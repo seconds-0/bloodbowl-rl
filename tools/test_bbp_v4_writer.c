@@ -13,6 +13,20 @@ static uint32_t read_u32(const uint8_t* p) {
 }
 
 int main(void) {
+    // The newest procedure must be printable in verbose replay diagnostics.
+    // An enum-sized bounds check with an older name table reads past the table.
+    bb_match stack_match = {0};
+    stack_match.stack_top = 1;
+    stack_match.stack[0] = (bb_frame){.proc=BB_PROC_TARGETED_ACTION,
+                                    .phase=4, .a=3, .b=20};
+    FILE* stack_file = tmpfile();
+    assert(stack_file != NULL);
+    print_stack(stack_file, &stack_match);
+    rewind(stack_file);
+    char stack_text[128] = {0};
+    assert(fread(stack_text, 1, sizeof stack_text - 1, stack_file) > 0);
+    assert(strcmp(stack_text, "TARGETED_ACTION.4(3,20)") == 0);
+    fclose(stack_file);
     runner context_runner = {0};
     char long_context[1024];
     memset(long_context, 'x', sizeof long_context - 1);
@@ -56,7 +70,7 @@ int main(void) {
     unlink(path);
 
     assert(memcmp(bytes, "BBP1", 4) == 0);
-    assert(read_u32(bytes + 4) == 4);
+    assert(read_u32(bytes + 4) == 5);
     assert(read_u32(bytes + 8) == BBE_OBS_SIZE);
     assert(read_u32(bytes + 12) == BBE_MASK_SIZE);
 
@@ -93,6 +107,6 @@ int main(void) {
            second_mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + 390] == 1);
 
     free(bytes);
-    puts("bbp v4 writer: conditional masks and inactive targets verified");
+    puts("bbp v5 writer: obs-v7 conditional masks and inactive targets verified");
     return 0;
 }

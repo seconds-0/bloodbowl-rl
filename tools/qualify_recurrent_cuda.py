@@ -36,7 +36,7 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
 import re
 import socket
@@ -100,6 +100,7 @@ HARD_INTEGRITY_KEYS = (
 TRANSITION_CELL_KINDS = frozenset(
     {"rollout", "terminal_auto", "terminal_control", "ratio", "throughput"}
 )
+THROUGHPUT_MEASUREMENT_CONTRACT = "lr0-rollout-plus-train-tail-consumption-v1"
 CELL_KINDS = ("construction", *sorted(TRANSITION_CELL_KINDS))
 GRAPH_ATOL_BY_PRECISION = {4: 1.0e-6}
 RATIO_ATOL_BY_PRECISION = {4: 2.0e-5}
@@ -109,19 +110,50 @@ DEFAULT_MAX_REGRESSION_FRACTION = 0.10
 # the first execution before CUDA lazy initialization; -1 means graphs off.
 DEFAULT_CUDAGRAPH_WARMUP_EPOCHS = 10
 DEFAULT_THROUGHPUT_MINIBATCH_SIZE = 16384
-BACKEND_SOURCE_FILES = (
-    "pufferlib/pufferl.py", "pufferlib/selfplay.py", "pufferlib/torch_pufferl.py",
-    "src/bindings.cu", "src/bindings_cpu.cpp", "src/kernels.cu",
-    "src/pufferlib.cu", "src/vecenv.h",
+BACKEND_SOURCE_REGISTRY = (
+    Path(__file__).resolve().parents[1]
+    / "training" / "puffer_compiled_backend_sources.txt"
 )
 QUALIFICATION_SURFACE_BINDINGS = (
     "qualification_recurrent_state", "qualification_snapshot",
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+ROLLOUT_TRANSITION_CONTRACT = "terminal-aware-tbptt-v1"
+ENTROPY_SCHEDULE_CONTRACT = "cosine-update-index-over-total-updates-fp32-v1"
 
 
 class QualificationError(RuntimeError):
     """A missing, malformed, drifted, or failed qualification predicate."""
+
+
+def load_backend_source_registry(path: Path) -> tuple[str, ...]:
+    """Load the installer's ordered, safe, path-bound backend source list."""
+    registry = Path(path)
+    try:
+        lines = registry.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise QualificationError(
+            f"backend source registry is unavailable: {exc}") from exc
+    if not lines:
+        raise QualificationError("backend source registry must be nonempty")
+    result: list[str] = []
+    seen: set[str] = set()
+    for index, relative in enumerate(lines, 1):
+        candidate = PurePosixPath(relative)
+        if (not relative or candidate.is_absolute()
+                or candidate.as_posix() != relative
+                or any(part in ("", ".", "..") for part in candidate.parts)):
+            raise QualificationError(
+                f"backend source registry line {index} is not a safe relative path")
+        if relative in seen:
+            raise QualificationError(
+                f"backend source registry contains duplicate path: {relative}")
+        seen.add(relative)
+        result.append(relative)
+    return tuple(result)
+
+
+BACKEND_SOURCE_FILES = load_backend_source_registry(BACKEND_SOURCE_REGISTRY)
 
 
 def _num(value: Any, label: str) -> float:
@@ -456,12 +488,22 @@ def bind_transition_integrity(
     """Finish a bounded telemetry interval and bind its exact-zero verdict."""
     for _ in range(_int(additional_rollouts, "additional integrity rollouts", minimum=0)):
         backend.rollouts(pufferl)
+        backend.train(pufferl)
     log = backend.log(pufferl)
     if not isinstance(log, Mapping) or not isinstance(log.get("env"), Mapping):
         raise QualificationError("transition integrity log/env telemetry is missing")
     record["hard_integrity"] = validate_hard_integrity(log["env"])
     record["hard_integrity_zero"] = True
     return record["hard_integrity"]
+
+
+def require_zero_learning_rate(config: Mapping[str, Any], label: str) -> None:
+    train = config.get("train")
+    if not isinstance(train, Mapping) or _num(
+        train.get("learning_rate"), f"{label} learning rate"
+    ) != 0.0:
+        raise QualificationError(
+            f"{label} tail-consuming diagnostic requires learning_rate=0")
 
 
 def validate_transition_cell_integrity(
@@ -486,6 +528,9 @@ def validate_transition_cell_integrity(
 
 
 def _validate_throughput_record(record: Mapping[str, Any], label: str) -> None:
+    if record.get("measurement_contract") != THROUGHPUT_MEASUREMENT_CONTRACT:
+        raise QualificationError(
+            f"{label} throughput measurement contract is incompatible")
     for key in ("host", "gpu"):
         if not isinstance(record.get(key), str) or not record.get(key):
             raise QualificationError(f"{label} throughput {key} is missing")
@@ -498,8 +543,10 @@ def _validate_throughput_record(record: Mapping[str, Any], label: str) -> None:
         sps, steps / elapsed, rel_tol=1.0e-12, abs_tol=0.0
     ):
         raise QualificationError(f"{label} throughput rate is internally inconsistent")
-    median = _num(record.get("median_rollout_seconds"), f"{label} median rollout")
-    p95 = _num(record.get("p95_rollout_seconds"), f"{label} p95 rollout")
+    median = _num(
+        record.get("median_update_cycle_seconds"), f"{label} median update cycle")
+    p95 = _num(
+        record.get("p95_update_cycle_seconds"), f"{label} p95 update cycle")
     if median <= 0 or p95 < median:
         raise QualificationError(f"{label} throughput rollout timing is invalid")
     validate_hard_integrity(record.get("hard_integrity", {}))
@@ -836,6 +883,10 @@ def _module_identity(_C, module: Path, puffer_root: Path) -> dict[str, Any]:
         "observation_abi": str(_C.observation_abi),
         "observation_version": int(_C.observation_version),
         "action_abi": str(_C.action_abi),
+        "rollout_transition_contract": str(getattr(
+            _C, "rollout_transition_contract", "<missing>")),
+        "entropy_schedule_contract": str(getattr(
+            _C, "entropy_schedule_contract", "<missing>")),
         "precision_bytes": int(_C.precision_bytes),
         "compiled_env": str(_C.env_name),
         "qualification_surface": qualification_surface_state(_C),
@@ -845,21 +896,25 @@ def _module_identity(_C, module: Path, puffer_root: Path) -> dict[str, Any]:
 def validate_module_identity(
     identity: Mapping[str, Any], *, qualification_surface: bool = True
 ) -> dict[str, Any]:
-    """The imported module really is obs-v6 / exact-joint-v1 / fp32.
+    """The imported module really is obs-v7 / exact-joint-v1 / fp32.
 
-    obs-v4, obs-v5 and obs-v6 are all 2782 bytes, so only this provenance
-    separates them; a mixup already wasted a 12B-step run. The two digest equalities are
+    obs-v7 is 2851 bytes and version 7; older same-shape revisions still require
+    provenance rather than shape inference. The two digest equalities are
     compiled == on-disk source and compiled == installed snapshot: the build
     compiles the snapshot, not your edit.
     """
     if identity.get("compiled_env") != "bloodbowl":
         raise QualificationError("compiled environment is not bloodbowl")
-    if identity.get("observation_abi") != "obs-v6" or identity.get(
+    if identity.get("observation_abi") != "obs-v7" or identity.get(
         "observation_version"
-    ) != 6:
-        raise QualificationError("compiled observation lineage is not obs-v6")
+    ) != 7:
+        raise QualificationError("compiled observation lineage is not obs-v7")
     if identity.get("action_abi") != "exact-joint-v1":
         raise QualificationError("compiled action lineage is not exact-joint-v1")
+    if identity.get("rollout_transition_contract") != ROLLOUT_TRANSITION_CONTRACT:
+        raise QualificationError("compiled rollout-transition contract is wrong")
+    if identity.get("entropy_schedule_contract") != ENTROPY_SCHEDULE_CONTRACT:
+        raise QualificationError("compiled entropy-schedule contract is wrong")
     if identity.get("precision_bytes") not in GRAPH_ATOL_BY_PRECISION:
         raise QualificationError("compiled precision is unsupported")
     if identity.get("qualification_surface") is not qualification_surface:
@@ -909,8 +964,6 @@ def _measure_ratio(
         "frozen_rows": sorted(frozen_rows),
         "state_layout": layout,
     }
-    _C.rollouts(pufferl)
-    bind_transition_integrity(_C, pufferl, result)
     before_path = directory / f"ratio-before-{os.getpid()}.bin"
     after_path = directory / f"ratio-after-{os.getpid()}.bin"
     try:
@@ -918,8 +971,17 @@ def _measure_ratio(
         before = sha256(before_path)
         covered: set[int] = set()
         calls = 0
+        per_call_weight_sha256: list[str] = []
         while covered != primary_rows and calls < call_limit:
+            _C.rollouts(pufferl)
+            # Snapshot the freshly collected batch before its one owner
+            # consumes the tail record. Each retry is a new LR=0 PPO sample.
+            decode_snapshot(_C.qualification_snapshot(pufferl))
             _C.train(pufferl)
+            _C.save_weights(pufferl, str(after_path))
+            call_weight = sha256(after_path)
+            validate_weight_identity(before, call_weight)
+            per_call_weight_sha256.append(call_weight)
             snapshot = decode_snapshot(_C.qualification_snapshot(pufferl))
             selected = snapshot["selected_rows"].astype(np.int32, copy=False)
             arrays[f"selected_{calls}"] = selected
@@ -939,8 +1001,10 @@ def _measure_ratio(
         before_path.unlink(missing_ok=True)
         after_path.unlink(missing_ok=True)
     validate_weight_identity(before, after)
+    bind_transition_integrity(_C, pufferl, result)
     result.update(
-        weights_before_sha256=before, weights_after_sha256=after, ratio_calls=calls
+        weights_before_sha256=before, weights_after_sha256=after,
+        per_call_weight_sha256=per_call_weight_sha256, ratio_calls=calls
     )
 
 
@@ -950,6 +1014,7 @@ def _measure_throughput(
 ) -> dict[str, Any]:
     for _ in range(args.throughput_warmup_rollouts):
         _C.rollouts(pufferl)
+        _C.train(pufferl)
     _C.log(pufferl)
     start_step = int(pufferl.global_step)
     durations: list[float] = []
@@ -957,6 +1022,7 @@ def _measure_throughput(
     for _ in range(args.throughput_timed_rollouts):
         one = time.perf_counter_ns()
         _C.rollouts(pufferl)
+        _C.train(pufferl)
         durations.append((time.perf_counter_ns() - one) / 1.0e9)
     elapsed = (time.perf_counter_ns() - started) / 1.0e9
     steps = int(pufferl.global_step) - start_step
@@ -971,9 +1037,10 @@ def _measure_throughput(
         "host": socket.gethostname(), "gpu": gpu,
         "precision_bytes": int(_C.precision_bytes), "config": dict(config),
         "steps": steps, "elapsed_seconds": elapsed,
+        "measurement_contract": THROUGHPUT_MEASUREMENT_CONTRACT,
         "steps_per_second": steps / elapsed,
-        "median_rollout_seconds": statistics.median(durations),
-        "p95_rollout_seconds": float(np.percentile(durations, 95)),
+        "median_update_cycle_seconds": statistics.median(durations),
+        "p95_update_cycle_seconds": float(np.percentile(durations, 95)),
         "hard_integrity_zero": True, "hard_integrity": integrity,
         "utilization": dict(_C.get_utilization(0)),
     }
@@ -1007,12 +1074,14 @@ def run_cell(args: argparse.Namespace) -> int:
             result["state"] = _C.qualification_recurrent_state(pufferl, False)
             validate_zero_state(result["state"], expected_banks=2, expected_buffers=1)
         elif args.kind == "rollout":
+            require_zero_learning_rate(config, "rollout qualification")
             result["state_before"] = _C.qualification_recurrent_state(pufferl, False)
             validate_zero_state(
                 result["state_before"], expected_banks=2, expected_buffers=1
             )
             _C.rollouts(pufferl)
             arrays = decode_snapshot(_C.qualification_snapshot(pufferl))
+            _C.train(pufferl)
             # Keep the first-rollout parity snapshot, then deterministically
             # cross max_decisions so at least one complete episode contributes
             # integrity telemetry to this isolated cell.
@@ -1047,11 +1116,13 @@ def run_cell(args: argparse.Namespace) -> int:
                 raise QualificationError("terminal cell did not exercise every row")
             bind_transition_integrity(_C, pufferl, result)
         elif args.kind == "ratio":
+            require_zero_learning_rate(config, "ratio qualification")
             _measure_ratio(
                 _C, pufferl, result, arrays, output_json.parent, config,
                 args.ratio_call_limit,
             )
         else:
+            require_zero_learning_rate(config, "throughput qualification")
             result["throughput"] = _measure_throughput(
                 _C, pufferl, config, evidence, args
             )

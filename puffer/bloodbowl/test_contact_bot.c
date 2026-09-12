@@ -95,6 +95,49 @@ static ContactHookStats run_contact_hook_tagged(int scripted, int scripted_team,
     return out;
 }
 
+static ContactHookStats run_contact_hook_masked(int scripted, int scripted_team,
+                                                uint64_t seed, int games,
+                                                unsigned int scripted_bank_mask,
+                                                int env_tag) {
+    Bloodbowl env;
+    memset(&env, 0, sizeof env);
+    env.scripted_bank_mask = scripted_bank_mask;
+    env.tag = env_tag;
+    static uint8_t obs[BBE_AGENTS * BBE_OBS_SIZE];
+    static float actions[BBE_AGENTS * 3];
+    static unsigned char masks[BBE_AGENTS * BBE_MASK_SIZE];
+    static float rewards[BBE_AGENTS];
+    static float terminals[BBE_AGENTS];
+    env.num_agents = BBE_AGENTS;
+    env.seed = seed;
+    env.scripted_opponent = scripted;
+    env.scripted_opponent_team = scripted_team;
+    env.max_decisions = CONTACT_DECISION_CAP;
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        env.obs_ptr[a] = obs + a * BBE_OBS_SIZE;
+        env.action_ptr[a] = actions + a * 3;
+        env.action_mask_ptr[a] = masks + a * BBE_MASK_SIZE;
+        env.reward_ptr[a] = rewards + a;
+        env.terminal_ptr[a] = terminals + a;
+    }
+    c_reset(&env);
+    bb_rng pol;
+    bb_rng_seed(&pol, seed ^ 0x51C1A7EDu, 5);
+    ContactHookStats out = {.digest = 1469598103934665603ull};
+    while (out.completed < games && out.decisions < (long)games * CONTACT_DECISION_CAP) {
+        for (int a = 0; a < BBE_AGENTS; a++) bbe_sample_joint_uniform(&env, a, env.action_ptr[a], &pol);
+        hash_bytes(&out.digest, actions, sizeof actions);
+        c_step(&env);
+        hash_bytes(&out.digest, rewards, sizeof rewards);
+        hash_bytes(&out.digest, terminals, sizeof terminals);
+        out.decisions++;
+        if (terminals[0] != 0.0f) out.completed++;
+    }
+    out.n = env.log.n;
+    out.blocks_thrown_t1 = env.log.blocks_thrown_t1;
+    return out;
+}
+
 static ContactHookStats run_contact_hook(int scripted, int scripted_team,
                                          uint64_t seed, int games) {
     return run_contact_hook_tagged(scripted, scripted_team, seed, games, 0, 0);
@@ -192,4 +235,30 @@ BB_TEST(contact_bot_scripted_bank_tag_gates_the_bot_on_the_env_tag) {
     // Tag 0 = global semantics, unchanged: every env is scripted.
     ContactHookStats global_tagged_env = run_contact_hook_tagged(1, BB_AWAY, seed, 6, 0, 3);
     BB_CHECK(global_tagged_env.digest == scripted.digest);
+}
+
+BB_TEST(contact_bot_scripted_bank_mask_selects_multiple_tags) {
+    const uint64_t seed = 0x5C817BA9u;
+    ContactHookStats plain = run_contact_hook_tagged(0, BB_AWAY, seed, 6, 0, 0);
+    ContactHookStats global = run_contact_hook_tagged(1, BB_AWAY, seed, 6, 0, 0);
+    // 0b10000001 selects tags 1 and 8 only.
+    ContactHookStats tag1 = run_contact_hook_masked(1, BB_AWAY, seed, 6, 129u, 1);
+    ContactHookStats tag8 = run_contact_hook_masked(1, BB_AWAY, seed, 6, 129u, 8);
+    ContactHookStats tag2 = run_contact_hook_masked(1, BB_AWAY, seed, 6, 129u, 2);
+    ContactHookStats untagged = run_contact_hook_masked(1, BB_AWAY, seed, 6, 129u, 0);
+    BB_CHECK(tag1.digest == global.digest);
+    BB_CHECK(tag8.digest == global.digest);
+    BB_CHECK(tag2.digest == plain.digest);
+    BB_CHECK(untagged.digest == plain.digest);
+}
+
+BB_TEST(contact_bot_scripted_selector_rejects_unsafe_numeric_inputs) {
+    unsigned int out = 999;
+    BB_CHECK(bbe_parse_scripted_selector(0.0, 255, &out) && out == 0);
+    BB_CHECK(bbe_parse_scripted_selector(255.0, 255, &out) && out == 255);
+    BB_CHECK(!bbe_parse_scripted_selector(-1.0, 255, &out));
+    BB_CHECK(!bbe_parse_scripted_selector(1.5, 255, &out));
+    BB_CHECK(!bbe_parse_scripted_selector(256.0, 255, &out));
+    BB_CHECK(!bbe_parse_scripted_selector(NAN, 255, &out));
+    BB_CHECK(!bbe_parse_scripted_selector(INFINITY, 255, &out));
 }

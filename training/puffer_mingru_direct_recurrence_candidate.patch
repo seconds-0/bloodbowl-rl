@@ -1,0 +1,391 @@
+--- a/src/models.cu
++++ b/src/models.cu
+@@ -85,24 +85,6 @@
+ 
+ // The core of 4.0 is the MinGRU fused scan operation. This allows us to parallelize
+ // training across the sequence dimension and scale to longer sequences
+-__device__ __forceinline__ void log_coeffs_and_values_fwd(float gate, float hidden,
+-        float* log_coeff_out, float* log_value_out) {
+-    float abs_gate = fabsf(gate);
+-    float sp_neg = log1pf(expf(-abs_gate));
+-    float softplus_gate = (gate >= 0.0f) ? gate + sp_neg : sp_neg;
+-    float softplus_neg_gate = (gate >= 0.0f) ? sp_neg : -gate + sp_neg;
+-    *log_coeff_out = -softplus_gate;
+-    float log_tilde_h = (hidden >= 0.0f) ? logf(hidden + 0.5f) : -softplus_fwd(-hidden);
+-    *log_value_out = -softplus_neg_gate + log_tilde_h;
+-}
+-
+-__device__ __forceinline__ void log_coeffs_and_values_bwd(float grad_log_coeffs, float grad_log_values,
+-        float gate, float hidden, float* grad_gate_out, float* grad_hidden_out) {
+-    float sig_gate = sigmoid(gate);
+-    *grad_gate_out = -grad_log_coeffs * sig_gate + grad_log_values * (1.0f - sig_gate);
+-    *grad_hidden_out = (hidden >= 0.0f) ? grad_log_values / (hidden + 0.5f) : grad_log_values * sigmoid(-hidden);
+-}
+-
+ __global__ void mingru_gate(precision_t* out, precision_t* next_state,
+         const precision_t* combined, const precision_t* state_in,
+         const precision_t* x_in, int H, int B) {
+@@ -136,253 +118,112 @@
+     out[idx] = from_float(proj_sigmoid * mingru_out + (1.0f - proj_sigmoid) * x);
+ }
+ 
+-// Prefix scan buffers
++// Training uses the same direct recurrence and fp32 rounding points as rollout.
++// One CUDA thread owns one (sequence, hidden-unit) pair and walks T serially.
++__device__ __forceinline__ float fast_sigmoid_derivative(float x) {
++    float v = x * 0.5f;
++    if (v <= -9.0f || v >= 9.0f) return 0.0f;
++    float z = v * v;
++    const float a5 = -2.76076847742355e-16f, a4 = 2.00018790482477e-13f;
++    const float a3 = -8.60467152213735e-11f, a2 = 5.12229709037114e-08f;
++    const float a1 = 1.48572235717979e-05f, a0 = 6.37261928875436e-04f;
++    const float am = 4.89352455891786e-03f;
++    const float b3 = 1.19825839466702e-06f, b2 = 1.18534705686654e-04f;
++    const float b1 = 2.26843463243900e-03f, b0 = 4.89352518554385e-03f;
++    float r = (((((a5*z + a4)*z + a3)*z + a2)*z + a1)*z + a0)*z + am;
++    float dr_dz = ((((6.0f*a5*z + 5.0f*a4)*z + 4.0f*a3)*z
++        + 3.0f*a2)*z + 2.0f*a1)*z + a0;
++    float denominator = ((b3*z + b2)*z + b1)*z + b0;
++    float dd_dz = (3.0f*b3*z + 2.0f*b2)*z + b1;
++    float numerator = v * r;
++    float unclamped = 0.5f * (numerator / denominator + 1.0f);
++    if (unclamped <= 0.0f || unclamped >= 1.0f) return 0.0f;
++    float dnumerator_dv = r + 2.0f*z*dr_dz;
++    float ddenominator_dv = 2.0f*v*dd_dz;
++    float dtanh_dv = (dnumerator_dv*denominator
++        - numerator*ddenominator_dv) / (denominator*denominator);
++    return 0.25f * dtanh_dv;
++}
++
+ struct PrefixScan {
+     precision_t* combined_ptr = nullptr;
+     precision_t* state_ptr = nullptr;
+-    precision_t* input_ptr = nullptr;  // (B, T, H) original input before projection (for highway gate)
++    precision_t* input_ptr = nullptr;
+     int B = 0, T = 0, H = 0;
+-    FloatTensor a_star, s_vals, log_values_buf;
++    FloatTensor state_history; // raw state_t; recurrent carry is precision-rounded
+     PrecisionTensor out, next_state;
+     PrecisionTensor grad_combined, grad_state;
+-    PrecisionTensor grad_input;        // (B, T, H) highway gate gradient w.r.t. input
++    PrecisionTensor grad_input;
+ };
+ 
+-// Checkpointing trades off partial recomputation for memory bandwidth.
+-#define CHECKPOINT_INTERVAL 4
+ __global__ void mingru_scan_forward(PrefixScan scan) {
+-    int T_seq = scan.T, H = scan.H, B = scan.B;
+-    precision_t* __restrict__ out = scan.out.data;
+-    precision_t* __restrict__ next_state = scan.next_state.data;
+-    float* __restrict__ a_star_buf = scan.a_star.data;
+-    float* __restrict__ s_buf = scan.s_vals.data;
+-    float* __restrict__ log_values_buf = scan.log_values_buf.data;
+-    const precision_t* __restrict__ combined = scan.combined_ptr;
+-    const precision_t* __restrict__ state = scan.state_ptr;
+-    const precision_t* __restrict__ input = scan.input_ptr;
+-
++    int T = scan.T, H = scan.H, B = scan.B;
+     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+-    if (idx >= B * H) {
+-        return;
++    if (idx >= B * H) return;
++    int b = idx / H, h = idx % H;
++    int state_idx = b * H + h;
++    int base = b * T * H + h;
++    int combined_base = 3 * b * T * H;
++    float state = to_float(from_float(to_float(scan.state_ptr[state_idx])));
++    scan.state_history.data[b * (T + 1) * H + h] = state;
++    for (int t = 0; t < T; ++t) {
++        int c = combined_base + t * 3 * H + h;
++        float hidden = to_float(scan.combined_ptr[c]);
++        float gate = to_float(scan.combined_ptr[c + H]);
++        float proj = to_float(scan.combined_ptr[c + 2 * H]);
++        float input = to_float(scan.input_ptr[base + t * H]);
++        float g = sigmoid(gate);
++        float candidate = hidden >= 0.0f ? hidden + 0.5f : fast_sigmoid(hidden);
++        float raw_state = lerp(state, candidate, g);
++        scan.state_history.data[b * (T + 1) * H + (t + 1) * H + h] = raw_state;
++        float p = sigmoid(proj);
++        scan.out.data[base + t * H] = from_float(
++            p * raw_state + (1.0f - p) * input);
++        state = to_float(from_float(raw_state));
+     }
+-
+-    int b = idx / H;
+-    int h = idx % H;
+-
+-    int bH = b * H;
+-    int H3 = 3 * H;
+-    int H2 = 2 * H;
+-    int bHT = bH * T_seq;
+-    int out_base = bHT + h;
+-    int cbase = 3 * bHT;
+-
+-    float a_star = 0.0f;
+-    float log_value = 0.0f;
+-
+-    // Handle t=0 outside the loop: use log(state), coeff = 0
+-    float s = __logf(to_float(state[bH + h]));
+-    log_value = s;
+-
+-    int T_out = T_seq + 1;
+-    int buf_base = b * T_out * H + h;
+-    int buf_curr = buf_base;
+-    a_star_buf[buf_curr] = a_star;
+-    s_buf[buf_curr] = s;
+-    log_values_buf[buf_curr] = log_value;
+-
+-    const precision_t* combined_h_base = &combined[cbase + h];
+-    const precision_t* combined_g_base = &combined[cbase + H + h];
+-    const precision_t* combined_p_base = &combined[cbase + H2 + h];
+-
+-    // Loop t=1..T_seq with sparse checkpointing
+-    float scan_result = 0.0f;
+-    int out_curr = out_base;
+-    int t_offset = 0;
+-
+-    for (int t = 1; t < T_seq + 1; t++) {
+-        float hidden_val = to_float(combined_h_base[t_offset]);
+-        float gate_val = to_float(combined_g_base[t_offset]);
+-        float proj_val = to_float(combined_p_base[t_offset]);
+-        float x_val = to_float(input[out_base + (t - 1) * H]);
+-
+-        float log_coeff_val;
+-        log_coeffs_and_values_fwd(gate_val, hidden_val, &log_coeff_val, &log_value);
+-
+-        // a_star[t] = sum_{i=0}^t log_coeffs[i]
+-        a_star += log_coeff_val;
+-
+-        float z = log_value - a_star;
+-        s = logaddexp(s, z);
+-
+-        scan_result = __expf(a_star + s);
+-        float proj_sigmoid = sigmoid(proj_val);
+-
+-        // out = sigmoid(proj) * scan_result + (1 - sigmoid(proj)) * x (highway gate)
+-        out[out_curr] = from_float(proj_sigmoid * scan_result + (1.0f - proj_sigmoid) * x_val);
+-
+-        buf_curr += H;
+-        out_curr += H;
+-        t_offset += H3;
+-
+-        if (t % CHECKPOINT_INTERVAL == 0) {
+-            a_star_buf[buf_curr] = a_star;
+-            s_buf[buf_curr] = s;
+-            log_values_buf[buf_curr] = log_value;
+-        }
+-    }
+-
+-    // Write timestep T to next_state (raw scan_result, no proj, for recurrence)
+-    next_state[bH + h] = from_float(scan_result);
++    scan.next_state.data[state_idx] = from_float(state);
+ }
+ 
+-// Reads sparse checkpoints from forward pass, recomputes intermediate values in chunks
+ __global__ void mingru_scan_backward(PrefixScan scan,
+         const precision_t* __restrict__ grad_out,
+         const precision_t* __restrict__ grad_next_state) {
+-    int T_seq = scan.T, H = scan.H, B = scan.B;
+-    precision_t* __restrict__ grad_combined = scan.grad_combined.data;
+-    precision_t* __restrict__ grad_state = scan.grad_state.data;
+-    precision_t* __restrict__ grad_input = scan.grad_input.data;
+-    const precision_t* __restrict__ combined = scan.combined_ptr;
+-    const precision_t* __restrict__ state = scan.state_ptr;
+-    const precision_t* __restrict__ input = scan.input_ptr;
+-    const float* __restrict__ a_star_buf = scan.a_star.data;
+-    const float* __restrict__ s_buf = scan.s_vals.data;
+-    const float* __restrict__ log_values_buf = scan.log_values_buf.data;
+-
++    int T = scan.T, H = scan.H, B = scan.B;
+     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+-    if (idx >= B * H) {
+-        return;
++    if (idx >= B * H) return;
++    int b = idx / H, h = idx % H;
++    int state_idx = b * H + h;
++    int base = b * T * H + h;
++    int combined_base = 3 * b * T * H;
++    int history_base = b * (T + 1) * H + h;
++    float grad_state = to_float(grad_next_state[state_idx]);
++    for (int t = T - 1; t >= 0; --t) {
++        int c = combined_base + t * 3 * H + h;
++        int row = base + t * H;
++        float hidden = to_float(scan.combined_ptr[c]);
++        float gate = to_float(scan.combined_ptr[c + H]);
++        float proj = to_float(scan.combined_ptr[c + 2 * H]);
++        float input = to_float(scan.input_ptr[row]);
++        float previous = to_float(from_float(
++            scan.state_history.data[history_base + t * H]));
++        float current = scan.state_history.data[history_base + (t + 1) * H];
++        float grad_output = to_float(grad_out[row]);
++        float p = sigmoid(proj);
++        float g = sigmoid(gate);
++        float candidate = hidden >= 0.0f ? hidden + 0.5f : fast_sigmoid(hidden);
++        grad_state += grad_output * p;
++        float grad_candidate = grad_state * g;
++        float grad_hidden = hidden >= 0.0f
++            ? grad_candidate
++            : grad_candidate * fast_sigmoid_derivative(hidden);
++        scan.grad_combined.data[c] = from_float(grad_hidden);
++        scan.grad_combined.data[c + H] = from_float(
++            grad_state * (candidate - previous) * g * (1.0f - g));
++        scan.grad_combined.data[c + 2 * H] = from_float(
++            grad_output * (current - input) * p * (1.0f - p));
++        scan.grad_input.data[row] = from_float(grad_output * (1.0f - p));
++        grad_state *= 1.0f - g;
+     }
+-
+-    int b = idx / H;
+-    int h = idx % H;
+-
+-    int bHT = b * H * T_seq;
+-    int cbase = 3 * bHT;
+-    int H3 = 3 * H;
+-    int H2 = 2 * H;
+-    const int state_idx = b * H + h;
+-    const int out_base = bHT + h;
+-
+-    const precision_t* combined_h_base = &combined[cbase + h];
+-    const precision_t* combined_g_base = &combined[cbase + H + h];
+-    const precision_t* combined_p_base = &combined[cbase + H2 + h];
+-
+-    precision_t* grad_combined_h_base = &grad_combined[cbase + h];
+-    precision_t* grad_combined_g_base = &grad_combined[cbase + H + h];
+-    precision_t* grad_combined_p_base = &grad_combined[cbase + H2 + h];
+-
+-    int T_out = T_seq + 1;
+-    int buf_base = b * T_out * H + h;
+-
+-    float acc = 0.0;
+-    float s_val_next = 0.0;
+-    float carry_grad_a = 0.0;
+-
+-    for (int chunk_end = T_seq; chunk_end > 0; chunk_end -= CHECKPOINT_INTERVAL) {
+-        int chunk_start = (chunk_end > CHECKPOINT_INTERVAL) ? (chunk_end - CHECKPOINT_INTERVAL) : 0;
+-        int chunk_len = chunk_end - chunk_start;
+-
+-        // Chunk storage in registers
+-        float chunk_a_star[CHECKPOINT_INTERVAL];
+-        float chunk_s[CHECKPOINT_INTERVAL];
+-        float chunk_log_values[CHECKPOINT_INTERVAL];
+-        float chunk_hidden[CHECKPOINT_INTERVAL];
+-        float chunk_gate[CHECKPOINT_INTERVAL];
+-
+-        // Load checkpoint from global memory
+-        int ckpt_buf_idx = buf_base + chunk_start * H;
+-        float recomp_a_star = a_star_buf[ckpt_buf_idx];
+-        float recomp_s = s_buf[ckpt_buf_idx];
+-        float recomp_log_value = log_values_buf[ckpt_buf_idx];
+-
+-        // Recompute and store from chunk_start to chunk_end
+-        for (int i = 0; i < chunk_len; ++i) {
+-            int t = chunk_start + 1 + i;
+-            int t_offset = (t - 1) * H3;
+-            float hv = to_float(combined_h_base[t_offset]);
+-            float gv = to_float(combined_g_base[t_offset]);
+-
+-            float lc;
+-            log_coeffs_and_values_fwd(gv, hv, &lc, &recomp_log_value);
+-            recomp_a_star += lc;
+-
+-            float z = recomp_log_value - recomp_a_star;
+-            recomp_s = logaddexp(recomp_s, z);
+-
+-            chunk_a_star[i] = recomp_a_star;
+-            chunk_s[i] = recomp_s;
+-            chunk_log_values[i] = recomp_log_value;
+-            chunk_hidden[i] = hv;
+-            chunk_gate[i] = gv;
+-        }
+-
+-        for (int i = chunk_len - 1; i >= 0; --i) {
+-            int t = chunk_start + 1 + i;
+-            int t_offset = (t - 1) * H3;
+-
+-            float a_star_t = chunk_a_star[i];
+-            float s_t = chunk_s[i];
+-            float log_value_t = chunk_log_values[i];
+-            float hidden_val = chunk_hidden[i];
+-            float gate_val = chunk_gate[i];
+-
+-            float proj_val = to_float(combined_p_base[t_offset]);
+-            int input_idx = out_base + (t - 1) * H;
+-            float x_val = to_float(input[input_idx]);
+-
+-            float scan_result = __expf(a_star_t + s_t);
+-            float z = log_value_t - a_star_t;
+-
+-            float grad_out_val = to_float(grad_out[input_idx]);
+-            float grad_scan_from_next = (t == T_seq) ? to_float(grad_next_state[state_idx]) : 0.0f;
+-            float proj_sigmoid = sigmoid(proj_val);
+-
+-            // Highway gate gradients: out = sigmoid(proj) * scan_result + (1 - sigmoid(proj)) * x
+-            float grad_scan_result = grad_scan_from_next + grad_out_val * proj_sigmoid;
+-            float grad_proj = grad_out_val * (scan_result - x_val) * proj_sigmoid * (1.0f - proj_sigmoid);
+-            grad_input[input_idx] = from_float(grad_out_val * (1.0f - proj_sigmoid));
+-
+-            float grad_log_h = grad_scan_result * scan_result;
+-            float grad_s = grad_log_h;
+-
+-            if (t == T_seq) {
+-                acc = grad_s;
+-            } else {
+-                acc = grad_s + acc * __expf(s_t - s_val_next);
+-            }
+-            float grad_z = acc * __expf(z - s_t);
+-            s_val_next = s_t;
+-
+-            float grad_a = grad_log_h + carry_grad_a - grad_z;
+-            carry_grad_a = grad_a;
+-
+-            float grad_g, grad_h;
+-            log_coeffs_and_values_bwd(grad_a, grad_z, gate_val, hidden_val, &grad_g, &grad_h);
+-
+-            grad_combined_h_base[t_offset] = from_float(grad_h);
+-            grad_combined_g_base[t_offset] = from_float(grad_g);
+-            grad_combined_p_base[t_offset] = from_float(grad_proj);
+-        }
+-    }
+-
+-    int ckpt_0_idx = buf_base;
+-    float a_star_0 = a_star_buf[ckpt_0_idx];
+-    float s_0 = s_buf[ckpt_0_idx];
+-    float log_value_0 = log_values_buf[ckpt_0_idx];
+-
+-    float scan_result_0 = __expf(a_star_0 + s_0);
+-    float z_0 = log_value_0 - a_star_0;
+-
+-    float grad_scan_result_0 = 0.0f;
+-    float grad_log_h_0 = grad_scan_result_0 * scan_result_0;
+-    float grad_s_0 = grad_log_h_0;
+-
+-    acc = grad_s_0 + acc * __expf(s_0 - s_val_next);
+-    float grad_z_0 = acc * __expf(z_0 - s_0);
+-
+-    grad_state[state_idx] = from_float(grad_z_0 / to_float(state[state_idx]));
++    scan.grad_state.data[state_idx] = from_float(grad_state);
+ }
+ 
+ __global__ void sum_rows_to_precision_kernel(precision_t* __restrict__ dst,
+@@ -638,9 +479,7 @@
+     for (int i = 0; i < m->num_layers; i++) {
+         a->scan_bufs[i] = {
+             .B = B, .T = TT, .H = H,
+-            .a_star =           {.shape = {B, TT + 1, H}},
+-            .s_vals =           {.shape = {B, TT + 1, H}},
+-            .log_values_buf =   {.shape = {B, TT + 1, H}},
++            .state_history =     {.shape = {B, TT + 1, H}},
+             .out =              {.shape = {B, TT, H}},
+             .next_state =       {.shape = {B, 1, H}},
+             .grad_combined =    {.shape = {B, TT, 3 * H}},
+@@ -654,9 +493,7 @@
+         alloc_register(acts,&a->combined_bufs[i]);
+         alloc_register(acts,&a->scan_bufs[i].out);
+         alloc_register(acts,&a->scan_bufs[i].next_state);
+-        alloc_register(acts,&a->scan_bufs[i].a_star);
+-        alloc_register(acts,&a->scan_bufs[i].s_vals);
+-        alloc_register(acts,&a->scan_bufs[i].log_values_buf);
++        alloc_register(acts,&a->scan_bufs[i].state_history);
+         alloc_register(acts,&a->scan_bufs[i].grad_combined);
+         alloc_register(acts,&a->scan_bufs[i].grad_state);
+         alloc_register(acts,&a->scan_bufs[i].grad_input);

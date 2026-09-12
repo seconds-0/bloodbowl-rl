@@ -148,8 +148,8 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 "screen_profile": "exact-action-canary",
                 "qualification_only": True,
                 "bootstrap": {
-                    "observation_abi": "obs-v6",
-                    "observation_version": 6,
+                    "observation_abi": "obs-v7",
+                    "observation_version": 7,
                     "action_abi": "exact-joint-v1",
                     "initialization": "fresh",
                     "warm_lineage_sha256": "",
@@ -159,7 +159,7 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                 "final_steps": 49_938_432,
                 "schedule": [{"index": 1, "arm": "both", "seed": 42}],
                 "settings": {
-                    "expected_checkpoint_bytes": "16066560",
+                    "expected_checkpoint_bytes": "16207872",
                     "native_precision_bytes": "4",
                     "min_train_games": "1",
                     "min_eval_games": "10000",
@@ -178,8 +178,8 @@ class RewardScreenAnalysisTests(unittest.TestCase):
                     "compiled_semantic_contract": {
                         "env_name": "bloodbowl",
                         "precision_bytes": 4,
-                        "observation_abi": "obs-v6",
-                        "observation_version": 6,
+                        "observation_abi": "obs-v7",
+                        "observation_version": 7,
                         "action_abi": "exact-joint-v1",
                         "environment_source_sha256": source_sha,
                     },
@@ -204,7 +204,7 @@ class RewardScreenAnalysisTests(unittest.TestCase):
             "screen_manifest_sha256": manifest_sha,
             "reward_sha256": analyze_reward_screen
             .POSSESSION_GAIN_REWARD_SHA256["both"],
-            "checkpoint_bytes": 16_066_560,
+            "checkpoint_bytes": 16_207_872,
             "checkpoint_sha256": digest("checkpoint-both-42"),
             "checkpoint_lineage": "/remote/run/0000000049938432.bin.lineage.json",
             "checkpoint_lineage_sha256": checkpoint_lineage_sha,
@@ -307,8 +307,35 @@ class RewardScreenAnalysisTests(unittest.TestCase):
         self.assertNotIn("2x2 effects", rendered)
         self.assertNotIn("Across 1 seeds", rendered)
 
+    def test_historical_obs_v6_canary_remains_explicitly_analyzable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_exact_action_canary(tmp)
+            manifest_path = Path(tmp) / "SCREEN_MANIFEST.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            contract = manifest["contract"]
+            contract["settings"]["expected_checkpoint_bytes"] = "16066560"
+            contract["bootstrap"].update(
+                observation_abi="obs-v6", observation_version=6)
+            contract["implementation"]["compiled_semantic_contract"].update(
+                observation_abi="obs-v6", observation_version=6)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+            result_path = next(Path(tmp).glob("*.result.json"))
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["screen_manifest_sha256"] = manifest_sha
+            result["checkpoint_bytes"] = 16_066_560
+            result_path.write_text(json.dumps(result), encoding="utf-8")
+            completion_path = Path(tmp) / "SCREEN_COMPLETE.json"
+            completion = json.loads(completion_path.read_text(encoding="utf-8"))
+            completion["screen_manifest_sha256"] = manifest_sha
+            completion["results"][0]["sha256"] = hashlib.sha256(
+                result_path.read_bytes()).hexdigest()
+            completion_path.write_text(json.dumps(completion), encoding="utf-8")
+            report = analyze_reward_screen.analyze_screen(tmp, ("tds",))
+            self.assertEqual(report["screen"]["profile"], "exact-action-canary")
+
     def test_exact_action_canary_rejects_contaminated_or_wrong_build(self):
-        """The canary's real preconditions: fresh, obs-v6/exact-joint, fp32,
+        """The canary's real preconditions: fresh, obs-v7/exact-joint, fp32,
         and compiled from the installed source."""
         mutations = (
             (

@@ -42,7 +42,7 @@
 #     BRIDGE_PROVENANCE / BRIDGE_REASON  make this stage the reviewed warm
 #     start from an OUT-OF-LINEAGE raw blob (docs/audit-2026-08-20.md F2).
 #     A bridge is always a FIRST rung: WARM is the raw obs-v4/obs-v5-era
-#     checkpoint with no sidecar, PREV_POOL is an eligible obs-v6 pool, and
+#     checkpoint with no sidecar, PREV_POOL is an eligible obs-v7 pool, and
 #     PREV_COMPLETE must be unset (a chained rung's warm has a sidecar, and a
 #     sidecar-bearing warm is refused by the bridge on purpose).
 set -uo pipefail
@@ -240,6 +240,7 @@ fi
 [ -z "${LADDER_CHAIN_LR_SCALE:-}" ] || export LADDER_CHAIN_LR_SCALE
 [ -z "${LADDER_CHAIN_ENT_SCALE:-}" ] || export LADDER_CHAIN_ENT_SCALE
 [ -z "${SCRIPTED_BANK_TAG:-}" ] || export SCRIPTED_BANK_TAG
+[ -z "${SCRIPTED_BANK_MASK:-}" ] || export SCRIPTED_BANK_MASK
 [ -z "${SCRIPTED_BOT_TYPE:-}" ] || export SCRIPTED_BOT_TYPE
 [ -z "${LADDER_PROFILE:-}" ] || export LADDER_PROFILE
 [ -z "${GRAFT_FROM_SOURCE_SHA256:-}" ] || export GRAFT_FROM_SOURCE_SHA256
@@ -257,8 +258,8 @@ case "$LADDER_PROFILE" in
   *)
     echo "  profile ${LADDER_PROFILE}" ;;
 esac
-[ -z "${SCRIPTED_BANK_TAG:-}${SCRIPTED_BOT_TYPE:-}" ] || \
-  echo "  bot  scripted_bank_tag=${SCRIPTED_BANK_TAG:-0} scripted_bot_type=${SCRIPTED_BOT_TYPE:-0}"
+[ -z "${SCRIPTED_BANK_TAG:-}${SCRIPTED_BANK_MASK:-}${SCRIPTED_BOT_TYPE:-}" ] || \
+  echo "  bot  scripted_bank_tag=${SCRIPTED_BANK_TAG:-0} scripted_bank_mask=${SCRIPTED_BANK_MASK:-0} scripted_bot_type=${SCRIPTED_BOT_TYPE:-0}"
 export POOL="$POOL_OUT/pool"
 export DEADLINE_HOURS="${DEADLINE_HOURS:-40}"
 exec bash tools/launch_ladder_rung.sh

@@ -1,4 +1,4 @@
-"""decoder.py — reconstruct game state from a HOME-agent obs-v4 observation.
+"""decoder.py — reconstruct game state from a HOME-agent obs-v7 observation.
 
 Byte map per the 2026-06-10 obs-v4 layout audit (puffer/bloodbowl/bloodbowl.h):
   [0..767]    32 player records x 24B (home agent: row == slot, ABSOLUTE coords)
@@ -8,6 +8,13 @@ Byte map per the 2026-06-10 obs-v4 layout audit (puffer/bloodbowl/bloodbowl.h):
   [1612..2001] A1 plane: P(def down)*255 per square (block targets, MOVE proc)
   [2002..2391] A2 plane: P(att down)*255 per square
   [2392..2781] B plane: P(step success)*255 per square
+  [2782..2813] effective Loner target by egocentric player row
+  [2814..2845] effective Bloodlust target by egocentric player row
+  [2846]       targeted-action variant (engine kind + 1; zero outside wrapper)
+  [2847]       targeted-action context flags
+  [2848]       projected public choice/dispatch state flags
+  [2849]       targeted-wrapper actor row + 1 (zero outside wrapper)
+  [2850]       targeted-wrapper target row + 1 (zero outside wrapper)
 Square index: idx = y*26 + x (x in [0,25], y in [0,14]).
 
 IMPORTANT: only decode the HOME agent's obs row — the away agent's is
@@ -15,9 +22,37 @@ x-mirrored and team-swapped (ego encoding). All protocol output is absolute.
 """
 
 PITCH_W, PITCH_H = 26, 15
+OBS_SIZE = 2851
 CTX, SCAL = 768, 784
 TZ_OFF, TZ_PLANE = 832, 390
 A1_OFF, A2_OFF, B_OFF = 1612, 2002, 2392
+TARGETED_VARIANT_OFF = 2846
+TARGETED_CONTEXT_OFF = 2847
+TARGETED_STATE_OFF = 2848
+TARGETED_ACTOR_OFF = 2849
+TARGETED_TARGET_OFF = 2850
+
+TARGETED_VARIANTS = {
+    1: "block", 2: "stab", 3: "hypnotic_gaze", 5: "chainsaw",
+    6: "breathe_fire", 7: "projectile_vomit",
+}
+TARGETED_CONTEXT_FLAGS = {
+    1: "from_ball_chain", 2: "from_blitz", 4: "frenzy_second",
+}
+TARGETED_STATE_FLAGS = {
+    0x01: "dump_off_declined",
+    0x02: "dump_off_used",
+    0x04: "dump_off_pass_in_flight",
+    0x08: "trickster_declined",
+    0x10: "trickster_used",
+    0x20: "trickster_pickup_declined",
+    0x40: "trickster_pickup_test_in_flight",
+    0x80: "action_dispatched_or_child_pending",
+}
+
+
+def decode_flag_names(value, names):
+    return [name for bit, name in names.items() if value & bit]
 
 LOC = {0: "off", 1: "pitch", 2: "reserves", 3: "ko", 4: "cas"}
 STANCE = {0: "standing", 1: "prone", 2: "stunned"}
@@ -49,7 +84,9 @@ def sq_xy(idx):
 
 
 def decode_players(obs):
-    """obs: bytes-like 2782 (HOME agent row). Returns list of 32 player dicts."""
+    """Decode the 32 player rows from one exact obs-v7 HOME observation."""
+    if len(obs) != OBS_SIZE:
+        raise ValueError(f"obs-v7 requires {OBS_SIZE} bytes, got {len(obs)}")
     out = []
     for slot in range(32):
         o = slot * 24

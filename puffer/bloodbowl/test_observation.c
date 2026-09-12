@@ -1,5 +1,6 @@
 #define BB_TEST_MAIN
 #include "bb_test.h"
+#include "bb_fixtures.h"
 #include "bloodbowl.h"
 
 typedef struct {
@@ -79,7 +80,7 @@ static const uint8_t* obs_ctx(ObservationFixture* f, int agent) {
 }
 
 BB_TEST(observation_block_faces_are_public_at_reroll_and_choice_windows) {
-    BB_CHECK_EQ(BBE_OBS_VERSION, 6);
+    BB_CHECK_EQ(BBE_OBS_VERSION, 7);
     for (int phase = 1; phase <= 2; phase++) {
         ObservationFixture f;
         observation_fixture_init(&f);
@@ -135,6 +136,74 @@ BB_TEST(observation_block_face_slots_zero_after_dice_count) {
     BB_CHECK_EQ(ctx[13], 0);
     BB_CHECK_EQ(ctx[14], 0);
     BB_CHECK_EQ(ctx[15], 0);
+}
+
+BB_TEST(observation_dump_off_windows_are_exact_and_egocentric_both_sides) {
+    for (int owner = BB_HOME; owner <= BB_AWAY; owner++) {
+        ObservationFixture f;
+        observation_fixture_init(&f);
+        obs_clear_pitch(&f);
+        int attacker = (1 - owner) * BB_TEAM_SLOTS;
+        int defender = owner * BB_TEAM_SLOTS;
+        obs_place(&f, attacker, 10, 7);
+        obs_place(&f, defender, 11, 7);
+        f.env.match.players[defender].pa = 3;
+        f.env.match.players[defender].flags |= BB_PF_HAS_BALL;
+        bb_add_skill(&f.env.match.players[defender].skills, BB_SK_DUMP_OFF);
+        f.env.match.ball.state = BB_BALL_HELD;
+        f.env.match.ball.carrier = (uint8_t)defender;
+        f.env.match.ball.x = 11; f.env.match.ball.y = 7;
+        f.env.match.status = BB_STATUS_DECISION;
+        f.env.match.decision_team = (uint8_t)owner;
+        f.env.match.active_team = (uint8_t)(1 - owner);
+        f.env.match.stack_top = 1;
+        f.env.match.stack[0] =
+            (bb_frame){BB_PROC_TARGETED_ACTION, 0, (uint8_t)attacker,
+                       (uint8_t)defender, BB_TA_BLOCK, 0, 0};
+        f.env.n_legal = bb_legal_actions(&f.env.match, f.env.legal);
+        bbe_fill_mask(&f.env, owner);
+        encode_both(&f);
+
+        BB_CHECK_EQ(f.env.n_legal, 2);
+        for (int i = 0; i < f.env.n_legal; i++) {
+            bb_action round = bb_action_unpack(bb_action_pack(f.env.legal[i]));
+            BB_CHECK(bb_action_eq(round, f.env.legal[i]));
+        }
+        for (int agent = BB_HOME; agent <= BB_AWAY; agent++) {
+            const uint8_t* ctx = obs_ctx(&f, agent);
+            BB_CHECK_EQ(ctx[4], BB_PROC_TARGETED_ACTION);
+            BB_CHECK_EQ(ctx[5], 0);
+            BB_CHECK_EQ(ctx[10], agent == owner);
+            BB_CHECK_EQ(ctx[11], agent == 1 - owner);
+        }
+        BB_CHECK(f.env.action_mask_ptr[owner][BB_A_CHOOSE_OPTION]);
+
+        f.env.match.stack[0].phase = 1;
+        f.env.n_legal = bb_legal_actions(&f.env.match, f.env.legal);
+        bbe_fill_mask(&f.env, owner);
+        encode_both(&f);
+        BB_CHECK(f.env.n_legal > 1);
+        bb_action want = {BB_A_PASS_TARGET, 0, 13, 7};
+        int found = -1;
+        for (int i = 0; i < f.env.n_legal; i++) {
+            bb_action round = bb_action_unpack(bb_action_pack(f.env.legal[i]));
+            BB_CHECK(bb_action_eq(round, f.env.legal[i]));
+            if (bb_action_eq(f.env.legal[i], want)) found = i;
+        }
+        BB_CHECK(found >= 0);
+        BB_CHECK_EQ(f.env.legal_arg[found], 32);
+        int ego_x = owner == BB_HOME ? 13 : BB_PITCH_LEN - 1 - 13;
+        BB_CHECK_EQ(f.env.legal_sq[found], 7 * BB_PITCH_LEN + ego_x);
+        float heads[3] = {BB_A_PASS_TARGET, 32,
+                          (float)(7 * BB_PITCH_LEN + ego_x)};
+        BB_CHECK(bb_action_eq(bbe_decode(&f.env, owner, heads), want));
+        for (int agent = BB_HOME; agent <= BB_AWAY; agent++) {
+            const uint8_t* ctx = obs_ctx(&f, agent);
+            BB_CHECK_EQ(ctx[4], BB_PROC_TARGETED_ACTION);
+            BB_CHECK_EQ(ctx[5], 1);
+            BB_CHECK_EQ(ctx[10], agent == owner);
+        }
+    }
 }
 
 BB_TEST(observation_test_kind_and_active_movement_survive_nested_window) {
@@ -460,8 +529,8 @@ BB_TEST(macro_step_requires_canonical_inactive_argument) {
 BB_TEST(observation_v6_scalar_layout_is_the_documented_tail) {
     // The byte layout is part of the ABI: obs offsets 806..831, OBS_SIZE
     // unchanged so none of the three sync points move.
-    BB_CHECK_EQ(BBE_OBS_VERSION, 6);
-    BB_CHECK_EQ(BBE_OBS_SIZE, 2782);
+    BB_CHECK_EQ(BBE_OBS_VERSION, 7);
+    BB_CHECK_EQ(BBE_OBS_SIZE, 2851);
     BB_CHECK_EQ(BBE_SCALAR_OFF, 784);
     BB_CHECK_EQ(BBE_SCALAR_OFF + BBE_S_WINDOW_FLAGS, 806);
     BB_CHECK_EQ(BBE_SCALAR_OFF + BBE_S_ACT_KIND, 807);
@@ -1075,7 +1144,7 @@ BB_TEST(observation_activation_gate_target_is_visible_at_its_reroll_window) {
     BB_CHECK_EQ(obs_ctx(&f, BB_HOME)[8], 0);
 }
 
-BB_TEST(observation_v6_slack_bytes_stay_zero_at_every_window) {
+BB_TEST(observation_v7_bonus_rerolls_are_egocentric_at_every_window) {
     ObservationFixture f;
     observation_fixture_init(&f);
     obs_clear_pitch(&f);
@@ -1086,9 +1155,8 @@ BB_TEST(observation_v6_slack_bytes_stay_zero_at_every_window) {
     f.env.match.ball.state = BB_BALL_IN_AIR;
     f.env.match.ball.x = 5;
     f.env.match.ball.y = 6;
-    // The 2 bytes of slack (s[30], s[31]) are reserved for a future revision
-    // and must read zero under every window the encoder handles, otherwise a
-    // later reader would inherit garbage rather than a clean reservation.
+    f.env.match.bonus_rerolls[BB_HOME] = 2;
+    f.env.match.bonus_rerolls[BB_AWAY] = 3;
     static const bb_frame windows[] = {
         {BB_PROC_PASS, 2, 3, 0, 12, 7, 0x100},
         {BB_PROC_PUSH, 3, 3, 20, 6, 8, PSH_POW | PSH_FROM_BLITZ},
@@ -1106,10 +1174,170 @@ BB_TEST(observation_v6_slack_bytes_stay_zero_at_every_window) {
         f.env.match.stack_top = 1;
         f.env.match.stack[0] = windows[i];
         encode_both(&f);
-        for (int agent = 0; agent < BBE_AGENTS; agent++) {
-            const uint8_t* scalar = obs_scalars(&f, agent);
-            BB_CHECK_EQ(scalar[30], 0);
-            BB_CHECK_EQ(scalar[31], 0);
+        const uint8_t* home = obs_scalars(&f, BB_HOME);
+        const uint8_t* away = obs_scalars(&f, BB_AWAY);
+        BB_CHECK_EQ(home[BBE_S_BONUS_REROLLS_OWN], 2);
+        BB_CHECK_EQ(home[BBE_S_BONUS_REROLLS_OPP], 3);
+        BB_CHECK_EQ(away[BBE_S_BONUS_REROLLS_OWN], 3);
+        BB_CHECK_EQ(away[BBE_S_BONUS_REROLLS_OPP], 2);
+    }
+}
+
+BB_TEST(observation_v7_parameter_vectors_follow_egocentric_player_rows) {
+    ObservationFixture f;
+    observation_fixture_init(&f);
+    bb_player* home = &f.env.match.players[3];
+    bb_player* away = &f.env.match.players[20];
+    bb_add_skill(&home->skills, BB_SK_LONER);
+    home->p_loner = 3;
+    bb_add_skill(&away->skills, BB_SK_BLOODLUST);
+    away->p_bloodlust = 2;
+    encode_both(&f);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_LONER_OFF + 3], 3);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_BLOODLUST_OFF + 20], 2);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_AWAY][BBE_LONER_OFF + 19], 3);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_AWAY][BBE_BLOODLUST_OFF + 4], 2);
+}
+
+BB_TEST(observation_v7_uses_existing_effective_parameter_fallbacks) {
+    ObservationFixture f;
+    observation_fixture_init(&f);
+    bb_player* p = &f.env.match.players[3];
+    bb_add_skill(&p->skills, BB_SK_LONER);
+    p->p_loner = 0; // bb_loner_value's established 4+ fallback
+    bb_add_skill(&p->skills, BB_SK_BLOODLUST);
+    p->p_bloodlust = 0; // established inert Bloodlust representation
+    encode_both(&f);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_LONER_OFF + 3], 4);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_BLOODLUST_OFF + 3], 0);
+}
+
+BB_TEST(observation_v7_does_not_invent_parameter_validation) {
+    ObservationFixture f;
+    observation_fixture_init(&f);
+    bb_player* p = &f.env.match.players[3];
+    bb_add_skill(&p->skills, BB_SK_LONER);
+    bb_add_skill(&p->skills, BB_SK_BLOODLUST);
+    p->p_loner = 120;
+    p->p_bloodlust = 100;
+    int status_before = f.env.match.status;
+    encode_both(&f);
+    BB_CHECK_EQ(f.env.match.status, status_before);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_LONER_OFF + 3], 120);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_BLOODLUST_OFF + 3], 100);
+}
+
+BB_TEST(observation_v7_targeted_action_public_state_survives_child_test) {
+    ObservationFixture f;
+    observation_fixture_init(&f);
+    f.env.match.stack_top = 2;
+    f.env.match.stack[0] = (bb_frame){
+        .proc = BB_PROC_TARGETED_ACTION, .phase = 1, .a = 3, .b = 20,
+        .x = BB_TA_STAB, .y = BB_TA_FROM_BLITZ | BB_TA_FRENZY_SECOND,
+        .data = 0xFF,
+    };
+    f.env.match.stack[1] = (bb_frame){
+        .proc = BB_PROC_TEST, .phase = 0, .a = 7, .b = BB_TEST_CATCH,
+        .x = 3,
+    };
+    encode_both(&f);
+    const uint8_t expected_state = bb_targeted_action_public_state(
+        &f.env.match.stack[0]);
+    for (int agent = 0; agent < BBE_AGENTS; agent++) {
+        const uint8_t* obs = f.env.obs_ptr[agent];
+        BB_CHECK_EQ(obs[BBE_TARGETED_VARIANT_OFF], BB_TA_STAB + 1);
+        BB_CHECK_EQ(obs[BBE_TARGETED_CONTEXT_OFF],
+                    BB_TA_FROM_BLITZ | BB_TA_FRENZY_SECOND);
+        BB_CHECK_EQ(obs[BBE_TARGETED_STATE_OFF], expected_state);
+        // Occupied context bytes retain the actual child TEST semantics.
+        BB_CHECK_EQ(obs_ctx(&f, agent)[6],
+                    1 + (agent == BB_AWAY ? (7 ^ 16) : 7));
+        BB_CHECK_EQ(obs_ctx(&f, agent)[7], 0);
+        BB_CHECK_EQ(obs[BBE_TARGETED_ACTOR_OFF],
+                    1 + (agent == BB_AWAY ? (3 ^ 16) : 3));
+        BB_CHECK_EQ(obs[BBE_TARGETED_TARGET_OFF],
+                    1 + (agent == BB_AWAY ? (20 ^ 16) : 20));
+    }
+}
+
+BB_TEST(observation_v7_targeted_action_bytes_zero_without_wrapper) {
+    ObservationFixture f;
+    observation_fixture_init(&f);
+    f.env.match.stack_top = 1;
+    f.env.match.stack[0] = (bb_frame){BB_PROC_TEST, 0, 3, BB_TEST_RUSH, 2, 0, 0};
+    encode_both(&f);
+    for (int agent = 0; agent < BBE_AGENTS; agent++) {
+        BB_CHECK_EQ(f.env.obs_ptr[agent][BBE_TARGETED_VARIANT_OFF], 0);
+        BB_CHECK_EQ(f.env.obs_ptr[agent][BBE_TARGETED_CONTEXT_OFF], 0);
+        BB_CHECK_EQ(f.env.obs_ptr[agent][BBE_TARGETED_STATE_OFF], 0);
+        BB_CHECK_EQ(f.env.obs_ptr[agent][BBE_TARGETED_ACTOR_OFF], 0);
+        BB_CHECK_EQ(f.env.obs_ptr[agent][BBE_TARGETED_TARGET_OFF], 0);
+    }
+}
+
+static bb_action obs_action(int type, int arg, int x, int y) {
+    return (bb_action){(uint8_t)type, (uint8_t)arg, (uint8_t)x, (uint8_t)y};
+}
+
+BB_TEST(observation_blitz_stab_targeted_context_both_sides_and_rush_paths) {
+    for (int active = BB_HOME; active <= BB_AWAY; active++) {
+        for (int mode = 0; mode < 3; mode++) {
+            /* mode 0: ordinary Stab; mode 1: Blitz-Stab with movement left;
+             * mode 2: Blitz-Stab whose block replacement requires a Rush. */
+            bb_match m;
+            fx_match_midturn(&m, active, 0);
+            int actor = fx_player(&m, active, 0, mode == 2 ? 9 : 10, 7,
+                                  mode == 2 ? 1 : 6, 3, 3, 4, 9);
+            int target = fx_player(&m, 1 - active, 0, 11, 7,
+                                   7, 3, 2, 3, 8);
+            fx_give_skill(&m, actor, BB_SK_STAB);
+            fx_give_skill(&m, target, BB_SK_TRICKSTER);
+            const uint8_t dice[] = {6};
+            bb_rng rng;
+            bb_rng_script(&rng, dice, sizeof dice);
+
+            BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+            BB_CHECK_EQ(fx_apply(&m, obs_action(BB_A_ACTIVATE, actor, 0, 0),
+                                 &rng), BB_STATUS_DECISION);
+            int declared = mode == 0 ? BB_ACT_STAB : BB_ACT_BLITZ;
+            BB_CHECK_EQ(fx_apply(&m, obs_action(BB_A_DECLARE, declared, 0, 0),
+                                 &rng), BB_STATUS_DECISION);
+            if (mode == 2) {
+                /* Spend the player's one movement point through legal play,
+                 * so the Stab needs a Rush without an artificial MA 0. */
+                BB_CHECK_EQ(fx_apply(&m, obs_action(BB_A_STEP, 0, 10, 7),
+                                     &rng), BB_STATUS_DECISION);
+            }
+            BB_CHECK(fx_find(&m, obs_action(BB_A_SPECIAL_TARGET, BB_TA_STAB,
+                                            11, 7)) >= 0);
+            BB_CHECK_EQ(fx_apply(&m,
+                                 obs_action(BB_A_SPECIAL_TARGET, BB_TA_STAB,
+                                            11, 7),
+                                 &rng), BB_STATUS_DECISION);
+            BB_CHECK_EQ(bb_top(&m)->proc, BB_PROC_TARGETED_ACTION);
+            BB_CHECK_EQ(m.decision_team, 1 - active);
+            BB_CHECK_EQ((bb_top(&m)->y & BB_TA_FROM_BLITZ) != 0, mode != 0);
+            BB_CHECK_EQ(rng.script_pos, mode == 2 ? 1 : 0);
+
+            ObservationFixture f;
+            observation_fixture_init(&f);
+            f.env.match = m;
+            encode_both(&f);
+            for (int view = BB_HOME; view <= BB_AWAY; view++) {
+                const uint8_t* obs = f.env.obs_ptr[view];
+                BB_CHECK_EQ(obs[BBE_TARGETED_VARIANT_OFF], BB_TA_STAB + 1);
+                BB_CHECK_EQ((obs[BBE_TARGETED_CONTEXT_OFF] &
+                             BB_TA_FROM_BLITZ) != 0,
+                            mode != 0);
+                BB_CHECK_EQ(obs[BBE_TARGETED_ACTOR_OFF],
+                            1 + (view == BB_AWAY ? (actor ^ 16) : actor));
+                BB_CHECK_EQ(obs[BBE_TARGETED_TARGET_OFF],
+                            1 + (view == BB_AWAY ? (target ^ 16) : target));
+                const uint8_t* ctx = obs_ctx(&f, view);
+                BB_CHECK_EQ(ctx[4], BB_PROC_TARGETED_ACTION);
+                BB_CHECK_EQ(ctx[10], view == 1 - active);
+            }
+            BB_CHECK(!bb_rng_error(&rng));
         }
     }
 }

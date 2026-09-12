@@ -48,7 +48,7 @@ static const char* proc_name(int p) {
         N(ACTIVATION); N(MOVE); N(DODGE); N(RUSH); N(PICKUP); N(BLOCK);
         N(PUSH); N(KNOCKDOWN); N(ARMOUR); N(INJURY); N(CASUALTY); N(PASS);
         N(CATCH); N(SCATTER); N(THROW_IN); N(HANDOFF); N(FOUL); N(TTM);
-        N(TEST); N(TOUCHDOWN); N(TURNOVER); N(END_DRIVE); N(KO_RECOVERY);
+        N(TEST); N(TOUCHDOWN); N(TURNOVER); N(END_DRIVE); N(KO_RECOVERY); N(TARGETED_ACTION);
 #undef N
     default: snprintf(buf, sizeof buf, "proc%d", p); return buf;
     }

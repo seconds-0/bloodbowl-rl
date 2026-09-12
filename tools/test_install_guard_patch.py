@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """tools/install_puffer_env.sh must upgrade an installed v1 scripted guard.
 
-The scripted-training guard patch was revised for scripted_bank_tag. Its first
-hunk occupies the same lines as the previous revision, so a vendored tree that
-already carries the v1 guard can neither take the new patch nor pass its
-reverse-check. The installer keeps the retired revision as
-training/pufferl_scripted_training_guard.v1.patch, reverse-applies it when it
-is what the tree holds, then applies the new one. These tests build a
-synthetic pufferlib/pufferl.py from the patches' own context lines (no
-vendored tree exists on a Mac checkout) and drive the installer's guard/warm
-block and its --check counterpart through the three tree states: fresh,
-old-guard, new-guard.
+The current guard is rebased onto the entropy/config stack, while the immutable
+v1 patch records the older source layout. The installer may upgrade v1 only if
+a shadow reverse-v1/apply-current transaction proves clean; otherwise it must
+fail before mutation and require a fresh pinned Puffer tree. These tests build
+synthetic pufferlib.py inputs from each patch's own context and exercise the
+supported fresh/current states plus the rejected legacy state.
 """
 
 from __future__ import annotations
@@ -47,9 +43,12 @@ def old_side_hunks(patch_path):
     return hunks
 
 
-def synthetic_pufferl():
+def synthetic_pufferl(*patches):
     """Reconstruct the pre-patch pufferl.py regions both patches touch."""
-    hunks = sorted(old_side_hunks(GUARD) + old_side_hunks(WARM))
+    patches = patches or (GUARD, WARM)
+    hunks = sorted(
+        hunk for patch in patches for hunk in old_side_hunks(patch)
+    )
     body = []
     line_number = 1
     for start, lines in hunks:
@@ -122,13 +121,13 @@ class InstallGuardPatchTests(unittest.TestCase):
         self.assertEqual(check.returncode, 0, check.stderr)
 
     def test_v1_patch_is_the_retired_revision(self):
-        # The v1 file is exactly what shipped before, and it differs from the
-        # new one only in the guard body (same context, same call sites).
+        # V1 remains the immutable retired patch. The current patch is now
+        # deliberately based on the later entropy/config source layout.
         v1 = GUARD_V1.read_text(encoding="utf-8")
         self.assertIn("@@ -204,6 +204,26 @@", v1)
         self.assertNotIn("scripted_bank_tag", v1)
         self.assertIn("scripted_bank_tag", GUARD.read_text(encoding="utf-8"))
-        self.assertEqual(
+        self.assertNotEqual(
             [lines for _, lines in old_side_hunks(GUARD_V1)],
             [lines for _, lines in old_side_hunks(GUARD)])
 
@@ -140,21 +139,23 @@ class InstallGuardPatchTests(unittest.TestCase):
         self.assertIn("applied:   pufferl_warm_start.patch", result.stdout)
         self.assert_new_guard_installed()
 
-    def test_old_guard_tree_is_upgraded_in_place(self):
+    def test_old_guard_tree_fails_before_mutation_with_fresh_tree_remedy(self):
+        self.pufferl.write_text(
+            synthetic_pufferl(GUARD_V1, WARM), encoding="utf-8")
         self.assertEqual(self.git_apply(GUARD_V1).returncode, 0)
         self.assertEqual(self.git_apply(WARM).returncode, 0)
+        before = self.pufferl.read_bytes()
         # Before: the drift check names the stale guard.
         stale = self.run_check_block()
         self.assertNotEqual(stale.returncode, 0)
         self.assertIn("local pufferl.py patch is missing or stale", stale.stderr)
         self.assertIn("pufferl_scripted_training_guard.patch", stale.stderr)
         result = self.run_install_block()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("reversed:  pufferl_scripted_training_guard.v1.patch",
-                      result.stdout)
-        self.assertIn("applied:   pufferl_scripted_training_guard.patch", result.stdout)
-        self.assertNotIn("applied:   pufferl_warm_start.patch", result.stdout)
-        self.assert_new_guard_installed()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("legacy scripted-training guard v1 cannot be upgraded",
+                      result.stderr)
+        self.assertIn("fresh pinned Puffer tree", result.stderr)
+        self.assertEqual(self.pufferl.read_bytes(), before)
 
     def test_new_guard_tree_is_idempotent(self):
         first = self.run_install_block()
@@ -167,12 +168,15 @@ class InstallGuardPatchTests(unittest.TestCase):
         self.assertEqual(self.pufferl.read_bytes(), before)
         self.assert_new_guard_installed()
 
-    def test_installer_wires_v1_reverse_and_check_verifies_both_patches(self):
+    def test_installer_shadow_checks_v1_and_check_verifies_current_patches(self):
         source = INSTALLER.read_text(encoding="utf-8")
         self.assertIn('GUARD_V1_PATCH="$ROOT/training/pufferl_scripted_training_guard.v1.patch"',
                       source)
         self.assertIn('git -C "$PUFFER" apply --reverse --no-index "$GUARD_V1_PATCH"',
                       source)
+        self.assertIn('git -C "$guard_shadow" apply --check --no-index "$GUARD_CURRENT_PATCH"',
+                      source)
+        self.assertIn("fresh pinned Puffer tree", source)
         check = installer_block('if [ "$MODE" = "check" ]; then',
                                 "\n# Record the source content hash")
         self.assertIn('"$ROOT/training/pufferl_scripted_training_guard.patch" \\\n'

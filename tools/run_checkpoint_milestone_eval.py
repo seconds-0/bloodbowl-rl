@@ -30,7 +30,7 @@ import run_reward_candidate_transfer
 
 
 SCHEMA_VERSION = 1
-EXPECTED_NATIVE_BYTES = 16_066_560
+EXPECTED_NATIVE_BYTES = run_reward_candidate_transfer.EXPECTED_NATIVE_BYTES
 CONTROL_SEEDS = (42, 43, 44)
 FIXED_TARGET_STEPS = (
     0,

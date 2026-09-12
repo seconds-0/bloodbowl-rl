@@ -1,0 +1,291 @@
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -833,7 +833,279 @@
+     result["is_continuous"] = pufferl.is_continuous;
+     result["precision"] = "f32";
+     result["max_bytes"] = max_bytes;
++    result["used_bytes"] = used;
++    result["tensors"] = tensors;
++    return result;
++}
++
++
++// Qualification-only forward attribution. This never mutates weights, optimizer,
++// rollout storage, or the production activation buffers.
++__global__ void qualification_gather_timestep(
++        const precision_t* __restrict__ source, precision_t* __restrict__ output,
++        int B, int T, int width, int t, int source_b_start) {
++    int i = blockIdx.x * blockDim.x + threadIdx.x;
++    if (i >= B * width) return;
++    int b = i / width, col = i % width;
++    output[i] = source[((b + source_b_start) * T + t) * width + col];
++}
++
++__global__ void qualification_scatter_timestep(
++        const precision_t* __restrict__ source, precision_t* __restrict__ output,
++        int B, int T, int width, int t) {
++    int i = blockIdx.x * blockDim.x + threadIdx.x;
++    if (i >= B * width) return;
++    int b = i / width, col = i % width;
++    output[(b * T + t) * width + col] = source[i];
++}
++
++__global__ void qualification_mingru_direct_step(
++        const precision_t* __restrict__ combined,
++        const precision_t* __restrict__ input,
++        precision_t* __restrict__ state,
++        precision_t* __restrict__ output, int B, int H) {
++    int idx = blockIdx.x * blockDim.x + threadIdx.x;
++    if (idx >= B * H) return;
++    int h = idx % H;
++    float previous = to_float(state[idx]);
++    // puf_mm rows are [hidden, gate, projection], each row contiguous.
++    int row = idx / H;
++    int c = row * 3 * H + h;
++    float hidden = to_float(combined[c]);
++    float gate = to_float(combined[c + H]);
++    float proj = to_float(combined[c + 2 * H]);
++    float g = sigmoid(gate);
++    float candidate = hidden >= 0.0f ? hidden + 0.5f : fast_sigmoid(hidden);
++    float current = to_float(from_float(lerp(previous, candidate, g)));
++    state[idx] = from_float(current);
++    float p = sigmoid(proj);
++    output[idx] = from_float(p * current + (1.0f - p) * to_float(input[idx]));
++}
++
++__global__ void qualification_select_terminal_rows(
++        const precision_t* __restrict__ terminals,
++        const int* __restrict__ selected,
++        precision_t* __restrict__ output, int B, int T) {
++    int i = blockIdx.x * blockDim.x + threadIdx.x;
++    if (i >= B * T) return;
++    int b = i / T, t = i % T;
++    output[i] = terminals[selected[b] * T + t];
++}
++
++__global__ void qualification_per_head_logprobs(
++        const precision_t* __restrict__ logits, int logits_stride,
++        const precision_t* __restrict__ actions,
++        const precision_t* __restrict__ mask,
++        const int* __restrict__ act_sizes,
++        const precision_t* __restrict__ old_logprobs,
++        float* __restrict__ logprobs, float* __restrict__ total_logprobs,
++        float* __restrict__ ratios,
++        int rows, int heads, int mask_stride) {
++    int row = blockIdx.x * blockDim.x + threadIdx.x;
++    if (row >= rows) return;
++    int offset = 0;
++    float total = 0.0f;
++    for (int head = 0; head < heads; ++head) {
++        float lse, entropy, lp;
++        int act = static_cast<int>(to_float(actions[row * heads + head]));
++        ppo_discrete_head(logits, row * logits_stride, 1, offset,
++            act_sizes[head], act, mask, row * mask_stride,
++            &lse, &entropy, &lp);
++        logprobs[row * heads + head] = lp;
++        total += lp;
++        offset += act_sizes[head];
++    }
++    total_logprobs[row] = total;
++    ratios[row] = __expf(total - to_float(old_logprobs[row]));
++}
++
++struct QualificationCudaBuffer {
++    void* data = nullptr;
++    explicit QualificationCudaBuffer(size_t bytes) {
++        cudaError_t status = bytes == 0 ? cudaErrorInvalidValue
++            : cudaMalloc(&data, bytes);
++        if (status != cudaSuccess) {
++            size_t free_bytes = 0, total_bytes = 0;
++            cudaMemGetInfo(&free_bytes, &total_bytes);
++            throw std::runtime_error(std::string("dual-forward allocation failed: bytes=")
++                + std::to_string(bytes) + " free=" + std::to_string(free_bytes)
++                + " error=" + cudaGetErrorName(status));
++        }
++    }
++    ~QualificationCudaBuffer() { if (data != nullptr) cudaFree(data); }
++    QualificationCudaBuffer(const QualificationCudaBuffer&) = delete;
++    QualificationCudaBuffer& operator=(const QualificationCudaBuffer&) = delete;
++};
++
++py::dict qualification_dual_forward(
++        py::object pufferl_obj, size_t max_bytes = 128ULL << 20) {
++    constexpr size_t HARD_MAX_BYTES = 128ULL << 20;
++    if (max_bytes == 0 || max_bytes > HARD_MAX_BYTES) {
++        throw std::runtime_error("invalid dual-forward evidence byte limit");
++    }
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
++    if (USE_BF16 || pufferl.is_continuous || !pufferl.hypers.reset_state) {
++        throw std::runtime_error("dual-forward requires discrete fp32 reset-state training");
++    }
++    if (pufferl.hypers.lr != 0.0f) {
++        throw std::runtime_error("dual-forward requires exactly zero learning rate");
++    }
++    if (pufferl.epoch <= 0 || pufferl.train_activations.network == nullptr ||
++            pufferl.train_activations.decoder == nullptr) {
++        throw std::runtime_error("dual-forward requires one completed training update");
++    }
++    MinGRUWeights* network = reinterpret_cast<MinGRUWeights*>(pufferl.weights.network);
++    MinGRUActivations* train_net = reinterpret_cast<MinGRUActivations*>(
++        pufferl.train_activations.network);
++    DecoderWeights* decoder_weights = reinterpret_cast<DecoderWeights*>(pufferl.weights.decoder);
++    DecoderActivations* train_decoder = reinterpret_cast<DecoderActivations*>(
++        pufferl.train_activations.decoder);
++    int T = pufferl.hypers.horizon;
++    int rows = pufferl.hypers.minibatch_size;
++    int B = rows / T;
++    int H = pufferl.hypers.hidden_size;
++    int heads = static_cast<int>(numel(pufferl.act_sizes_puf.shape));
++    int logits_stride = decoder_weights->output_dim + 1;
++    if (T <= 0 || rows <= 0 || rows % T != 0 || B <= 0 || H <= 0 ||
++            network == nullptr || network->num_layers != pufferl.hypers.num_layers ||
++            train_net->saved_inputs == nullptr || train_net->saved_inputs[0].data == nullptr ||
++            train_decoder->out.data == nullptr ||
++            train_decoder->out.shape[0] != rows ||
++            train_decoder->out.shape[1] != logits_stride ||
++            pufferl.train_buf.mb_actions.data == nullptr ||
++            ndim(pufferl.train_buf.mb_actions.shape) != 3 ||
++            pufferl.train_buf.mb_actions.shape[2] != heads || heads <= 0 ||
++            pufferl.train_buf.mb_action_mask.data == nullptr) {
++        throw std::runtime_error("dual-forward training tensors have incompatible shapes");
++    }
++    constexpr int CHUNK_SEQUENCES = 16;
++    int chunk_cap = std::min(B, CHUNK_SEQUENCES);
++    size_t combined_bytes = static_cast<size_t>(chunk_cap) * 3 * H * sizeof(precision_t);
++    size_t hidden_bytes = static_cast<size_t>(chunk_cap) * H * sizeof(precision_t);
++    size_t state_bytes = static_cast<size_t>(network->num_layers) * chunk_cap * H * sizeof(precision_t);
++    size_t logits_chunk_bytes = static_cast<size_t>(chunk_cap) * T * logits_stride * sizeof(precision_t);
++    size_t head_bytes = static_cast<size_t>(rows) * heads * sizeof(float);
++    QualificationCudaBuffer combined(combined_bytes), hidden_a(hidden_bytes), hidden_b(hidden_bytes);
++    QualificationCudaBuffer direct_state(state_bytes), direct_logits_chunk(logits_chunk_bytes);
++    QualificationCudaBuffer logits_step(static_cast<size_t>(chunk_cap) * logits_stride * sizeof(precision_t));
++    QualificationCudaBuffer scan_head_lp(head_bytes), direct_head_lp(head_bytes);
++    QualificationCudaBuffer scan_total_lp(static_cast<size_t>(rows) * sizeof(float));
++    QualificationCudaBuffer direct_total_lp(static_cast<size_t>(rows) * sizeof(float));
++    QualificationCudaBuffer scan_ratios(static_cast<size_t>(rows) * sizeof(float));
++    QualificationCudaBuffer direct_ratios(static_cast<size_t>(rows) * sizeof(float));
++    QualificationCudaBuffer selected_terminals(static_cast<size_t>(rows) * sizeof(precision_t));
++    std::vector<float> direct_logits_host(static_cast<size_t>(rows) * logits_stride);
++    cudaStream_t stream = pufferl.default_stream;
++    for (int b_start = 0; b_start < B; b_start += chunk_cap) {
++        int C = std::min(chunk_cap, B - b_start);
++        for (int layer = 0; layer < network->num_layers; ++layer) {
++            if (cudaMemcpyAsync(static_cast<precision_t*>(direct_state.data) + layer * C * H,
++                    pufferl.train_buf.mb_state.data + layer * B * H + b_start * H,
++                    static_cast<size_t>(C) * H * sizeof(precision_t),
++                    cudaMemcpyDeviceToDevice, stream) != cudaSuccess) {
++                throw std::runtime_error("dual-forward state chunk copy failed");
++            }
++        }
++        PrecisionTensor step_input = {.data=static_cast<precision_t*>(hidden_a.data), .shape={C,H}};
++        PrecisionTensor step_output = {.data=static_cast<precision_t*>(hidden_b.data), .shape={C,H}};
++        PrecisionTensor step_combined = {.data=static_cast<precision_t*>(combined.data), .shape={C,3*H}};
++        PrecisionTensor step_logits = {.data=static_cast<precision_t*>(logits_step.data), .shape={C,logits_stride}};
++        PrecisionTensor direct_chunk = {.data=static_cast<precision_t*>(direct_logits_chunk.data), .shape={C*T,logits_stride}};
++        for (int t = 0; t < T; ++t) {
++            qualification_gather_timestep<<<grid_size(C * H), BLOCK_SIZE, 0, stream>>>(
++                train_net->saved_inputs[0].data, step_input.data, C, T, H, t, b_start);
++            PrecisionTensor current = step_input;
++            PrecisionTensor next = step_output;
++            for (int layer = 0; layer < network->num_layers; ++layer) {
++                puf_mm(&current, &network->weights[layer], &step_combined, stream);
++                qualification_mingru_direct_step<<<grid_size(C * H), BLOCK_SIZE, 0, stream>>>(
++                    step_combined.data, current.data,
++                    static_cast<precision_t*>(direct_state.data) + layer * C * H,
++                    next.data, C, H);
++                current = next;
++                next.data = next.data == step_output.data ? step_input.data : step_output.data;
++            }
++            puf_mm(&current, &decoder_weights->weight, &step_logits, stream);
++            qualification_scatter_timestep<<<grid_size(C * logits_stride), BLOCK_SIZE, 0, stream>>>(
++                step_logits.data, direct_chunk.data, C, T, logits_stride, t);
++        }
++        qualification_per_head_logprobs<<<grid_size(C*T), BLOCK_SIZE, 0, stream>>>(
++            direct_chunk.data, logits_stride,
++            pufferl.train_buf.mb_actions.data + static_cast<size_t>(b_start) * T * heads,
++            pufferl.train_buf.mb_action_mask.data + static_cast<size_t>(b_start) * T * pufferl.train_buf.mb_action_mask.shape[2],
++            pufferl.act_sizes_puf.data,
++            pufferl.train_buf.mb_logprobs.data + static_cast<size_t>(b_start) * T,
++            static_cast<float*>(direct_head_lp.data) + static_cast<size_t>(b_start) * T * heads,
++            static_cast<float*>(direct_total_lp.data) + static_cast<size_t>(b_start) * T,
++            static_cast<float*>(direct_ratios.data) + static_cast<size_t>(b_start) * T,
++            C*T, heads, pufferl.train_buf.mb_action_mask.shape[2]);
++        if (cudaMemcpyAsync(direct_logits_host.data() + static_cast<size_t>(b_start) * T * logits_stride,
++                direct_chunk.data, static_cast<size_t>(C) * T * logits_stride * sizeof(float),
++                cudaMemcpyDeviceToHost, stream) != cudaSuccess) {
++            throw std::runtime_error("dual-forward direct-logit chunk copy failed");
++        }
++    }
++    int mask_stride = pufferl.train_buf.mb_action_mask.shape[2];
++    qualification_per_head_logprobs<<<grid_size(rows), BLOCK_SIZE, 0, stream>>>(
++        train_decoder->out.data, logits_stride, pufferl.train_buf.mb_actions.data,
++        pufferl.train_buf.mb_action_mask.data, pufferl.act_sizes_puf.data,
++        pufferl.train_buf.mb_logprobs.data, static_cast<float*>(scan_head_lp.data),
++        static_cast<float*>(scan_total_lp.data), static_cast<float*>(scan_ratios.data),
++        rows, heads, mask_stride);
++    qualification_select_terminal_rows<<<grid_size(rows), BLOCK_SIZE, 0, stream>>>(
++        pufferl.train_rollouts.terminals.data, pufferl.prio_bufs.idx.data,
++        static_cast<precision_t*>(selected_terminals.data), B, T);
++    if (cudaStreamSynchronize(stream) != cudaSuccess) {
++        throw std::runtime_error("dual-forward diagnostic synchronization failed");
++    }
++    PrecisionTensor scan_logits = {.data=train_decoder->out.data, .shape={B,T,logits_stride}};
++    FloatTensor scan_lp = {.data=static_cast<float*>(scan_head_lp.data), .shape={B,T,heads}};
++    FloatTensor direct_lp = {.data=static_cast<float*>(direct_head_lp.data), .shape={B,T,heads}};
++    FloatTensor scan_total = {.data=static_cast<float*>(scan_total_lp.data), .shape={B,T}};
++    FloatTensor direct_total = {.data=static_cast<float*>(direct_total_lp.data), .shape={B,T}};
++    FloatTensor scan_ratio = {.data=static_cast<float*>(scan_ratios.data), .shape={B,T}};
++    FloatTensor direct_ratio = {.data=static_cast<float*>(direct_ratios.data), .shape={B,T}};
++    PrecisionTensor terminal_rows = {.data=static_cast<precision_t*>(selected_terminals.data), .shape={B,T}};
++    size_t used = 0;
++    py::dict tensors;
++    tensors["scan_logits"] = qualification_precision_tensor("scan_logits", scan_logits, &used, max_bytes);
++    size_t direct_bytes = direct_logits_host.size() * sizeof(float);
++    if (direct_bytes > max_bytes || used > max_bytes - direct_bytes)
++        throw std::runtime_error("dual-forward evidence exceeds qualification byte limit");
++    py::dict direct_descriptor;
++    direct_descriptor["name"] = "direct_logits";
++    direct_descriptor["dtype"] = "f32";
++    direct_descriptor["shape"] = py::cast(std::vector<long long>{B,T,logits_stride});
++    direct_descriptor["present"] = true;
++    direct_descriptor["data"] = py::bytes(reinterpret_cast<const char*>(direct_logits_host.data()), direct_bytes);
++    direct_descriptor["bytes"] = direct_bytes;
++    used += direct_bytes;
++    tensors["direct_logits"] = direct_descriptor;
++    tensors["scan_head_logprobs"] = qualification_float_tensor("scan_head_logprobs", scan_lp, &used, max_bytes);
++    tensors["direct_head_logprobs"] = qualification_float_tensor("direct_head_logprobs", direct_lp, &used, max_bytes);
++    tensors["scan_total_logprobs"] = qualification_float_tensor("scan_total_logprobs", scan_total, &used, max_bytes);
++    tensors["direct_total_logprobs"] = qualification_float_tensor("direct_total_logprobs", direct_total, &used, max_bytes);
++    tensors["scan_ratio"] = qualification_float_tensor("scan_ratio", scan_ratio, &used, max_bytes);
++    tensors["direct_ratio"] = qualification_float_tensor("direct_ratio", direct_ratio, &used, max_bytes);
++    tensors["actions"] = qualification_precision_tensor("actions", pufferl.train_buf.mb_actions, &used, max_bytes);
++    tensors["action_mask"] = qualification_precision_tensor("action_mask", pufferl.train_buf.mb_action_mask, &used, max_bytes);
++    tensors["old_logprobs"] = qualification_precision_tensor("old_logprobs", pufferl.train_buf.mb_logprobs, &used, max_bytes);
++    tensors["initial_state"] = qualification_precision_tensor("initial_state", pufferl.train_buf.mb_state, &used, max_bytes);
++    tensors["terminals"] = qualification_precision_tensor("terminals", terminal_rows, &used, max_bytes);
++    tensors["selected_rows"] = qualification_int_tensor("selected_rows", pufferl.prio_bufs.idx, &used, max_bytes);
++    tensors["act_sizes"] = qualification_int_tensor("act_sizes", pufferl.act_sizes_puf, &used, max_bytes);
++    py::dict result;
++    result["contract"] = "min-gru-scan-vs-direct-fp32-v1";
++    result["batch_sequences"] = B;
++    result["horizon"] = T;
++    result["hidden_size"] = H;
++    result["num_layers"] = network->num_layers;
++    result["num_heads"] = heads;
++    result["logits_stride"] = logits_stride;
++    result["direct_chunk_sequences"] = chunk_cap;
+     result["used_bytes"] = used;
++    result["max_bytes"] = max_bytes;
+     result["tensors"] = tensors;
+     return result;
+ }
+@@ -1472,6 +1744,8 @@
+         &qualification_entropy_gradient_state,
+         py::arg("pufferl"),
+         py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
++    m.def("qualification_dual_forward", &qualification_dual_forward,
++        py::arg("pufferl"), py::arg("max_bytes") = 128ULL << 20);
+     m.def("qualification_graph_execution", &qualification_graph_execution,
+         py::arg("pufferl"));
+     m.def("train", &train);

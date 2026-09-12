@@ -1095,3 +1095,1820 @@ The rung is launched under an explicitly limited claim, because D277's asymmetri
 **D288 - CHAIN 22 LAUNCHED: THE RUSH FINE IS THE LAST NONZERO SHAPING TERM IN r0_poss_half THAT NO ARM HAS EVER VARIED (2026-08-28 07:24 PDT).** With the continuation question closed by D287 and the knob screen closed twice over (D274 arithmetic ceiling, D277 power revision), an inventory of `puffer/config/rewards/r0_poss_half.json` leaves exactly one nonzero coefficient the anneal never walked. Distance moved in D264/D265, the possession-vs-ball-gain decomposition in D266/D267/D269/D270, the five block-EV terms as a family in D278/D281, `reward_td` 0.4 and `reward_win` 0.6 are the objective and are not shaping - which leaves `reward_rush_cost` 0.015, a per-attempt fine on Rush that has been carried unexamined since the July manifests. It is the one term whose sign points against scoring: at this capability the policy already under-converts field position, and a standing fine on the cheapest way to close the last squares is a plausible brake on exactly the contact champion cells that have been flat for eight rungs. Chain 22 (`/home/rache/r0chain22.sh`, unit `r0chain22-1787926840`, `runs/ladder-d0-r0chain22-rushzero-20260828`, new arm **`r0_poss_half_rush_zero`** = `r0_poss_half` with `reward_rush_cost` 0.015 -> 0.0 and every other coefficient byte-identical) is warm-started from **the chain 9 frontier marker at SEED 42**, so its paired comparator is chain 14, the same-parent same-seed plain continuation whose exam is already on the board at 0.504 / 0.415, 0.444 / 0.410, 0.576 / 0.345 (D273/D274), with the chain 9 + chain 16 pooled frontier mean 0.537 / 0.416, 0.492 / 0.406, 0.571 / 0.350 as the absolute bar. Pre-registered power limits, unchanged from D278: champion cells judged from this one training seed at a 0.02 floor, conceded and net not scored from one run at all (D277's 0.05 conceded floor), and a seed-43 replicate from the chain 16 marker queued only if the champion read is positive. Three files changed to make the arm launchable and all are pushed: the manifest, the `run_reward_screen.sh` arm-to-manifest map, and its `LADDER_ARM` whitelist (the first launch attempt at 07:19 PDT failed closed on that whitelist before touching the GPU, which is the guard behaving correctly; the aborted run dir was removed and `tools/test_ladder_rung_profile.py` passes 23/23 with the new arm). Launch verified clean at 07:24 PDT: warm `1787584031608/0000002999975936.bin`, arm `r0_poss_half_rush_zero`, seed 42, scripted_bank_tag 4, scripted_bot_type 0, bot share 0.12, LR 2.8e-4, 3B cap, pid 1396090, trainer count 3, rig drift check OK. The structural decision from D275 is unchanged and still Alex's.
 
 **D289 - THE RUSH FINE IS EXONERATED: ZEROING `reward_rush_cost` IS FLAT ON BOTH CONTACT CELLS AND NEGATIVE ON OFFENSE, SO THE REWARD ANNEAL IS FINISHED WITH NOTHING PROMOTED AND CHAIN 9 STILL THE FRONTIER (2026-08-28 15:05 PDT).** Chain 22 (`runs/ladder-d0-r0chain22-rushzero-20260828`, unit `r0chain22-1787926840`, arm `r0_poss_half_rush_zero` = `r0_poss_half` with `reward_rush_cost` 0.015 -> 0.0 and every other coefficient byte-identical, warm = the chain 9 frontier marker, SEED 42, LR 2.8e-4, bot share 0.12, contact bot) finished its 3B at the exact 2,999,975,936-step cap at about 14:18 PDT with the unit going inactive on its own. Clean: final panel error_episodes 0, illegal_frac 0, pickup_attempts 5.051, pickup_success 2.841, possession_rate 0.373, tds 1.700 (t0 0.998 / t1 0.703), blocks_thrown 14.03, hist_score_bank_3 0.096, in-run eval tds 1.700 / perf 0.585, checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1787926845500/0000002999975936.bin`. The arm did what it claims: the emitted-ledger channel `reward_component_rush` reads exactly 0.0 on the final panel against a nonzero possession channel (-0.00476), so the term was live-zeroed and not merely absent from a config. The staged two-seed exam ran on the idle rig (unit `exam-c22-1787953688`, `EXAMS_DONE_C22_BOTH_SEEDS` at 14:56 PDT): seed 42 (`runs/exam-c22-s42`) contact AWAY 0.496 / 0.405, contact HOME 0.442 / 0.447, offense AWAY 0.560 / 0.358; seed 43 (`runs/exam-c22-s43`) 0.491 / 0.427, 0.474 / 0.434, 0.548 / 0.352; two-exam-seed mean **0.4935 / 0.416, 0.458 / 0.4405, 0.554 / 0.355**. D288 pre-registered chain 14 as the paired comparator - same parent, same training seed, same recipe, same 3B, the rush coefficient the only difference - and chain 14's own two exam draws are on the board at seed 42 0.511 / 0.424, 0.439 / 0.428, 0.579 / 0.320 and seed 43 0.496 / 0.406, 0.448 / 0.392, 0.572 / 0.369, mean 0.5035 / 0.415, 0.4435 / 0.410, 0.5755 / 0.3445. Champion deltas on the shared exam seeds are **-0.010, +0.0145 and -0.0215**: contact AWAY down inside the 0.02 floor (-0.015 and -0.005 per seed), contact HOME up inside it (+0.003 and +0.026), and offense AWAY down on both seeds (-0.019 and -0.024) for the only mean that clears the floor at all, and it clears it against the knob. D288's promotion condition was both contact cells up outside 0.02 with offense not down; not one clause of it is met, so **the seed-43 replicate is not spent and the knob is rejected.** Conceded moved +0.001, +0.0305 and +0.0105, all below D277's 0.05 floor and not scoreable from one training run in any case. Against the chain 9 + chain 16 pooled frontier mean (0.537 / 0.416, 0.492 / 0.406, 0.571 / 0.350) chain 22 is -0.0435, -0.034 and -0.017 champion, negative on all three cells like every other continuation since D273. **The hypothesis D288 stated - that a standing per-attempt fine on Rush is a brake on the flat contact champion cells - is refuted: removing it does not free scoring, it costs about 0.02 TD/game of offense while leaving both contact cells inside the reproducibility floor.** The practical consequence is that the reward-anneal program is now complete. Distance (D264/D265), the possession-vs-ball-gain decomposition (D266/D267/D269/D270), the block-EV family (D278/D281) and now the rush fine have each been varied one at a time from `r0_poss_half`, every one of them either null or negative, and the only nonzero coefficients left are `reward_td` 0.4 and `reward_win` 0.6, which are the objective and not shaping. **The inventory of un-annealed shaping terms is empty and no reward arm has ever beaten the plain lineage.** Combined with the two closed opponent-knob screens (bot share at the 0.124 arithmetic ceiling, D274; LR x2 rejected twice, D259/D271; offense bot in the bank seat rejected twice, D260/D272; entropy, D262) and the five plain continuations that all land flat (chains 14, 19, 20, 21 across two parents and four training seeds, D273/D284/D285/D287), the loop has exhausted every direction available to it below the structural decision D275 handed to Alex. Chain 22 is NOT promoted, chain 9 remains the frontier it has been since D266, and the rig is deliberately left idle rather than spending a sixth 12-hour replicate of a result five runs have already established.
+
+
+**D290 — MEASURED DECISION CLOCK: SCRIPTED FULL MATCHES REQUIRE LONG CREDIT ASSIGNMENT; FORCED CHOICES ARE A SMALL SHARE (2026-09-04).** On the September integration branch based on `141708f`, `tools/decision_clock_probe.c` ran 128 complete legal kickoff matches (32 fixed roster/dice seeds for each of contact/contact, contact/offense, offense/contact, offense/offense), with zero engine errors. The games consumed 166,560 decision ticks, a mean 1,301.25 per match; only 4.8229% of active-side decisions had a singleton legal set. Among 38 observed scoring held-ball spells, the median delay from the most recent uninterrupted team-held state acquisition to scoring was 146.5 decision ticks and 90 own non-singleton choices; mean delay 268.526, maximum 852. A carrierless intermediate window ends this particular diagnostic interval, so it is not a universal possession-ownership statistic. At the campaign gamma 0.995, discount across the median interval is 0.4798; direct GAE residual weight at lambda 0.85 is about 2.19e-11. The latter is not a hard planning horizon: value learning can propagate distant outcomes. These scripted trajectories measure the environment timescale, not chain 9 behavior or the causal benefit of changing lambda. They justify a controlled credit-assignment diagnostic after trainer qualification; they do not authorize a reward/default change. Manifest, compiler dependency closure, binary identity, per-game records, and result: `audit-artifacts/decision-clock-20260904/verified/`; manifest SHA `a25b2aace1669cc2e18873d239d2bd89cc1970eccf012eff2b791d0a5a3f11fb`, games SHA `132b8a1b92179a26391627a969f5685060e30d668353e0c9476c5cc5bdd01ef6`.
+
+
+**D291 — THE PORTED CPU TORCH ENTROPY OBJECTIVE HAS AN INDEPENDENT GRADIENT-UPDATE PROOF (2026-09-04).** The September isolated CPU fp32 module (`f82d1c4a89a3d45a2299cc533036573c6ad1e098aa61a7a52caaa39aad264efb`) and actual `torch_pufferl.PuffeRL.train` source (`4d889f9b33a06197fde172d805439c221d959f7a78f9b55aad34b85feae8cc5d`) were executed on a cloned scalar categorical-policy fixture, with deterministic controlled advantages and one SGD minibatch. Positive versus zero entropy coefficients at cosine update indices 0, 10 and 19 of 20 produced parameter-delta differences matching an independently calculated categorical entropy derivative times the learning rate and float32 coefficient. The maximum absolute error was 1.14e-8 against a 2e-7 tolerance; coefficients were approximately 0.200000003, 0.109999999 and 0.021108050. All three cells also consumed exactly one fresh tail, advanced one epoch and emitted finite losses. Canonical evidence is `audit-artifacts/entropy-cpu-new/EVIDENCE.json`, SHA-256 `d4da9e0b7b9d9b8dfc822e220bba5d52f122b7b0887278fd8889d4d3289481c9`; the verifier binds its own hash and the executed runtime. This establishes the CPU method's entropy contribution in this controlled fixture, not native CUDA parity, full F5 qualification, general trainability, or a production promotion. Native graph-gradient behavior remains a separate gate.
+
+
+**D292 — BOUNDED TACTICAL SEARCH IMPROVES THE SCRIPTED OFFENSE BASELINE AGAINST CONTACT ON A FIXED FRESH-SEED CONFIRMATION (2026-09-04).** Corrected-v2 search chooses only fresh team-turn activation roots, uses two independent counterfactual dice streams and a 64-decision horizon per candidate, scores only touchdown differential, and retains the offense script on exact ties. The corrected rollout dispatches by decision owner and records engine/RNG/no-legal failures on counterfactual paths. Its frozen final contact test used seeds 1001–1256 on both tested sides, 512 paired cases / 1,024 complete games. Baseline W/D/L was 54/393/65 and search 92/356/64; primary normalized match utility (W + 0.5D)/N rose from 0.4892578125 to 0.52734375, a paired +0.0380859375. The predeclared 100,000-replicate percentile bootstrap clustered both sides by seed, with a 95% interval [+0.0146484375,+0.0615234375]. Earlier exploratory cases were not pooled into this final primary analysis; no cases were added or stopped in response to the result. Real-trajectory and counterfactual error counters were all zero. Aggregate TD changed from 65–78 to 108–84. Search overrode 730 of 49,800 roots and averaged 11.491ms/root on the Mac CPU. This is a held-out-seed gain against one scripted opponent, not evidence against learned opponents, a neural-policy improvement, or championship readiness. Another opponent style is the next transfer check. Frozen source SHA `35c4cec6f0b80560df9da5c4173019255ed7f8e63d0d733bd1f75bc5f3f79abe`, binary SHA `4b16f50db9eba55f19fe2b04defee58ecf06f43664d2734333be7be4197bd896`; copied evidence in `audit-artifacts/tactical-search-v2-final-contact-20260904/`, JSONL SHA `1201d1804e5687461a8225a6dcbeb8f2f8ce8fd9e905c49e93826a0c412f2fa5`. No default or production policy was changed.
+
+
+**D293 — THE SAME BOUNDED SEARCH ALSO IMPROVES AGAINST THE OFFENSE SCRIPT WITHOUT RETUNING ITS INTERNAL OPPONENT MODEL (2026-09-04).** Following D292, the only source extension selected the actual played opponent via `--actual-opponent contact|offense`; internal counterfactual opponent actions still used contact, and samples, horizon, utility, tie handling, decision ownership and RNG derivation stayed fixed. The prospectively frozen offense transfer used seeds 2001–2064 on both sides: 128 paired cases / 256 complete games, zero real and counterfactual errors. Baseline W/D/L 18/92/18 became 24/89/15. Primary match utility rose from 0.50000000 to 0.53515625 (+0.03515625); the separately predeclared seed-cluster 100,000-replicate percentile bootstrap interval was [+0.00390625,+0.06640625]. TD totals changed from 20–20 to 27–19. Search overrode 182 of 12,843 roots, averaging 10.907ms/root. This is encouraging transfer across two deterministic scripted styles, with uncertainty reported per experiment; it is not evidence against learned opponents or a claim about the neural champion. Preserve the original accepted contact implementation separately. Transfer source SHA `d24ae47ef61f0e070f9096abea43b975f2a7df3f6a803745ef070420f788c5c8`; copied evidence `audit-artifacts/tactical-search-v2-offense-transfer-20260904/`, JSONL SHA `8305c6441fc1f112b3d258875f1e64e2482a2a75705638c351715400f7ee2789`.
+
+
+**D294 — CORRECTED SPARSE-RETURN CURRICULUM LEARNS THE FIXED EIGHT-DECISION DRILL, WITH LARGE SEED VARIANCE; THE EARLIER NULL IS REJECTED (2026-09-04).** Root code review found the standalone curriculum runner used a critic value instead of the reward when accumulating discounted returns, then read immediate reward instead of that return into PPO. The earlier zero-scoring curriculum artifact (`3ec1b2bd...`) is rejected as scientific evidence. A focused adversarial-critic oracle now requires a terminal-only three-step reward to produce [gamma²,gamma,1]. A fresh corrected run with the original three seeds, eight backward-prefix stages and 24×128 episodes per stage scored 3468,3225,90 of 4096 unassisted final evaluations, from zero initially in each seed. Each seed completed all 24,576 training episodes with zero truncation/invalid/nonfinite counts. The diagnostic controls whichever side currently owns the decision: after Home failure, the same policy controls Away. It is therefore a cooperative both-decision-sides, fixed-geometry capability test, not a native Puffer or fixed-opponent qualification. The corrected result shows acquisition with variable reliability and cannot support the earlier claim that correct curriculum PPO fails. Copied artifact `audit-artifacts/f5-september-full8-ppo-corrected-returns-20260904/result.json`, SHA `095616e2ed9e32d13c5f482a1c010ab863a7311b707fe2cce6b6f9f809f09a12`.
+
+**D295 — EIGHT LEGAL DEMONSTRATION PAIRS GIVE A REPRODUCIBLE FIXED-DRILL WARM START THAT PPO RETAINS AND STRENGTHENS (2026-09-04).** The separate BC-versus-scratch runner used correct discounted-return indices and was independently reviewed. For three identical-within-pair initial networks, the treatment received 256 supervised updates on the reviewed eight observation/action pairs, then both arms received the same 64×128 fully unassisted PPO episodes with the same optimizer configuration and sampling seeds. Final scratch scores were 0/4096 in every seed. BC alone scored 3691,3742,3754/4096; after PPO those became 4016,4023,4009/4096, with zero invalid/nonfinite counters. The preservation repeat reproduced every evaluation count and all 18 initial/post-BC/final semantic parameter digests exactly. All 18 saved checkpoints were reloaded into fresh policies, their file and parameter hashes checked, and their corresponding seeded evaluations reproduced. This establishes a reproducible local capability on one fixed cooperative both-decision-sides fixture. The BC arm receives extra supervised information and updates; this is not an equal-total-compute algorithm comparison, randomized-state generalization, neural-champion improvement, or production promotion. Canonical copied artifact `audit-artifacts/f5-september-bc-vs-scratch-ppo-preserved-20260904/result.json`, SHA `7420cf4ddc632f92fc28ccee8b6b161cebc6cb319ed6961d0f9b71c36c2724aa`, with 18 checkpoints, executed source snapshots, and captured compiled binding SHA `cb5a3026d00885268deb64311b7791777eb56809e77f316b3cd2f3dfcc95d23d`. The next capability experiment should add held-out geometry and a fixed opponent before treating the drill as solved.
+
+
+**D296 — THE REBUILT NATIVE CUDA ENTROPY OBJECTIVE MATCHES AN INDEPENDENT GRADIENT ORACLE AND CHANGES SAVED WEIGHTS IN BOTH EAGER AND GRAPH EXECUTION (2026-09-04).** The isolated fp32 module `af4ba8e3c9d179bea869f07e4fcd1a016f47159489e43655d8053854d8249b5e` includes read-only gradient and actual graph-execution accessors; its backend digest is `9e5a4ba6382327c10268bb5d0dbdee091e24464691618236f4deb0947be1ba18`. Eight process-isolated cells compared identical-start entropy-positive and exact-zero controls. LR=0 cells verified every float32 cosine coefficient over 20 updates and reconstructed the categorical entropy derivative from native logits and masks at updates0/10/19. Maximum oracle errors were 1.42e-9,2.17e-8,3.52e-9, identical in eager and captured-graph execution. Per-update counters proved the selected execution path. Separate positive-LR cells produced different final weights for entropy-positive versus zero (28,328 differing checkpoint bytes), with exact eager/graph checkpoint parity for each coefficient. All LR=0 weights remained unchanged. These are controlled native objective/gradient/update proofs, not full-match learning or the sealed F5 qualification. All24 raw worker/checkpoint artifacts were copied and independently hash-verified. Canonical copied result `audit-artifacts/rig-stage-3/native-entropy-v2/RESULT.json`, SHA `2d6dcec1cc45b2a33696f24c3cc35908a836ae0b2af6a6a6029f4ddc4197ae3d`. New-module recurrent qualification v3 also accepted (`a7b50d51a3c50358818b3dc24b25005488cea68ad1c9877adb7d976725b806ce`); eight-bank coverage and the disposable canary remain separate gates.
+
+
+**D297 — THE EIGHT-BANK THREE-LAYER RUNTIME FAILS THE UNCHANGED FP32 RATIO GATE; POSITION-DEPENDENT DRIFT REQUIRES ATTRIBUTION (2026-09-04).** The isolated module af4ba8e3 was tested at 2,048 agents, two buffers, eight real loaded policy banks, hidden size 512, three recurrent layers, horizon 64, minibatch 16,384 and zero learning rate. The budget-corrected v3 and failure-preserving v4 runs each completed 34 fresh rollout/train cycles and covered all 1,072 primary rows with byte-identical learner weights. V4 preserved 557,056 ratio elements; none was non-finite, but 3,975 (0.714%) exceeded the existing 2e-5 tolerance. The exception reports the first failing call's maximum (6.2466e-5); the maximum across all preserved calls is 9.1314e-5. These are different summaries, not evidence that the repeat became less deterministic; v3 did not retain arrays for direct comparison. Exploratory position analysis found maximum error 3.34e-6 at t=0, 1.81e-5 at t=7, 5.77e-5 at t=31 and 7.65e-5 at t=63. This is consistent with accumulation in the log-space scan versus direct stepwise recurrence, but does not establish attribution or justify relaxing the gate. A separate dual-forward diagnostic must compare identical stored inputs/actions/masks/weights and preserve raw evidence before judging either path. Known training/evaluation memory-regime differences remain the historical F9 limitation in docs/audit-2026-08-20.md, not a new discovery. The diagnostic v4 result is audit-artifacts/rig-stage-3/eight-bank-control-seed42-v4/EIGHT_BANK_RECURRENT.json (SHA 7d590b9a6280b5c9bcb3f0336c5c1516dab7c961a8731e044d4f621941a21407); raw NPZ SHA a0a393973fd0aa96155ddb34c1e706bf5a50462fa7abd20aa992f4704aaf6f80. Graph deltas were checked live but not serialized on failure; a subsequent runner revision retains them. No canary, composition training, or production promotion is authorized by this rejected evidence.
+
+
+**D298 — Same-input native dual-forward replay localizes the eight-bank ratio discrepancy to sequence recurrence (2026-09-04).** The D297 rejection is retained. On the selected B=256, T=64, H=512, three-layer cell with no internal terminal, read-only instrumentation held encoded inputs, initial states, masks, actions and weights fixed and compared the existing scan with repeated direct steps. Native ratio error decreased from 6.2465668e-5 to 8.5830688e-6; the independent float64 head calculation gave 6.2348402e-5 and 8.8215263e-6 respectively. Native-versus-float64 head log-probability discrepancy was at most 1.1084098e-6. All recorded weights remained 7cd77479541e5261e9425cebe327dbc99cefa8ba6d43c7bc26a76846395959ec. The accepted artifact is audit-artifacts/rig-stage-4/dual-forward-eight-bank-seed42-v3/RESULT.json/DUAL_FORWARD.json, SHA a8e2b107b2fcc732325d95a1bae91faf65f5ecb4ef0130bfa3accfa66f54c90a. Different GEMM batch shapes leave a small residual; this is evidence for replacing the numerical sequence calculation, not evidence that all train/eval memory semantics are correct. The known F9 boundary/reset mismatch stays separate. No tolerance or production runtime changed for this attribution.
+
+**D299 — Direct recurrent candidate passes native derivatives and the unchanged full eight-bank qualification on the RTX 2070 (2026-09-04).** The private fp32 candidate module 9fc1ffcb9f19a8a24fc946f45b52b4787e4d3250c59db51c160fe32c83d02d4c, backend 3d268bd171625d95596ccd1ba49f62bf51a72cba4ae136408f8d8138ce7083c4, uses patch 78fea312374334ecdc2ba5e5172e458cde1ae12b501377c678168daecf156298. Actual CUDA derivatives versus independent float64 autograd passed all T={1,2,7,64} × L={1,3} cases, max error 1.1824618273426069e-7 below 3e-5. Seed-42 eight-bank qualification against frozen control pool 892fe5da372179ab858918938836958f222af3065cabf2827ab89852d1028252 completed 34 real calls, covered every one of 1,072 learner rows and all 18 recurrent groups, executed captured graphs without eager fallback, retained unchanged weights 7cd77479..., and recorded all hard-integrity counters zero. Maximum ratio error 8.344650268554688e-6 passed the original 2e-5 limit. The separate generic qualifier passed construction, graph parity, terminal reset and ratio checks. Explicitly matched one-bank/one-layer LR=0 rollout-plus-train throughput was 141735.55 versus 136861.75 steps/s (+3.56%); this short matched measurement is not a confidence interval or eight-bank production throughput. Accepted artifacts under audit-artifacts/rig-stage-5: derivatives SHA 3348b636aa64dbbc5958721a4d88f8a103a0178deaa709f9abcfd69c5c3d8dcf, eight-bank SHA 45ec6d93dadaf736a6f98e8a5ea4d0053b0cac8479266bea5bbe321daeab9d16, generic SHA 6f1b99792f76cca5273568a0e9f3c28cc24713b997c357517d3eece23837f618. Root checked accepted result and derivative/eight-bank raw-artifact hashes. Failed staging/config-match attempts remain preserved. Integrate only the direct algorithm into the task source, keep optional dual/derivative fixtures outside the normal patch stack, and qualify the final combined module before training. BF16, changed recurrent boundary semantics, full-game learning and production promotion are not established.
+
+**D300 — A sole eligible interceptor must remain a defending-coach choice (2026-09-04).** Current BB2025 interception text allows the opposing coach to select an eligible player; a singleton legal candidate does not authorize automatic use. The engine previously rolled immediately for exactly one candidate. The source now opens the existing candidate/0xFE-decline window for every positive candidate count, without consuming the interception die before selection. HOME-throw/AWAY-attempt and AWAY-throw/HOME-decline regressions verify ownership, legal alternatives, settled possession and turnover behavior; nested interception catch-reroll and three historical skill fixtures now explicitly select. Patch e01bbaeef00ad3072ec159959a5539c039c237153396305074c7ea6f88cf6df5 is integrated. Root normal and ASan/UBSan suites each pass 476 engine + 64 reward + 5 contact + 22 state-bank + 26 observation cases and the writer, with no golden regeneration. Logs are preserved under audit-artifacts/model-facing-audit-20260904/rules/. This changes engine behavior and invalidates assuming old-source experiments are exact current-source bridge evidence; no old checkpoint or production process was modified.
+
+**D301 — Local viewer independent marginal selection can create unreachable action tuples; exact joint source repair passes its focused regressions (2026-09-04).** The viewer selected each of the three heads independently, unlike the audited native PPO joint-support path. The two-action witness {(1,4,10),(2,5,11)} makes the old greedy path choose illegal (1,5,10). stream_backend/game.py now requires packed joint metadata, uses the canonical conditional sampler for stochastic inference, and conditions each greedy head on previous selected heads; it verifies final tuple membership and fails closed when metadata is unavailable. Four CPU regressions pass, including 256 stochastic samples entirely inside the witness support. These tests execute the new helper and canonical patched joint helpers with a Torch categorical primitive; they are source-level evidence, not a completed actual Match runtime validation. An isolated CPU runtime smoke remains required. Production viewer and BBTV are untouched. This finding must not be attributed to native training, whose action path differs.
+
+
+**D302 — Actual isolated viewer Match path passes six natural full matches after exact-joint and batch-construction repairs (2026-09-04).** This closes the runtime limitation in D301 for the tested obs-v6 CPU stack. Actual Match construction exposed stale minibatch/replay defaults after setting horizon=1 and total_agents=2; the viewer now explicitly sets minibatch_size=2 and replay_ratio=1.0, and a fifth regression passes the constructed arguments through actual Puffer validation without creating a trainer. Corrected smoke v2 used native module f82d1c4a89a3d45a2299cc533036573c6ad1e098aa61a7a52caaa39aad264efb, viewer source 6efe349ceeffac2f81f304e42f754f6237fc2e3429d0b39422a4b23a2d2e901c and converted chain-9 checkpoint f62657558bfdef9c0abdb7800d5cbcb1e898f3ee8e5302fb3d5079db87a8dccb. Greedy seed 20260904 completed games at 516/558/560 decisions; stochastic seed 20260905 at 419/472/512. All six were kickoff starts (demo_reset_pct=0), below the 4096 cap, with error_episodes=0, hence natural MATCH_OVER terminals. All 6074 postselection packed-support checks passed; 3037 native steps had no exceptions. Both modes reported all 11 required named illegal/error/demo-fallback/clip/nonfinite counters exactly zero via native vec.log(). Fixed rosters 0/1 and unchanged seeds make this a functional acceptance repeat, not independent strength evidence. Accepted local result audit-artifacts/viewer-runtime-smoke-v2-20260904/run/RESULT.json SHA 2f70c255e3ad16a7098fec0d46f1476fd617a9b24e8c9f23280fc96dbb90fcb5; manifest fcd0d17570b4415ec7f74cc8b916086c9d804f192b611ce0bf7f262ec594f4a0. Root verified the result hash and per-mode completion/integrity records. Smoke v1 had filtered the wrong telemetry nesting and remains a narrower below-cap-terminal artifact; it is not silently upgraded. This proof does not cover the still-changing obs-v7/rule-wrapper stack. No production viewer or service was modified.
+
+
+**D303 — Generated skill availability exceeds implemented match mechanics; mask round trips cannot establish BB2025 conformance (2026-09-04).** A source/rule audit beyond the existing decision windows confirms missing Chomp and Throw Bomb declarations despite generated Monstrous Mouth and Bombardier inputs. The private availability witness (source SHA 451cbe3367662b51f66f9d70bb792570ced6acc823df8a575138b742215eee41, binary c0982fbbd20ba78c40e4c7c9b695da9b5e209bdd5cd65b996456316f75c7b08e) constructs an activation with a marked opponent; adding either skill leaves its five declaration alternatives byte-identical. Root independently reran it and obtained the intentional gap exit. Monstrous Mouth's Strip Ball immunity does exist; the absent part is the separate Chomp action/condition. Bloodlust has a distinct source-confirmed partial path: failed activation automatically becomes Move while biting and its consequences remain TODO. A generated skill token or a hook-reference comment is not implementation coverage. The broader 109-skill inventory is still being reviewed; an earlier sub-audit's no-additional-gap claim is withdrawn, including its incorrect assertion that On the Ball was inline-integrated. Retain source/runtime hashes and explicit supported-mechanic coverage for learning claims. Completing known decision-interface fixes does not authorize calling full generated-roster play BB2025-conformant, and future paid training requires a declared, audited rule scope. No default or production process is changed by this finding.
+
+
+**D304 — Combined targeted-action and obs-v7 source repairs pass local integration, with explicit runtime and rule limits (2026-09-04).** Dump-off and Trickster now share an appended targeted-action wrapper for Blocks and the currently implemented directly targeted Special Actions. Defending-coach use/decline, Quick Pass targets, attacker-adjacent relocation, optional normal pickup, inactive skill-reroll ownership, durable Dump-off no-turnover scope and distinct immediate-Dump/delayed-Trickster touchdown behavior are explicit. Stable CHOOSE_OPTION arguments avoid collapsing two high skill IDs into the same exact-joint tuple. A subsequent rule audit adds My Ball exclusion. Obs-v7 is frozen at 2,851 bytes, including effective Loner/Bloodlust, drive bonus rerolls and five targeted-parent context bytes; a child TEST retains its original context slots. Historical checkpoints and BBP-v4 pairs are not relabeled. Root combined make test and make asan pass 615 cases plus writer; standalone random-policy selftest passes 100 episodes. Root additionally reproduced an ASan global-buffer-overflow in verbose replay stack printing after the new procedure ID and fixed it with a full name table, compile-time size assertion and regression. Final evidence is audit-artifacts/model-facing-audit-20260904/integration-v7/ with hashed logs and input patches. A v7 compiled GPU/runtime qualification remains required. Ball & Chain exclusion is only a synthetic predicate test because the action is unimplemented; clearing Chomped similarly awaits that missing state. No rule completeness, strength, reward promotion or production deployment is implied.
+
+**D305 — Complete registry review inventory is 108 IDs, with substantial shared decision and rule debt (2026-09-04).** Amend D303's preliminary count: the generated registry contains 108 skill/trait IDs, not 109; the earlier count included a table header. The original inventory plus three mechanically partitioned deeper reports now inspect every previously unreviewed row (75, split into disjoint groups of 25). Reports and source hashes are preserved under audit-artifacts/model-facing-audit-20260904/integration-v7/. They identify missing complete actions and, separately, omitted reroll/optional-choice paths, incorrect eligibility/resource lifetimes and partial mechanics. High-leverage common defects include missing reroll windows for TTM/KTM/direct specials, restricted Pro, Catch/Sure Hands usage caps, Leader lifetime, Secret Weapon off-pitch send-offs, Animosity timing and Grab geometry. Most deeper findings are rule/source inspections rather than executed witnesses; implemented clauses are bounded, not a full conformance certificate. Common roster membership cannot define an approved scope by itself because procgen can add learned skills. Paid broad training remains premature without explicit audited mechanic coverage and held-out full-match acceptance. No defaults changed.
+
+
+**D306 — V7 compatibility validation is explicit end to end; missed test discovery and stale defaults corrected (2026-09-04).** Root integration found and corrected a superseded checkpoint-size constant (16,203,776 versus final16,207,872) and a qualifier that labeled obs-v7 but accepted numeric observation version6. The current qualifier requires7. Eight-bank inputs now carry individually hashed lineage sidecars bound to source/module/patch identity; default eligibility remains mandatory, and migrated ineligible checkpoints require explicit qualification mode. Root replicated112 tests with12 historical skips. The converter rejects a same-sized reordering of action heads; a failing regression was observed before correction. Its previous plain-function test module was merely imported by unittest, so earlier aggregate counts did not exercise conversion. A load_tests adapter now executes all7 converter functions; final Torch aggregate runs31 tests with2 environment skips, distinct from the source aggregate210 with15 skips. A broader root scan then found four ancillary old-size defaults in learned transfer, milestone eval and pool/freezer tools. They now derive current constants and pass23 focused tests. This later runner-only patch is separate from immutable GPU source snapshot2e08979afb549307834f25260560d511d87bd7ced42a14308d2c1b69a0e8caac and must not be silently attributed to it. A current-source standalone100-episode action-stat repeat observed84,407 windows,548 identical raw Jump duplicates and zero distinct-action projection collisions; duplicates are not claimed absent. No production viewer, historical sidecar or training eligibility was changed.
+
+
+**D307 — Integrated obs-v7 runtime passes scoped native and viewer qualification (2026-09-04).** Immutable source snapshot2e08979a… builds fp32 GPU module3e675d70120c534da4c521375a25bdef19134b2b6c012045d0272018f988e626 with environment9581e3c5…, canonical backend2d764151… and ordered18-patch bundle425c5d5b…. Post-build installed-source check passes. New eight-bankv2 covers all1,072 learner rows and557,056 saved ratios, with maximum residual9.5367431640625e-6 below the unchanged2e-5; initial/final and every per-call weight hash agree; all16 hard-integrity fields are zero. Root independently recomputed raw-array coverage/residuals. Genericv2 graph, terminal, ratio and throughput gates pass; exact old workload135,927 versus141,736 steps/s is a descriptive4.10% slowdown across changed observation/rule semantics, not a causal algorithm regression claim. Separate H512/L3 LR0 measurement gives102,579 steps/s and6.212GiB reported VRAM. CPU module000cd93d… completes six natural Match games with6,550 exact-support checks and all11 named viewer integrity fields zero; the previously skipped real tiny-batch test executes and all7 viewer tests pass. Root validates result71ae4535… and copied evidence under rig-stage-5/integrated-obs7 plus viewer-runtime-smoke-obs7-20260904. The migration forward diagnostic uses Torch on CPU/CUDA with synthetic inputs, not native _C or real-game parity; its sample deltas do not grant training eligibility. Migrated banks remain ineligible qualification/evaluation artifacts. The copied checksum list has a stale self-entry for its initially empty file; all64 payload hashes match and root preserves that distinction. No production or paid compute changes.
+
+**D308 — New targeted-action engine breaks the old tactical-search functional bridge; reconfirm on unused seeds (2026-09-04).** The unchanged search source d24ae47e… compiled against the integrated engine does not reproduce the old contact/offense matrices. All1,280 repeated games complete with zero played/counterfactual errors, but contact has340/512 semantic mismatches (157 outcome mismatches), and offense71/128 (26 outcome mismatches). Current reused-seed score deltas are+2.6367pp contact and+2.34375pp offense; they are not fresh confirmation and are not pooled with historical primary results. BRIDGE_ANALYSIS.json SHA8bae6c12a93f6506068611614d1e2b9c974e6b1815712440b7e70583f4f934b9 preserves every mismatch under tactical-search-obs7-engine-bridge-20260904. Root therefore freezes a new unchanged-planner confirmation on archive-disjoint seeds: contact4001–4256 both sides, offense5001–5064 both sides. Prelaunch plan4fe1b8e9… is recorded before execution. Full-game divergence cannot by itself attribute the first cause to a particular repair. Historical3.81pp/3.52pp gains retain their original source scope and are not current-engine proof.
+
+**D309 — BBP-v5 format support does not imply restored-choice replay extraction (2026-09-04).** Source audit shows the generic C action executor and writer can represent new targeted choices, but lockstep_map lacks their state/handlers and the normalizer drops required dialog/mode context. A bounded local scan of400 cached replays (66MB) verifies embeddedBB2025 edition in each and identifies actual Dump-off-decline-before-Block/Stab and Trickster-use/decline/relocation/pickup-failure branches. Across73 Trickster dialogs there are70 relocations and3 observed declines, but no Trickster skillUse reports; a skillUse-only mapper cannot recover the choice. Exact replay IDs, raw indices and excerpts are preserved in integration-v7/bb-targeted-replay-fixture-discovery-20260904.md (SHA84a502d8…). Dump-off-use and pickup-decline fixtures remain unlocated in this bounded cache. Re-extraction requires typed raw normalization and mapper→engine→writer branch tests with zero skips/dice drift; do not infer fabricated policy labels or silently decline. No shards, splits or corpus were rewritten.
+
+
+**D310 — Fresh current-engine tactical search improves the contact-bot result; offense transfer remains inconclusive (2026-09-04).** Under the prospectively frozen D308 plan (SHA 4fe1b8e9…), unchanged search on archive-disjoint seeds 4001–4256 and both sides completes 512 pairs with zero played/counterfactual errors. Baseline W/D/L is 53/403/56 and search 95/361/56; W+0.5D score rises from 0.4970703125 to 0.5380859375, a paired +4.1015625 percentage points. The declared 100,000 seed-cluster bootstrap gives 95% [+1.953125,+6.25]pp. Fresh offense transfer, seeds 5001–5064 and both sides, completes 128 pairs with all errors zero: 15/98/15 versus 17/98/13, +1.5625pp with interval [−1.953125,+5.078125]pp. Its sign is inconclusive. Root independently recomputed exact coverage, W/D/L, TD totals, paired means, bootstrap intervals and positive fractions from raw JSONL. Contact search averages 11.92ms per root. ANALYSIS.json SHA 8d62e020b75fc0236653aa70e8fa6c2a803cf1d7e9544bec509e040d2613b590 and ROOT_VERIFIED.json are preserved under tactical-search-obs7-fresh-confirmation-20260904. This is script-plus-search evidence against two scripted contexts, not neural-policy improvement, learned-opponent strength, full rules conformance or promotion. Historical source results and the failed bridge remain separate.
+
+
+**D311 — Frozen neural evaluation rejects canonical source links before playing; provenance repair must bind the actual runtime closure (2026-09-04).** Approved baseline plan v2 b92595a8… launches under durable unit bb-obs7-chain9-baseline-v2 but fails before output creation, games or optimizer calls because generic tree_sha256 rejects canonical puffer/bloodbowl/bb and engine symlinks. Checkpoint, module and executable preflight identities match. Attempt report SHA 774ac2657c7bce2d5a162e29d4b89675c99d915403a465ff1c226f52793d2900 is preserved in obs7-chain9-frozen-scripted-baseline-plan-20260904. Root subsequently rejects the private v3 repair: it hashes files under the separate snapshot root, trusts the declared tree digest and does not prove the executing runtime closure matches. A replacement must validate canonical links, closed regular source roots, recomputed identities and runtime contents, including drift and injected-file rejection. Do not use runtime-bridge bypass, relabel migrated lineage or change the 256-game matrix to evade this failure. No baseline result exists yet.
+
+
+**D312 — Declared canary safeguards need executable acceptance gates (2026-09-04).** Independent review rejects private plan v2 1cbbe602… before launch. The proposed wrapper checks only rewritten default.ini identity; other pinned identities are recorded but not compared before execution. Runtime thermal/disk supervision and durable systemd containment are absent from that wrapper. The frozen screen aggregator excludes final reprints without positively requiring the declared final cumulative evaluation record. The replacement wrapper must enforce prospective identity closure, runtime guards, process containment and final telemetry acceptance with negative fixtures. Native training panels are windowed, while native evaluation is cumulative; require the actual emitter contract rather than inventing a cumulative-training flag. Complete-log training integrity still requires all 16 hard fields zero, and evaluation must complete at least 10,000 games. No 50M canary has run and no checkpoint is accepted from these plans.
+
+
+**D313 — Frozen evaluator source identity validates the executing closed source set (2026-09-04).** The accepted v4 repair replaces the rejected generic symlink traversal with explicit regular-file closures over puffer/bloodbowl, engine/include/bb and engine/src, while requiring the exact three canonical repository links and real parent directories. Runtime and independent snapshot file lists/content hashes must match each other and the prospective digest. Root source closure is 50 files, 1,028,496 bytes, SHA 7c8035bc3bd7978ecdb3b739624d0bd82c41faaa612d4384096a98a3bc1f812a, matching the remote accepted runtime. Changed runtime C content, injected source, wrong digest, redirected links and symlinked closure parents have rejection tests. Root evaluator-plus-comparison suite passes 27 tests. Runner SHA 8f5ab727818f885f73521d454a22bc6caa15b8f0f3e5f196f550a8560e5bd7d0 and tests SHA 9edf51d4ffd9ecbd37418460385632cb265309523099d00c3745d61c654ed950 are archived under model-facing-audit-20260904/evaluator-provenance-v4. This is a runner-only source change; it does not alter the qualified native module or authorize a baseline result before the new immutable bundle runs. V2 failure and rejected v3 remain preserved.
+
+
+**D314 — Natural Blitz–Stab loses its parent context without a Rush; corrected source passes the full suite (2026-09-04).** A legal TEAM_TURN → ACTIVATE → DECLARE Blitz → Stab probe reaches the targeted wrapper with no BB_TA_FROM_BLITZ on both orientations, while the Rush branch already supplies it. Root independently reproduces both failures. The ordinary Stab dispatch now derives that flag from the declared action. A durable observation test covers ordinary Stab (flag absent), Blitz with movement (present) and Blitz after a legal MA1 STEP that requires a Rush (present), both sides and both egocentric observations, with exact pre-choice RNG consumption. Root make test and make asan pass 616 cases plus writer; a separate corrected 15-test trajectory matrix passes normally and under ASan/UBSan. Earlier private inaccurate-flight coverage is withdrawn because die2 plus a tackle-zone penalty fumbled; the corrected die3 path consumes six dice and settles a loose ball. Post-entry skill additions were also replaced with pre-activation setup. Evidence is under natural-targeted-trajectories/corrected-v3, with failures and narrower earlier artifacts preserved. New closed source SHA 1bde5e3b8345d784fb0afe70223e4ae922a02c3896ed217466fc0c130fd5b0ec requires new runtime qualification and new migrated sidecar identities before baseline or canary. Observation version and width remain 7/2851. No production or reward default changed.
+
+
+**D315 — Inactive procedure storage affects tactical counterfactual RNG; context-only engine repair cannot inherit the old search result (2026-09-04).** Four natural both-skill Blitz–Stab continuations differ only by the corrected parent-context bit. After settlement, status, live stack depth, RNG, next legal actions and visible outcomes agree, but full bb_match bytes and tactical state_key differ in all four. The first differing byte is 2001, stack[4].y, above settled stack_top=2. bb_pop retains inactive frame storage and the planner hashes all 2,240 struct bytes. No masking was used for the failed bridge. Thus D310 remains valid for its recorded pre-D314 source, but is not exact evidence for the repaired planner runtime. RESULT.md SHA 7b222a76fa9634b607750f1c7dc3d99260626a7ea00c607c12b87dd7720a514d is preserved under tactical-search-obs7-blitz-stab-compat-20260904. The next tool-only repair will explicitly exclude inactive stack storage from seed hashing, with regression and a new prospectively frozen matrix; it cannot retroactively validate old outcomes. No default is promoted.
+
+
+**D316 — Corrected obs7 native runtime passes unchanged recurrent numerical gates (2026-09-04).** Module c0a5bd762e9578c7a26ef9d405f3db4739c755bb33305d830357afc2a50d923e compiles environment6fbd67f7 and backend2d764151 from immutable snapshot21e29cae, including D314. Root independently checks the retained NPZ:557,056 ratio values, all1,072 primary rows covered, maximum absolute deviation9.5367431640625e-6, zero nonfinite or deviations above unchanged2e-5. All34 zero-learning-rate calls preserve weights and recorded graph counters match. Generic construction, graph parity, terminal reset, ratio and throughput gates pass; H512L1 throughput132,034.95steps/s versus135,927.34reference is a2.86% decrease within the10% gate. H512L3 eight-bank coverage is a distinct numerical configuration, not that throughput measurement. Immutable source fixture installer test is repeated from an identical writable scratch source because it intentionally installs into a temporary mutable fixture; original114-test run with one permission-context failure and12skips is preserved. Canonical runtime installer check passes. Evidence: audit-artifacts/root-runtime-v2-qualification-20260904/root-runtime-v2-qualification/ROOT_VERIFIED.json. This qualifies numerical behavior, not match strength, complete rules or promotion.
+
+**D317 — Frozen evaluation must override fractional training replay during native construction (2026-09-04).** On qualified runtimec0a5bd76, baseline plan2fa53214 fails before its first game because the two-agent,H1,minibatch2 evaluation inherits replay_ratio0.25, and native construction truncates its minibatch count to zero. The evaluator now explicitly sets replay_ratio1.0 for unused constructor allocations. Its loop still calls rollout/eval_log only, never train. A regression fails before the repair;28 evaluator/comparison tests pass afterward. The isolated evaluator overlay preserves the qualified module and native source. A first overlay launch rejects two loaded CUDA-runtime paths because the preload still named the original venv; the replacement prospective wrapper binds the overlay venv preload and actual module. Plan990a3b3e starts the unchanged256-game kickoff matrix, both styles/sides, seeds6001/6002,32games/cell. Failed launches and zero-game artifacts remain separate; no result is accepted until all games and post-run identities pass.
+
+
+**D318 — Recover episode lengths from the exact native float32 mean contract (2026-09-04).** Baseline plan990a3b3e plays four valid games, then rejects a non-integer reconstructed length. The source accumulates integer decision counts in a float32 log and emits a float32 mean; subtracting two mean×count products amplifies division rounding beyond the old1e-4 tolerance. A32-game float32 fixture reproduces that failure. The repaired decoder recovers each cumulative integer sum only below2^24, requires its native float32 division to reproduce the observed mean exactly, rejects ambiguous adjacent sums and unsupported magnitudes, then differences the exact sums. It records both original means/counts with each game. No integrity tolerance is relaxed. Thirty evaluator/comparison tests pass, including fractional and ambiguous rejection. The native module is unchanged; a small immutable source overlay explicitly shares its qualified read-only vendor dependency. Plan49ff71ef reruns the whole unchanged256-game matrix and does not splice the failed run's four games.
+
+**D319 — Corrected CPU viewer runtime reproduces the complete functional smoke (2026-09-04).** CPU modulee53678244f186db76328b20b620765bb853f4b54aa80dd66822367284411541b compiles the D314 environment with the same backend contract. The existing fixed-seed greedy/stochastic smoke completes six natural games,3275 decisions and6550 exact-joint membership checks, with no exceptions and all11 named integrity values zero. Root independently checks the copied result. Seven viewer tests pass against this actual CPU module from the canonical repository layout. An earlier relocated-test invocation ran zero tests because its relative repository lookup was invalid; that failed log remains preserved separately. Evidence: audit-artifacts/root-viewer-runtime-v2-20260904/. This proves functional local viewing, not human control, model strength, whole-rule conformance or production deployment.
+
+
+**D320 — Overlapping patch verification copies immutable files once (2026-09-04).** The installer shadow checker names a file once per overlapping patch, so the second copy tries to overwrite its first read-only copy and emits a permission error. The first copy is identical and later reverse checks still validate the content; this was not a demonstrated acceptance bypass. A focused actual-function fixture reproduces the misleading stderr. The repair deduplicates those copies and explicitly rejects temporary-directory/copy failures. Six patch-shadow/guard tests pass, including tamper rejection; the exact overlap sequence against the qualified read-only runtime exits successfully with empty output. The installed runtime and frozen experiments retain their old installer hashes; this tool-only repair is recorded for subsequent installations. Evidence: audit-artifacts/readonly-patch-shadow-20260904/.
+
+
+**D321 — Inactive-stack-stable search improves contact match utility on the complete frozen rig matrix (2026-09-04).** The tool-only seed-key repair hashes inactive procedure storage as zero and preserves live frames/all other bytes. Actual state_key regressions pass normally and under ASan/UBSan. Two Mac contact attempts fail integrity during recorded clamshell sleep and remain rejected. Both full matrices then run on the local rig under prospective manifestca39d785, unchanged source da3d855a and dependency hashes. Contact seeds7001–7256,both sides:512 pairs; baselineW43/D412/L57,TD50–66 becomes searchW85/D364/L63,TD95–74. Primary W+.5D improves48.6328%→52.1484%,+3.515625pp;100000 paired-seed bootstrap draws give95% interval[+1.26953125,+5.6640625]pp. Losses increase by6, so this is not dominance on every outcome. Offense seeds8001–8064,both sides:128pairs; W12/D104/L12 becomes W16/D103/L9,+2.734375pp with interval[0,+5.46875]pp, leaving broader transfer uncertain. All1280 games complete, all real/counterfactual error counters zero. Mean search root time29.89ms contact and23.42ms offense on this rig; timings include concurrent diagnostic load. Root independently recomputes raw results/bootstrap and verifies copied binary and55dependencies unchanged. ROOT_ANALYSIS SHA340ded6f5b2df524025643181e864f1105db237536aeaad8dc1f8330a30663db under audit-artifacts/tactical-search-final-rig-20260904/. This is script-plus-search evidence, not a neural-policy or learned-opponent improvement; no historical pooling or promotion.
+
+**D322 — Corrected-runtime frozen Chain9 baseline completes its entire256-game matrix (2026-09-04).** Plan49ff71ef and evaluator-v7 finish both scripts, both learner sides, seeds6001/6002 and32games per cell. Root verifies exact game identities, per-game W/D/L, native float32 length reconstruction and unchanged post-run pins. AggregateW63/D142/L51,TD102–91 gives52.34375% match utility. By style/side over64games each:contact/homeW18/D26/L20,48.4375%;contact/awayW12/D41/L11,50.78125%;cage/homeW27/D29/L8,64.84375%;cage/awayW6/D46/L12,45.3125%. The large cage side gap is a diagnostic requiring attribution, not proof of a new encoding defect or confidence about tournament strength. COMPLETE SHA d0c554c513b198edd6c2d3edbcf8cb27d5a4a8a334d8535d92b93192804af9d6; root verification25aee823295f66ceb1e4a282259d20661c9ef24a9ea2e2fd5e44aa45189e8f81. Evidence: audit-artifacts/frozen-chain9-baseline-obs7-final-20260904/. The migrated checkpoint remains ineligible/qualification-only. No training or optimizer calls occur and no old-ABI curve comparison or promotion follows.
+
+
+**D323 — Canary preparation exposes an omitted Windows backing-volume guard (2026-09-04).** After accepted baseline/search evidence is copied locally, numerical canary plan22a90785 launches under bounded systemd unit at20:17:38PDT. Last observed state is execution-runtime copy preparation. Ubuntu Tailscale disappears near20:20; Windows remains reachable. A console diagnostic reports getpwnam/getpwuid errors5 and filesystem I/O failure. Windows C: has7,467,008bytes free while the Ubuntu VHD is271,207,890,944bytes; its last write is20:19:34. Earlier Linux df reported ample virtual free space, which did not protect the backing drive. The runtime copies grew the VHD and the last copy appears to have exhausted physical C:. Root missed the host-level preflight. GPU is idle at0%,69MiB; no canary completion or checkpoint is accepted. D: has1.61TB free and the installed WSL supports managed distribution relocation. Recovery approval is required because stopping Ubuntu can interrupt explicitly out-of-scope production processes; no stop/move has been performed. A new read-only backing-volume checker has3 passing tests, rejects actual C: and accepts D: for a full VHD copy plus100GiB reserve. Future plans must check the real backing volume before and during execution and avoid redundant full-venv copies. Evidence and exact proposed recovery: audit-artifacts/wsl-backing-storage-incident-20260904/.
+
+### D324 — Approved WSL relocation recovered the rig and preserved frozen evidence (2026-09-05)
+
+Amends D323 operational status. After explicit user approval, stopped Ubuntu
+and used the installed supported `wsl --manage Ubuntu --move` operation to
+`D:\WSL\Ubuntu-BloodBowl-20260904`. Ubuntu was the only registered distro;
+its VHD remained held after terminate, so the WSL-requested VM shutdown was
+needed. SSH lost the final move response; independent registry, physical
+volume and Linux checks establish completion. C: now has about277GB free;
+D:1.34TB. No manual registry mutation or filesystem repair. Existing bbstream
+restarted under its original configuration.
+
+All28,567 canonical runtime entries retain closure8a72fb52f72c8d4be70d8f2a639894c299c5eb9dfd3850dd3945c49922e114e1;
+all4,228 source snapshot entries, pinned tools, CPU module, migrated Chain9
+weights, and baseline COMPLETE/GAMES/MANIFEST match their prior hashes. A
+flushed write/read probe passes; root ext4 is mounted read/write without
+reported ext4 I/O errors. Two systemd journal files were automatically renamed
+as corrupt or unclean; full kernel diagnostics are retained. The old canary
+has only its partial execution copy, no checkpoint and no active transient
+unit. It remains rejected and must not be resumed under the old guard.
+
+Evidence: `audit-artifacts/wsl-backing-storage-incident-20260904/RECOVERY_VERIFIED.json`,
+`PHYSICAL_POSTMOVE_WINDOWS.json`, `PHYSICAL_POSTMOVE_DRVFS.json`, and recovery
+command logs. This is infrastructure recovery, not new training evidence or
+production promotion. A new canary requires physical backing-volume checks
+throughout execution and verified checkpoint output routing without copying
+the full environment.
+
+### D325 — Complete native startup exposed output and metric-finalization defects (2026-09-05)
+
+The recovered rig's immutable runtime and actual parser gates passed. A tiny
+74.5MB source overlay shared the frozen vendor environment, with explicit
+CHECKPOINT_DIR throughout CLI, discovery, manifests and validation. Independent
+review rejected an unlaunched supervisor whose synthetic fixture masked the
+real contract.settings nesting. Corrected v8 passed14 supervisor tests locally
+and on the rig, but stopped before native construction: Puffer also creates
+args.log_dir, which still defaulted to relative logs inside the readonly vendor.
+The arm launcher now derives Puffer's own log path from its absolute owned log
+path, passes --log-dir explicitly, records it, and rejects symlink/file
+collisions. The failed v8 run is retained, with no model update or checkpoint.
+
+A subsequent one-update full-shape LR0 diagnostic with explicit checkpoint and
+log paths reached the final cumulative evaluation panel:565 completed games,
+all16 hard integrity counters exactly zero. It then crashed in Puffer's final
+downsampling reducer when np.mean received text-valued entropy diagnostics.
+The entropy schedule patch exports a textual contract and interval role among
+numeric fields. Thus a final dashboard line is still not successful process
+completion or accepted evidence. This entire startup diagnostic remains
+rejected despite its completed games and saved disposable weights.
+
+Evidence: audit-artifacts/puffer-metric-reducer-20260905/pufferl-failing.py and
+rejected-native-startup/; audit-artifacts/canary-recovery-plan-v8-20260905/rejected-run/.
+Repair the numeric reducer with executable tests against this exact installed
+source, preserve text diagnostics explicitly, then rebuild and repeat full
+startup before a replacement50M numerical canary. No reward, optimizer or
+lineage eligibility default changed.
+
+### D326 — Rebuilt trainer completes native finalization with explicit text metadata (2026-09-05)
+
+The D325 reducer repair preserves numeric downsampling and dynamic-key behavior,
+separates the latest text diagnostics into a metadata object, and rejects a key
+that changes between numeric and text. Six focused tests reproduce the original
+NumPy U46 failure, verify the amended patch in actual fresh-install order, and
+exercise numeric/text/dynamic-key behavior. The combined output-routing,
+reducer, and physical-storage suite passes 23 tests.
+
+An isolated materialized vendor tree shares only the canonical frozen venv.
+Install, float rebuild, and installed-source check pass. Module553c70a9bc3ad33da20c34a52bbc7c2dd58c1f286f4e3dcff51c375ca8ba690b
+binds backendf7eb385091f48231192c1e5483dc46433050f10dfdceb45827e6f0e4c0f2c54e;
+environment6fbd67f7 is unchanged. Runtime closurea5df1dd06820fc7440dab68cf6c043be0f82dbc69599fc4c213586b725cb8866
+has5014 entries and725139070 regular bytes. Explicit PYTHONPATH selects this
+vendor despite shared editable-install metadata.
+
+The first repaired native process exited zero, but root's postvalidator wrongly
+expected interval_role=empty. Independent producer review establishes training
+is correct: the training update emits entropy diagnostics, evaluation emits no
+replacement entropy record, and the initial empty dashboard is never stored in
+all_logs. That validator failure remains preserved. A clean corrected rerun
+then exits zero, saves its disposable131072-step LR0 checkpoint and complete
+native JSON, and finishes765 evaluation games with all16 hard counters zero.
+Actual imported module identity and unchanged runtime/canonical closures pass.
+STARTUP_ACCEPTED SHA23028e1bef0babf9bd65444acdce5de84bd69a32cb8194c5c7ccaa33adee5696;
+native JSON SHA47f11928b069f8b0281e87930ae153edf1c33bde0d6fa0ebf60be4ce4b841b9e.
+Evidence: audit-artifacts/puffer-metric-reducer-20260905/.
+
+This proves startup, output routing and successful finalization, not strength.
+Fresh generic numerical gates pass, but the first eight-bank requalification
+used an old patch-bundle label in its input sidecars. Root rejects that input
+provenance despite valid numeric arrays; corrected frozen inputs and a fresh
+eight-bank run remain required before the canary. No default or eligibility
+change follows from this entry.
+
+### D327 — Corrected runtime qualification binds actual patch provenance (2026-09-05)
+
+Amends the pending qualification in D326. The corrected eight-bank repeat uses
+new qualification-only, ineligible sidecars bound to the actual screen-produced
+patch bundle cd3576ad38e3ba406b580476f40e04a35495d6f5754402406749649b2aa3f1c5.
+Root crosschecks all eight sidecars and the pool manifest against the measured
+screen implementation, then independently checks all557056 raw ratio elements:
+1072 primary rows, maximum9.5367431640625e-6 below2e-5, no nonfinite/out-of-tolerance
+values, unchanged weights and all16 hard counters zero. Corrected result
+b0a64e85607bb0cf2e85050b01f8cb574c9c8c48548b6e587af008a7e2bd59cb and pool
+224ef7762f5c92db93ff826d8c849c2379176038bcbec0d88dbf063a3a2c829b supersede the
+old-label qualification. Its rejected artifacts remain intact.
+
+Generic construction, graph parity, terminal reset, ratio and throughput gates
+also pass on the same module. The bounded H512L3 LR0 throughput is102455.947
+steps/second; this is a diagnostic timing, not a funded campaign estimate.
+Evidence: audit-artifacts/reducer-v1-qualification-20260905/ and
+puffer-metric-reducer-20260905/ROOT_CORRECTED_ACCEPTANCE.json.
+
+A durable source-only qualifier repair removes the arbitrary patch-digest CLI.
+It instead requires a hash-pinned actual screen manifest and verifies its
+module, environment, backend and semantic identities against the imported
+runtime before using its patch bundle for lineage validation. Twenty qualifier
+tests pass; the combined latest qualifier/reducer/output/storage suite passes43.
+Root also exercises the new guard on the actual reducer screen manifest. This
+new tool is not substituted into prior immutable qualification runs: their
+corrected manifest binding was independently verified. No native source,
+reward, optimizer, eligibility or production default changes in this amendment.
+
+### D328 — Local canary completes; integrity acceptance is not playing strength (2026-09-05)
+
+The reviewed v9-r2 package runs381 updates to49,938,432 native steps and then
+completes10,194 evaluation games. Root independently validates379 episode-bearing
+training windows,146,099 completed training games, exactly one final cumulative
+eval reprint, and all16 hard integrity fields at exact zero. Checkpoint bytes
+and numeric loss summaries are finite. The16,207,872-byte checkpoint hashes to
+d0612c22ef6447afb6385a82f1399d1599bc13dba1a29ea92416ab4462ccd521 and reloads/saves
+byte-identically in a fresh native constructor with zero rollouts/optimizer
+calls. The first manual reload omitted the transient nccl_id transport key
+that saved JSON intentionally excludes; it failed before construction and is
+preserved. The corrected diagnostic supplies the single-GPU empty transport ID.
+
+The unit exits0 with Result=success, taking6min21.488s wall time including
+preflight/evaluation/verification. All36 physical-storage samples pass; minimum
+D: free space is1,338,214,535,168 bytes. The completed output is read-only and
+copied locally. Wrapper acceptance063094986a2a68e59606c751bd8a4b150871c2ae1a26ae3e55840796445afc69;
+native JSON464c2d1e7634630813d9bad2f6bfae8f0bf41cc062da06c62283593719ee1c1e.
+
+Root's final audit also finds a redundant plan metadata typo: the registry-file
+digest was copied as the backend-bundle digest. The hash-pinned actual prelaunch
+manifest and actual run implementation agree exactly on every field, including
+the correct registry digest2b576749aa1cd4bf32dae10d85f6566c975a14572b3720682f5de9c6ad2d555a;
+the frozen runtime closure independently binds those same registry bytes.
+This is explicitly amended as diagnostic bookkeeping, without rewriting the
+plan or changing any executed source/configuration. It is not an authorization
+for causal reward comparison or promotion. New tools/validate_runtime_plan_identity.py
+requires exact equality with the hash-pinned producer manifest before future
+plan launch; four tests reproduce this typo and reject identity/byte drift.
+The frozen v9-r2 plan intentionally fails that new stricter prelaunch guard.
+
+Evidence: audit-artifacts/canary-recovery-plan-v9-r2-20260905/, including
+ROOT_COMPLETION_VERIFIED.json, REVIEW_REGISTRY_METADATA.md and checkpoint-reload/.
+The final evaluation has zero touchdowns and draw_rate=1. This fresh single-seed
+self-play canary proves valid execution and checkpoint persistence, not useful
+match play. Its sidecar stays qualification_only=true and eligible=false. No
+reward/checkpoint/production promotion, commit, push, deployment or Vast spend.
+The next tranche is terminal-state leakage and coherent recurrent-state
+handling, followed by diverse teacher tasks and held-out full-match transfer.
+
+
+### D329 — 2026-09-05 — Real Torch recurrent replay now clears episode boundaries
+
+The unchanged installed Torch trainer fails an actual mid-window terminal
+regression: its first observation after auto-reset does not match a fresh-state
+MinGRU forward. This is cross-episode state leakage. A separate failing
+cross-window test establishes the deliberate change from forced H64 memory
+resets to detached numeric carry; the previous zero-state tail was consistent
+with that old forced-reset regime and was not an independent bootstrap bug.
+
+The candidate terminal-aware-tbptt-v1 Torch patch clears observation-aligned
+terminal rows, snapshots exact segment initial states, gathers them with PPO
+indices, recomputes with terminal masks, and bootstraps from copied carried
+state without advancing behavior memory. The real PuffeRL constructor, two
+rollout/train windows, two-layer MinGRU, conditional multi-choice masks, sampled
+log probabilities, backward pass and LR0 Muon update pass 14/14 tests using the
+frozen CPU module e53678244f186db76328b20b620765bb853f4b54aa80dd66822367284411541b
+and its actual puff_advantage_cpu kernel. Perturbing only one stored state row
+changes that row's log probability by more than 1e-4 while preserving the other
+row; near-one ratios therefore do not pass merely because choices are singleton.
+Post-terminal loss has exactly zero gradient into pre-terminal observations.
+Three independent entropy-update cells also pass (maximum error about 1.14e-8).
+
+Patch SHA256 a77b6051d2498e931cf1f9d117dca179e0aa5d9917ba3f06be409e353ebd2d38.
+Evidence: audit-artifacts/memory-torch-20260905/.
+- CPU_REAL_KERNEL_PASS.log: 9a0740e1f11a88e62d985183a029a1ca049f11dd2fcff27697dceeff44e68a9e
+- CPU_REAL_KERNEL_OLD_FAIL.log: e0abfbec1c8edb85d17c85d15406a0c379983c9e1db4454404c5867599c7ad5c
+- CPU_REAL_ENTROPY_RESULT.json: 8cb5b24057502de818209878d7172994844ff1e241bc8580255c644e1150ec50
+
+This accepts the focused CPU/MinGRU implementation evidence only. Native CUDA
+qualification, graph paths, frozen-bank ownership and unchanged evaluation
+bridge remain required. Existing LSTM forward_eval has an in-place autograd
+limitation; this evidence does not qualify LSTM. No reward, checkpoint, or
+production promotion, commit, push, deployment or paid GPU use.
+
+### D330 — 2026-09-05 — Terminal-aware native memory passes direct CUDA qualification
+
+The isolated terminal-aware-v2 fp32 build implements terminal-aware-tbptt-v1.
+Module651ffc40e43e669912803e2f5bb3d3e641c34c0d8b431ab0f38f8393bbc700a3,
+backend8f8d0563b3991b554d96c137c6928188f9c7e16d5e231d66ddbd19adca830385,
+environment6fbd67f7201ce9830b3f282f19d3a98768ea197b8f3e5b9357991460884526f1.
+The native patch SHA is f9bdd1f7592a0776d4b26136753d2646e454127cd90b94de7bffb49aa945b3de.
+Clean install, repeated install, clean CUDA build and exact installer check pass.
+
+Actual native MinGRU derivatives match an independent float64 Torch autograd
+reference across three terminal-mask cases (maximum error below8.36e-8 versus
+3e-5 tolerance), including exact-zero initial gradient after a t0 terminal.
+The eight-row/two-buffer/two-frozen-bank fixture verifies observation-aligned
+resets, decoder/state equality to fresh explicit-zero controls, exact physical
+state/mask gathering, nonmutating tail bootstrap, ordinary rollout/train/rollout
+carry, and multi-choice behavior likelihoods. All four primary rows are sampled;
+16 stored PPO ratios differ from one by at most9.5367431640625e-7 with LR0 and
+byte-identical weights. This focused fixture complements the separate full-game
+integrity qualification, rather than substituting for it.
+
+A final diagnostic repeat explicitly records execution counters. Each captured
+cell executes8 rollout,2 tail and2 train graph launches with zero eager callbacks;
+the eager cell executes the same callback counts with zero graph launches.
+All saved graph/eager arrays are bit-identical. Root independently revalidates
+the raw NPZ arrays and counter evidence after copying them locally. The separate
+H512/L3 generic gate passes all16 hard-integrity counters at zero and measures
+100,758.41334798187 steps/sec for1,048,576 LR0 rollout-plus-train transitions.
+This is throughput evidence, not a matched causal speedup claim.
+
+Preserved earlier failures are diagnostic defects: one fixture assigned .5 to
+each of two frozen banks and left no primary rows; a subsequent native snapshot
+accessor aliased three Python dictionaries, falsely reporting tail-state mutation.
+The final accessor uses separate dictionaries. Neither failure is averaged into
+acceptance. Failed bridge-v1 separately rejects pre-first-episode missing log
+keys and is preserved; evaluation parity and a sustained canary remain pending.
+
+Evidence: audit-artifacts/memory-integration-20260905/accepted-v2/,
+memory-final/, and ROOT_NATIVE_REVALIDATION.json. D329 remains the real CPU
+trainer evidence. These results establish focused recurrent implementation
+correctness, not improved match strength or a longer gradient horizon. No reward,
+checkpoint or production promotion, commit, push, deployment or paid GPU use.
+
+### D331 — 2026-09-05 — Frozen evaluation is unchanged across the memory repair
+
+The same frozen migrated Chain9 H512/L3 obs-v7 checkpoint is evaluated on the
+historical reducer-v1 runtime and terminal-aware-v2. Eight style/side/seed cells
+(contact/cage, home/away, two common seeds) complete exactly two natural kickoff
+games each:16 games per runtime,32 total. All16 hard-integrity fields are present
+and zero; statmatch and demo endings are zero. Complete effective native configs
+match per paired cell. Every constructor proves the intended checkpoint loaded
+by immediately saving it and requiring the pinned SHA; post-evaluation saves
+remain identical. No train calls occur and no lineage is promoted.
+
+All16,913 aligned H1 decision snapshots match. Observations, exact action masks,
+actions and terminals match raw-byte digests; rewards, log probabilities and
+values have maximum absolute error0 (frozen tolerance1e-6). Root independently
+rehashes copied completion records, traces and serialized weights and replays
+the comparison locally. This bounded bridge supports unchanged frozen inference
+behavior after the repair; it is not learning improvement or transfer evidence.
+
+Checkpoint452527469879f1cfb489a8799af331f22986728a74431c0eeca488b7edb8a50e.
+Old module553c70a9bc3ad33da20c34a52bbc7c2dd58c1f286f4e3dcff51c375ca8ba690b.
+New module651ffc40e43e669912803e2f5bb3d3e641c34c0d8b431ab0f38f8393bbc700a3.
+Plan3c7deb7a0759bac627edc19a99c7273eb4da13c17f402170e65ce830469676c5.
+Bridge completion e733ed06e8fbe72265b2ea7a5ee64d5bb2dd493a36b847be4c4a7a361eb6e76c.
+Evidence: audit-artifacts/memory-integration-20260905/eval-bridge-v2/,
+including ROOT_BRIDGE_REVALIDATION.json. The rejected v1 driver expected an
+episode counter before any episode completed; its logs and partial trace remain
+in eval-bridge-v1-rejected. The corrected driver allows only an empty or metadata-
+only pre-first-game panel and retains strict final completeness requirements.
+
+The final runtime closure e177dce87a50e6ec5dd6ca5682a0df3db4167dd17040bbf589410d3e02d6d8d5
+binds5,032 entries/722,683,706 regular bytes. Its explicit derived-directory
+exclusions and separately bound shared-venv symlink are in RUNTIME_CLOSURE.json
+(SHAfd425f95a757ba06b44aaa108510b2780de37e8cd698957fc6d7df888ab6a062).
+The runtime is read-only; this does not change the historical shared-runtime
+closure semantics. A fresh full-bank gate and disposable50M canary remain
+required before a learning experiment. No paid GPU use or production change.
+
+### D332 — 2026-09-05 — Full eight-bank terminal-aware stress gate passes
+
+The frozen terminal-aware-v2 module passes the H512/L3, H64, 2048-row,
+two-buffer/eight-frozen-bank profile. All1072 primary physical rows are sampled
+across29 LR0 train calls;475,136 saved ratios are finite with maximum residual
+9.059906005859375e-6 below the unchanged2e-5 tolerance. Every per-call weight
+hash is unchanged, all18 recurrent groups are covered, captured rollout/tail/
+train execution is demonstrated, and all16 hard-integrity fields are zero.
+Root independently rehashes the saved NPZ and repeats complete row-coverage,
+frozen-exclusion and ratio validation after copying evidence locally.
+
+The historical compact-snapshot qualifier rejected the new native tensors.
+The accepted external qualifier requires exactly9 tensors with explicit shapes
+and dtypes,18 decoder groups, and18,031,632 bytes under the64MiB cap. It is
+hash-pinned outside the frozen runtime, so no compiled or runtime bytes change.
+A permissive subset draft was never executed. The rejected original-schema
+attempt remains preserved; its failure is a stale diagnostic contract, not
+accepted training evidence.22 focused qualifier tests pass.
+
+All eight bank files are byte-identical copies of the explicitly authorized
+Chain9 diagnostic weights452527469879f1cfb489a8799af331f22986728a74431c0eeca488b7edb8a50e.
+Each new sidecar passes the actual current validator and remains explicitly
+qualification-only/ineligible. This stresses physical bank ownership; it does
+not demonstrate opponent diversity or authorize old-ancestry training.
+
+External qualifier5a3d14608d803017270fdb743ff98ccc681eeb43c00715c816b9debc52fc989a.
+Resultfe3c3ea84d9efc59fbb1f98226875100f53d18ce708b896caa2791f9e6ff786d.
+Raw NPZcfefbc2da22ac036afeb166647a825c1921ba6133db613ad1099c5c1f55e5315.
+Leaguefa8c9581fae4b9956cd6448bcb6a033faafe35f15058c3568b611bb48cb43842.
+Root consolidated acceptance8d003889588c3f6ffeddabda9598e054657394e0925434af43d51d25528a0554.
+Evidence: audit-artifacts/memory-integration-20260905/eightbank-v4/ and
+ROOT_QUALIFICATION_ACCEPTED.json. Native startup separately completes765 final
+eval games with zero16, valid Puffer JSON, and a saved checkpoint.
+
+For operational checks use the full unfiltered D328-style runtime closure:
+4973b6676d1c91f6fbbb55117add0215a6e397d395a16880b6cbe437afa32b2e,
+5041 entries/725,776,933 regular bytes, no exclusions or symlink traversal.
+Its record SHA is d352ebb7011adebdf38cb73bb78bdf32df07e38e3722f828f04e67fce7ace0d4.
+The excluded-derived D331 closure remains supplementary source evidence.
+The disposable50M canary is next; no strength or production claim follows.
+
+### D333 — 2026-09-05 — First terminal-aware canary is rejected for plan drift
+
+The first disposable50M terminal-aware run completes381 updates/49,938,432
+steps,379 ordinary episode-bearing windows/163,235 training games, and10,175
+final eval games. Raw screen analysis passes all16 hard fields at zero; final
+TDs are zero and draw rate is1. Checkpoint4886e464458e42659a73d3d800c8c16bf9e45f3b15d286881a06c4ed175db526
+is saved, qualification-only and ineligible. These are descriptive raw outputs,
+not accepted canary evidence.
+
+The supervisor's new full-contract comparator correctly rejects the completed
+run: the measured PLAN_ONLY contract says detection_poll_seconds=30, while the
+explicit supervisor uses10. A recursive comparison shows this is the sole
+unpermitted contract difference after the three declared output substitutions.
+The supervisor unit exits1; later systemctl output after collection cannot be
+used to claim success. Journal evidence records the failed unit. There is no
+CANARY_WRAPPER_ACCEPTED marker. The entire completed output is preserved and
+made read-only; no post-hoc acceptance or weakened comparator is used.
+
+The next fresh repeat uses a new measured PLAN_ONLY with POLL_SECONDS=10 and
+new output/unit identities. A pre-spawn gate requires measured producer poll,
+frozen plan guard poll and executable CHILD_POLL_SECONDS all equal10.21 tests
+include rejection when either declared input is changed to30. The model,
+rewards, optimizer, seed42 and compiled runtime are unchanged. This is a clean
+integrity repeat on the local GPU, not a new reward comparison or promotion.
+
+Earlier never-launched plan drafts also contained a truncated arm digest and a
+wrong copied validator digest. Both were rejected and preserved before launch;
+the freezer now validates every digest and derives these pins from measured
+producer/current verified source. Actual remote pin and full-closure checks
+pass for the new repeat package. Evidence:
+audit-artifacts/memory-canary-plan-20260905/rejected-completed-run/ and UNIT_FINAL.log;
+audit-artifacts/memory-canary-repeat-20260905/. No Vast spend or production change.
+
+### D334 — 2026-09-05 — Clean terminal-aware canary and fresh checkpoint reload pass
+
+The clean repeat completes 381 updates / 49,938,432 aligned training steps,
+379 episode-bearing training windows / 163,235 completed training games, and
+10,175 final evaluation games. Independent local verification checks all copied
+artifact bindings and the entire measured producer contract, allowing only the
+three previously declared output-path substitutions. Measured producer, plan
+and executable poll intervals are all 10 seconds. No amendment is needed.
+All 16 hard-integrity counters are zero in accepted train/final-eval panels;
+loss summaries and every checkpoint float are finite. All 36 physical backing
+storage samples pass, with minimum free space 1,336,301,932,544 bytes.
+
+A separate fresh native GPU constructor validates actual checkpoint lineage,
+loads and saves the checkpoint byte-identically, and closes without rollout or
+optimizer calls. The checkpoint remains qualification-only and ineligible.
+The canary and reload outputs are read-only after completion; the local RTX2070
+is idle. The canary journal records 6min22.596s wall time. Collected systemd
+unit default properties are not used as proof of exit status.
+
+Plan24a2f4a39938e25908da8a61f8f733a4513f3775a0f81c9a62722a1805e78f1b.
+Actual PLAN_ONLY39caa47b59d05cdb7ce06d0eb1d184973df880491bb12a83ef5ee007299481a8.
+Completed manifestce21c77b822b43b28cdf30d798092a5c0f391e39de9a70cf51eb3850270fa530.
+Checkpoint4886e464458e42659a73d3d800c8c16bf9e45f3b15d286881a06c4ed175db526.
+Module651ffc40e43e669912803e2f5bb3d3e641c34c0d8b431ab0f38f8393bbc700a3.
+Root completion7416959894645ecd04ac4b4a7e8e0b5ced13c5896d3fea193d3997507c43264c.
+Root reload9dd3f3adc1089131142935cae4f3bd066824b860cb67f40fbe1c15eed4c00f4a.
+Evidence: audit-artifacts/memory-canary-repeat-20260905/, including
+ROOT_COMPLETION_VERIFIED.json, ROOT_RELOAD_VERIFIED.json and UNIT_FINAL.log.
+21 supervisor tests pass locally. D329–D332 supply the independent CPU/native,
+full-bank, derivative, graph/eager and frozen-inference qualification evidence.
+
+Final evaluation has zero touchdowns and draw rate 1. This accepts sustained
+execution integrity, not useful playing strength. The repeated checkpoint hash
+matches the rejected D333 run; that run remains rejected, without retroactive
+acceptance. The recurrent-memory implementation tranche is complete. Controlled
+learning, richer teacher/opponent curricula, held-out match evaluation, longer
+horizon experiments and the broader rule/choice backlog remain future work.
+No reward default, training ancestry or checkpoint is promoted. No paid compute,
+commit, push or deployment occurred.
+
+### D335 — 2026-09-05 — Freeze local paired memory-learning screen
+
+The user explicitly requests execution of the training and funding plan after
+D334. Freeze four fresh runs at 250M requested / 249,954,304 aligned steps each:
+control42, terminal-aware42, terminal-aware43, control43. The sole declared
+factor is the complete recurrent-memory contract; H64 gradients, R0, engine,
+obs-v7/exact-joint-v1, model, optimizer and fresh self-play remain common.
+There is no warm checkpoint or pool and every output remains ineligible.
+The historical control's known leak remains confined to its frozen runtime.
+
+Plan3412306226b93ee5fb8719f5ef2cd53319e67430e4232c692e0bf9b9f4f6242a.
+Runnerd69dc078662a9507ffaf4154a4d287e4f58f69e3bfea0b9e51a10f23c55da6e6.
+Package: plans/memory-learning-paired-250m-v1 on the local rig;
+local audit-artifacts/memory-learning-20260905/. Exact remote pins, both runtime
+closures and the shared environment closure pass before launch. Five focused
+controller tests pass. All four actual measured screen contracts match after
+only declared runtime, seed and output-path normalization, including poll10.
+The executable derivatives retain the mature audited screen and record exactly
+three transforms: absolute ROOT, seed literal, and the fixed budget guard from
+50M to250M. The guard is not removed. Unused direct-arm drafts remain preserved.
+
+Native constructor evidence proves old/new initial weights byte-identical at
+seed42(ed441582...) and seed43(4f995a42...), with distinct seeds, no rollouts or
+optimizer calls. Initializer evidence SHAab9fa9b4... is fully recorded in the
+frozen plan. Its direct-arm checkpoint-save cadence differs from the screen;
+that Python-runner cadence does not affect native initial weights and is not
+claimed as complete final-run configuration equality.
+
+After training, evaluate exactly128 natural kickoff games per model: evaluation
+seeds2026090511–2026090514, contact/cage, home/away,8 games per cell,512 total.
+Report W/D/L, TD for/against, matched-seed differences and equal-weight training-
+seed summaries. Two training seeds and scripted opponents are descriptive.
+If all arms remain unable to score, report lack of discriminatory evidence;
+do not substitute human-looking action rates or extend the budget adaptively.
+The next useful question then concerns diverse teacher/curriculum experience.
+
+One externally pinned current evaluator and lineage helper serve both frozen
+runtimes. Actual old/new one-game smoke passes before training under unchanged
+runtime bytes (SMOKE_ACCEPTED SHA bba331f76e32f6425f2215c200499b06c39cf8d597aad1b588e4957ae8bceb85).
+The first evaluator smoke's preconstruction permission failure remains preserved;
+invoking the unchanged installer check through bash corrects that driver issue.
+Known incomplete BB2025 mechanic/roster scope remains explicit in
+ docs/memory-learning-screen-2026-09-05.md. No paid GPU, promotion or production
+change is authorized by this diagnostic. This entry freezes intent and design;
+actual launch/completion and measured findings require subsequent artifacts.
+
+D335 execution amendment: the actual launched package is v2, PLAN
+fd5f0274166ba6fa6dc7e24df3103f1ea2b3c9061d83b0feae670cd6d5932036,
+runner e695a92677c069e2b4160ae059b9727c766e99f53af50f90df44a22a94502d98.
+It adds explicit shared-runtime closure checks and stronger artifact/provenance
+bindings before launch; scientific inputs and measured screen contracts are
+unchanged. The earlier34123062 and5f8be196 plans were never launched. Final
+independent review SHA703f8af908a29f4247c7bc1dab9c8af7923c1373b025e8a43c9c4f0a0d0704d7
+and remote full verification pass. Unitbb-memory-learning-paired-250m-v2.service
+was dispatched with invocationc0b4747eb44a45949cf865ff2838e0f1.
+ROOT_LAUNCH_RECORD.json records this dispatch; actual trainer liveness and
+completion are established separately from fresh process/phase artifacts.
+
+### D336 — 2026-09-05 — Reject first paired learning run on thermal guard
+
+D335 v2 stopped at127,270,912 steps in control seed42 before any accepted arm.
+The active-loop gpu(idle=False) predicate proves temperature exceeded82C
+(integer>=83C); the exact sample was not persisted. Failure time2026-09-06
+03:02:35Z, exit143, completed_runs0. The remaining three arms never started.
+No final checkpoint/result/evaluation exists. Intermediate zero integrity
+counters do not authorize acceptance or resume. Preserve the complete v2 output.
+Independent audit: audit-artifacts/memory-learning-review-20260905/
+THERMAL_FAILURE_REVIEW.md, SHA63a2396c344dea8f4111e29a52766ce22b6d7704a5cf6a102f9e4b4d1679f37c.
+
+A brief unrelated CPU main-policy smoke overlapped the rejected arm: conservatively
+exclude2026-09-06T02:55:21Z through02:56:43.188Z (19.8s aggregate tool invocation
+walltime inside82.188s envelope), plus a3.3s converter around02:57:03Z, from any
+throughput interpretation. No finer process-start timestamps were recorded.
+No remote auxiliary workload may overlap the replacement matrix.
+
+The idle GPU cooled to56C. WSL sudo nvidia-smi could not set power; the native
+Windows nvidia-smi successfully set125W from175W, with independent readback.
+This is a reversible operational change for every future arm, not a modification
+to v2 or evidence accepting it. Recovery will freeze a new all-fresh four-arm
+package at fixed125W, unchanged scientific inputs and82C threshold, and persist
+GPU samples before checking them. The future recovery requires its own review
+and launch evidence. No paid compute, commit, deployment, or promotion occurred.
+
+### D337 — 2026-09-05 — Freeze symmetric 125W paired-learning recovery
+
+After D336, freeze package plans/memory-learning-paired-250m-v3 at PLAN
+8f1592f07da731536c1a687ed6a6dcf872d17c0ac2e54a711c811b56bec25df8,
+runner7274fe5c8695dad981433283c637ef56ba6fddce5f40b8f32c8c40969ba2dea1.
+All four arms restart fresh, control42/terminal42/terminal43/control43,
+250M requested each. New output root experiments/memory-learning-thermal-
+recovery-20260905 and v3 prefixes prevent collision with rejected D335 output.
+All scientific inputs, runtime closures, initializer identities and512-game
+held-out exam remain unchanged. No partial checkpoint supplies ancestry.
+
+The sole operational amendment is a fixed125W GPU power limit for every arm,
+verified from Windows and WSL. Every10s the supervisor fsyncs timestamp,
+temperature, power draw/limit, utilization and memory before testing strict
+82C maximum and125W equality. Nonfinite telemetry fails closed. The frozen
+base runner supplies the same source/config/closure/completion and cleanup
+checks. Seven focused tests pass on Mac and rig; all four actual PLAN_ONLY
+contracts preserve the complete scientific comparison. Hardware proof SHA
+3d25a438db71bf432e646bca1617c1d67ce626ae1c8f51eb3230c7c713ac6144.
+The initial incomplete manifest staging was caught before launch and repaired;
+actual remote full verification then passed. Launch and completion require
+separate live records. Paid compute, promotion and production remain unchanged.
+
+D337 launch amendment: root independently reran staged full verification, then
+launched bb-memory-learning-paired-250m-v3.service at2026-09-05T20:47:29-07:00,
+invocationde9f9abcc9d647879a840e9942421079, supervisorPID41473. The actual first
+trainerPID41925 began at20:48:19. At21:04 PDT it has164.2M fresh steps and
+76C, with125W configuration intact; these are liveness observations, not final
+acceptance. ROOT_LAUNCH_RECORD.json binds dispatch. The independent v3 result
+verifier remains prospective pending complete four-arm output.
+
+### D338 — 2026-09-05 — Paired memory learning matrix completes cleanly
+
+D337 completes all four fresh250M requested/249,954,304 aligned arms:
+999,817,216 steps total. Independent root verification of copied final evidence
+accepts exact producer contracts, checkpoint/lineage/log/CUDA/Puffer bindings,
+finite weights/losses, correct final epochs, completed-game gates, and all16
+integrity fields zero. Root matrix proof SHA
+3b98040047e945449117f402e684a6174725f297988574235fcf645fb4089659;
+raw matrix completion49ff00fd5756ee595b293388d3644d01ec57af007a9f4b39ef83f13024f0ee3d.
+Hardware611 samples cover all four arms and final shutdown; maximum81C and
+fixed125W configuration throughout. Transient power draw reached151.05W;
+configured power limit, not instantaneous draw, is the declared125W contract.
+Unit wall time1h43m32.869s includes runtime verification and producer overhead;
+summed native reported uptime5667.375s is a different measured quantity.
+
+Embedded evaluation game counts are10079(control42),10030(terminal42),
+10041(terminal43),10053(control43), total40203. Every embedded evaluation
+records zero touchdowns and draw rate1. This supports execution integrity but
+no learned scoring capability or playing-strength benefit. Two seeds do not
+supply a confidence interval. The separate512-game held-out evaluation remains
+required before interpretation. No checkpoint, reward, or lineage is promoted.
+
+Freeze actual four checkpoints into the prospective held-out evaluator PLAN
+f584a077b43fa880cc951cb53410c6f54439b12df4db0882932c2d1e1de820df,
+under plans/memory-learning-evaluation-v3. Actual staged verifier passes.
+This plan binds root acceptance5ab2facf73d138f3e951b39b05e5186c286b088dba166dcfb8c87ac6e4e8676b
+and the exact original launch. Launch/completion evidence is separate.
+
+### D339 — 2026-09-06 — Held-out memory comparison has no scoring signal
+
+All512 kickoff games complete under the frozen D338 evaluator, with256 paired
+comparisons. Root independently reconstructs the complete raw-game populations,
+W/D/L, touchdown differences, cells, paired macro, runtime/config identities,
+completion hashes and hardware telemetry. Root acceptance SHAd10c0b5ff8b3dabc1c41ef4d0760eea5c7e8bf1efe019a4c36c46ab10fe534ef.
+Result SHA f84fbf728a12be4e17803a4a90a177fcd257ca0e41ec9a8abb8a38a7275d21ed.
+All four models score zero TD. Historical42 W/D/L0/50/78, TD0/120; corrected42
+0/46/82, TD0/119; historical43 0/47/81, TD0/115; corrected43 0/48/80, TD0/121.
+Corrected-minus-historical match utility is -1.5625pp(seed42), +0.390625pp(seed43),
+macro -0.5859375pp. This descriptive, inconsistent two-seed result does not rank
+learning performance reliably or justify restoring a known memory defect.
+Unit wall1497.843s for512games includes verification; maximum62C, fixed125W,
+zero integrity failures. No scoring signal supports more undirected scratch
+steps or paid capacity. No promotion.
+
+### D340 — 2026-09-06 — Select fixed matched recurrent teaching diagnostic
+
+D339's absent scoring and inconsistent utility signs select the prepared local
+whole-trajectory BC experiment. Freeze existing plan
+3365603e4e5d53b517cb1013aca3a47f5754907aa3ab5f6cde9a4304f7b15712 unchanged:
+real H512/L3 main policy, seeds20260905/20260906, exact matched fresh weights,
+56 training trajectories/420 decisions,25 epochs Adam1e-4, train-only metrics.
+Bind generated final checkpoints before any held-out observation; then128
+natural-RNG closed-loop trials across8 heldout states,4 RNG seeds,4 models,
+cap32 and separate coach-owned recurrent states. Teachers use favorable scripted
+dice; natural evaluation is authored-start completion, not full-game strength.
+No adaptive epochs, holdout selection or reward labels. CPU-only Mac execution
+uses the reviewed pinned wrappers and existing immutable bridge. Local next
+question is learnability; funding remains0 until useful full-game transfer.
+
+### D341 — 2026-09-06 — Reject first matched BC run after result-writer failure
+
+D340 seed20260905 exits1 after training/checkpoint reload while constructing
+final metadata: validation_coach_sides still references removed val_ids. No
+TRAIN_RESULT or TRAIN_COMPLETE exists. Preserve all output and hashes under
+audit-artifacts/main-recurrent-teaching-run-20260906/seed-20260905, with
+ROOT_FAILURE_RECORD.json. No held-out evaluation occurred. The saved checkpoint
+is rejected, not ancestry. Fix only the final metadata in a new pinned package,
+regress the train-only result construction, independently review, and restart
+both seeds fresh at unchanged scientific settings. Do not amend oldplan/files.
+
+D341 recovery amendment: new plan dd549af635786b3eec473c896a458c0811488b6e69c257f499597fdc66f3f542
+under audit-artifacts/main-recurrent-teaching-recovery-20260906 changes only
+implementation paths/report metadata and explicit rejection/restart provenance.
+Trainer fd66854062e00562cfee796b081dfcb1916719aa10c001a5084c81efe21ca35e
+derives side counts from manifest metadata. Independent GO and root23tests pass.
+Root directly executes the actual validation_side_counts AST expression: old
+report fails NameError val_ids, recovery reports correct counts without it.
+Both seeds restart from unchanged original weights; no holdout was observed.
+
+D341 second recovery rejection: dd549 seed20260905 reaches TRAIN_RESULT but
+wrapper rejects initial-copy hash5e3d38db... versus pinned38b10c04.... Trainer
+reserializes state_dict under another filename, changing serialized bytes.
+No TRAIN_COMPLETE; checkpoint remains ineligible. Preserve failure record in
+recovery runs/seed20260905. New package must copy the input bytes, test actual
+Torch serialization/copy and complete a disposable one-epoch train-only report
+smoke before freezing another unchanged25epoch/twofreshseed experiment. No
+held-out evaluation has occurred and neither rejected run supplies ancestry.
+
+D341 recovery-v2: plan10b5c20ff7b2dfd1b76c963dfd7b3470717e7af2fa31adfe66f2523b7ad05416
+uses trainer e72a05628841472e1b364221cfb8367a2ba24b11b855ee52c722cf6ae2b545d6.
+Accepted training copies the pinned initialization bytes with shutil.copyfile;
+initialize-only generation remains separate. Root24tests pass, and actual
+disposable one-epoch/all56train completion passes all result/hash/roundtrip
+predicates (only epoch expectation1 for this explicit diagnostic). Root proof
+is recovery-v2/disposable-one-epoch-v1/ROOT_SMOKE_VERIFIED.json. Its checkpoint
+is ineligible; no holdout evaluation. Restart both scientific seeds fresh for
+25epochs unchanged. No earlier failed output supplies ancestry.
+
+### D342 — 2026-09-06 — Main recurrent BC transfers to held-out authored starts
+
+Recovery-v2 plan10b5c20f completes both fresh25epoch seeds. Initial copies match
+original pinned files exactly; final checkpoints5294850f.../58c8b71f... and
+full TRAIN_COMPLETE records pass. Generated evaluation plan
+5566f569b083471cf2818a9a39293f674cdff0bb40530a29d4e3f0a0b19d3e2e
+is frozen before any heldout inference. First freezer invocation with relative
+completion paths rejects before writing; absolute recorded paths pass unchanged
+code/plan. No training or scientific output was altered for this invocation fix.
+
+All128 natural trials complete; root independently checks raw32/model matrix,
+common initial fingerprints, exact checkpoints, splits, summaries, zeroillegal/
+engine-error/projection-collision outcomes, train-only metrics and source hashes.
+Root acceptance6192e3f72b71be2446d3b1267ff230f1d20340e53ef9a11c2a02d73951080483,
+evaluation completion7eb3bd2f40ced50ffe663baba95b44e020fed0fce22f50aba7690a857b9346d1.
+Seed20260905 fresh0/32TD versusBC11/32 (geometry4/12,side7/20); seed20260906
+fresh0/32 versusBC6/32 (geometry2/12,side4/20). Combined17/64 versus0/64,
+17 paired gains/no paired losses. Train exact-action accuracy97.619%/99.286%
+is separate from natural outcomes. Both seeds improve in both splits, but only
+8 authored states and4 dice seeds are tested. This is learnability evidence,
+not full-match utility, uncertainty interval, or production promotion.
+
+Accepted CPU training takes101.836259s+94.701955s=196.538214s total. Failed
+attempts/disposable smoke excluded from accepted runtime, preserved separately.
+This motivates a local fresh-versusBC kickoff-game transfer with both sides,
+heldout opponents and matched seeds before any paid scale-up. Current funding
+recommendation remains0; do not buy steps before proving full-game transfer.
+
+### D343 — 2026-09-06 — Prepare exact-Torch kickoff transfer after authored gains
+
+User requests continuation after D342. Next tranche evaluates the same four
+Torch checkpoints directly, without native conversion or reserialization, in
+complete kickoff games. Proposed512matrix remains unlaunched pending production
+Cbridge qualification, reactive-coach routing, terminal/cap/error provenance,
+checkpoint policy parity, runtime benchmark and final immutable freeze.
+
+Policy-path parity already passes8train-onlyfixtures/70decisions acrossfour
+checkpoints, matching accepted authored evaluator observations, masks, logits,
+values, recurrent input/output and deterministic action/outcome path exactly.
+Evidence audit-artifacts/bc-kickoff-transfer-20260906/POLICY_PARITY.json.
+This qualifies the Torch invocation only; full-game Cbridge is a separate gate.
+Productionkickoff RNGstream1 differs from authoredstream47 and will be explicit.
+Local compute only; no paid provision, checkpoint promotion or default change.
+
+### D344 — 2026-09-06 — Freeze exact-Torch kickoff transfer
+
+Plan29415013b22f298a199f03aab3cc63c89ed71c25734f7e0d1cc7dfa052a7c4f0
+under audit-artifacts/bc-kickoff-transfer-20260906 binds four unconverted D342
+Torch checkpoints, complete50fileCclosure+canonicalsymlinks, qualifiedbridge
+5e4fc130... and actualPython/Torch/models/Puffer/config identities. Root reruns
+fourproductionparity fullgames, two bridge tests,5Pythonterminalguard tests,
+5independent rawmatrix tests,7controller tests and exact8fixture70decision
+policyparity. Invalid/collidingdecode returnsNONE and productionaborts before
+apply/terminalreset; sourcecontrolflow closes terminalcollision concern.
+
+Matrix is4base seeds2026090711..14 ×contact/cage ×learner0/1 ×replicate1..8
+for128games/model,512total. Requested seed=uint64(base*2654435761+replicate),
+productionstream1; commonwithin4models only, no crosshistorical examstartclaim.
+Natural kickoff/procgen, demo0, defaultskilllimits4players/2each, noforce/exclude
+rosters. Explicit TD.4/win.6/draw0 and otherrewards0 are unused outcome telemetry,
+not a new learningreward. Matchedcomparison contains nooptimizer/conversion.
+
+Independentbridge parity coversactualinactive-coach reactions, rawmatch/obs/mask
+boundaries and durableterminal logs. Dice explicitly excludeinitialreset and
+hiddennextreset. Drives count SETUPentries. Naturalreason1 required; allerror/
+cap/nonfinite/illegal/collision/clip outcomesreject. TwoexactTorch timinggames
+outsideexam take0.136/0.174s at8threads. Freeze300s/model,180sprogressguard,
+1GiBdiskreserve+outputcap; sequential4models. Rootlivepreflight passes.
+Launch/completion evidence remains separate. No paidcompute orpromotion.
+
+### D345 — 2026-09-06 — Finishing-skill BC does not transfer to kickoff scoring
+
+D344 actuallaunch2026-09-07T01:04:24Z (=September6PDT), PID65570; allfour
+models completeexit0 in65.460533s onMacCPU. Root independently reconstructs
+512rawgames, exact128/model populations, scores/WDL, terminalintegrity,
+checkpoint/source/runtime bindings, commoninitialfingerprints and256paired
+rows including producerpairedhashchain. Root resultSHA812082fb96bb9f3e592e5d78db083a563bce43f8ea824de946b133771e3e994b.
+Producer COMPLETE d5104eb0e295f70cfb7be04eefd2359890719138f0dd0d7e8b5deddafa56a6b9.
+
+Seed20260905 freshW/D/L0/41/87 TD0/139, BC0/40/88 TD0/132; seed20260906
+fresh0/51/77 TD0/120, BC0/52/76 TD0/125. Combinedfresh andBC both0/92/164,
+normalizedutility0.1796875. AlllearnersscorezeroTD. Perseedutilitydeltas
+-0.390625pp/+0.390625pp cancel; TDdifferentialdelta+0.0546875/-0.0390625
+also changes sign. No fullgame benefit is established. Bothseedcontact/home
+cells improve9.375pp, while cage/away worsens7.8125/9.375pp; do not promote
+from an isolated favorable cell. This descriptive two-seed scripted exam is
+not confidence evidence, learned-opponent validation or productionpromotion.
+
+D342 authoredcompletion remainsvalid17/64vs0/64 butdoesnot generalize to
+kickoffscoring. All64corpus trajectories begin withacarrier, fixed distance5
+geometryfamilies and5..9decision scoringsequences. The nextjustified local
+improvement is broader teacherexperience linking ballacquisition anddrive
+progression to finishing, with new group-disjoint holdouts and naturaldice,
+then the same fullgametransfer gate. This is a data-coverage hypothesis, not
+a proven diagnosis of a particular in-game failure phase. Do not add epochs
+on the same tiny finishingcorpus or paid scratchsteps as the next default.
+
+The directTorch/productionC serial exam achieves512games/65.46s for this
+specific greedyCPU path, including startup/validation. It is not a general
+GPU speedup or comparable learningthroughput. Currentfundingrecommendation0.
+No checkpoint/reward/default changed, no paidcompute, commit or deployment.
+
+D345 corpus-description correction: direct manifest inventory gives distances
+3–7, not fixed distance5. All64 starts have a carrier and sequences span5–9
+decisions. The family-name inventory, not the discovery helper name or first
+example, is authoritative. The interpretation and recommendation are unchanged.
+
+### D346 — 2026-09-06 — Full recurrent gradients fit the first long-sequence CPU probe
+
+Before changing the D342 trainer for broader demonstrations, root exercised its
+unchanged `sequence_forward` and backward pass on repeated observations from one
+training-only shard (929204). These are synthetic length probes, not legal game
+trajectories or learning results. No optimizer ran and parameter digests stayed
+identical. The accepted fresh seed-20260905 checkpoint and trainer source hashes
+are recorded in `audit-artifacts/drive-teaching-20260906/training-probes/`.
+
+With Torch 2.10.0 and eight Mac CPU threads, lengths 64/256 took 0.268/0.827
+seconds; lengths 1024/2048 took 3.006/6.591 seconds. Process peak RSS in the long
+probe was 529/793 MB (decimal); all gradients were finite. This does not establish
+real-corpus throughput, but it removes the immediate need to introduce truncated
+backpropagation solely from assumed memory cost. Prefer retaining full recurrent
+gradients for the first broader-data comparison if a representative actual
+training trajectory also fits the bounded resource contract. No default changed.
+
+### D347 — 2026-09-06 — BC kickoff diagnostic shows MOVE-only declarations without drive progress
+
+A separate 32-game discovery matrix uses all four D342 checkpoints, two new
+base seeds (2026090801/802), contact/cage and both sides. The derivative bridge
+includes the accepted kickoff bridge unchanged and adds read-only accessors.
+Two full-game original/derivative comparisons have identical observation/action
+trace hashes and outcomes. Root independently verifies the exact matrix,
+10,916 decision records, checkpoint/binary/source hashes and current 50-file
+engine closure. All games end naturally with recorded integrity counters zero.
+Evidence: `audit-artifacts/drive-teaching-20260906/diagnostic/ROOT_VERIFIED.json`.
+
+BC is observed with a carrier in 13/16 games, but its closest observed carrier
+is 12 squares from the end zone. Across 1,074 consecutive owned same-drive
+boundaries, distance decreases 30 times, increases 47 times, and stays unchanged
+997 times, with net distance improvement -17. All 651 BC activation declarations
+are MOVE; STEP is selected on all 3,553 available occasions; END_TURN is selected
+on none of 651 available occasions. Fresh policies also score zero; these
+observations do not establish that fresh behavior is strategically better.
+
+This locates an observed failure before the authored finishing states and
+supports testing broader teacher behavior. It does not prove why the policy
+learned it, prescribe a correct alternative action, or justify event rewards.
+Boundaries omit intervening opponent decisions; distance deltas may include
+carrier changes and are not summed learner movement. First-possession timing is
+censored to games with observed ownership, so conditional means do not prove
+causal acquisition delay. The broader-data hypothesis now has an observed
+MOVE-only policy pattern to test, while full-game utility remains the outcome.
+
+### D348 — 2026-09-06 — Streamed full-match BC preserves the accepted learning update
+
+The new `audit-artifacts/drive-teaching-20260906/trainer/` wrapper streams one
+coach-owned match sequence at a time and calls the accepted recovery-v2 loader
+and whole-sequence forward unchanged. It preserves full BPTT, one zero state per
+match, no drive/half resets, decision-normalized conditional-head CE, clip norm
+1.0 and one Adam step per sequence. Source-match and source-seed sibling groups
+cannot cross splits; the loader refuses non-train payloads. Per-update fsynced
+records and final train-only fit metrics make optimization observable.
+
+Root reran all nine focused tests, including actual H512/L3 loss, gradient,
+clipped Adam parameter/moment equivalence, unequal-length metric weighting,
+non-train access refusal, malformed masks, overlength preallocation rejection,
+and update-trace integrity. A disposable natural-match smoke then consumed the
+longest v3 qualification sequence: 1,125 learner decisions, one optimizer step,
+3.312 seconds (339.65 decisions/s), finite update and no trained checkpoint
+saved. The exact initial copy hash matches D342. Evidence is in
+`training-probes/actual-match-smoke-v1/` and its outer process record.
+
+This qualifies a learning path and resource scale, not an accepted training arm
+or improvement in strength. Scientific corpus generation and immutable screen
+freezing still follow; the v3 smoke population is ineligible for that corpus.
+
+### D349 — 2026-09-06 — Unconditioned production-path full-match corpus accepted
+
+The frozen literal v4b matrix generated all 48 source games without outcome
+filtering or replacement. Original production kickoff reset/step and an offense
+teacher supplied complete coach-owned sequences, including reactions. Root and
+independent replay checks accepted every one of 33,933 learner boundaries;
+exact observations, selected conditional masks, actions, initial state, dice
+and terminal outcomes reproduce. All 96 BBP/trace files retain their hashes.
+The v4b corruption suite rejects altered observations, masks, actions, seeds,
+footers, truncation and trailing bytes; paired same-seed sides remain supported.
+
+Training is 32 contact games from 16 indivisible source-seed families, with
+22,950 decisions (437–1,045/game), W/D/L 3/23/6 and TD 3/6. Development is eight
+contact games from four new families: 5,128 decisions, all scoreless draws.
+Test is eight cage games from four further families: 5,855 decisions, W/D/L
+3/2/3 and TD 3/3. Each source family includes both sides, and none crosses a
+split. These are teacher outcomes, not neural-policy results. Cage is held out
+as a training opponent, though its offense script supplies the teacher policy.
+
+Evidence: CORPUS_PLAN SHA 616dc678005250c6f96c6f958b4fa6dffae42f83956297e856ed10aa4418aba2;
+manifest SHA 16c64b5b5d370e04cca475e4bbde3d98b388ed4ac91031be457da1122d257a17;
+independent review SHA 427338cab4460944cdd803c9a04b2506b2f71f9204558a2ee4b78438458cde35,
+all under `audit-artifacts/drive-teaching-20260906/`. Actual longest train-only
+smoke: 1,045 decisions, one finite update, 3.753 seconds and 633 MB peak RSS;
+no trained checkpoint retained. Earlier v1 scoring-conditioned selection and
+v2 direct-reset scope are not used. No reward/default change or paid compute.
+
+### D350 — 2026-09-06 — Freeze the two-seed full-match teaching screen
+
+TRAINING_PLAN SHA 0e21c0a743f0c1649c07112d4a50c40a06f47ae1594b961cdebbc01bd2f1f7b3
+binds the D349 corpus, accepted exact fresh D342 initializations at seeds
+20260905/606, current Torch 2.10.0 H512/L3 obs-v7 policy, streamed full-BPTT
+trainer and external supervisor. Per seed: 32 complete coach sequences, eight
+fixed epochs, 256 Adam updates, 183,600 decision presentations, LR 1e-4 and
+norm clip 1.0. One zero state per match; no drive/half resets or heldout payload
+access. Root and independent review recheck 283 pinned inputs and the actual
+venv runtime. The nine trainer and five controller tests pass.
+
+Sequential local CPU runs have eight threads, 1,800-second per-arm cap,
+180-second progress silence cap, 4 GiB process-group RSS limit, 5 GiB free disk
+reserve and 1 GiB output cap. Every update is fsynced. No resume, replacement or
+adaptive epoch selection. Completion requires exact update/decision counts,
+finite telemetry, byte-bound initialization, final checkpoint hash, exact reload
+logits and unchanged inputs. Review SHA
+3520284cce9f1bf3cdf060d9e7c39ddafb4cbffbe19bfe1c0ae37df9b1c6ef7d.
+
+The prospectively fixed full-game exam has bases 2026091301..304, eight
+replicates, contact/cage and both sides for 128 games/model, 512 total. Its
+checkpoint hashes are resolved only after both training arms pass. This tests
+the fixed full-match teaching package against exact fresh initialization; it
+does not identify corpus breadth causally versus differently trained D342 BC.
+Launch and accepted result evidence follow separately. No paid compute,
+production change, commit or deployment.
+
+### D351 — 2026-09-06 — Full-match BC training accepted; fixed kickoff exam launched
+
+Both D350 arms completed all 256 full-match Adam updates and 183,600 decision
+presentations, with finite gradients/parameters, unchanged pinned inputs and
+exact checkpoint reload logits. Root independently reconstructed all eight
+seeded epoch orders, per-row counts and artifact identities, scanned every
+checkpoint tensor, and verified changed weights against each fresh initializer.
+Six verifier regressions pass. Training took 581.109 and 570.752 seconds on the
+local CPU (19.20 combined training minutes); this excludes preparation and
+verification overhead.
+
+Independent train-only log-probability reconstruction agrees with the producer
+under the prospectively fixed 1e-5 float-reduction tolerance. Seed 20260905:
+NLL 3.019717 -> 0.580797; exact action agreement 0.216601 -> 0.809150.
+Seed 20260906: NLL 2.744672 -> 0.591160; exact agreement 0.231765 -> 0.808932.
+These metrics cover the same 32 training matches; no held-out payload inference
+occurred. Optional argument accuracy remains about 0.67; training fit alone
+establishes neither scoring nor match strength.
+
+Final checkpoints: seed 20260905 SHA
+10561b25a8b692b77f3c8dcb9b779733a72655b7fd32ea1f750557c520cb7a20;
+seed 20260906 SHA
+befc278f2b1fc5ba576907a25b0b74bc7abe7c8d048a4a9f6b3948ca8d7ec655.
+Training root verification SHA
+c277b59a946a234a3780ae5cf6bcd32184294d0068d84b288173e95447668f55;
+independent fit verification SHA
+6a26717ccf64e1e7597314e5966dc6dc9b2276aaa1d31f17a5c975ab556df137.
+
+The pretraining-pinned 512-game population is now resolved against all four
+exact fresh/trained checkpoints. Evaluation plan SHA
+30b82038cb300d53d9f63da31264591fc492b247f155c440bc122e03f2145c74
+passes its validator and ten focused tests, with independent prelaunch GO.
+The exact Torch/production kickoff bridge comparison is running. Raw full-game
+results and independent paired reconstruction must precede any transfer claim.
+All evidence is under audit-artifacts/drive-teaching-20260906/. No paid compute,
+reward/default change, commit, deployment or promotion.
+
+### D352 — 2026-09-06 — Full-match BC scores, but match-utility replication is unresolved
+
+The fixed D351 exam completed all 512 natural games with all seven integrity
+fields finite and zero. Root independently rebuilt exact game keys, raw-score
+W/D/L, seed formula, initial-state fingerprints, source/runtime identities and
+all 256 paired differences; a second reviewer independently agrees. No games
+were replaced or excluded.
+
+Per training seed, 128 games per model:
+- 20260905 fresh W/D/L 0/46/82, TD 0/135; BC 1/42/85, TD 1/125.
+  Paired mean W+0.5D change: -0.0078125.
+- 20260906 fresh 0/42/86, TD 0/136; BC 1/58/69, TD 1/99.
+  Paired mean W+0.5D change: +0.0703125.
+- Combined fresh 0/88/168, TD 0/271; BC 2/100/154, TD 2/224.
+  Mean match utility 0.171875 -> 0.203125 (+3.125 percentage points).
+
+Both training seeds now score once from natural kickoff, but opposite signs in
+match utility prevent a reproducible-gain conclusion. Lower conceded TD counts
+in both seeds are diagnostic, not a replacement primary objective. The first
+seed's negative utility cells occur on learner side 1; the second seed improves
+all four style/side cells. Two scripted opponents and two training seeds remain
+descriptive screening evidence, not a confidence interval or promotion.
+
+Root verification SHA
+7f48b02d5b43c047d537cdec3835bb96d104f0c730d24894ce7b0ec0ef6ccddc;
+independent result review SHA
+194b71f1e5cb69d631664195bc030ec52f36c76f38ef5c0c93568670080b3703.
+Both reside in audit-artifacts/drive-teaching-20260906/.
+
+Next priority is prospectively frozen replication at two new initialization
+seeds with the unchanged 32-match/eight-epoch recipe and unused balanced kickoff
+seeds. Retain and report the original negative seed; do not select a favorable
+checkpoint or replace an arm. A 24-epoch optimization-budget comparison remains
+a separate unlaunched proposal. Full-game gain and acceptable local play are
+not yet established. Additional Vast spend remains zero.
+
+### D353 — 2026-09-06 — Development fit exposes a substantial generalization gap
+
+A prospectively frozen DEV-only diagnostic consumed exactly source IDs
+640000000..640000007 (four source-seed families, both learner sides; 5,128
+coach decisions). Every sequence starts recurrent state once and remains whole.
+The four D351 fresh/trained checkpoints are unchanged; no optimizer was created.
+The test-eight payloads (650000000..7) remain unopened for neural inference.
+
+Root recomputed and a separate reviewer reconstructed the persisted sequence,
+head, optional-choice and action-family aggregates. Seed 20260905: fresh/BC
+DEV exact action agreement 0.194423/0.514431, NLL 3.069043/1.557503.
+Seed 20260906: agreement 0.221334/0.507410, NLL 2.719587/1.592382.
+BC optional square accuracy is 0.457736/0.444906, versus approximately 0.93 on
+training matches. BC optional argument accuracy is 0.594595/0.603003.
+
+This is teacher-forced generalization to DEV matches, not closed-loop success
+or causal proof of why kickoff play fails. Both models improve over fresh,
+but training agreement around 0.81 substantially overstates unseen-match fit.
+More epochs on the same 32 matches must not be assumed to repair this gap.
+The next selected experiment remains unchanged-recipe fresh-seed replication;
+data-diversity and optimization-budget comparisons are separate later factors.
+
+Plan SHA 095d5c2eb9816c6aadbbcfa7e41ef31ec41a8c186215aed8a23d90838c8c98ba;
+result SHA 56953ae6f92bb395379dd4d694b830c9b0ef13ae14ea10146265ea2f8e708f4e;
+independent review SHA
+15e309c14a4c0772ef69f36fcbc043da7cb2fe4f2de1b24babbbb959e89cfcd6,
+under audit-artifacts/drive-teaching-20260906/.
+
+### D354 — 2026-09-06 — Teacher activation labels can depend on unencoded state
+
+Disposable source-level and executable audits show that offense-teacher
+activation scoring reads roster cost and the cheer_assist latch beyond the
+instantaneous obs-v7 surface. Synthetic equal-observation/equal-exact-support
+fixtures change teacher argmax when those values change; artificially permuting
+a legal list also changes tie resolution. Roster extremes break normal generated
+stats/position relationships and legal-list permutation is not a production
+ordering defect. Neither establishes a reachable production alias.
+
+A separate copy-only observer replayed all 32 accepted train games and all
+22,950 recorded learner actions exactly. Root repeated the executable result.
+Among 3,177 ACTIVATE states, cheer_assist was live at 17; removing it changes the
+teacher label at two of those actual states. Comparing forced-off versus
+forced-on copies flips 405 activation labels with identical instantaneous
+observations and exact support. Original labels, live match/RNG bytes, terminal
+scores, dice counts and integrity all remain unchanged. Extreme equalized costs
+flip 13 labels between low/high counterfactuals, with weaker reachability scope.
+
+This proves actual label dependence on a field absent from instantaneous input;
+it does not prove identical full recurrent histories with different labels.
+The two actual live-cheer-dependent labels are a small fraction of this corpus,
+and the completed screen remains accepted. Before policy-state aggregation,
+resolve the teacher/observation contract as a separate declared factor. Do not
+bundle a new observation ABI or teacher repair into the current replication.
+Evidence and explicit limitations: teacher-alias-qualification/TRAIN_STATE_REPORT.md,
+TRAIN_STATE_SENSITIVITY.json and ROOT_TRAIN_REPEAT.json under the D353 audit root.
+
+### D355 — 2026-09-06 — Freeze and launch unchanged-recipe fresh-seed replication
+
+Replication training plan SHA
+0055006f3ce6d71cf6491d4fbe2a5397d4af5e3f85e4e6f8a335b0e741cdfb79
+runs seeds 20260907 and 20260908 through the exact D351 trainer/corpus/runtime
+and eight-epoch contract: 256 updates, 183,600 decisions each. New initialization
+and seeded epoch order plus unused exam seeds are the declared replication
+changes; no data, reward, observation, loss or optimizer change is included.
+
+The initializer first reproduced both original fresh checkpoints tensor for
+tensor, then generated the two new seeds. Independent regeneration accepts all
+four seeds' exact tensors, finiteness, repeatability, distinctness and reload.
+New 07 checkpoint SHA
+09ec544cb73da10ae6d3beee07e787dd1f2aa96b87b81bf694ce0cc5bb64f441;
+new 08 SHA
+43fdc90a7891464816acca7512e950818e12d97bb69b7dea0fd33aa39f09b55f.
+Initialization independent review SHA
+baca37f4145e8b074dc3744e0db1da0ddcbae2f07d8ea8a48ef375584e6a9291.
+
+The new balanced exam has bases 2026091401..404, eight replicates, contact/cage,
+both sides, stream 1, demo reset 0, greedy policy, cap 20,000: 512 games for
+four fresh/trained models. Positive paired match utility AND positive learner-TD
+difference are required separately in each new seed; combined new-seed utility
+must also improve separately for both opponents and both sides. All four
+training seeds, including the original negative seed, remain in reporting.
+These fixed gates cannot be relaxed after results. Integrity acceptance and
+scientific confirmation are separate verdicts; failure is retained evidence.
+
+Four focused tests, real-runtime preflight and independent prelaunch review
+pass. Review SHA
+e81079c3a5de57624c902788293309743dafe6c4b619f4cdae7e85c945b19884.
+The accepted supervisor supplies the unchanged 1800s arm/180s progress/4GiB
+RSS/5GiB disk/1GiB output guards. Both new arms are launched sequentially; seed
+07 has emitted finite updates. Source proposal files are now frozen and must
+not be edited. Output: replication-training-v1 under the D353 audit root.
+Expected combined training compute is about 19.2 local CPU minutes from D351;
+actual times and outcome verification follow. No paid spend or promotion.
+
+### D356 — 2026-09-06 — Fresh-seed replication training completes with intact contracts
+
+D355's unchanged eight-epoch recipe completed on the local Mac CPU for seeds
+20260907 and 20260908. Each has exactly 256 seeded updates and 183,600 decision
+presentations. Independent root and agent verification accept schedules, finite
+parameters/gradients, unchanged source/runtime pins, full-match recurrence,
+checkpoint reload equality and controller-to-result hash links. No failure or
+held-out inference occurred in training.
+
+Trainer elapsed times were 554.280525 and 614.022170 seconds: 19.47 combined
+local CPU minutes. Train exact-action accuracy was 0.789237 and 0.783878;
+train NLL was 0.630620 and 0.628533. These are fit diagnostics, not game utility.
+Final checkpoint hashes are 9ad62bac0ce099f1cae65acacba4570e63cb87c982389cca106468ce01ff8fff
+and 76ac02a9ee0daa1bac46297a7a8bc8ae1f61abfdca15b2e4fe93094b473cec87.
+Independent review SHA 8906caa68efb3d081c5cac07b4efff8e366787452e3273ef92b7660327c6d7e6.
+
+The predeclared 512-game exam resolved against these accepted checkpoints;
+plan SHA 048f207cf8e29a7a4e2699f82a0b363466da270ce161093dfc08727d307bebd3.
+Frozen plan verification passed and sequential evaluation launched. Performance
+confirmation remains pending. Additional Vast spend is $0; no promotion.
+
+### D357 — 2026-09-06 — Fresh-seed full-game replication fails scoring confirmation
+
+D356's frozen exam completed all512 games and root independently verified every
+raw row, exact matrix, natural completion, seven zero integrity counters,
+checkpoint identities, runtime/source closure, paired starts and artifact links.
+Evaluation COMPLETE SHA8ef0c2f3c7142e5dfb90f4bc891211c1c62213170a9a08f0d734c6164d487004.
+Evidence: drive-teaching-20260906/REPLICATION_EVALUATION_ROOT_VERIFIED.json.
+
+Seed20260907 fresh W/D/L0/51/77 becomes BC0/53/75; TDfor stays0,
+TDagainst135 to102, paired normalized match utility +0.0078125.
+Seed20260908 fresh0/36/92 becomes BC0/42/86; TDfor stays0,
+TDagainst137 to128, utility +0.0234375. Combined new-seed utility +0.015625
+is positive, but neither seed scores and cage utility is -0.00390625.
+The prospective per-seed touchdown and per-opponent utility gates therefore
+FAIL. Integrity is accepted; scientific confirmation is not. Retain the old
+negative seed20260905 and positive seed20260906. This is not a reproducible
+full-game scoring gain, locally competent bot, or promotion basis. Vast spend $0.
+
+### D358 — 2026-09-06 — Frozen four-seed analyzer exposes old-controller API gap
+
+After accepted D357 raw verification, the frozen reporting analyzer failed at
+its pair_row call: the accepted ORIGINAL evaluation controller lacks that
+helper. The synthetic end-to-end fixture used the new controller API and missed
+the real mixed-version boundary. No FOUR_SEED_ANALYSIS artifact was emitted.
+The runner, plan and raw games remain immutable and accepted; do not rerun games
+or edit the pinned analyzer. Prepare a separately versioned reporting repair
+with actual old/new API regression coverage and independent raw reconstruction.
+This defect affects consolidated reporting, not the separately verified D357
+raw results or the predeclared gates.
+
+### D359 — 2026-09-06 — Separate four-seed reporting repair preserves failed confirmation
+
+A new replication-analysis-v2 analyzer resolves D358 without editing any frozen
+input or replaying games. Its compatibility regression imports both actual old
+and new evaluator APIs. Root reviewed the diff, repeated both tests, and ran the
+full raw reconstruction in memory; its result exactly equals the saved report.
+Analyzer SHA b4896a6d45c5913077d8919c1672eb150b2d60a004f8c4e6206cbc3e60563441;
+report SHA 1d92e7302285d54c2bd00bd5dd118cd7f8067e1ba270aadbd551e320badffb30.
+Independent raw result review SHA
+a62b70d8eee467d90e5e2dcd30c23fc72ce45f7701eb2dd599a0b84ce656a814
+agrees on every seed, group and confirmation gate.
+
+Across all four seeds, fresh policies recorded W/D/L 0/175/337 and TD 0/543;
+BC policies recorded 2/195/315 and TD 2/454 over 512 games per group.
+Paired utility delta is +0.0234375. The original negative seed remains included.
+This descriptive aggregate does not override D357's failed scoring and cage
+confirmation. Reproducible useful offense remains unestablished.
+
+The next local preparation targets teacher input equivalence before broader
+state coverage. Develop and qualify a disposable policy-visible teacher variant
+separately from preserved generator/runtime sources, including complete scoring
+input inventory and real train-state checks. No new observation ABI, weighted
+loss, architecture change, longer epoch run, corpus generation or paid training
+is authorized by this finding; each causal experiment needs its own frozen
+proposal. Preserve the unused test payload for later confirmation.
+
+### D360 — 2026-09-06 — Accepted training corpus has sparse near-end-zone carrier coverage
+
+A train-only inventory reads all 32 accepted BBP v5 sequences by their manifest
+hashes, without neural inference or development/test payload access. Of 22,950
+recorded decisions: 6,592 have a loose ball, 9,051 have our carrier farther than
+six squares from the end zone, 280 have our carrier within six squares, 6,074
+have the opponent carrying, and 953 have the ball off pitch or in the air.
+The 280 near-carrier records occur in five matches and include 149 STEP labels.
+This is 1.22% of decision records, not a possession rate or fraction of
+independent positions. Within six squares is geometric proximity, not proof
+that a touchdown was feasible at that decision.
+
+Independent parsing verifies every train payload hash, count, replay ID, action
+sum and stage count against native observation writer offsets and both-side
+egocentric transforms. Review SHA
+bfbf418a42786bdf91a6349dd48957d5c62d5d29ca20def0042f528ad7d90a35.
+Evidence: train_coverage_inventory.py, TRAIN_COVERAGE_INVENTORY.json and
+TRAIN_COVERAGE_INDEPENDENT_REVIEW.json under drive-teaching-20260906.
+This describes sparse late-drive exposure; it does not prove a causal failure
+or authorize outcome-filtered demonstrations or stage reward coupons.
+
+### D361 — 2026-09-06 — Isolate ordinary demonstration diversity from teacher redesign
+
+Refine D359's preparation order: full observation-only teacher equivalence is
+not a prerequisite for testing ordinary teacher-generated data diversity.
+Retain the exact accepted v4b teacher, including its documented privileged
+inputs, identically in both arms. Do not call it observation-equivalent.
+A different teacher would introduce an additional unmeasured behavior change;
+keep that prototype and learner-state aggregation qualification separate.
+
+Prepare a nested repeat-versus-diversity experiment: original 32 complete train
+sequences repeated eight times versus those 32 plus 32 new unconditional train
+sequences repeated four times. Each arm has 256 full-sequence optimizer updates;
+total decision presentations may differ and must be reported as part of this
+fixed-update estimand. Do not select or rebalance sequences after observing
+length, touchdowns or action mix. Preserve full-match recurrence and all other
+model/loss/optimizer settings. Source-family disjointness, exact generator and
+replay qualification, new seed matrix and finite resource bounds must pass
+before freezing generation/training. No run has launched under this proposal.
+
+### D362 — 2026-09-06 — Teacher prototype differences mostly select exact score ties
+
+Root repeated the disposable teacher decomposition over all 32 original train
+traces: 22,950 original actions reproduce exactly, with no live match/RNG
+mutation or known cheer/cost invariance failure. The candidate changes 3,389
+labels; 3,382 remain exact maxima under the ORIGINAL scorer. Those tied changes
+are 3,242 STEP, 14 JUMP, six BLOCK_TARGET and 120 PUSH_SQUARE choices. Seven
+changes have strictly lower original scores: three ACTIVATE, two DECLARE and
+two BLOCK_TARGET. No setup target changes in this corpus. Root checked action
+names against the enum and corrected the report's initial mislabeling of types
+19 and 21; numeric raw results remain unchanged.
+
+Canonical tie selection alone accounts for all 3,382 tied differences. Hidden
+field normalization with original ordering accounts for seven changes. Thus
+exact target agreement can differ materially between policies that maximize
+the same teacher score, but no model's teacher-equivalent accuracy is measured
+here. This does not explain the observed generalization gap by itself. Keep
+exact-label metrics and eventual exact-max-set agreement distinct, and do not
+silently change the training loss or treat approximate ties as equivalent.
+
+The wrapper is only known-alias-neutralized, not fully observation-equivalent;
+its full-match helper dependencies remain. It is not adopted in D361. Evidence:
+generalization-v2-proposal/TRAIN_REPLAY_DECOMPOSITION_V2.json and corrected
+TRAIN_REPLAY_DECOMPOSITION.md SHA
+39ef35d60282bd7ceef88d04dc42b53c4f67ffcd369b54e5278902386ad4490b.
+
+### D363 — 2026-09-06 — Diversity trainer preserves accepted sequence optimization
+
+Root reviewed the minimal derivative of the accepted full-match trainer and
+repeated its 11 focused tests. The derivative admits exactly 32 sequences over
+eight epochs or 64 over four, both 256 whole-sequence updates. It adds expected
+sequence-count validation and arm metadata. Full BPTT, one zero state per match,
+sequence-normalized conditional CE, seeded epoch order, Adam, clipping, streamed
+train-only access and checkpoint reload behavior are unchanged. Tests include
+exact reference loss/gradient/Adam equivalence and malformed-label/held-out
+refusal. Code lives only in data-diversity-v2-training; old runner is unchanged.
+This qualifies the trainer derivative, not a frozen or completed training run.
+
+Before freezing D361, retain DEV metrics as diagnostics and evaluate ALL four
+accepted trained arms on the predeclared full-game population, regardless of
+DEV exact-label accuracy. D362 shows why a teacher-label gate is not an adequate
+substitute for match utility, and this local 512-game exam is inexpensive.
+Scientific per-seed TD/utility and opponent/side requirements remain unchanged.
+Use the same Random(training_seed + epoch) scheduling rule in both arms; their
+different sequence lists account for ordering differences without a second RNG
+factor. Generation and supervisor preparation remain in progress; no new run.
+
+### D364 — 2026-09-06 — Reject a mistyped generation launch digest before execution
+
+Root's first generation invocation omitted characters from the expected plan
+SHA. The frozen runner rejected it at its initial plan-hash check, before any
+child, matrix execution or payload creation. The only output was FAILURE.json.
+Verified the output directory contained only that record; preserved its bytes
+as data-diversity-v2-generation/REJECTED_PRELAUNCH_DIGEST.json and removed the
+empty output directory. No game or training result exists to retry or replace.
+Invoke the same reviewed plan with its correct independently verified digest;
+this corrects the command, not the frozen experiment or its population.
+
+### D365 — 2026-09-06 — Qualify paired fresh initializations for data diversity
+
+Initialization plan SHA
+bccbbfad67d0cf3fbe8b9b46a9b1d02899427c564466c2340c944bf758b67bd8
+uses the accepted constructor and changes only the new seed pair to 20260909
+and 20260910. Root reviewed the initializer diff; generation completed without
+an optimizer or policy inference. Independent regeneration matches both new
+states tensor-for-tensor, reproduces old 05/06 reference states, confirms all
+nine tensors finite, exact reload, distinct states and all 93 runtime/source
+identity pins current. Independent review SHA
+16e9783b24ab33827a938b35709ff2382819a1051daf90a8aabab709a5c95828.
+Fresh 09 SHA 0b488b11eaa14636aa7576974c11af9cf75dbaec45f06f5454b40b96812c690f;
+fresh 10 SHA 00815e645b457e28ab45060a978b0174f771f4ef411b8b85bef4c016bef88cd6.
+Both arms within each seed will use the same initializer. This establishes no
+training performance or utility claim.
+
+### D366 — 2026-09-06 — Generate the fixed unconditional 32-match diversity addition
+
+After root review, six repeated tests, actual preflight and independent GO,
+the corrected D364 invocation generated all 32 literal new train sequences and
+exactly replay-verified all 24,466 learner decisions. Generation took 0.619s;
+replay verification took 0.524s. All source pins remain unchanged. No development
+or test payload was opened; all outcomes were retained. The new teacher panel
+has W/D/L 2/26/4 and TD 2/5; sequence lengths range from 441 to 1,135 decisions.
+These are corpus properties, not a candidate-policy evaluation or selection.
+
+The basename-only merged corpus contains 64 complete sequences and 47,416
+unique decisions. Root rehashed every merged BBP against its manifest; all
+original 32 are byte-identical copies. The prospective diverse64x4 exposure is
+189,664 decisions versus 183,600 for control32x8, both 256 optimizer updates.
+Manifest SHA e26af2b5824b6cc857a4c67fae574f5225a6c6c04817a01ba6e181db72cc68d6;
+COMPLETE SHA 6faa6645b622530c4a7f7cb893b93cc8e07ce6026b766ebac4353dd1321a3b9a.
+Independent actual-corpus acceptance and final training-supervisor integration
+checks remain pending. No training arm has launched. Additional paid spend $0.
+
+### D367 — 2026-09-06 — Independently accept the merged diversity corpus
+
+Independent review parsed every generated BBP record, checked all planned
+identities and 128 source/copy records, rehashed all source pins, and reran the
+immutable C replay validator read-only. It confirms all 32 new matches and
+24,466 learner actions, exact original nesting and merged 64/47,416 counts.
+The preserved D364 rejected command failed before any child or game; no
+replacement or adaptive game selection occurred. Review artifact:
+data-diversity-v2-generation/GENERATION_ROOT_VERIFIED.json, SHA
+5f0c95b5401c16c8705d21367bbbea9731e3dbb84af5de33e7cd4a2c2bd63c6e.
+The corpus is qualified for a frozen training plan. This does not establish
+learner fit, generalization or full-game utility. Final training-plan review
+and launch remain pending; no paid spend or promotion.
+
+### D368 — 2026-09-06 — Freeze and launch the four-arm data-diversity comparison
+
+Final training plan SHA
+c673302956ec3b152f6fb5cf48389368a0c477b033cbce85e2746542395b4724
+is data-diversity-v2-training/TRAINING_PLAN_V2.json. It pins the corrected
+independent prelaunch review SHA
+0bb2d33908c729a80df867abdab56fce795744a2e83339703e348c6a7ec10bbc,
+all reviewed sources, corpus and initialization evidence. Root repeated all
+16 tests, including a real-artifact freezer-to-controller integration, then
+verified the literal resolved plan and every reviewed source/review hash.
+Earlier TRAINING_PLAN.json was never launched; V2 adds the final independent
+review to the pinned inputs. No scientific setting changed between drafts.
+
+The train-only merged manifest required an explicit trainer validation mode;
+row/group/path/hash validation stays intact. All four accepted trained models
+must enter the predeclared exam regardless of DEV imitation metrics. The
+counterbalanced order is seed09 repeat32, seed09 diverse64, seed10 diverse64,
+seed10 repeat32. Every arm has 256 full-match updates. Control presents183600
+and diversity189664 decisions, using the same initializer within each seed,
+same Random(seed+epoch) shuffle rule and accepted full-match BC semantics.
+
+Local supervision started with PID23198, exec session85365. First arm emitted
+nine finite updates (5959 decisions) at the first root process check. Guards:
+1800s per arm,180s progress silence,4GiB process-group RSS,5GiB disk reserve,
+1GiB output cap. A separate bounded observer session19641 updates the live
+checklist every10s; it never modifies the trainer. Expected combined training
+time is about39 local CPU minutes, actual timings pending. No paid spend or
+promotion; all pinned training source files must now remain unchanged.
+
+### D369 — 2026-09-06 — Qualify the data-diversity evaluation interfaces before results
+
+The new data-diversity-v2-evaluation package is bound to active training plan
+c673302956ec3b152f6fb5cf48389368a0c477b033cbce85e2746542395b4724.
+Root repeated eight focused tests; independent review additionally ran a
+complete temporary freezer-to-actual-evaluator validation using the real
+training-plan structure and immutable parent/runtime/proposal/corpus pins,
+with synthetic four-arm completion records. All four models and 98 live pins
+validate for the exact 512-game population. No game inference occurred.
+Independent prelaunch review SHA
+e50966b8ca34914ca4ade5b5736ad6c065c7f08c20d48a8028ff61ff2589fff2.
+
+Root prepared verify_diversity_evaluation_independent.py, independently
+reconstructing ordered raw games, W/D/L, TDs, fingerprints, pair arithmetic
+and every prospective scientific gate. Reviewer accepts SHA
+4c415626544d64ae00cdba6eb8994217fa5ac8a5650b30be7d7ea01d053143c1.
+Four additional root tests exercise the complete synthetic 512-game producer
+schema, missing-game rejection, nonzero-integrity rejection and incorrect
+scientific-gate rejection despite rehashed completion records. Those synthetic
+raw tests stub runtime identity only; actual runtime/source identity is covered
+by the separate real-parent preflight. The first synthetic fixture used the
+wrong paired-row sorting order and was corrected to the producer's sorted-key
+serialization; no production verifier or game evidence changed.
+
+All four accepted trained models must play bases 2026091501..1504, replicates
+1..8, contact/cage, both sides, greedy exact Torch, stream1, demo0, cap20000.
+The current training process remains live and finite. Completion/checkpoint
+verification and actual evaluation-plan resolution remain pending; no held-out
+inference or performance claim is established by these tests.
+
+### D370 — 2026-09-06 — More independent matches do not guarantee more finishing exposure
+
+A train-only classification of the fixed new32 addition, independently
+reconstructed from all payload hashes and embedded IDs, finds 119 own-carrier
+within-six-square decision records in three new matches, versus 280 in five
+original matches. The combined64 corpus has399 such unique recorded decisions.
+At the frozen repeat counts this becomes1596 near-carrier presentations for
+64x4 versus2240 for32x8. No outcome or stage filtering is applied to change that
+realized difference. The current comparison tests unconditioned match diversity
+at fixed updates, not targeted finishing coverage.
+
+The new32 totals are loose7175, own-far8672, own-near119, opponent-carrier7453,
+off-pitch/in-air1047, sum24466. These are repeated decision-record counts and
+geometric proximity only, not possession rates or scoring feasibility.
+Independent review SHA
+8a349a221beaecebdfebccfb860a34fb3c0368eb7b50b737d738da5cc3e947ac.
+Evidence: DIVERSITY_COVERAGE_INVENTORY.json and
+DIVERSITY_COVERAGE_INDEPENDENT_REVIEW.json. Preserve the active experiment;
+this finding cannot alter its inputs, checkpoints or prospective game exam.
+
+### D371 — 2026-09-06 — First diversity control completes with independently checked execution
+
+The seed20260909 repeat-32 arm completed256 updates and183600 decision
+presentations in622.35 trainer seconds (629.78 supervised seconds). Root
+called the independent arm verifier against the actual immutable per-arm
+STATUS, checking the exact schedule, source/runtime pins, result/trace links,
+optimizer and full-match recurrence declarations, reload equality, and finite
+changed checkpoint tensors. Final checkpoint SHA
+5420a9d9e3f02a77ed2ae29ff29d9f6fa3c54c93d2f50a72bbee9718abc5706c.
+
+DIVERSITY_FIRST_ARM_EARLY_CHECK.json records this deliberately partial check;
+it is not the whole-run root acceptance required by the evaluation freezer.
+The other three arms must finish and pass whole-experiment verification.
+No held-out inference or policy quality claim follows from this check.
+The second arm is running under the same original supervisor; no restart or
+frozen-input modification was performed.
+
+### D372 — 2026-09-06 — Qualify four-model DEV diagnostics without selection authority
+
+The separate data-diversity-v2-dev-diagnostic package binds the exact active
+training plan and requires accepted four-arm controller completion plus root
+verification before resolving checkpoints. Root review strengthened exact plan
+identity and reconstruction of model paths and result/checkpoint hash links.
+The independent reviewer passed the actual freezer-to-validator interface with
+a temporary four-arm completion fixture using real immutable runtime/DEV pins;
+its temporary plan digest was substituted only inside fixture modules.
+
+Root repeated six focused tests and added two independent synthetic-logit
+witnesses for conditional masking, forced versus optional heads, unequal-shard
+decision weighting, per-family counts, and illegal-label rejection. No real
+model inference occurred. The accepted complete-match recurrent forward is
+retained. All four models must use DEV IDs640000000..7 (5128 decisions); this
+diagnostic cannot select checkpoints or alter the mandatory full-game exam.
+
+Independent prelaunch review SHA
+797a6540b895e1538696024e36225f9725f47d87c5c0392669bd72471b8e9143.
+Root verified every reviewed source hash. The600s/8GiB internal guard is
+cooperative only; the actual launch requires an external660s hard timeout and
+process-group termination. Actual plan freeze, inference and result validation
+remain pending. Raw family metrics retain explicit hit/row counts; displayed
+ratios must use those denominators. No performance or promotion is established.
+
+### D373 — 2026-09-06 — Bound DEV inference externally and consolidate measured funding plan
+
+A separate stdlib supervisor provides the reviewed660s external deadline for
+the pending DEV diagnostic. It launches an isolated process group, captures
+logs, rejects nonzero exits, and terminates the whole group even when its leader
+has exited. Four tests exercise successful/nonzero children, a TERM-ignoring
+descendant at timeout, and an orphan after successful leader exit. Independent
+review also passes the actual CLI with temporary exact-hash synthetic plan,
+review and fake runner; no model inference or canonical output occurs.
+Supervisor review SHA
+be1d4ccd73e0e4768535d032c66192a28529e86bfcb2abef511abde6254989cd.
+Supervisor SHA
+a5e01d7a324f9f5df8e1dd6e98e4b3aebca219080b6452ffd7d22457be98a90e
+must be checked by the enclosing launch before invocation. Wrapper completion
+proves process execution only; independent metric validation remains required.
+
+The funding document is consolidated into a single current plan. Its exact
+previous text is archived as training-and-funding-plan-history-2026-09-06.md,
+SHA daf9bc36ddc9ab572bf0b6e7f20b265b614ee3ecfea9e02ce7a0fdf7b71b65f0.
+The first two trainers total21.24 local CPU minutes; their mean projects42.5
+minutes for all four, replacing the earlier39-minute estimate. Actual final
+time and game results remain pending. Additional Vast budget remains zero.
+No scientific ledger entry, frozen experiment, default or promotion changed.
+
+### D374 — 2026-09-06 — Separate active elapsed training time from host sleep
+
+The macOS power log records clamshell sleep at20:37:53, followed by dark wake
+and maintenance sleep during the third diversity arm. Root observed the same
+trainer PID31485 and supervisor PID23198 live; updates advanced normally on
+resumption without restart. At one check ps elapsed was41m9s while trainer
+elapsed was673.36 seconds. Frozen guards and trainer telemetry use monotonic
+time, which on this host excludes the observed system-sleep interval.
+
+DIVERSITY_HOST_SLEEP_OBSERVATION.json SHA
+e7ead43022063152f081c97e75ced245070c37558758f4184870d6ddfd69bc0c records the operational evidence.
+Report active elapsed time and total civil wall time separately; earlier
+42.5-minute extrapolation describes active elapsed time, not delivery time
+through a closed-lid interval or summed process CPU time. The pending external
+DEV subprocess timeout is likewise a hard execution timeout in monotonic time,
+not a guarantee of termination while the machine is asleep. No threshold,
+training input, result, process or scientific acceptance rule was changed.
+
+### D375 — 2026-09-06 — Account for actual match-normalized supervised loss exposure
+
+The accepted sequence_forward sums each conditional head cross-entropy and
+divides the sum by match decision count. Independent agent accounting and
+root reconstruction from every pinned train payload agree: both32x8 and64x4
+have256 match updates, total prescribed record coefficient256 and nominal
+three-head coefficient768. Optional type/argument/square coefficients are
+188.973/85.687/129.954 for control and188.889/85.441/129.746 for diversity.
+Root checks all19/20 observed action families, all ball stages, exact headers,
+embedded IDs, manifest counts, and pre/post payload hashes.
+
+Geometric own-carrier-within-six coefficient falls from2.563697541 to
+1.882256546 (about26.58 percent lower), despite280 to399 unique near records.
+This refines the earlier raw presentation-count comparison; it is not actual
+loss, gradient magnitude, scoring feasibility, possession rate or causality.
+Singleton legal heads have zero immediate conditional CE/logit gradient, but
+forced decisions can still affect recurrent state and later gradients.
+No loss coefficient, data, teacher, checkpoint, epoch count or game exam changes.
+
+DIVERSITY_LOSS_EXPOSURE_AUDIT.json SHA
+cb36f913b6c202ee4e6fd33d7408c6698554bec8f2c5fdcf2b3e1e9cc7e20aed.
+DIVERSITY_LOSS_EXPOSURE_ROOT_VERIFIED.json SHA
+592337cd73d2d5536e6fad360c2d6ece14c2d001bf08ea6b4235692c19672d98.
+
+### D376 — 2026-09-06 — Accept four-arm training execution and launch the fixed full-game exam
+
+All four trainers and the original supervisor completed with exit0. Root and
+an independent reviewer accept the exact1024 update schedules, paired
+initializers, full-match recurrent/loss/optimizer contract, finite changed
+weights, exact checkpoint reload parity, empty stderr, and unchanged pins.
+Control arms each present183600 decisions; diversity arms each189664.
+Controller COMPLETE SHA6ced2864271eede0e25ba71f238e16692063b6f92713f48ddab10ebe1f7027f3.
+Root proof SHA17d8280c7810ffcada1d07c61337835347e8101a5837b95da961b3c91ac49f35.
+Independent training review SHAd3441b3698866c9e7c6db070d3b83313a82a9608e609fb3a1cde6abce8fb45f2.
+
+Final trainer-result elapsed times (including final fit/reload) sum to
+3074.649 seconds (51.244 minutes) of active elapsed time.
+Civil wall time includes the D374 host-sleep interval and is not this value.
+Training accuracy is descriptive on different training populations and cannot
+select a model or replace the full-game comparison.
+
+All four exact finals entered the predeclared512-game exam under resolved
+plan3ea2e9d1fe84eaf9d58214879a553886ae6adeb2322f29df7bfab492125c5d0d.
+Actual validator and live runtime pass. Independent exact-plan prelaunch review
+SHAdea3977b33c86d1b9111757a46aae6f329168a37a005d95127780d826309ad95.
+Evaluation session86405 is running; no game result is accepted by this entry.
+The DEV plan386419b2eb8901a2bb427a3e6cae9c96c864519bbe426364fd3401ea47047c1b
+is separately frozen and validated, but not inferred. No paid spend, default
+change or promotion occurs.
+
+### D377 — 2026-09-06 — Broader demonstrations improve draw utility but fail scoring gate
+
+The fixed512-game evaluation completed with exit0. Root and independent raw
+reconstruction accept all natural terminals, all seven exact-zero integrity
+counters, matched starting fingerprints, exact512 rows/256 pairs, checkpoint
+and runtime/source provenance, and unchanged evidence.
+
+Seed20260909: repeat32 W/D/L0/42/86 TD0/123; diverse64 0/49/79 TD0/115.
+Seed20260910: repeat32 W/D/L0/46/82 TD0/119; diverse64 0/54/74 TD0/113.
+Diverse-minus-repeat normalized match utility improves by0.02734375 and
+0.03125 respectively, combined0.029296875. Utility improves in each style
+and side when combined across seeds. Neither arm scores any learner touchdown.
+The prospective positive-learner-TD-each-seed gate FAILS, so confirmation_passed
+is false. Positive draw utility cannot replace the failed scoring requirement.
+This is descriptive two-seed scripted-opponent evidence, not local competence
+or promotion authority.
+
+Controller completion SHAbb40f9db3039d8eb777d8f47d085ede9a474f35ba4064a292342ea5e615332b4.
+Root raw proof SHA1439062dfdf5a80aae61bddb10b2ac81ec8c77a1b7f3f424cc5d7a18062d7311.
+Independent result review SHA371b98314ee62ed782d69d11c9da5695545379dd91682865df3fc5a7235a5995.
+The separately frozen DEV diagnostic completed under the reviewed supervisor;
+its reporting arithmetic and provenance review remain pending in this entry.
+Next work should locate ball acquisition/progression/finishing failure in these
+actual policies before choosing targeted loss weighting or a new teacher.
+No paid spend, reward/default change, deployment or promotion occurs.
+
+### D378 — 2026-09-06 — Broader data improves DEV imitation without resolving full-game scoring
+
+The frozen four-model DEV diagnostic completed under external supervision
+with exit0 in7.991 active elapsed seconds. All four models used the same
+eight already-observed DEV matches (5128 decisions/model), with accepted
+full-match recurrence and conditional masks. No optimizer or test inference
+occurred. Root and independent verifier review accept actual runtime/native
+bytes, plan/review/checkpoint/producer links and independently reconstructed
+per-sequence arithmetic. This verifies reporting, not a second forward pass.
+
+Seed20260909 repeat-to-diverse exact action accuracy:0.514040562 to0.545241810;
+NLL1.582335837 to1.457009649. Seed20260910:0.511115445 to0.535101404;
+NLL1.599292367 to1.449686249. Both DEV fits improve, but D377 still records
+zero learner TDs and the failed prospective scoring gate. Do not replace that
+outcome with imitation accuracy or choose a checkpoint using this diagnostic.
+
+Result SHAa043089b8ddc7fccdbca7e7e5160712fd6e0a1c794f5751c9e484456f337c62b.
+Independent verifier review SHA9dbfbd0f501c3fa8ae3cac8cfa520a2a01d9dd738c70eaf6bbdee8e0d11237f9.
+Root proof SHA7e2ed8ebd899145c61456df13bdaf5c1b7a45d3239d65ed865e605537c2467ec.
+Verifier12c6bf94cb2c996bb0ef96e1a7c8d071279b81c2cb24a7596a0ce8453afc3e77
+passes9 focused tests, including real supervisor/runtime schema, sorted model
+keys, pinned native bytes, exact per-shard counts and contradictory summaries.
+
+The next diagnostic panel is frozen before implementation:
+failure-stage-v2-proposal/PANEL.json SHA
+d5de0fc0899367aaf63a1ddf5fff7624bc109202d91ecaea7b4070506f21ef54.
+It selects all4 models, all4 accepted base seeds, both styles/sides, replicate1
+by structure:64 observed games,16 paired keys per training seed,32 pairs total.
+Exact original observation/action trace and raw-summary parity are required
+before telemetry interpretation. Active learner-turn observations must remain
+separate from reactive opponent-turn decisions; milestones are not strict
+prerequisites. Only the panel/proposal exist; implementation and review are
+next, and no rerun inference or new training has been launched.
+
+### D379 — 2026-09-06 — Failure-stage observer qualifies without changing the accepted game producer
+
+The derivative observer includes the unchanged accepted kickoff bridge and
+adds read-only getters. Nested declarations use bbe_declared_act_kind;
+active mover, carrier, active team and decision team remain separate.
+Team-turn denominators require a TEAM_TURN frame in the procedure stack.
+Post-terminal board getters return invalid sentinels so automatic next-game
+reset state cannot enter possession or movement diagnostics. Scoring support
+means an engine-legal carrier end-zone STEP attempt, never guaranteed success.
+The accepted bridge has macro_moves=0; conditional support must equal the raw
+projected legal set under that explicit contract.
+
+The exact native subset compiled cleanly with the accepted clang flags.
+Controlled getter fixtures and the no-neural natural-game terminal smoke pass;
+all54 native/fixture/engine input pins are unchanged before and after.
+Native qualification receipt SHA
+fac35e5a8618d808a21a69cc64366b8b09a6bd55b934370055dcfc9bb59f9219.
+Derivative binary SHA
+630e7130a2b16158ea54158ed90ae11fe08c104b2d611afba2f342d6a5906dbc.
+
+Root additionally exercised the complete Python snapshot path on four natural
+first-legal-policy games spanning both sides and contact/cage opponents:
+2205 boundaries, including3 opponent-active reactions. Repeated snapshots and
+conditional masks preserve the full internal-state digest; every support set
+matches and every terminal passes zero integrity counters. Accepted proof SHA
+a5bf5815cd073ddf05bec56216ab24aa5360a71bca9dc127a74c97926456e53b.
+An earlier identical probe completed its game checks but was rejected because
+Python source changed concurrently; its original failure artifact is retained.
+
+This qualifies observation instrumentation, not neural strength or the complete
+run controller. V5/RUN_PLAN_V1 was rejected before launch: its child validation
+requires an absent supervisor directory after the supervisor legitimately
+creates it. Correct the lifecycle and test the real startup sequence before
+rerunning the frozen64-game panel. No model inference, new training, reward
+change, paid spend, commit, deployment or promotion occurred in this stage.
+
+### D380 — 2026-09-07 — Exact-trace panel locates the observed failure before carrier scoring attempts
+
+The final V6 observer reran all64 structurally selected games with the four
+accepted checkpoints. All32791 learner boundaries reproduce the original
+observation/action trace SHA, and all raw game fields match exactly. Every
+game ends naturally with the seven integrity counters exactly zero. The
+runner completed in33.595 active seconds; diagnostic payload size is219478842
+bytes. No optimizer or checkpoint change occurred.
+
+The supervisor failed after successful child exit and an absent-process-group
+check: its final validator references nonexistent sources.native_module in the
+accepted evaluation plan. The original FAILURE remains authoritative and is
+not replaced with SUCCESS. A separate independently reviewed recovery validates
+the actual accepted runtime, exact original command and narrow error, pinned
+control flow, complete source/payload closure, all64 rows and32791 decisions,
+with identical pre/post snapshots. Retrospective PID observation is unavailable;
+clean child exit/group evidence is from the frozen reviewed control flow.
+Recovery SHA79eef58e077fd1b903c70055b238715a58af5decbfaca2fbe91b41fdbb28a676.
+Recovered independent raw proof SHA
+62c5175e853232367e6ba277f41bddb18b7c89851db43c378057ed1395a1df20.
+The raw verifier independently checks legal support, teacher-independent
+scoring-attempt flags, exact decision coverage and boundary telemetry.
+
+Observed possession occurs in28/64 games: repeat09 9/16, diverse09 6/16,
+repeat10 5/16, diverse10 8/16. Corresponding observed learner team-turn keys
+with possession are25/256,15/253,6/253 and31/254. These are boundary-observed
+counts, not continuous possession or a reward target. Only one game (repeat09)
+reaches carrier distance8 or less; it reaches3. No game presents a legal
+carrier end-zone STEP attempt. This does not rule out other scoring actions,
+and the unobserved final routed interval is not assigned an action-level cause.
+The diagnostic does not establish that finishing labels or reward weights
+caused the lack of scoring.
+
+Next test a controlled continuation using teacher labels on learner-visited
+states versus labels on teacher-visited states, keeping the accepted teacher,
+paired starting checkpoints, optimizer and update budget fixed. Treat state
+visitation mismatch as a hypothesis, not a demonstrated mechanism. Qualify
+counterfactual teacher queries and teacher-conditioned legal masks first.
+This one-batch continuation is not full cumulative DAgger. Positive touchdowns
+remain necessary before any full-game competence or goal-completion claim.
+No reward/default change, paid spend, commit, deployment or promotion occurs.
+
+### D381 — 2026-09-07 — Actual teacher-label corpus roundtrip preserves counterfactual conditional masks
+
+The new isolated teacher-label corpus writer is qualified on the complete
+historical game1 sequence, using qualification-only ID699000001. All576
+selected-coach decisions load through the accepted recurrent training reader.
+There are363 teacher/actor disagreements and34 teacher labels unsupported by
+the actor-conditioned mask. The first actual conflict is decision17. Each BBP
+record uses its teacher-conditioned mask; original actor actions and masks are
+retained separately for replay. Substituting the real actor mask causes the
+accepted reader to reject the payload. Root independently reloaded every label,
+rejected the wrong-mask payload, and verified all input/output hashes unchanged.
+Root proof SHA82d29df95ef599813153aad91e06f6b9fb02865f911181ddd7884e67fcbffed4.
+Qualification SHA3c2a367ad2871913bf66d83b236e6a54246dfd1e0e847a53345f5b3e1d39c4a8.
+
+Metadata requires exactly seven finite-zero integrity counters, consistent
+coach/side, and explicit IDs. The paired starting checkpoint is recorded for
+both arms; acting checkpoint is null for the scripted teacher and matches the
+paired start for the frozen learner. Empty integrity metadata, contradictory
+side, and mismatched learner checkpoint fail with retained failure artifacts.
+Synthetic format tests are not engine-legality witnesses; the historical
+native-to-reader roundtrip supplies the actual action/mask witness.
+
+This qualifies the corpus I/O component, not the fresh collection supervisor
+or a training result. The fixed continuation protocol remains not runnable
+until collection runtime, lifecycle and complete-game checks pass. No fresh
+collection, training, reward/default change, paid spend, commit or promotion
+occurred in this qualification.
+
+### D382 — 2026-09-07 — Native counterfactual teacher queries pass complete historical replay qualification
+
+Independent review accepts V9 across64 historical games and32791 learner
+boundaries, including59 reactions and2522 boundaries outside TEAM_TURN.
+All113 input pins remain current and pre/post snapshots are byte-identical.
+Every teacher query succeeds, cached and regenerated legal-list teacher choices
+agree, and exactly one distinct native action projects to each teacher tuple.
+There are308 rows with repeated identical native actions. These are legal
+under the accepted decoder and must not be confused with distinct-action
+projection collisions. The JUMP destination witness needs no engine change.
+
+There are2745 teacher choices rejected by the actor-conditioned mask,2745 type
+disagreements and4549 argument disagreements. This validates the requirement
+for separately conditioned teacher masks; these rows must not be dropped.
+The accepted component uses isolated match/legal copies and checks query purity
+before continuing the original actor action. Internal wrapper/RNG hashes contain
+pointers and remain same-process witnesses, not portable state serialization.
+Independent review SHA
+72ada93a022837c27b7010b8e70eeb4d4e15a80eeba169ac2aebc956765baeb2.
+Qualification result SHA
+ db1e1ec9e30249b5b5c14a96c07ed32cda2ffb2d39a2570e68cf272af4cc2bca.
+
+This accepts the query component only. Fresh collection still requires its
+complete runner/supervisor qualification. No fresh model inference, training,
+reward/default change, paid spend, commit or promotion occurs here.
+
+### D383 — 2026-09-07 — Size collection storage from measured complete evidence before launch
+
+The historical576decision collection fixture occupies11249694 bytes including
+actor trace, labels, BBP and audit copies. Linear128game extrapolation is
+1439960832 bytes (about1.34GiB), exceeding the original1GiB estimate before
+any fresh collection. Preserve all rows and evidence. The separately frozen
+operational amendment allows8GiB for the complete collection batch, with5GiB
+free-space reserve. Training and evaluation each retain their1GiB output cap.
+Available local capacity at measurement is about44.87GiB; paid spend stays0.
+
+The amendment changes no scientific factor, seed, population, optimizer,
+update count or advancement gate. Original protocol remains immutable.
+Amendment SHA00088d3cbebbab47281c97ddf0151ddd8b42904415608fe39340bf426d4f25e2.
+The final runnable collector must pin the amendment and monitor the whole
+collection output tree, including aggregate copies.
+
+### D384 — 2026-09-07 — Freeze possession gate denominators before fresh data
+
+The continuation protocol phrase observed learner-active TEAM_TURN possession
+fraction is clarified before fresh collection, training or evaluation. Use the
+proposal's active turns ever owning and D380's exact unique keys: per game,
+collect (half, drive, turn[learner side]) at live selected-coach boundaries
+where in_team_turn=1 and active_team=learner side. Denominator is the number
+of observed keys; numerator is the number with at least one owned-ball
+boundary (ball_state=HELD=2 and carrier_team=learner side). Sum the integer
+numerators and denominators across each fixed32game panel. Compare the arms
+by exact cross-products, requiring positive denominators.
+
+Games ever owning still counts any live selected-coach boundary, including
+reactions. Decision-boundary ownership counts remain separately reported
+diagnostics; their ratio must not replace the unique-turn gate. This avoids
+silently weighting a turn more because one policy emits more decisions.
+Hidden terminal-reset state is excluded. These are observed ownership
+measures, not continuous possession, rewards or causal proof.
+Clarification SHA
+7d26e4ea67847dc0c1956af370239822b4c5667d9df14c0858163ec9d7795126.
+Original protocol remains immutable; all other scientific factors and gates
+remain unchanged. No fresh collection or training has started.
+
+### D385 — 2026-09-11 — Qualified collection runner launched for fixed teacher-label continuation
+
+Root completed the collection runner's shared-process-group wiring: the outer
+supervisor owns one group containing batch, per-game supervisor and game worker.
+A real leader/descendant test confirms whole-group cleanup. The accepted trainer
+loads/preflights a batch-produced manifest row and its complete576decision BBP.
+Six focused tests pass; the complete historical supervised path exits0 with
+validated completion. Independent V10 source review finds no launch blocker.
+The runnable plan differs only in status and exact absent output path from
+reviewed candidateV10. All source/runtime/protocol pins remain current.
+
+Runnable plan SHA
+18977e01e2ca73c70f81b48024352d72ac614c898673812e637a50a1bbcc4243.
+Root preflight SHAc85e2d97663c0126732e0e4b0d679253936728692e67f3ab031b6b3694eefc1b.
+Collection launched under outer supervision, session9919, output
+`audit-artifacts/drive-teaching-20260906/teacher-label-collected-v1`.
+Exactly128 fresh games, four32sequence corpora; local CPU8threads,8GiB output
+cap and5GiB reserve. No optimizer step has started. Training requires complete
+accepted corpora with all full-match lengths within the qualified trainer bound.
+No row dropping, truncation, replacement, paid spend or promotion is permitted.
+
+### D386 — 2026-09-11 — Full teacher/learner-state collection accepted; continuation plan frozen
+
+All128 fixed natural games completed in532.430 active seconds under the clean
+shared-process-group supervisor. The four32game corpora contain80342 decisions:
+09teacher25425,09learner15849,10learner13665,10teacher25403. Maximum sequence
+lengths are1182,740,657,1228; all fit the unchanged2048decision full-BPTT bound.
+All game integrity counters are exactly zero. Root independently parsed every
+BBP row and matched actor trace, labels, separate masks, descriptors, matrix,
+terminal records and source/runtime identities. Teacher-played labels exactly
+match their actor actions. Learner-state labels disagree9212 and7789 times;
+1707 and1220 labels respectively need different actor-conditioned masks.
+
+Collection completion SHA
+76d3c84e55814452df76c089ab725bf8a1985e76b58577533baab698fdb50e68.
+Clean supervision SHA
+84a3cdc7407cd57bbc5cf5209cf0a763c977b41db6a30dcd0537359f71c7cef0.
+Root raw proof SHA
+bd5630c25bd8e8fbcbdccdf1247d1bd72acfc391e18dd61aea5c50fa5dd56a47.
+Payload size1836629996bytes, below8GiB. No row was dropped or truncated.
+
+Actual trainer manifest/loader preflight passes all128 complete sequences.
+Training plan897b9a6e069fe96bba8fa9be31d83d8cc4ac916072c25e5b8495584948255efc
+pins649 new evidence/source files in addition to inherited runtime identities.
+It freezes four128update arms and321368 total decision presentations, fresh
+Adam state, unchanged sequence-normalized full-BPTT objective and paired starts.
+Teacher/learner sequence lengths differ as an outcome of the visitation factor;
+update counts are matched, not decision counts. No strength claim follows from
+collection or supervised agreement. Paid spend remains0; no promotion.
+
+### D387 — 2026-09-11 — Paired teacher-label continuation training started
+
+Independent launch review rehashes649 pins and confirms all four actual32game
+manifests, paired starting weights, literal commands, freshAdam semantics and
+absent outputs. Actual controller preflight passes. Root launched the fixed
+four-arm supervisor as session17971 under plan897b9a6e069fe96bba8fa9be31d83d8cc4ac916072c25e5b8495584948255efc.
+The first arm has produced real optimizer updates with finite gradients and
+parameters. This is running training, not yet an accepted result. All512updates,
+final reload checks and unchanged pins must pass before the192game exam.
+LocalCPU8threads; paidspend0. No checkpoint/default promotion or commit.

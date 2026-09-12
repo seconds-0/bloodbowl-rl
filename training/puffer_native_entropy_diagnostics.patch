@@ -1,0 +1,252 @@
+diff --git a/src/bindings.cu b/src/bindings.cu
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -597,6 +597,44 @@ py::dict qualification_int_tensor(
+     return result;
+ }
+ 
++py::dict qualification_float_tensor(
++        const char* name, FloatTensor& tensor,
++        size_t* used_bytes, size_t max_bytes) {
++    py::dict result;
++    result["name"] = name;
++    result["dtype"] = "f32";
++    result["shape"] = qualification_shape(tensor.shape);
++    result["present"] = tensor.data != nullptr;
++    if (tensor.data == nullptr) {
++        result["data"] = py::bytes();
++        result["bytes"] = 0;
++        return result;
++    }
++    int64_t elements = numel(tensor.shape);
++    if (elements <= 0 ||
++            static_cast<uint64_t>(elements) >
++                static_cast<uint64_t>(std::numeric_limits<size_t>::max() /
++                                      sizeof(float))) {
++        throw std::runtime_error(
++            "qualification float tensor shape is invalid");
++    }
++    size_t nbytes = static_cast<size_t>(elements) * sizeof(float);
++    if (nbytes > max_bytes || *used_bytes > max_bytes - nbytes) {
++        throw std::runtime_error(
++            "entropy gradient evidence exceeds qualification byte limit");
++    }
++    std::vector<char> host(nbytes);
++    if (cudaMemcpy(host.data(), tensor.data, nbytes,
++            cudaMemcpyDeviceToHost) != cudaSuccess) {
++        throw std::runtime_error(
++            "qualification float tensor copy failed");
++    }
++    *used_bytes += nbytes;
++    result["data"] = py::bytes(host.data(), nbytes);
++    result["bytes"] = nbytes;
++    return result;
++}
++
+ py::dict qualification_snapshot(
+         py::object pufferl_obj,
+         size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES) {
+@@ -670,6 +708,191 @@ py::dict qualification_snapshot(
+     return result;
+ }
+ 
++py::dict qualification_entropy_gradient_state(
++        py::object pufferl_obj,
++        size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
++    if (max_bytes == 0 || max_bytes > QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++        throw std::runtime_error(
++            "invalid entropy gradient evidence byte limit");
++    }
++    if (USE_BF16 || pufferl.is_continuous) {
++        throw std::runtime_error(
++            "entropy gradient evidence requires a discrete fp32 policy");
++    }
++    if (pufferl.training_failed ||
++            pufferl.defer_entropy_schedule_commit ||
++            pufferl.entropy_schedule_commit_pending) {
++        throw std::runtime_error(
++            "entropy gradient evidence requires a successful committed update");
++    }
++    if (pufferl.current_ent_epoch < 0 ||
++            pufferl.current_ent_epoch == std::numeric_limits<long>::max() ||
++            pufferl.epoch != pufferl.current_ent_epoch + 1 ||
++            pufferl.entropy_schedule_update_count != 1 ||
++            pufferl.entropy_loss_minibatch_count != 1 ||
++            !pufferl.entropy_schedule_valid) {
++        throw std::runtime_error(
++            "entropy gradient evidence requires one unread public update");
++    }
++    if (pufferl.hypers.total_agents <= 0 || pufferl.hypers.horizon <= 0 ||
++            pufferl.hypers.total_agents >
++                std::numeric_limits<int>::max() / pufferl.hypers.horizon) {
++        throw std::runtime_error(
++            "entropy gradient evidence has an invalid batch shape");
++    }
++    int full_batch =
++        pufferl.hypers.total_agents * pufferl.hypers.horizon;
++    if (pufferl.hypers.minibatch_size != full_batch) {
++        throw std::runtime_error(
++            "entropy gradient evidence requires a full-batch minibatch");
++    }
++    double minibatches_real =
++        static_cast<double>(pufferl.hypers.replay_ratio) *
++        static_cast<double>(full_batch) /
++        static_cast<double>(pufferl.hypers.minibatch_size);
++    if (!std::isfinite(minibatches_real) ||
++            std::floor(minibatches_real) != 1.0) {
++        throw std::runtime_error(
++            "entropy gradient evidence requires exactly one minibatch");
++    }
++    if (pufferl.train_activations.decoder == nullptr) {
++        throw std::runtime_error(
++            "entropy gradient decoder activation is unavailable");
++    }
++    DecoderActivations* decoder = reinterpret_cast<DecoderActivations*>(
++        pufferl.train_activations.decoder);
++    if (decoder->out.data == nullptr ||
++            pufferl.ppo_bufs_puf.grad_logits.data == nullptr ||
++            pufferl.ppo_bufs_puf.grad_values.data == nullptr ||
++            pufferl.train_buf.mb_actions.data == nullptr ||
++            pufferl.train_buf.mb_logprobs.data == nullptr ||
++            pufferl.train_buf.mb_advantages.data == nullptr ||
++            pufferl.train_buf.mb_prio.data == nullptr ||
++            pufferl.train_buf.mb_action_mask.data == nullptr ||
++            pufferl.act_sizes_puf.data == nullptr ||
++            pufferl.ppo_bufs_puf.ent_coef.data == nullptr) {
++        throw std::runtime_error(
++            "entropy gradient evidence tensors are incomplete");
++    }
++    if (cudaDeviceSynchronize() != cudaSuccess) {
++        throw std::runtime_error(
++            "entropy gradient evidence synchronization failed");
++    }
++    if (ndim(decoder->out.shape) != 2 ||
++            decoder->out.shape[0] != full_batch ||
++            decoder->out.shape[1] <= 1 ||
++            ndim(pufferl.ppo_bufs_puf.grad_values.shape) != 3 ||
++            pufferl.ppo_bufs_puf.grad_values.shape[0] !=
++                pufferl.hypers.total_agents ||
++            pufferl.ppo_bufs_puf.grad_values.shape[1] !=
++                pufferl.hypers.horizon ||
++            pufferl.ppo_bufs_puf.grad_values.shape[2] != 1) {
++        throw std::runtime_error(
++            "entropy gradient evidence has an invalid logical shape");
++    }
++    PrecisionTensor decoder_output = {
++        .data = decoder->out.data,
++        .shape = {pufferl.hypers.total_agents, pufferl.hypers.horizon,
++                  decoder->out.shape[1]},
++    };
++    FloatTensor grad_values = {
++        .data = pufferl.ppo_bufs_puf.grad_values.data,
++        .shape = {pufferl.hypers.total_agents, pufferl.hypers.horizon},
++    };
++    size_t used = 0;
++    py::dict tensors;
++    tensors["decoder_output"] = qualification_precision_tensor(
++        "decoder_output", decoder_output, &used, max_bytes);
++    tensors["grad_logits"] = qualification_float_tensor(
++        "grad_logits", pufferl.ppo_bufs_puf.grad_logits, &used, max_bytes);
++    tensors["grad_values"] = qualification_float_tensor(
++        "grad_values", grad_values, &used, max_bytes);
++    tensors["mb_actions"] = qualification_precision_tensor(
++        "mb_actions", pufferl.train_buf.mb_actions, &used, max_bytes);
++    tensors["mb_logprobs"] = qualification_precision_tensor(
++        "mb_logprobs", pufferl.train_buf.mb_logprobs, &used, max_bytes);
++    tensors["mb_advantages"] = qualification_precision_tensor(
++        "mb_advantages", pufferl.train_buf.mb_advantages, &used, max_bytes);
++    tensors["mb_prio"] = qualification_precision_tensor(
++        "mb_prio", pufferl.train_buf.mb_prio, &used, max_bytes);
++    tensors["mb_action_mask"] = qualification_precision_tensor(
++        "mb_action_mask", pufferl.train_buf.mb_action_mask, &used, max_bytes);
++    tensors["act_sizes"] = qualification_int_tensor(
++        "act_sizes", pufferl.act_sizes_puf, &used, max_bytes);
++    tensors["entropy_coefficient"] = qualification_float_tensor(
++        "entropy_coefficient", pufferl.ppo_bufs_puf.ent_coef,
++        &used, max_bytes);
++    py::dict result;
++    result["contract"] = "ppo-entropy-preclip-gradient-v1";
++    result["completed_update_index"] = pufferl.current_ent_epoch;
++    result["committed_epoch"] = pufferl.epoch;
++    result["is_continuous"] = pufferl.is_continuous;
++    result["precision"] = "f32";
++    result["max_bytes"] = max_bytes;
++    result["used_bytes"] = used;
++    result["tensors"] = tensors;
++    return result;
++}
++
++py::dict qualification_graph_execution(py::object pufferl_obj) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
++    if (cudaDeviceSynchronize() != cudaSuccess) {
++        throw std::runtime_error(
++            "qualification graph-execution synchronization failed");
++    }
++    bool rollout_handles = pufferl.fused_rollout_cudagraphs != nullptr;
++    if (rollout_handles) {
++        int count = pufferl.hypers.horizon * pufferl.hypers.num_buffers;
++        for (int i = 0; i < count; i++) {
++            if (pufferl.fused_rollout_cudagraphs[i] == nullptr) {
++                rollout_handles = false;
++                break;
++            }
++        }
++    }
++    bool tail_handles = pufferl.tail_rollout_cudagraphs != nullptr;
++    if (tail_handles) {
++        for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
++            if (pufferl.tail_rollout_cudagraphs[i] == nullptr) {
++                tail_handles = false;
++                break;
++            }
++        }
++    }
++    py::dict captured;
++    captured["rollout"] = pufferl.rollout_captured;
++    captured["tail"] = pufferl.tail_captured;
++    captured["train"] = pufferl.train_captured;
++    py::dict handles;
++    handles["rollout"] = rollout_handles;
++    handles["tail"] = tail_handles;
++    handles["train"] = pufferl.train_cudagraph != nullptr;
++    py::dict graph_counts;
++    graph_counts["rollout"] = pufferl.qualification_execution_counts[
++        QUAL_GRAPH_ROLLOUT].load(std::memory_order_relaxed);
++    graph_counts["tail"] = pufferl.qualification_execution_counts[
++        QUAL_GRAPH_TAIL].load(std::memory_order_relaxed);
++    graph_counts["train"] = pufferl.qualification_execution_counts[
++        QUAL_GRAPH_TRAIN].load(std::memory_order_relaxed);
++    py::dict eager_counts;
++    eager_counts["rollout"] = pufferl.qualification_execution_counts[
++        QUAL_EAGER_ROLLOUT].load(std::memory_order_relaxed);
++    eager_counts["tail"] = pufferl.qualification_execution_counts[
++        QUAL_EAGER_TAIL].load(std::memory_order_relaxed);
++    eager_counts["train"] = pufferl.qualification_execution_counts[
++        QUAL_EAGER_TRAIN].load(std::memory_order_relaxed);
++    py::dict result;
++    result["cudagraphs"] = pufferl.hypers.cudagraphs;
++    result["captured"] = captured;
++    result["handles_ready"] = handles;
++    result["graph_launch_counts"] = graph_counts;
++    result["eager_execution_counts"] = eager_counts;
++    return result;
++}
++
+ pybind11::dict train(pybind11::object pufferl_obj) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
+     require_idle_entropy_transaction(pufferl);
+@@ -1241,5 +1464,11 @@ PYBIND11_MODULE(_C, m) {
+     m.def("qualification_snapshot", &qualification_snapshot,
+         py::arg("pufferl"), py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
++    m.def("qualification_entropy_gradient_state",
++        &qualification_entropy_gradient_state,
++        py::arg("pufferl"),
++        py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
++    m.def("qualification_graph_execution", &qualification_graph_execution,
++        py::arg("pufferl"));
+     m.def("train", &train);
+     m.def("close", &puf_close);
+     m.def("save_weights", &save_weights);

@@ -249,11 +249,14 @@ class QualificationValidatorTests(unittest.TestCase):
 
         baseline = {
             "host": "rtx2070", "gpu": "RTX 2070", "precision_bytes": 4,
+            "measurement_contract": (
+                "lr0-rollout-plus-train-tail-consumption-v1"),
             "config": {"cudagraphs": 10, "vec": {"total_agents": 4096}},
             "steps_per_second": 1000.0,
             "hard_integrity_zero": True,
             "steps": 1000, "elapsed_seconds": 1.0,
-            "median_rollout_seconds": 0.1, "p95_rollout_seconds": 0.2,
+            "median_update_cycle_seconds": 0.1,
+            "p95_update_cycle_seconds": 0.2,
             "hard_integrity": {
                 key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS
             },
@@ -384,9 +387,60 @@ class QualificationValidatorTests(unittest.TestCase):
         )
 
         self.assertEqual(backend.rollouts.call_count, 16)
+        self.assertEqual(backend.train.call_count, 16)
+        self.assertEqual(
+            backend.method_calls,
+            [call for _ in range(16) for call in (
+                mock.call.rollouts(pufferl), mock.call.train(pufferl))]
+            + [mock.call.log(pufferl)],
+        )
         backend.log.assert_called_once_with(pufferl)
         self.assertEqual(record["hard_integrity"], integrity)
         self.assertIs(record["hard_integrity_zero"], True)
+
+    def test_integrity_probe_never_overwrites_or_reuses_a_training_tail(self):
+        integrity = {key: 0.0 for key in self.q.HARD_INTEGRITY_KEYS}
+
+        class StrictBackend:
+            def __init__(self):
+                self.tail_owned = False
+                self.calls = []
+
+            def rollouts(self, owner):
+                if self.tail_owned:
+                    raise AssertionError("overwrote unconsumed tail")
+                self.tail_owned = True
+                self.calls.append("rollouts")
+
+            def train(self, owner):
+                if not self.tail_owned:
+                    raise AssertionError("trained without fresh tail")
+                self.tail_owned = False
+                self.calls.append("train")
+
+            def log(self, owner):
+                self.calls.append("log")
+                return {"env": integrity}
+
+        backend = StrictBackend()
+        self.q.bind_transition_integrity(
+            backend, object(), {}, additional_rollouts=3)
+        self.assertEqual(
+            backend.calls,
+            ["rollouts", "train", "rollouts", "train", "rollouts", "train", "log"],
+        )
+        self.assertIs(backend.tail_owned, False)
+
+    def test_tail_consumption_diagnostics_require_literal_zero_learning_rate(self):
+        self.q.require_zero_learning_rate(
+            {"train": {"learning_rate": 0.0}}, "test")
+        for config in (
+            {"train": {"learning_rate": 1e-9}},
+            {"train": {}},
+            {},
+        ):
+            with self.assertRaises(self.q.QualificationError):
+                self.q.require_zero_learning_rate(config, "test")
 
     # --------------------------------------------------- compiled provenance
 
@@ -423,6 +477,54 @@ class QualificationValidatorTests(unittest.TestCase):
             with self.assertRaises(self.q.QualificationError):
                 self.q.backend_source_hash(puffer)
 
+    def test_backend_registry_is_canonical_and_tamper_changes_digest(self):
+        self.assertEqual(
+            self.q.BACKEND_SOURCE_FILES,
+            self.q.load_backend_source_registry(
+                self.q.BACKEND_SOURCE_REGISTRY),
+        )
+        self.assertEqual(len(self.q.BACKEND_SOURCE_FILES), 15)
+        with tempfile.TemporaryDirectory() as temporary:
+            puffer = pathlib.Path(temporary)
+            for index, relative in enumerate(self.q.BACKEND_SOURCE_FILES):
+                source = puffer / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text(f"source-{index}\n", encoding="utf-8")
+            before = self.q.backend_source_hash(puffer)
+            changed = puffer / self.q.BACKEND_SOURCE_FILES[-1]
+            changed.write_text("tampered\n", encoding="utf-8")
+            self.assertNotEqual(before, self.q.backend_source_hash(puffer))
+
+    def test_backend_registry_rejects_empty_duplicate_and_unsafe_paths(self):
+        invalid = {
+            "empty": "",
+            "duplicate": "src/a.c\nsrc/a.c\n",
+            "absolute": "/src/a.c\n",
+            "parent": "src/../a.c\n",
+            "dot": "src/./a.c\n",
+            "blank": "src/a.c\n\nsrc/b.c\n",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            registry = pathlib.Path(temporary) / "sources.txt"
+            for label, contents in invalid.items():
+                with self.subTest(label=label):
+                    registry.write_text(contents, encoding="utf-8")
+                    with self.assertRaises(self.q.QualificationError):
+                        self.q.load_backend_source_registry(registry)
+
+    def test_backend_hash_matches_installer_ordering_algorithm(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            puffer = pathlib.Path(temporary)
+            manifest = bytearray()
+            for index, relative in enumerate(self.q.BACKEND_SOURCE_FILES):
+                source = puffer / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_bytes(f"ordered-{index}\n".encode())
+                digest = hashlib.sha256(source.read_bytes()).hexdigest()
+                manifest.extend(f"{digest}  {relative}\n".encode())
+            expected = hashlib.sha256(manifest).hexdigest()
+            self.assertEqual(expected, self.q.backend_source_hash(puffer))
+
     def test_compiled_digest_must_equal_source_and_installed_snapshot(self):
         with tempfile.TemporaryDirectory() as temporary:
             puffer = pathlib.Path(temporary)
@@ -440,9 +542,12 @@ class QualificationValidatorTests(unittest.TestCase):
             backend = SimpleNamespace(
                 exact_action_source_hash=compiled,
                 environment_source_hash="b" * 64,
-                observation_abi="obs-v6",
-                observation_version=6,
+                observation_abi="obs-v7",
+                observation_version=7,
                 action_abi="exact-joint-v1",
+                rollout_transition_contract="terminal-aware-tbptt-v1",
+                entropy_schedule_contract=(
+                    "cosine-update-index-over-total-updates-fp32-v1"),
                 precision_bytes=4,
                 env_name="bloodbowl",
                 qualification_recurrent_state=object(),
@@ -456,6 +561,14 @@ class QualificationValidatorTests(unittest.TestCase):
                 identity["environment_sha256"],
             )
             self.q.validate_module_identity(identity)
+
+            for key in (
+                "rollout_transition_contract", "entropy_schedule_contract"
+            ):
+                with self.subTest(key=key), self.assertRaises(
+                    self.q.QualificationError
+                ):
+                    self.q.validate_module_identity(dict(identity, **{key: "wrong"}))
 
             # A module built from other bytes than the tree it sits in fails,
             # and so does one whose installed snapshot lags its own build.
@@ -478,7 +591,7 @@ class QualificationValidatorTests(unittest.TestCase):
                 del incomplete["backend_sources_sha256"]
                 self.q.validate_module_identity(incomplete)
 
-    def test_module_identity_requires_exact_bloodbowl_obs_v6_fp32_lineage(self):
+    def test_module_identity_requires_exact_bloodbowl_obs_v7_fp32_lineage(self):
         digest = "a" * 64
         identity = {
             "module": "/puffer/pufferlib/_C.so",
@@ -488,20 +601,24 @@ class QualificationValidatorTests(unittest.TestCase):
             "backend_sources_sha256": digest,
             "environment_sha256": "b" * 64,
             "installed_snapshot_sha256": "b" * 64,
-            "observation_abi": "obs-v6",
-            "observation_version": 6,
+            "observation_abi": "obs-v7",
+            "observation_version": 7,
             "action_abi": "exact-joint-v1",
+            "rollout_transition_contract": "terminal-aware-tbptt-v1",
+            "entropy_schedule_contract": (
+                "cosine-update-index-over-total-updates-fp32-v1"),
             "precision_bytes": 4,
             "compiled_env": "bloodbowl",
             "qualification_surface": True,
         }
         self.q.validate_module_identity(identity)
-        # obs-v4, obs-v5 and obs-v6 are all 2782 bytes: only this provenance
-        # separates them, and BF16 cannot satisfy the ratio contract.
+        # The ABI and numeric version must agree exactly. Shape alone is not
+        # provenance, and BF16 cannot satisfy the ratio contract.
         for key, value in (
             ("compiled_env", "other"),
             ("observation_abi", "obs-v4"),
             ("observation_version", 4),
+            ("observation_version", 6),
             ("action_abi", "marginal"),
             ("precision_bytes", 2),
             ("environment_sha256", "bad"),
@@ -1145,6 +1262,9 @@ class QualificationPatchContractTests(unittest.TestCase):
         qualification_at = installer.index(
             'echo "applied:   bounded recurrent CUDA qualification evidence'
         )
+        direct_at = installer.index(
+            'echo "applied:   direct min-GRU training recurrence'
+        )
         digest_at = installer.index('EXACT_BACKEND_HASH="$(exact_backend_hash)"')
         league_at = installer.index(
             'echo "applied:   training/selfplay_league.patch ->'
@@ -1152,13 +1272,19 @@ class QualificationPatchContractTests(unittest.TestCase):
         self.assertLess(recurrent_at, qualification_at)
         self.assertLess(recurrent_at, frozen_at)
         self.assertLess(frozen_at, qualification_at)
+        self.assertLess(frozen_at, direct_at)
+        self.assertLess(direct_at, qualification_at)
         self.assertLess(league_at, digest_at)
         self.assertLess(qualification_at, digest_at)
         backend_hash = installer[
             installer.index("exact_backend_hash()"):
             installer.index('if [ "$MODE" = "check" ]')
         ]
-        self.assertIn("pufferlib/selfplay.py", backend_hash)
+        self.assertIn("puffer_compiled_backend_sources.txt", backend_hash)
+        registry = (
+            ROOT / "training/puffer_compiled_backend_sources.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        self.assertIn("pufferlib/selfplay.py", registry)
         self.assertIn(
             'git -C "$PUFFER" apply --reverse --check --no-index',
             installer,
@@ -1168,7 +1294,8 @@ class QualificationPatchContractTests(unittest.TestCase):
         self.assertIn("league_preseed", league_patch)
         for marker in (
             "eligible_agents", "qualification_recurrent_state",
-            "qualification_snapshot", "apply --reverse --check --no-index",
+            "qualification_snapshot", "direct min-GRU recurrence patch",
+            "apply --reverse --check --no-index",
             "Patch copy: training/selfplay_league.patch",
         ):
             self.assertIn(marker, installer)

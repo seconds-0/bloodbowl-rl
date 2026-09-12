@@ -29,22 +29,22 @@ pre-existing pool, hence training/selfplay_league.patch (skips the bootstrap
 and seeds each bank from this manifest when [selfplay] league_preseed names
 this pool dir).
 
-Seed files must be CUDA flat-fp32 weight blobs with eligible obs-v6/exact-action
+Seed files must be CUDA flat-fp32 weight blobs with eligible obs-v7/exact-action
 lineage sidecars — the save_weights format
 (vendor/PufferLib/src/bindings.cu:180: raw fwrite of master_weights, no
 header). Semantic compatibility comes from the sidecar, not blob size.
 pufferl_load_frozen_bank (vendor/PufferLib/src/pufferlib.cu:1830)
 checks the byte size but only fprintf-warns and RETURNS on mismatch (the
 bank silently keeps its previous weights), so this tool hard-verifies every
-seed's size up front. 16,066,560 bytes = the current bloodbowl policy (obs
-2782 = obs v5, heads {30,33,391}, hidden 512, 3 layers —
+seed's size up front. 16,207,872 bytes = the current bloodbowl policy (obs
+2851 = obs v7, heads {30,33,391}, hidden 512, 3 layers —
 training/test_convert_checkpoint.py). Historical obs-v3 (13,670,400-byte) and
 obs-v2 (12,072,960-byte) pools require both an explicit size and the
 `--legacy-unlabeled` reconstruction mode; current launchers reject them.
 
 Usage:
     tools/build_league.py --out <run-dir> --seeds name0=/path/a.bin \
-        name1=/path/b.bin ... [--expect-bytes 16066560]
+        name1=/path/b.bin ... [--expect-bytes 16207872]
 
 Seed order == frozen bank index (bank 0 = first --seeds entry). The patched
 setup() also starts the opponent pool as exactly this list, oldest-first, so
@@ -65,11 +65,11 @@ from checkpoint_lineage import (
     LineageError, lineage_digest, sidecar_path, validate_lineage,
 )
 
-# Current Blood Bowl CUDA flat blob: 4,016,640 fp32 params (obs 2782 = obs
-# v5 / heads {30,33,391} / hidden 512 / 3 layers). Size pinned by
+# Current Blood Bowl CUDA flat blob: 4,051,968 fp32 params (obs 2851 = obs
+# v7 / heads {30,33,391} / hidden 512 / 3 layers). Size pinned by
 # training/test_convert_checkpoint.py. Older obs-v3 (13,670,400 bytes) and
 # obs-v2 (12,072,960 bytes) lineages require an explicit --expect-bytes.
-DEFAULT_EXPECT_BYTES = 16_066_560
+DEFAULT_EXPECT_BYTES = 16_207_872
 
 MANIFEST_NAME = 'league_seeds.json'
 
@@ -204,7 +204,7 @@ def main(argv=None):
              f'default {DEFAULT_EXPECT_BYTES})')
     ap.add_argument('--legacy-unlabeled', action='store_true',
         help='historical reconstruction only: permit checkpoints without '
-             'obs-v6/exact-action lineage; repaired launchers still reject it')
+             'obs-v7/exact-action lineage; repaired launchers still reject it')
     args = ap.parse_args(argv)
 
     try:

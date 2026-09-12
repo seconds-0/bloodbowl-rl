@@ -4,7 +4,19 @@
 #include "bb_fixtures.h"
 #include "authored_drill.h"
 
+#include <signal.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+static void check_state_bank_float(float got, float want) {
+    float delta = got - want;
+    if (delta < 0.0f) delta = -delta;
+    if (!(delta < 0.00001f)) {
+        printf("FLOAT %s: got %.9g, want %.9g\n",
+               bb_test_current, (double)got, (double)want);
+    }
+    BB_CHECK(delta < 0.00001f);
+}
 
 static void write_le32(FILE* file, uint32_t value) {
     uint8_t bytes[4] = {
@@ -97,11 +109,9 @@ typedef struct {
     float terminals[BBE_AGENTS];
 } StateBankEnvFixture;
 
-static void setup_state_bank_env(StateBankEnvFixture* fixture,
-                                 const bb_match* match) {
+static void setup_state_bank_buffers(StateBankEnvFixture* fixture) {
     memset(fixture, 0, sizeof *fixture);
     Bloodbowl* env = &fixture->env;
-    env->match = *match;
     env->num_agents = BBE_AGENTS;
     for (int agent = 0; agent < BBE_AGENTS; agent++) {
         env->obs_ptr[agent] = fixture->obs + agent * BBE_OBS_SIZE;
@@ -112,6 +122,13 @@ static void setup_state_bank_env(StateBankEnvFixture* fixture,
         env->terminal_ptr[agent] = fixture->terminals + agent;
         env->v4_dirty[agent] = 1;
     }
+}
+
+static void setup_state_bank_env(StateBankEnvFixture* fixture,
+                                 const bb_match* match) {
+    setup_state_bank_buffers(fixture);
+    Bloodbowl* env = &fixture->env;
+    env->match = *match;
     bbe_refresh_legal(env);
     bbe_emit_all(env);
 }
@@ -121,6 +138,523 @@ static int load_one(const char* path, const bb_match* match) {
     reset_state_bank_loader(path);
     bbe_state_bank_load();
     return bbe_state_bank_n;
+}
+
+static void configure_restored_pbrs_env(StateBankEnvFixture* fixture,
+                                        float fetch_coeff,
+                                        float carry_coeff,
+                                        float gamma) {
+    setup_state_bank_buffers(fixture);
+    Bloodbowl* env = &fixture->env;
+    env->seed = 0x5A17u;
+    env->max_decisions = BBE_MAX_DECISIONS;
+    env->force_home_team = -1;
+    env->force_away_team = -1;
+    env->exclude_team = -1;
+    env->demo_reset_pct = 1.0f;
+    env->reward_configured = 1;
+    env->reward_dist_ball = fetch_coeff;
+    env->reward_dist_endzone = carry_coeff;
+    env->reward_dist_pbrs_gamma = gamma;
+}
+
+static void step_state_bank_action(StateBankEnvFixture* fixture, bb_action act) {
+    Bloodbowl* env = &fixture->env;
+    int agent = env->match.decision_team;
+    BB_CHECK(agent == BB_HOME || agent == BB_AWAY);
+    if (agent != BB_HOME && agent != BB_AWAY) return;
+    BB_CHECK(fx_find(&env->match, act) >= 0);
+    if (fx_find(&env->match, act) < 0) return;
+    env->action_ptr[agent][0] = (float)act.type;
+    env->action_ptr[agent][1] = (float)bbe_action_arg(agent, act);
+    env->action_ptr[agent][2] = (float)bbe_action_sq(agent, act);
+    c_step(env);
+}
+
+static bb_match restored_pbrs_nested_loose_match(void) {
+    bb_match match = pending_dodge_reroll_match();
+    match.stack[3].x = 11;
+    fx_ball_ground(&match, 13, 7);
+    BB_CHECK(bb_state_bank_dodge_reroll_valid(&match));
+    BB_CHECK(bb_state_bank_resumable_valid(&match));
+    return match;
+}
+
+static void check_reset_reward_scratch_zero(
+        const StateBankEnvFixture* fixture) {
+    const Bloodbowl* env = &fixture->env;
+    for (int team = 0; team < BBE_AGENTS; team++) {
+        check_state_bank_float(fixture->rewards[team], 0.0f);
+        check_state_bank_float(fixture->terminals[team], 0.0f);
+        check_state_bank_float(env->ep_return[team], 0.0f);
+        check_state_bank_float(env->ep_reward_component_residual[team], 0.0f);
+        for (int component = 0;
+             component < BBE_REWARD_COMPONENT_COUNT; component++) {
+            check_state_bank_float(
+                env->step_reward_component[team][component], 0.0f);
+            check_state_bank_float(
+                env->ep_reward_component[team][component], 0.0f);
+        }
+    }
+}
+
+static void poison_potential_history(Bloodbowl* env) {
+    env->pot_fetch_prev[BB_HOME] = NAN;
+    env->pot_fetch_prev[BB_AWAY] = 77.0f;
+    env->pot_carry_prev[BB_HOME] = 78.0f;
+    env->pot_carry_prev[BB_AWAY] = NAN;
+}
+
+static void cleanup_state_bank_path(const char* path) {
+    bb_stall_attach(0);
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+    BB_CHECK_EQ(remove(path), 0);
+}
+
+BB_TEST(restored_pbrs_nested_loose_first_transition_uses_s0) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-pbrs-nested-%ld.bbs",
+             (long)getpid());
+    bb_match restored = restored_pbrs_nested_loose_match();
+    BB_CHECK_EQ(load_one(path, &restored), 1);
+
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.05f, 0.0f, 0.995f);
+    c_reset(&fixture.env);
+    Bloodbowl* env = &fixture.env;
+
+    BB_CHECK_EQ(bbe_state_bank_n, 1);
+    BB_CHECK_EQ(env->demo_started, 1);
+    BB_CHECK_EQ(memcmp(&env->match, &restored, sizeof restored), 0);
+    BB_CHECK_EQ(env->match.players[0].x, 10);
+    BB_CHECK_EQ(env->match.players[0].y, 7);
+    BB_CHECK_EQ(env->match.players[BB_TEAM_SLOTS].x, 10);
+    BB_CHECK_EQ(env->match.players[BB_TEAM_SLOTS].y, 8);
+    BB_CHECK_EQ(env->match.ball.x, 13);
+    BB_CHECK_EQ(env->match.ball.y, 7);
+    check_state_bank_float(env->pot_fetch_prev[BB_HOME], 1.10f);
+    check_state_bank_float(env->pot_fetch_prev[BB_AWAY], 1.10f);
+    check_state_bank_float(env->pot_carry_prev[BB_HOME], 0.0f);
+    check_state_bank_float(env->pot_carry_prev[BB_AWAY], 0.0f);
+    check_reset_reward_scratch_zero(&fixture);
+
+    uint8_t successful_reroll = 4;
+    bb_rng_script(&env->rng, &successful_reroll, 1);
+    step_state_bank_action(
+        &fixture, (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0});
+
+    BB_CHECK_EQ(env->match.players[0].x, 11);
+    BB_CHECK_EQ(env->match.players[0].y, 6);
+    BB_CHECK_EQ(env->match.ball.x, 13);
+    BB_CHECK_EQ(env->match.ball.y, 7);
+    BB_CHECK_EQ(env->rng.script_pos, 1);
+    BB_CHECK(!bb_rng_error(&env->rng));
+    check_state_bank_float(
+        env->step_reward_component[BB_HOME][BBE_REWARD_DISTANCE_BALL],
+        0.04425f);
+    check_state_bank_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_BALL],
+        -0.0055f);
+    check_state_bank_float(env->pot_fetch_prev[BB_HOME], 1.15f);
+    check_state_bank_float(env->pot_fetch_prev[BB_AWAY], 1.10f);
+    check_state_bank_float(fixture.rewards[BB_HOME], 0.04425f);
+    check_state_bank_float(fixture.rewards[BB_AWAY], -0.0055f);
+    check_state_bank_float(env->ep_return[BB_HOME], 0.04425f);
+    check_state_bank_float(env->ep_return[BB_AWAY], -0.0055f);
+    for (int team = 0; team < BBE_AGENTS; team++) {
+        check_state_bank_float(env->ep_reward_component_residual[team], 0.0f);
+        for (int component = 0;
+             component < BBE_REWARD_COMPONENT_COUNT; component++) {
+            if (component == BBE_REWARD_DISTANCE_BALL) continue;
+            check_state_bank_float(
+                env->step_reward_component[team][component], 0.0f);
+        }
+    }
+
+    cleanup_state_bank_path(path);
+}
+
+BB_TEST(restored_pbrs_held_boundary_initializes_carry_s0) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-pbrs-held-%ld.bbs",
+             (long)getpid());
+    bb_match restored = valid_bank_match();
+    fx_ball_held(&restored, 0);
+    BB_CHECK(bb_state_bank_boundary_valid(&restored));
+    BB_CHECK_EQ(load_one(path, &restored), 1);
+
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.0f, 0.04f, 0.995f);
+    c_reset(&fixture.env);
+    Bloodbowl* env = &fixture.env;
+
+    BB_CHECK_EQ(env->demo_started, 1);
+    BB_CHECK_EQ(memcmp(&env->match, &restored, sizeof restored), 0);
+    BB_CHECK_EQ(env->match.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(env->match.ball.carrier, 0);
+    check_state_bank_float(env->pot_fetch_prev[BB_HOME], 0.0f);
+    check_state_bank_float(env->pot_fetch_prev[BB_AWAY], 0.0f);
+    check_state_bank_float(env->pot_carry_prev[BB_HOME], 0.32f);
+    check_state_bank_float(env->pot_carry_prev[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(env->possessor, BB_HOME);
+    check_reset_reward_scratch_zero(&fixture);
+
+    step_state_bank_action(
+        &fixture, (bb_action){BB_A_ACTIVATE, 0, 0, 0});
+    check_state_bank_float(
+        env->step_reward_component[BB_HOME][BBE_REWARD_DISTANCE_ENDZONE],
+        -0.0016f);
+    check_state_bank_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_ENDZONE],
+        0.0f);
+    check_state_bank_float(fixture.rewards[BB_HOME], -0.0016f);
+    check_state_bank_float(fixture.rewards[BB_AWAY], 0.0f);
+    check_state_bank_float(env->ep_return[BB_HOME], -0.0016f);
+    check_state_bank_float(env->ep_return[BB_AWAY], 0.0f);
+    check_state_bank_float(env->ep_reward_component_residual[BB_HOME], 0.0f);
+    check_state_bank_float(env->ep_reward_component_residual[BB_AWAY], 0.0f);
+
+    cleanup_state_bank_path(path);
+}
+
+BB_TEST(restored_pbrs_away_held_boundary_initializes_carry_s0) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-pbrs-away-held-%ld.bbs",
+             (long)getpid());
+    bb_match restored;
+    fx_match_midturn(&restored, BB_AWAY, 2);
+    fx_lineman(&restored, BB_HOME, 0, 8, 7);
+    int carrier = fx_lineman(&restored, BB_AWAY, 0, 17, 7);
+    bb_rng rng;
+    bb_rng_seed(&rng, 0xB4A6u, 3);
+    BB_CHECK_EQ(fx_run(&restored, &rng), BB_STATUS_DECISION);
+    fx_ball_held(&restored, carrier);
+    BB_CHECK(bb_state_bank_boundary_valid(&restored));
+    BB_CHECK_EQ(load_one(path, &restored), 1);
+
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.0f, 0.04f, 0.995f);
+    c_reset(&fixture.env);
+    Bloodbowl* env = &fixture.env;
+
+    BB_CHECK_EQ(env->demo_started, 1);
+    BB_CHECK_EQ(memcmp(&env->match, &restored, sizeof restored), 0);
+    BB_CHECK_EQ(env->match.decision_team, BB_AWAY);
+    BB_CHECK_EQ(env->match.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(env->match.ball.carrier, BB_TEAM_SLOTS);
+    check_state_bank_float(env->pot_fetch_prev[BB_HOME], 0.0f);
+    check_state_bank_float(env->pot_fetch_prev[BB_AWAY], 0.0f);
+    check_state_bank_float(env->pot_carry_prev[BB_HOME], 0.0f);
+    check_state_bank_float(env->pot_carry_prev[BB_AWAY], 0.32f);
+    BB_CHECK_EQ(env->possessor, BB_AWAY);
+    check_reset_reward_scratch_zero(&fixture);
+
+    step_state_bank_action(
+        &fixture, (bb_action){BB_A_ACTIVATE, BB_TEAM_SLOTS, 0, 0});
+    check_state_bank_float(
+        env->step_reward_component[BB_HOME][BBE_REWARD_DISTANCE_ENDZONE],
+        0.0f);
+    check_state_bank_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_ENDZONE],
+        -0.0016f);
+    check_state_bank_float(fixture.rewards[BB_HOME], 0.0f);
+    check_state_bank_float(fixture.rewards[BB_AWAY], -0.0016f);
+    check_state_bank_float(env->ep_return[BB_HOME], 0.0f);
+    check_state_bank_float(env->ep_return[BB_AWAY], -0.0016f);
+    check_state_bank_float(env->ep_reward_component_residual[BB_HOME], 0.0f);
+    check_state_bank_float(env->ep_reward_component_residual[BB_AWAY], 0.0f);
+
+    cleanup_state_bank_path(path);
+}
+
+BB_TEST(restored_pbrs_loose_boundary_initializes_both_teams) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-pbrs-loose-%ld.bbs",
+             (long)getpid());
+    bb_match restored = valid_bank_match();
+    fx_ball_ground(&restored, 11, 7);
+    BB_CHECK(bb_state_bank_boundary_valid(&restored));
+    BB_CHECK_EQ(load_one(path, &restored), 1);
+
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.05f, 0.0f, 0.995f);
+    c_reset(&fixture.env);
+    Bloodbowl* env = &fixture.env;
+
+    BB_CHECK_EQ(env->demo_started, 1);
+    BB_CHECK_EQ(memcmp(&env->match, &restored, sizeof restored), 0);
+    check_state_bank_float(env->pot_fetch_prev[BB_HOME], 1.10f);
+    check_state_bank_float(env->pot_fetch_prev[BB_AWAY], 0.95f);
+    check_state_bank_float(env->pot_carry_prev[BB_HOME], 0.0f);
+    check_state_bank_float(env->pot_carry_prev[BB_AWAY], 0.0f);
+    check_reset_reward_scratch_zero(&fixture);
+
+    step_state_bank_action(
+        &fixture, (bb_action){BB_A_ACTIVATE, 0, 0, 0});
+    check_state_bank_float(
+        env->step_reward_component[BB_HOME][BBE_REWARD_DISTANCE_BALL],
+        -0.0055f);
+    check_state_bank_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_BALL],
+        -0.00475f);
+    check_state_bank_float(fixture.rewards[BB_HOME], -0.0055f);
+    check_state_bank_float(fixture.rewards[BB_AWAY], -0.00475f);
+    check_state_bank_float(env->ep_return[BB_HOME], -0.0055f);
+    check_state_bank_float(env->ep_return[BB_AWAY], -0.00475f);
+    check_state_bank_float(env->ep_reward_component_residual[BB_HOME], 0.0f);
+    check_state_bank_float(env->ep_reward_component_residual[BB_AWAY], 0.0f);
+
+    cleanup_state_bank_path(path);
+}
+
+BB_TEST(restored_pbrs_exact_inactive_and_zero_channels_are_finite) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-pbrs-inactive-%ld.bbs",
+             (long)getpid());
+    bb_match restored = valid_bank_match();
+    BB_CHECK_EQ(restored.ball.state, BB_BALL_OFF_PITCH);
+    BB_CHECK(bb_state_bank_boundary_valid(&restored));
+    BB_CHECK_EQ(load_one(path, &restored), 1);
+
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.05f, 0.04f, 0.995f);
+    poison_potential_history(&fixture.env);
+    c_reset(&fixture.env);
+    BB_CHECK_EQ(fixture.env.demo_started, 1);
+    BB_CHECK_EQ(memcmp(&fixture.env.match, &restored, sizeof restored), 0);
+    for (int team = 0; team < BBE_AGENTS; team++) {
+        BB_CHECK(isfinite(fixture.env.pot_fetch_prev[team]));
+        BB_CHECK(isfinite(fixture.env.pot_carry_prev[team]));
+        check_state_bank_float(fixture.env.pot_fetch_prev[team], 0.0f);
+        check_state_bank_float(fixture.env.pot_carry_prev[team], 0.0f);
+    }
+    check_reset_reward_scratch_zero(&fixture);
+
+    fixture.env.reward_dist_ball = 0.0f;
+    fixture.env.reward_dist_endzone = 0.0f;
+    poison_potential_history(&fixture.env);
+    c_reset(&fixture.env);
+    BB_CHECK_EQ(fixture.env.demo_started, 1);
+    BB_CHECK_EQ(memcmp(&fixture.env.match, &restored, sizeof restored), 0);
+    for (int team = 0; team < BBE_AGENTS; team++) {
+        BB_CHECK(isfinite(fixture.env.pot_fetch_prev[team]));
+        BB_CHECK(isfinite(fixture.env.pot_carry_prev[team]));
+        check_state_bank_float(fixture.env.pot_fetch_prev[team], 0.0f);
+        check_state_bank_float(fixture.env.pot_carry_prev[team], 0.0f);
+    }
+    check_reset_reward_scratch_zero(&fixture);
+
+    cleanup_state_bank_path(path);
+}
+
+BB_TEST(restored_pbrs_fresh_procgen_initializes_finite_zero) {
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.05f, 0.04f, 0.995f);
+    fixture.env.demo_reset_pct = 0.0f;
+    poison_potential_history(&fixture.env);
+    c_reset(&fixture.env);
+
+    BB_CHECK_EQ(fixture.env.demo_started, 0);
+    BB_CHECK_EQ(fixture.env.match.ball.state, BB_BALL_OFF_PITCH);
+    for (int team = 0; team < BBE_AGENTS; team++) {
+        BB_CHECK(isfinite(fixture.env.pot_fetch_prev[team]));
+        BB_CHECK(isfinite(fixture.env.pot_carry_prev[team]));
+        check_state_bank_float(fixture.env.pot_fetch_prev[team], 0.0f);
+        check_state_bank_float(fixture.env.pot_carry_prev[team], 0.0f);
+    }
+    check_reset_reward_scratch_zero(&fixture);
+    bb_stall_attach(0);
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+}
+
+BB_TEST(restored_pbrs_legacy_reset_preserves_nan_priming) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-pbrs-legacy-%ld.bbs",
+             (long)getpid());
+    bb_match restored = valid_bank_match();
+    fx_ball_ground(&restored, 11, 7);
+    BB_CHECK(bb_state_bank_boundary_valid(&restored));
+    BB_CHECK_EQ(load_one(path, &restored), 1);
+
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.05f, 0.04f, 0.0f);
+    c_reset(&fixture.env);
+    Bloodbowl* env = &fixture.env;
+    for (int team = 0; team < BBE_AGENTS; team++) {
+        BB_CHECK(isnan(env->pot_fetch_prev[team]));
+        BB_CHECK(isnan(env->pot_carry_prev[team]));
+    }
+    check_reset_reward_scratch_zero(&fixture);
+
+    step_state_bank_action(
+        &fixture, (bb_action){BB_A_ACTIVATE, 0, 0, 0});
+    check_state_bank_float(
+        env->step_reward_component[BB_HOME][BBE_REWARD_DISTANCE_BALL], 0.0f);
+    check_state_bank_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_BALL], 0.0f);
+    check_state_bank_float(env->pot_fetch_prev[BB_HOME], -0.15f);
+    check_state_bank_float(env->pot_fetch_prev[BB_AWAY], -0.30f);
+    BB_CHECK(isnan(env->pot_carry_prev[BB_HOME]));
+    BB_CHECK(isnan(env->pot_carry_prev[BB_AWAY]));
+    check_state_bank_float(fixture.rewards[BB_HOME], 0.0f);
+    check_state_bank_float(fixture.rewards[BB_AWAY], 0.0f);
+    check_state_bank_float(env->ep_return[BB_HOME], 0.0f);
+    check_state_bank_float(env->ep_return[BB_AWAY], 0.0f);
+    check_state_bank_float(env->ep_reward_component_residual[BB_HOME], 0.0f);
+    check_state_bank_float(env->ep_reward_component_residual[BB_AWAY], 0.0f);
+
+    env->reward_dist_pbrs_gamma = -0.5f;
+    poison_potential_history(env);
+    c_reset(env);
+    BB_CHECK_EQ(env->demo_started, 1);
+    BB_CHECK_EQ(memcmp(&env->match, &restored, sizeof restored), 0);
+    for (int team = 0; team < BBE_AGENTS; team++) {
+        BB_CHECK(isnan(env->pot_fetch_prev[team]));
+        BB_CHECK(isnan(env->pot_carry_prev[team]));
+    }
+    check_reset_reward_scratch_zero(&fixture);
+    step_state_bank_action(
+        &fixture, (bb_action){BB_A_ACTIVATE, 0, 0, 0});
+    check_state_bank_float(
+        env->step_reward_component[BB_HOME][BBE_REWARD_DISTANCE_BALL], 0.0f);
+    check_state_bank_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_BALL], 0.0f);
+    check_state_bank_float(env->pot_fetch_prev[BB_HOME], -0.15f);
+    check_state_bank_float(env->pot_fetch_prev[BB_AWAY], -0.30f);
+    BB_CHECK(isnan(env->pot_carry_prev[BB_HOME]));
+    BB_CHECK(isnan(env->pot_carry_prev[BB_AWAY]));
+    check_state_bank_float(fixture.rewards[BB_HOME], 0.0f);
+    check_state_bank_float(fixture.rewards[BB_AWAY], 0.0f);
+    check_state_bank_float(env->ep_return[BB_HOME], 0.0f);
+    check_state_bank_float(env->ep_return[BB_AWAY], 0.0f);
+    check_state_bank_float(env->ep_reward_component_residual[BB_HOME], 0.0f);
+    check_state_bank_float(env->ep_reward_component_residual[BB_AWAY], 0.0f);
+
+    cleanup_state_bank_path(path);
+}
+
+BB_TEST(restored_pbrs_second_reset_recomputes_new_s0) {
+    char loose_path[256];
+    char held_path[256];
+    snprintf(loose_path, sizeof loose_path,
+             "/tmp/bloodbowl-pbrs-reset-loose-%ld.bbs", (long)getpid());
+    snprintf(held_path, sizeof held_path,
+             "/tmp/bloodbowl-pbrs-reset-held-%ld.bbs", (long)getpid());
+    bb_match loose = valid_bank_match();
+    fx_ball_ground(&loose, 11, 7);
+    bb_match held = valid_bank_match();
+    fx_ball_held(&held, 0);
+    BB_CHECK_EQ(load_one(loose_path, &loose), 1);
+
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.05f, 0.04f, 0.995f);
+    c_reset(&fixture.env);
+    check_state_bank_float(fixture.env.pot_fetch_prev[BB_HOME], 1.10f);
+    check_state_bank_float(fixture.env.pot_fetch_prev[BB_AWAY], 0.95f);
+
+    fixture.env.pot_fetch_prev[BB_HOME] = 77.0f;
+    fixture.env.pot_fetch_prev[BB_AWAY] = 78.0f;
+    fixture.env.pot_carry_prev[BB_HOME] = 79.0f;
+    fixture.env.pot_carry_prev[BB_AWAY] = 80.0f;
+    BB_CHECK_EQ(load_one(held_path, &held), 1);
+    c_reset(&fixture.env);
+
+    BB_CHECK_EQ(fixture.env.demo_started, 1);
+    BB_CHECK_EQ(memcmp(&fixture.env.match, &held, sizeof held), 0);
+    check_state_bank_float(fixture.env.pot_fetch_prev[BB_HOME], 0.0f);
+    check_state_bank_float(fixture.env.pot_fetch_prev[BB_AWAY], 0.0f);
+    check_state_bank_float(fixture.env.pot_carry_prev[BB_HOME], 0.32f);
+    check_state_bank_float(fixture.env.pot_carry_prev[BB_AWAY], 0.0f);
+    check_reset_reward_scratch_zero(&fixture);
+
+    bb_stall_attach(0);
+    reset_state_bank_loader(BBE_STATE_BANK_PATH);
+    BB_CHECK_EQ(remove(loose_path), 0);
+    BB_CHECK_EQ(remove(held_path), 0);
+}
+
+BB_TEST(restored_pbrs_terminal_autoreset_consumes_old_history) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-pbrs-autoreset-%ld.bbs",
+             (long)getpid());
+    bb_match restored = restored_pbrs_nested_loose_match();
+    BB_CHECK_EQ(load_one(path, &restored), 1);
+
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.05f, 0.0f, 0.995f);
+    fixture.env.max_decisions = 1;
+    c_reset(&fixture.env);
+    uint8_t successful_reroll = 4;
+    bb_rng_script(&fixture.env.rng, &successful_reroll, 1);
+    step_state_bank_action(
+        &fixture, (bb_action){BB_A_USE_REROLL, BB_RR_TEAM, 0, 0});
+
+    BB_CHECK_EQ(fixture.terminals[BB_HOME], 1.0f);
+    BB_CHECK_EQ(fixture.terminals[BB_AWAY], 1.0f);
+    check_state_bank_float(fixture.rewards[BB_HOME], -1.10f);
+    check_state_bank_float(fixture.rewards[BB_AWAY], -1.10f);
+    check_state_bank_float(
+        fixture.env.log.reward_component[BBE_REWARD_DISTANCE_BALL], -1.10f);
+    check_state_bank_float(fixture.env.log.episode_return, -1.10f);
+    check_state_bank_float(fixture.env.log.reward_component_residual, 0.0f);
+    BB_CHECK_EQ(fixture.env.log.n, 1.0f);
+    BB_CHECK_EQ(fixture.env.demo_started, 1);
+    BB_CHECK_EQ(memcmp(&fixture.env.match, &restored, sizeof restored), 0);
+    check_state_bank_float(fixture.env.pot_fetch_prev[BB_HOME], 1.10f);
+    check_state_bank_float(fixture.env.pot_fetch_prev[BB_AWAY], 1.10f);
+    check_state_bank_float(fixture.env.pot_carry_prev[BB_HOME], 0.0f);
+    check_state_bank_float(fixture.env.pot_carry_prev[BB_AWAY], 0.0f);
+    check_state_bank_float(fixture.env.ep_return[BB_HOME], 0.0f);
+    check_state_bank_float(fixture.env.ep_return[BB_AWAY], 0.0f);
+    for (int team = 0; team < BBE_AGENTS; team++) {
+        check_state_bank_float(
+            fixture.env.ep_reward_component_residual[team], 0.0f);
+        for (int component = 0;
+             component < BBE_REWARD_COMPONENT_COUNT; component++) {
+            check_state_bank_float(
+                fixture.env.step_reward_component[team][component], 0.0f);
+            check_state_bank_float(
+                fixture.env.ep_reward_component[team][component], 0.0f);
+        }
+    }
+
+    cleanup_state_bank_path(path);
+}
+
+BB_TEST(restored_pbrs_exact_nonfinite_history_aborts) {
+    char path[256];
+    snprintf(path, sizeof path, "/tmp/bloodbowl-pbrs-abort-%ld.bbs",
+             (long)getpid());
+    bb_match restored = valid_bank_match();
+    fx_ball_held(&restored, 0);
+    BB_CHECK_EQ(load_one(path, &restored), 1);
+
+    StateBankEnvFixture fixture;
+    configure_restored_pbrs_env(&fixture, 0.0f, 0.04f, 0.995f);
+    c_reset(&fixture.env);
+    fixture.env.pot_carry_prev[BB_HOME] = NAN;
+
+    fflush(NULL);
+    pid_t child = fork();
+    BB_CHECK(child >= 0);
+    if (child == 0) {
+        FILE* sink = freopen("/dev/null", "w", stderr);
+        (void)sink;
+        step_state_bank_action(
+            &fixture, (bb_action){BB_A_ACTIVATE, 0, 0, 0});
+        _exit(0);
+    }
+    if (child > 0) {
+        int status = 0;
+        BB_CHECK_EQ(waitpid(child, &status, 0), child);
+        BB_CHECK(WIFSIGNALED(status));
+        if (WIFSIGNALED(status)) {
+            BB_CHECK_EQ(WTERMSIG(status), SIGABRT);
+        }
+    }
+
+    cleanup_state_bank_path(path);
 }
 
 static ad_recipe authored_test_recipe(void) {

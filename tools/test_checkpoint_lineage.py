@@ -26,11 +26,12 @@ class CheckpointLineageTests(unittest.TestCase):
         self.run_manifest = self.root / "RUN_MANIFEST.json"
         self.run_manifest.write_text(json.dumps({
             "schema_version": 1,
-            "mode": "native_fresh_v6_qualification",
+            "mode": "native_fresh_v7_qualification",
             "seed": "42",
-            "observation_abi": "obs-v6",
-            "observation_version": "6",
+            "observation_abi": "obs-v7",
+            "observation_version": "7",
             "action_abi": "exact-joint-v1",
+            "compiled_rollout_transition_contract": "terminal-aware-tbptt-v1",
             "initialization": "fresh",
             "qualification_only": "1",
             "policy_hidden_size": "512",
@@ -77,6 +78,140 @@ class CheckpointLineageTests(unittest.TestCase):
         self.assertTrue(payload["ancestry"]["qualification_only"])
         self.assertEqual(
             sidecar.read_bytes(), checkpoint_lineage.canonical_bytes(payload))
+        self.assertEqual(
+            payload["compatibility"]["rollout_transition_contract"],
+            "terminal-aware-tbptt-v1")
+
+    def test_manifest_must_explicitly_name_a_supported_recurrent_contract(self):
+        manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        del manifest["compiled_rollout_transition_contract"]
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError,
+                "compiled_rollout_transition_contract"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, self.run_manifest)
+
+        manifest["compiled_rollout_transition_contract"] = "shape-is-enough-v1"
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError, "unsupported rollout transition"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, self.run_manifest)
+
+    def test_training_mode_requires_explicit_matching_recurrent_contract(self):
+        manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        manifest["compiled_rollout_transition_contract"] = "tail-bootstrap-v1"
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        _, sidecar = self.create()
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError,
+                "rollout_transition_contract lineage mismatch"):
+            checkpoint_lineage.validate_lineage(
+                self.checkpoint, sidecar, expected=self.expected(),
+                require_eligible=False, recurrent_contract_mode="training",
+                expected_rollout_transition_contract="terminal-aware-tbptt-v1")
+
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        del payload["compatibility"]["rollout_transition_contract"]
+        checkpoint_lineage.write_lineage(sidecar, payload, replace=True)
+        for mode in ("inference", "qualification"):
+            observed = checkpoint_lineage.validate_lineage(
+                self.checkpoint, sidecar, expected=self.expected(),
+                require_eligible=False, recurrent_contract_mode=mode)
+            self.assertNotIn(
+                "rollout_transition_contract", observed["compatibility"])
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError,
+                "explicit rollout_transition_contract"):
+            checkpoint_lineage.validate_lineage(
+                self.checkpoint, sidecar, expected=self.expected(),
+                require_eligible=False, recurrent_contract_mode="training",
+                expected_rollout_transition_contract="terminal-aware-tbptt-v1")
+
+    def test_terminal_aware_lineage_is_training_eligible_only_when_requested(self):
+        manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        manifest["compiled_rollout_transition_contract"] = \
+            "terminal-aware-tbptt-v1"
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        _, sidecar = self.create()
+        observed = checkpoint_lineage.validate_lineage(
+            self.checkpoint, sidecar, expected=self.expected(),
+            require_eligible=False, recurrent_contract_mode="training",
+            expected_rollout_transition_contract="terminal-aware-tbptt-v1")
+        self.assertEqual(
+            observed["compatibility"]["rollout_transition_contract"],
+            "terminal-aware-tbptt-v1")
+
+    def test_training_mode_requires_expected_contract_and_known_mode(self):
+        _, sidecar = self.create()
+        observed = checkpoint_lineage.validate_lineage(
+            self.checkpoint, sidecar, expected=self.expected(),
+            require_eligible=False, recurrent_contract_mode="training")
+        self.assertEqual(
+            observed["compatibility"]["rollout_transition_contract"],
+            "terminal-aware-tbptt-v1")
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError,
+                "invalid recurrent_contract_mode"):
+            checkpoint_lineage.validate_lineage(
+                self.checkpoint, sidecar, expected=self.expected(),
+                require_eligible=False, recurrent_contract_mode="ambiguous")
+
+    def test_eligible_validation_defaults_current_and_old_requires_reviewed_expectation(self):
+        manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        manifest.update({
+            "qualification_only": "0",
+            "initialization": "lineage-v7",
+            "mode": "native_static_pool_reward_ablation",
+            "warm_lineage_sha256": "5" * 64,
+            "pool_lineage_bundle_sha256": "6" * 64,
+        })
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        payload = checkpoint_lineage.lineage_from_run_manifest(
+            self.checkpoint, self.run_manifest,
+            allow_eligible_publication=True)
+        payload["compatibility"]["rollout_transition_contract"] = \
+            "tail-bootstrap-v1"
+        sidecar = checkpoint_lineage.sidecar_path(self.checkpoint)
+        checkpoint_lineage.write_lineage(sidecar, payload)
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError,
+                "rollout_transition_contract lineage mismatch"):
+            checkpoint_lineage.validate_lineage(
+                self.checkpoint, sidecar, expected=self.expected(),
+                require_eligible=True)
+        observed = checkpoint_lineage.validate_lineage(
+            self.checkpoint, sidecar, expected=self.expected(),
+            require_eligible=True,
+            expected_rollout_transition_contract="tail-bootstrap-v1")
+        self.assertEqual(
+            observed["compatibility"]["rollout_transition_contract"],
+            "tail-bootstrap-v1")
+
+    def test_old_contract_cannot_be_newly_published_as_eligible(self):
+        manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
+        manifest.update({
+            "compiled_rollout_transition_contract": "tail-bootstrap-v1",
+            "qualification_only": "0",
+            "initialization": "lineage-v7",
+            "mode": "native_static_pool_reward_ablation",
+            "warm_lineage_sha256": "5" * 64,
+            "pool_lineage_bundle_sha256": "6" * 64,
+        })
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError,
+                "new eligible lineage publication requires"):
+            checkpoint_lineage.lineage_from_run_manifest(
+                self.checkpoint, self.run_manifest,
+                allow_eligible_publication=True)
 
     def test_qualification_output_is_never_eligible_ancestry(self):
         _, sidecar = self.create()
@@ -89,7 +224,7 @@ class CheckpointLineageTests(unittest.TestCase):
     def test_eligible_nonqualification_lineage_round_trips(self):
         manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
         manifest["qualification_only"] = "0"
-        manifest["initialization"] = "lineage-v6"
+        manifest["initialization"] = "lineage-v7"
         manifest["mode"] = "native_static_pool_reward_ablation"
         manifest["warm_lineage_sha256"] = "5" * 64
         manifest["pool_lineage_bundle_sha256"] = "6" * 64
@@ -112,7 +247,7 @@ class CheckpointLineageTests(unittest.TestCase):
         # entry point: eligible requires non-qualification, non-qualification
         # required non-fresh initialization, non-fresh requires an eligible warm
         # checkpoint and pool, and eligible may only be published by an accepted
-        # screen. Nothing could mint the first eligible checkpoint, so obs-v6
+        # screen. Nothing could mint the first eligible checkpoint, so obs-v7
         # could never train -- measured on the training host as zero
         # .lineage.json files in existence.
         def manifest_with(**over):
@@ -123,7 +258,7 @@ class CheckpointLineageTests(unittest.TestCase):
 
         # Declared genesis: fresh AND eligible, published by the screen.
         manifest_with(qualification_only="0", initialization="fresh",
-                      mode="native_fresh_v6_genesis")
+                      mode="native_fresh_v7_genesis")
         payload = checkpoint_lineage.lineage_from_run_manifest(
             self.checkpoint, self.run_manifest,
             allow_eligible_publication=True)
@@ -139,7 +274,7 @@ class CheckpointLineageTests(unittest.TestCase):
         # cannot become ancestry, so an ordinary canary stays ineligible even if
         # its qualification flag is flipped.
         manifest_with(qualification_only="0", initialization="fresh",
-                      mode="native_fresh_v6_qualification")
+                      mode="native_fresh_v7_qualification")
         with self.assertRaisesRegex(
                 checkpoint_lineage.LineageError, "declared genesis"):
             checkpoint_lineage.lineage_from_run_manifest(
@@ -149,7 +284,7 @@ class CheckpointLineageTests(unittest.TestCase):
         # Genesis is ancestry by definition, so it may not claim to be
         # qualification-only at the same time.
         manifest_with(qualification_only="1", initialization="fresh",
-                      mode="native_fresh_v6_genesis")
+                      mode="native_fresh_v7_genesis")
         with self.assertRaisesRegex(
                 checkpoint_lineage.LineageError, "not qualification-only"):
             checkpoint_lineage.lineage_from_run_manifest(
@@ -157,8 +292,8 @@ class CheckpointLineageTests(unittest.TestCase):
                 allow_eligible_publication=True)
 
         # Genesis must actually be fresh; it cannot relabel a warm-started run.
-        manifest_with(qualification_only="0", initialization="lineage-v6",
-                      mode="native_fresh_v6_genesis")
+        manifest_with(qualification_only="0", initialization="lineage-v7",
+                      mode="native_fresh_v7_genesis")
         with self.assertRaisesRegex(
                 checkpoint_lineage.LineageError, "must use fresh"):
             checkpoint_lineage.lineage_from_run_manifest(
@@ -168,7 +303,7 @@ class CheckpointLineageTests(unittest.TestCase):
         # And genesis still cannot self-publish: only accepted screen result
         # materialization may mint eligible lineage.
         manifest_with(qualification_only="0", initialization="fresh",
-                      mode="native_fresh_v6_genesis")
+                      mode="native_fresh_v7_genesis")
         with self.assertRaisesRegex(
                 checkpoint_lineage.LineageError, "accepted screen"):
             checkpoint_lineage.lineage_from_run_manifest(
@@ -239,7 +374,7 @@ class CheckpointLineageTests(unittest.TestCase):
         manifest.update({
             "mode": "native_static_pool_reward_ablation",
             "qualification_only": "0",
-            "initialization": "lineage-v6",
+            "initialization": "lineage-v7",
             "warm_lineage_sha256": "5" * 64,
             "pool_lineage_bundle_sha256": "6" * 64,
         })
@@ -281,7 +416,7 @@ class CheckpointLineageTests(unittest.TestCase):
 
     def test_obs_v5_sidecar_is_refused_against_an_obs_v6_module(self):
         """The v5->v6 lineage trap: same 2782-byte observation, same
-        16,066,560-byte checkpoint, different semantics. This is the exact
+        16,203,776-byte checkpoint, different semantics. This is the exact
         shape that cost a 12B-step run across v4/v5, and blob size cannot see
         it, so the declared observation version must be checked explicitly."""
         payload, sidecar = self.create()
@@ -289,10 +424,10 @@ class CheckpointLineageTests(unittest.TestCase):
         # so any refusal below cannot have come from the size check.
         self.assertEqual(self.checkpoint.stat().st_size,
                          checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES)
-        self.assertEqual(payload["compatibility"]["observation_abi"], "obs-v6")
-        self.assertEqual(payload["compatibility"]["observation_version"], 6)
+        self.assertEqual(payload["compatibility"]["observation_abi"], "obs-v7")
+        self.assertEqual(payload["compatibility"]["observation_version"], 7)
 
-        for abi, version in (("obs-v5", 5), ("obs-v5", 6), ("obs-v6", 5)):
+        for abi, version in (("obs-v6", 6), ("obs-v6", 7), ("obs-v7", 6)):
             with self.subTest(abi=abi, version=version):
                 stale = json.loads(json.dumps(payload))
                 stale["compatibility"]["observation_abi"] = abi
@@ -312,7 +447,7 @@ class CheckpointLineageTests(unittest.TestCase):
         stale_manifest.write_text(
             json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
         with self.assertRaisesRegex(checkpoint_lineage.LineageError,
-                                    "observation_abi must be obs-v6"):
+                                    "observation_abi must be obs-v7"):
             checkpoint_lineage.lineage_from_run_manifest(
                 self.checkpoint, stale_manifest)
 
@@ -321,7 +456,7 @@ class CheckpointLineageTests(unittest.TestCase):
         stale_manifest.write_text(
             json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
         with self.assertRaisesRegex(checkpoint_lineage.LineageError,
-                                    "observation_version must be 6"):
+                                    "observation_version must be 7"):
             checkpoint_lineage.lineage_from_run_manifest(
                 self.checkpoint, stale_manifest)
 
@@ -358,7 +493,7 @@ class CheckpointLineageTests(unittest.TestCase):
     def _eligible(self):
         manifest = json.loads(self.run_manifest.read_text(encoding="utf-8"))
         manifest["qualification_only"] = "0"
-        manifest["initialization"] = "lineage-v6"
+        manifest["initialization"] = "lineage-v7"
         manifest["mode"] = "native_static_pool_reward_ablation"
         manifest["warm_lineage_sha256"] = "5" * 64
         manifest["pool_lineage_bundle_sha256"] = "6" * 64
@@ -436,7 +571,7 @@ class CheckpointLineageTests(unittest.TestCase):
         self.run_manifest.write_text(json.dumps({
             **json.loads(self.run_manifest.read_text(encoding="utf-8")),
             "qualification_only": "1", "initialization": "fresh",
-            "mode": "native_fresh_v6_qualification",
+            "mode": "native_fresh_v7_qualification",
             "warm_lineage_sha256": "", "pool_lineage_bundle_sha256": "",
         }, sort_keys=True) + "\n", encoding="utf-8")
         qual = checkpoint_lineage.lineage_from_run_manifest(
@@ -469,7 +604,7 @@ class GraftLineageTests(unittest.TestCase):
 
     The run manifest declares the OLD implementation (all four graft_from_*
     keys or none) and the sidecar records it as ancestry.grafted_from, on top
-    of an otherwise ordinary lineage-v6 payload published on the NEW build."""
+    of an otherwise ordinary lineage-v7 payload published on the NEW build."""
 
     OLD = {
         "graft_from_source_sha256": "a" * 64,
@@ -491,10 +626,11 @@ class GraftLineageTests(unittest.TestCase):
             "schema_version": 1,
             "mode": "native_static_pool_reward_ablation",
             "seed": "42",
-            "observation_abi": "obs-v6",
-            "observation_version": "6",
+            "observation_abi": "obs-v7",
+            "observation_version": "7",
             "action_abi": "exact-joint-v1",
-            "initialization": "lineage-v6",
+            "compiled_rollout_transition_contract": "terminal-aware-tbptt-v1",
+            "initialization": "lineage-v7",
             "qualification_only": "0",
             "policy_hidden_size": "512",
             "policy_num_layers": "3",
@@ -537,9 +673,9 @@ class GraftLineageTests(unittest.TestCase):
             "puffer_patch_bundle_sha256": "c" * 64,
             "reason": "D242",
         })
-        # Published on the NEW build's digests, ordinary lineage-v6 otherwise.
+        # Published on the NEW build's digests, ordinary lineage-v7 otherwise.
         self.assertEqual(payload["implementation"], self.expected())
-        self.assertEqual(payload["ancestry"]["initialization"], "lineage-v6")
+        self.assertEqual(payload["ancestry"]["initialization"], "lineage-v7")
         self.assertTrue(payload["ancestry"]["eligible"])
         sidecar = checkpoint_lineage.sidecar_path(self.checkpoint)
         checkpoint_lineage.write_lineage(sidecar, payload)
@@ -589,10 +725,10 @@ class GraftLineageTests(unittest.TestCase):
 
     def test_graft_requires_lineage_v6_initialization(self):
         self.write(**{**self.OLD, "graft_from_warm_lineage_sha256": "5" * 64},
-                   initialization="fresh", mode="native_fresh_v6_genesis",
+                   initialization="fresh", mode="native_fresh_v7_genesis",
                    warm_lineage_sha256="", pool_lineage_bundle_sha256="")
         with self.assertRaisesRegex(checkpoint_lineage.LineageError,
-                                    "lineage-v6"):
+                                    "lineage-v7"):
             self.create()
 
     def test_graft_onto_the_identical_source_and_patch_is_refused_as_a_no_op(self):
@@ -641,7 +777,7 @@ class GraftLineageTests(unittest.TestCase):
             "reason", "r" * 201), "grafted_from.reason")
 
     def test_validate_refuses_grafted_from_on_fresh_lineage(self):
-        self.write(initialization="fresh", mode="native_fresh_v6_genesis",
+        self.write(initialization="fresh", mode="native_fresh_v7_genesis",
                    warm_lineage_sha256="", pool_lineage_bundle_sha256="")
         payload = self.create()
         payload["ancestry"]["grafted_from"] = {
@@ -728,14 +864,15 @@ class GraftBridgeTests(unittest.TestCase):
             self.bridge([("warm", old)], old_source="A" * 64)
 
 
+@unittest.skip("raw obs-v4/v5 bridge retired: obs-v7 has a different shape")
 class BridgeLineageTests(unittest.TestCase):
     """A bridge warm-starts from an OUT-OF-LINEAGE raw blob with no sidecar.
 
     The run manifest declares initialization=bridge plus the four bridge_*
     keys (all or none), an EMPTY warm_lineage_sha256 (there is no warm
     sidecar) and a NON-empty pool bundle digest (the banks are ordinary
-    eligible obs-v6 sidecars). The sidecar records ancestry.bridged_from and
-    is itself eligible ancestry for later lineage-v6 rungs."""
+    eligible obs-v7 sidecars). The sidecar records ancestry.bridged_from and
+    is itself eligible ancestry for later lineage-v7 rungs."""
 
     JULY_SHA = "4e97ba4ff72fcc71e154ca146caeab45eb7c5d9e584db42f17b07f77c72a7630"
     BRIDGE = {
@@ -766,9 +903,10 @@ class BridgeLineageTests(unittest.TestCase):
             "schema_version": 1,
             "mode": "native_static_pool_reward_ablation",
             "seed": "42",
-            "observation_abi": "obs-v6",
-            "observation_version": "6",
+            "observation_abi": "obs-v7",
+            "observation_version": "7",
             "action_abi": "exact-joint-v1",
+            "compiled_rollout_transition_contract": "terminal-aware-tbptt-v1",
             "initialization": "bridge",
             "qualification_only": "0",
             "policy_hidden_size": "512",
@@ -819,9 +957,9 @@ class BridgeLineageTests(unittest.TestCase):
             "reason": "audit-2026-08-20 F2",
         })
         self.assertNotIn("grafted_from", payload["ancestry"])
-        # Published on THIS build's digests and obs-v6, like any arm.
+        # Published on THIS build's digests and obs-v7, like any arm.
         self.assertEqual(payload["implementation"], self.expected())
-        self.assertEqual(payload["compatibility"]["observation_version"], 6)
+        self.assertEqual(payload["compatibility"]["observation_version"], 7)
         sidecar = checkpoint_lineage.sidecar_path(self.checkpoint)
         checkpoint_lineage.write_lineage(sidecar, payload)
         observed = checkpoint_lineage.validate_lineage(
@@ -834,7 +972,7 @@ class BridgeLineageTests(unittest.TestCase):
             self.create()["ancestry"]["bridged_from"]["warm_observation_version"], 5)
 
     def test_bridge_is_eligible_only_through_accepted_publication(self):
-        # Same gate as lineage-v6: a bridge output is eligible, so only the
+        # Same gate as lineage-v7: a bridge output is eligible, so only the
         # screen's materialize_result may mint it.
         self.write()
         with self.assertRaisesRegex(checkpoint_lineage.LineageError,
@@ -885,7 +1023,7 @@ class BridgeLineageTests(unittest.TestCase):
 
     def test_bridge_with_a_warm_lineage_digest_is_refused(self):
         # The whole point: the bridged warm HAS no sidecar. A digest here means
-        # the manifest was assembled for lineage-v6 and mislabelled.
+        # the manifest was assembled for lineage-v7 and mislabelled.
         self.write(warm_lineage_sha256="5" * 64)
         with self.assertRaisesRegex(checkpoint_lineage.LineageError,
                                     "leave warm_lineage_sha256 empty"):
@@ -898,21 +1036,21 @@ class BridgeLineageTests(unittest.TestCase):
             self.create()
 
     def test_bridge_keys_on_any_other_initialization_are_refused(self):
-        self.write(initialization="lineage-v6", warm_lineage_sha256="5" * 64)
+        self.write(initialization="lineage-v7", warm_lineage_sha256="5" * 64)
         with self.assertRaisesRegex(checkpoint_lineage.LineageError,
                                     "only valid with bridge initialization"):
             self.create()
-        self.write(initialization="fresh", mode="native_fresh_v6_genesis",
+        self.write(initialization="fresh", mode="native_fresh_v7_genesis",
                    pool_lineage_bundle_sha256="")
         with self.assertRaisesRegex(checkpoint_lineage.LineageError,
                                     "only valid with bridge initialization"):
             self.create()
         # And a bridge cannot be qualification-only or declared genesis.
-        self.write(qualification_only="1", mode="native_fresh_v6_qualification")
+        self.write(qualification_only="1", mode="native_fresh_v7_qualification")
         with self.assertRaisesRegex(checkpoint_lineage.LineageError,
                                     "fresh initialization"):
             self.create()
-        self.write(mode="native_fresh_v6_genesis")
+        self.write(mode="native_fresh_v7_genesis")
         with self.assertRaisesRegex(checkpoint_lineage.LineageError,
                                     "genesis output must use fresh"):
             self.create()
@@ -986,12 +1124,12 @@ class BridgeLineageTests(unittest.TestCase):
               "leave warm_lineage_sha256 empty")
         check(lambda b: b["ancestry"].__setitem__("pool_lineage_bundle_sha256", ""),
               "bind pool ancestry")
-        # bridged_from on a lineage-v6 or genesis sidecar is refused outright.
+        # bridged_from on a lineage-v7 or genesis sidecar is refused outright.
         check(lambda b: b["ancestry"].update(
-            initialization="lineage-v6", warm_lineage_sha256="5" * 64),
+            initialization="lineage-v7", warm_lineage_sha256="5" * 64),
             "only bridge lineage may record bridged_from")
         check(lambda b: b["ancestry"].update(
-            initialization="fresh", mode="native_fresh_v6_genesis",
+            initialization="fresh", mode="native_fresh_v7_genesis",
             pool_lineage_bundle_sha256=""),
             "only bridge lineage may record bridged_from")
         # grafted_from never belongs on a bridge (well-formed, so the
@@ -1000,11 +1138,11 @@ class BridgeLineageTests(unittest.TestCase):
             "warm_lineage_sha256": "5" * 64, "source_sha256": "a" * 64,
             "compiled_module_sha256": "b" * 64,
             "puffer_patch_bundle_sha256": "c" * 64, "reason": "D242"}),
-            "only lineage-v6 lineage may be grafted")
+            "only lineage-v7 lineage may be grafted")
 
     def test_a_later_lineage_v6_rung_can_warm_from_the_bridge_output(self):
         # The bridge output is ordinary eligible ancestry: the next rung names
-        # its sidecar digest as warm_lineage_sha256 under lineage-v6, and the
+        # its sidecar digest as warm_lineage_sha256 under lineage-v7, and the
         # bridged_from record stays one hop back rather than being copied.
         self.write()
         bridge_payload = self.create()
@@ -1021,14 +1159,14 @@ class BridgeLineageTests(unittest.TestCase):
                 checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES - len(b"rung1")))
         next_manifest = self.root / "RUNG1_MANIFEST.json"
         manifest = {k: v for k, v in self.base.items() if k not in self.BRIDGE}
-        manifest.update(initialization="lineage-v6",
+        manifest.update(initialization="lineage-v7",
                         warm_lineage_sha256=bridge_digest,
                         pool_lineage_bundle_sha256="7" * 64)
         next_manifest.write_text(
             json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
         next_payload = checkpoint_lineage.lineage_from_run_manifest(
             next_checkpoint, next_manifest, allow_eligible_publication=True)
-        self.assertEqual(next_payload["ancestry"]["initialization"], "lineage-v6")
+        self.assertEqual(next_payload["ancestry"]["initialization"], "lineage-v7")
         self.assertEqual(next_payload["ancestry"]["warm_lineage_sha256"],
                          bridge_digest)
         self.assertNotIn("bridged_from", next_payload["ancestry"])
@@ -1042,7 +1180,7 @@ class BridgeLineageTests(unittest.TestCase):
     def test_bridge_cli_create_and_validate(self):
         self.write()
         out = self.root / "cli.lineage.json"
-        # create refuses eligible publication from the CLI, like lineage-v6.
+        # create refuses eligible publication from the CLI, like lineage-v7.
         with self.assertRaises(SystemExit) as caught:
             checkpoint_lineage.main([
                 "create", "--checkpoint", str(self.checkpoint),

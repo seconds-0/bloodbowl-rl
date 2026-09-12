@@ -47,15 +47,13 @@ bias terms; the CUDA backend's layers are pure matmuls with NO biases.
     you can judge the warm-start fidelity loss).
   cuda -> torch: biases are zero-filled.
 
-OBS-V6 LINEAGE: the default obs size is 2782 (obs-v4 decision-support planes
-plus obs-v6 decision-window semantics) — 16,066,560 bytes = 4,016,640 fp32 for
-heads (30, 33, 391) / hidden 512 / 3 layers. Obs-v4 AND obs-v5 both have the
-SAME shape and parameter count but different reserved-byte/Touchback/
-decision-window semantics; this converter cannot identify or bridge either from
-blob size. Require source provenance and do not treat a shape-loadable v4 or v5
-artifact as a v6 warm start. For obs-v3 (1612;
-13,670,400 bytes) or obs-v2 (832; 12,072,960 bytes), pass the corresponding
-explicit --obs-size.
+OBSERVATION LINEAGE: the default obs-v7 size is 2851: 16,207,872 bytes =
+4,051,968 fp32 for heads (30, 33, 391), hidden 512 and 3 layers. Historical
+obs-v4, obs-v5 and obs-v6 share the 2782-byte shape but differ semantically.
+Use explicit --obs-size for historical conversion; size does not prove lineage.
+The dedicated --migrate-v6-to-v7 path requires hash-bound obs-v6 provenance
+and zero-extends the newly exposed inputs for qualification only. Older
+obs-v3 (1612) and obs-v2 (832) also require explicit --obs-size.
 
 Verified against a real artifact (obs-v2 lineage): a CUDA-backend
 checkpoint from a GPU training run is exactly 12,072,960 bytes =
@@ -73,8 +71,11 @@ Usage (PufferLib venv python):
 
 import argparse
 import configparser
+import hashlib
+import json
 import os
 import sys
+import tempfile
 
 import numpy as np
 import torch
@@ -83,10 +84,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Mirrors ACT_SIZES in puffer/bloodbowl/binding.c and bc_pretrain.py.
 DEFAULT_ACT_SIZES = (30, 33, 391)
-# BBE_OBS_SIZE (obs v5 semantics, obs-v4's 2782-byte shape). Blob size cannot
-# distinguish v4 from v5; provenance is required. Older shapes need an explicit
-# --obs-size: obs-v3 (TZ planes) = 1612, obs-v2 = 832.
-DEFAULT_OBS_SIZE = 2782
+# Current BBE_OBS_SIZE. Historical shapes require explicit --obs-size and
+# their recorded provenance; equal blob size does not imply equal semantics.
+DEFAULT_OBS_SIZE = 2851
+OBS_V6_SIZE = 2782
 OBS_V3_SIZE = 1612
 LEGACY_OBS_SIZE = 832
 DEFAULT_CONFIG = os.path.join(ROOT, "puffer", "config", "bloodbowl.ini")
@@ -220,6 +221,97 @@ def cuda_to_torch(blob, hidden, num_layers, obs_size, act_sizes):
     return sd
 
 
+def migrate_v6_blob_to_v7(blob, hidden, num_layers, act_sizes):
+    """Expand a native obs-v6 blob without giving new v7 inputs an effect.
+
+    Existing occupied encoder columns and every later tensor are copied
+    bit-for-bit. The two formerly reserved columns (814/815) and all 69 appended
+    parameter columns are positive zero in the destination encoder.
+    """
+    if tuple(act_sizes) != DEFAULT_ACT_SIZES:
+        raise SystemExit("obs-v6 exact-joint migration requires action heads "
+                         f"{DEFAULT_ACT_SIZES}")
+    src_entries, src_total = cuda_layout(
+        hidden, num_layers, OBS_V6_SIZE, act_sizes)
+    dst_entries, dst_total = cuda_layout(
+        hidden, num_layers, DEFAULT_OBS_SIZE, act_sizes)
+    if blob.size != src_total:
+        raise SystemExit(f"v6 blob has {blob.size} floats, expected {src_total}")
+    if not np.isfinite(blob).all():
+        raise SystemExit("v6 migration source contains non-finite weights")
+    out = np.zeros(dst_total, dtype="<f4")
+    src_by_name = {n: (s, o) for n, s, o in src_entries}
+    dst_by_name = {n: (s, o) for n, s, o in dst_entries}
+    for name in src_by_name:
+        src_shape, src_off = src_by_name[name]
+        dst_shape, dst_off = dst_by_name[name]
+        if name == "encoder.weight":
+            src = blob[src_off:src_off + hidden * OBS_V6_SIZE].reshape(src_shape)
+            dst = out[dst_off:dst_off + hidden * DEFAULT_OBS_SIZE].reshape(dst_shape)
+            dst[:, :OBS_V6_SIZE] = src
+            dst[:, 814:816] = np.float32(0.0)
+        else:
+            if src_shape != dst_shape:
+                raise SystemExit(f"unexpected shape drift for {name}")
+            n = int(np.prod(src_shape))
+            out[dst_off:dst_off + n] = blob[src_off:src_off + n]
+    return out
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def publish_bytes_exclusive(path, payload):
+    """Atomically publish bytes without replacing an existing path."""
+    parent = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".obs-migration-", dir=parent)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.link(tmp, path)  # atomic and fails if path already exists
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+
+def validate_v6_source_lineage(checkpoint, lineage_path, hidden, num_layers):
+    """Prove same-shaped input is obs-v6, not an obs-v4/v5 blob."""
+    try:
+        with open(lineage_path, "rb") as f:
+            payload = json.load(f)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"cannot read v6 source lineage: {exc}") from exc
+    try:
+        ckpt = payload["checkpoint"]
+        compat = payload["compatibility"]
+    except (KeyError, TypeError) as exc:
+        raise SystemExit("v6 source lineage lacks checkpoint/compatibility") from exc
+    expected = {
+        "observation_abi": "obs-v6", "observation_version": 6,
+        "action_abi": "exact-joint-v1", "policy_hidden_size": hidden,
+        "policy_num_layers": num_layers, "policy_expansion_factor": 1,
+    }
+    for key, value in expected.items():
+        if compat.get(key) != value:
+            raise SystemExit(
+                f"v6 source lineage {key} must be {value!r}, "
+                f"got {compat.get(key)!r}")
+    actual_sha = sha256_file(checkpoint)
+    actual_bytes = os.path.getsize(checkpoint)
+    if ckpt.get("sha256") != actual_sha or ckpt.get("bytes") != actual_bytes:
+        raise SystemExit("v6 source lineage checkpoint hash/size mismatch")
+    return actual_sha, sha256_file(lineage_path)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     direction = ap.add_mutually_exclusive_group(required=True)
@@ -227,14 +319,20 @@ def main():
                            help="torch state_dict checkpoint -> flat fp32 blob")
     direction.add_argument("--to-torch", metavar="CUDA_BIN",
                            help="flat fp32 blob -> torch state_dict checkpoint")
+    direction.add_argument("--migrate-v6-to-v7", metavar="CUDA_BIN",
+                           help="expand a proven obs-v6 native checkpoint")
     ap.add_argument("-o", "--out", required=True)
+    ap.add_argument("--migration-manifest",
+                    help="required JSON provenance output for v6-to-v7")
+    ap.add_argument("--source-lineage",
+                    help="required obs-v6 lineage sidecar for v6-to-v7")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
                     help="run config with [policy] hidden_size/num_layers")
     ap.add_argument("--hidden-size", type=int)
     ap.add_argument("--num-layers", type=int)
     ap.add_argument("--obs-size", type=int, default=DEFAULT_OBS_SIZE,
                     help=f"encoder input dim (default {DEFAULT_OBS_SIZE} = "
-                         f"obs-v6 shared shape; size cannot identify obs-v4; "
+                         f"obs-v7; historical shapes require explicit provenance; "
                          f"pass {OBS_V3_SIZE} for obs-v3 or "
                          f"{LEGACY_OBS_SIZE} for obs-v2 lineage checkpoints)")
     ap.add_argument("--act-sizes", default=",".join(map(str, DEFAULT_ACT_SIZES)),
@@ -248,6 +346,59 @@ def main():
         hidden, num_layers = read_policy_arch(args.config)
         hidden = args.hidden_size or hidden
         num_layers = args.num_layers or num_layers
+
+    if args.migrate_v6_to_v7:
+        if not args.migration_manifest:
+            raise SystemExit("--migration-manifest is required for v6-to-v7")
+        if not args.source_lineage:
+            raise SystemExit("--source-lineage is required for v6-to-v7")
+        if args.obs_size != DEFAULT_OBS_SIZE:
+            raise SystemExit("v6-to-v7 fixes destination --obs-size at 2851")
+        src_path = args.migrate_v6_to_v7
+        if os.path.exists(args.out):
+            raise SystemExit(f"migration destination already exists: {args.out}")
+        if os.path.exists(args.migration_manifest):
+            raise SystemExit(
+                f"migration manifest already exists: {args.migration_manifest}")
+        src_layout, src_total = cuda_layout(
+            hidden, num_layers, OBS_V6_SIZE, act_sizes)
+        del src_layout
+        if os.path.getsize(src_path) != src_total * 4:
+            raise SystemExit("migration source is not the expected obs-v6 blob size")
+        src = np.fromfile(src_path, dtype="<f4")
+        source_sha, source_lineage_sha = validate_v6_source_lineage(
+            src_path, args.source_lineage, hidden, num_layers)
+        dst = migrate_v6_blob_to_v7(src, hidden, num_layers, act_sizes)
+        publish_bytes_exclusive(args.out, dst.tobytes())
+        payload = {
+            "schema": "bloodbowl-checkpoint-observation-migration-v1",
+            "source": {"path": os.path.abspath(src_path),
+                       "sha256": source_sha,
+                       "lineage_path": os.path.abspath(args.source_lineage),
+                       "lineage_sha256": source_lineage_sha,
+                       "observation_abi": "obs-v6", "observation_version": 6,
+                       "observation_size": OBS_V6_SIZE},
+            "destination": {"path": os.path.abspath(args.out),
+                            "sha256": sha256_file(args.out),
+                            "observation_abi": "obs-v7", "observation_version": 7,
+                            "observation_size": DEFAULT_OBS_SIZE},
+            "architecture": {"hidden_size": hidden, "num_layers": num_layers,
+                             "action_sizes": list(act_sizes)},
+            "zero_effect_inputs": {"repurposed_v6_zero_columns": [814, 815],
+                                   "appended_columns": [2782, 2850]},
+        }
+        manifest_bytes = (json.dumps(payload, indent=2, sort_keys=True) +
+                          "\n").encode("utf-8")
+        try:
+            publish_bytes_exclusive(args.migration_manifest, manifest_bytes)
+        except BaseException:
+            # This invocation exclusively created the checkpoint above; do not
+            # leave an unmanifested bridge output if manifest publication loses
+            # a race or fails.
+            os.unlink(args.out)
+            raise
+        print(f"migrated obs-v6 -> obs-v7: {src_path} -> {args.out}")
+        return
 
     entries, total = cuda_layout(hidden, num_layers, args.obs_size, act_sizes)
     desc = (f"hidden {hidden} x{num_layers} layers, obs {args.obs_size}, "

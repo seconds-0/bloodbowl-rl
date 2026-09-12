@@ -5,7 +5,7 @@
 // defines as plain literals.
 #include "bloodbowl.h"
 
-#define OBS_SIZE 2782 // obs v6 semantic ABI; v4/v5 shape retained (see header)
+#define OBS_SIZE 2851 // obs v7: parameters plus targeted-action public state
 #define NUM_ATNS 3
 #define ACT_SIZES {30, 33, 391}
 #define OBS_TENSOR_T ByteTensor
@@ -208,7 +208,23 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     if (env->scripted_opponent_type < 0 || env->scripted_opponent_type > 1) {
         env->scripted_opponent_type = 0;
     }
-    env->scripted_bank_tag = (int)kw(kwargs, "scripted_bank_tag", 0.0);
+    double scripted_bank_tag_raw = kw(kwargs, "scripted_bank_tag", 0.0);
+    double scripted_bank_mask_raw = kw(kwargs, "scripted_bank_mask", 0.0);
+    unsigned int scripted_bank_tag = 0;
+    if (!bbe_parse_scripted_selector(scripted_bank_tag_raw, BBE_MAX_BANKS,
+                                     &scripted_bank_tag)) {
+        fprintf(stderr, "bloodbowl: scripted_bank_tag must be a finite integer in 0..%d\n",
+                BBE_MAX_BANKS);
+        exit(1);
+    }
+    if (!bbe_parse_scripted_selector(scripted_bank_mask_raw,
+                                     (1u << BBE_MAX_BANKS) - 1u,
+                                     &env->scripted_bank_mask)) {
+        fprintf(stderr, "bloodbowl: scripted_bank_mask must be a finite integer in 0..%u\n",
+                (1u << BBE_MAX_BANKS) - 1u);
+        exit(1);
+    }
+    env->scripted_bank_tag = (int)scripted_bank_tag;
     // Never fall back to global scripted mode on a bad bank tag: global mode
     // means EVERY env's opponent seat is a bot, which is exactly the learner
     // contamination the tag exists to prevent, and the trainer-side guard
@@ -220,7 +236,13 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
                 env->scripted_bank_tag, BBE_MAX_BANKS);
         exit(1);
     }
-    if (env->scripted_bank_tag > 0 && env->scripted_opponent_team != BB_AWAY) {
+    if (env->scripted_bank_tag > 0 && env->scripted_bank_mask != 0) {
+        fprintf(stderr,
+                "bloodbowl: scripted_bank_tag and scripted_bank_mask are mutually exclusive\n");
+        exit(1);
+    }
+    if ((env->scripted_bank_tag > 0 || env->scripted_bank_mask != 0) &&
+        env->scripted_opponent_team != BB_AWAY) {
         fprintf(stderr,
                 "bloodbowl: scripted_bank_tag=%d requires scripted_opponent_team=%d "
                 "(AWAY): tagged selfplay envs seat the frozen bank -- and so the "

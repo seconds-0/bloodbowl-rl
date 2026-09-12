@@ -51,16 +51,29 @@ class ExperimentContractTests(unittest.TestCase):
             env={
                 "TAG": "wrong-size-contract-test",
                 "REWARD_MANIFEST": "missing.json",
-                "BOOTSTRAP_MODE": "fresh-v6-qualification",
+                "BOOTSTRAP_MODE": "fresh-v7-qualification",
                 "EXPECT_BYTES": "13670400",
             },
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
-            "obs-v6/exact-joint-v1 requires EXPECT_BYTES=16066560",
+            "obs-v7/exact-joint-v1 requires EXPECT_BYTES=16207872",
             result.stderr,
         )
         self.assertNotIn("vendored Python missing", result.stderr)
+
+    def test_reward_launcher_rejects_migrated_v6_training_ancestry(self):
+        result = run_script(
+            "tools/run_reward_ablation.sh",
+            env={
+                "TAG": "migration-training-rejected",
+                "REWARD_MANIFEST": "missing.json",
+                "BOOTSTRAP_MODE": "migration-v6",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("qualification/evaluation only", result.stderr)
+        self.assertNotIn("missing reward manifest", result.stderr)
 
     def test_frozen_eval_rejects_trailing_override_before_checkpoint_io(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -221,11 +234,39 @@ class ExperimentContractTests(unittest.TestCase):
         ):
             self.assertIn(patch, screen)
             self.assertIn(patch, arm)
+        registry = (
+            ROOT / "training/puffer_compiled_backend_sources.txt"
+        ).read_text(encoding="utf-8").splitlines()
+        self.assertEqual(registry, [
+            "build.sh",
+            "pufferlib/pufferl.py",
+            "pufferlib/selfplay.py",
+            "pufferlib/sweep.py",
+            "pufferlib/torch_pufferl.py",
+            "src/bindings.cu",
+            "src/bindings_cpu.cpp",
+            "src/cudnn_conv2d.cu",
+            "src/kernels.cu",
+            "src/models.cu",
+            "src/muon.cu",
+            "src/ocean.cu",
+            "src/pufferlib.cu",
+            "src/tensor.h",
+            "src/vecenv.h",
+        ])
+        self.assertEqual(len(registry), len(set(registry)))
         for source in ("src/bindings_cpu.cpp", "src/kernels.cu"):
-            self.assertIn(source, screen)
-            self.assertIn(source, arm)
+            self.assertIn(source, registry)
+        self.assertIn("puffer_compiled_backend_sources.txt", screen)
+        self.assertIn("puffer_compiled_backend_sources.txt", arm)
+        self.assertIn(
+            "[vendor / relative for relative in backend_sources], backend_sources",
+            screen,
+        )
+        self.assertIn("for name in names", arm)
+        self.assertIn("for relative in sources", arm)
         screen_block = screen.split("patches = [", 1)[1].split(
-            "vendor_sources = [", 1
+            "supporting_python_sources = [", 1
         )[0]
         arm_block = arm.split('PATCH_HASH="$({', 1)[1].split(
             '} | sha256sum', 1
@@ -244,12 +285,12 @@ class ExperimentContractTests(unittest.TestCase):
         """D234: close the lineage hole a pure-Python trainer edit falls through.
 
         `tools/checkpoint_lineage.py` validates exactly three implementation
-        digests. `vendor_source_sha256` is recorded by run_reward_ablation.sh
-        and published by run_reward_screen.sh but is never checked, and
-        `pufferlib/torch_pufferl.py` is pure Python so editing it does not move
-        `compiled_module_sha256` either. Without the reward-clamp patch inside
-        the bundle, a post-patch run could warm-start a pre-patch checkpoint and
-        pass eligibility clean.
+        digests. `vendor_source_sha256` is validated against the module at
+        launch but is not a checkpoint-lineage key. `pufferlib/torch_pufferl.py`
+        is pure Python, so editing it does not move `compiled_module_sha256`
+        either. Without the reward-clamp patch inside the lineage bundle, a
+        post-patch run could warm-start a pre-patch checkpoint and pass
+        eligibility clean.
         """
         lineage = (ROOT / "tools/checkpoint_lineage.py").read_text(
             encoding="utf-8")
@@ -278,7 +319,7 @@ class ExperimentContractTests(unittest.TestCase):
         arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
             encoding="utf-8")
         screen_block = screen.split("patches = [", 1)[1].split(
-            "vendor_sources = [", 1)[0]
+            "supporting_python_sources = [", 1)[0]
         arm_block = arm.split('PATCH_HASH="$({', 1)[1].split(
             '} | sha256sum', 1)[0]
         screen_patches = re.findall(r'training/([^"/]+\.patch)', screen_block)
@@ -510,7 +551,7 @@ class ExperimentContractTests(unittest.TestCase):
         arm = (ROOT / "tools/run_reward_ablation.sh").read_text(
             encoding="utf-8")
         for contract in (
-            "fresh-v6-qualification", "obs-v6", "exact-joint-v1",
+            "fresh-v7-qualification", "obs-v7", "exact-joint-v1",
             '"qualification_only": qualification_only',
             'NUM_FROZEN_BANKS=0',
         ):
@@ -687,13 +728,12 @@ class ExperimentContractTests(unittest.TestCase):
         self.assertIn('"compiled_semantic_contract": compiled_contract', screen)
         # Assert the compiled-module probe by the CHECKS it performs, not by the
         # manifest field names it happens to use. This is the single invariant
-        # that distinguishes obs-v4/obs-v5/obs-v6 -- all three are 2782 bytes,
-        # so blob shape cannot -- and a v4/v5 mixup already wasted a 12B-step
-        # run. The screen and the launcher each verify it independently
+        # that binds the obs-v7 semantics in addition to its distinct shape.
+        # The screen and the launcher each verify it independently
         # against the imported _C, which is deliberate redundancy over the
         # compiled artifact rather than a shadow validator over a file.
         for probe in (
-            '"obs-v6"',
+            '"obs-v7"',
             '"exact-joint-v1"',
             "precision_bytes",
             "observation_version",

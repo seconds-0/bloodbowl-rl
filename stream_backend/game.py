@@ -12,6 +12,7 @@ import time
 
 try:
     import torch
+    from pufferlib import _C as puffer_c
     from pufferlib import pufferl as pufferl_mod
     from pufferlib import torch_pufferl as tp
     _TORCH_IMPORT_ERROR = None
@@ -19,6 +20,7 @@ except (ImportError, ModuleNotFoundError) as e:
     torch = None
     pufferl_mod = None
     tp = None
+    puffer_c = None
     _TORCH_IMPORT_ERROR = e
 
 import json
@@ -44,6 +46,7 @@ BB_A_CHOOSE_DIE = 20
 BB_PROC_MOVE = 7
 BB_PROC_BLOCK = 11
 BB_PROC_PUSH = 12
+BB_PROC_TARGETED_ACTION = 30
 
 BB_PF_DISTRACTED = 1 << 2
 BB_PF_NO_TZ = 1 << 10
@@ -59,11 +62,84 @@ SK_STUNTY = 99
 SK_TITCHY = 104
 
 DICE_SOURCE_INFERRED = "inferred_from_state"
+OBSERVATION_ABI = "obs-v7"
+OBSERVATION_VERSION = 7
+OBS_SIZE = 2851
+
+
+def validate_viewer_runtime(native_module):
+    """Require the source viewer's compiled observation and action contract."""
+    observed = {
+        "observation_abi": getattr(native_module, "observation_abi", None),
+        "observation_version": getattr(native_module, "observation_version", None),
+        "action_abi": getattr(native_module, "action_abi", None),
+    }
+    expected = {
+        "observation_abi": OBSERVATION_ABI,
+        "observation_version": OBSERVATION_VERSION,
+        "action_abi": "exact-joint-v1",
+    }
+    if observed != expected:
+        raise RuntimeError(
+            f"viewer requires {OBSERVATION_ABI}/{OBSERVATION_VERSION} "
+            f"exact-joint-v1, got {observed}")
 
 
 def greedy_logits(logits):
     """Argmax per head — broadcast mode plays its best move, no exploration."""
     return torch.stack([lg.argmax(-1).reshape(-1) for lg in logits], -1).int()
+
+
+def select_exact_joint_logits(logits, packed, greedy, backend=None):
+    """Select one action from a single row's packed exact joint support.
+
+    Stochastic selection delegates to Puffer's canonical rollout sampler.
+    Greedy selection uses the same type -> arg -> square conditioning, taking
+    argmax only within the support selected by the preceding heads.
+    """
+    backend = tp if backend is None else backend
+    sampler = getattr(backend, "sample_joint_logits", None)
+    if not callable(sampler):
+        raise RuntimeError("Puffer exact-joint sampler is unavailable")
+    if packed is None or packed.ndim != 1 or packed.numel() <= 0:
+        raise RuntimeError("viewer action row has no packed joint support")
+    if len(logits) != len(ACT_SIZES) or logits[0].shape[0] != 1:
+        raise RuntimeError("viewer exact-joint selection requires one three-head row")
+
+    device = logits[0].device
+    packed = packed.to(device=device, dtype=torch.int32)
+    counts = torch.tensor([packed.numel()], dtype=torch.int32, device=device)
+    offsets = torch.zeros(1, dtype=torch.int32, device=device)
+    if not greedy:
+        action, _logprob, _entropy, effective_mask = sampler(
+            logits, packed, offsets, counts, ACT_SIZES)
+    else:
+        prefix = torch.ones(packed.numel(), dtype=torch.bool, device=device)
+        selected = []
+        masks = []
+        for head, size in enumerate(ACT_SIZES):
+            values = (packed.long() >> (10 * head)) & 1023
+            support = torch.zeros((1, size), dtype=torch.bool, device=device)
+            head_values = values[prefix]
+            if head_values.numel() == 0 or bool((head_values >= size).any().item()):
+                raise RuntimeError(f"invalid exact support at viewer action head {head}")
+            support[0, head_values] = True
+            masked = logits[head].masked_fill(~support, float("-inf"))
+            choice = masked.argmax(dim=-1).int()
+            selected.append(choice)
+            masks.append(support)
+            prefix &= values == choice.long()[0]
+        action = torch.stack(selected, dim=1)
+        effective_mask = torch.cat(masks, dim=1).to(torch.uint8)
+
+    chosen = action[0].long()
+    matches = torch.ones(packed.numel(), dtype=torch.bool, device=device)
+    for head in range(len(ACT_SIZES)):
+        matches &= ((packed.long() >> (10 * head)) & 1023) == chosen[head]
+    if not bool(matches.any().item()):
+        raise RuntimeError("viewer selected tuple outside packed exact joint support")
+    masked_logits = backend.apply_action_mask(logits, effective_mask, ACT_SIZES)
+    return action.int(), masked_logits, effective_mask
 
 
 def _torch_no_grad():
@@ -137,12 +213,28 @@ def _ctx_from_obs(obs):
     def slot_at(i):
         v = obs[dec.CTX + i]
         return v - 1 if v > 0 else None
+    variant = int(obs[dec.TARGETED_VARIANT_OFF])
+    context = int(obs[dec.TARGETED_CONTEXT_OFF])
+    wrapper_actor = int(obs[dec.TARGETED_ACTOR_OFF])
+    wrapper_target = int(obs[dec.TARGETED_TARGET_OFF])
     return {
         "proc": obs[dec.CTX + 4],
         "phase": obs[dec.CTX + 5],
         "a": slot_at(6),
         "b": slot_at(7),
         "test_target": obs[dec.CTX + 8] or None,
+        "targeted_action_variant": dec.TARGETED_VARIANTS.get(variant),
+        "targeted_action_variant_code": variant,
+        "targeted_action_flags": dec.decode_flag_names(
+            context, dec.TARGETED_CONTEXT_FLAGS),
+        "targeted_action_flags_raw": context,
+        "targeted_action_state": dec.decode_flag_names(
+            int(obs[dec.TARGETED_STATE_OFF]), dec.TARGETED_STATE_FLAGS),
+        "targeted_action_state_raw": int(obs[dec.TARGETED_STATE_OFF]),
+        # These remain separate from ctx a/b, which describe the current top
+        # child frame (for example the player taking a catch or TEST).
+        "targeted_action_actor": wrapper_actor - 1 if wrapper_actor else None,
+        "targeted_action_target": wrapper_target - 1 if wrapper_target else None,
     }
 
 
@@ -602,6 +694,7 @@ class Match:
                 "Match requires torch and pufferlib; pure helpers such as "
                 "TeamStatsAccumulator can be imported without them"
             ) from _TORCH_IMPORT_ERROR
+        validate_viewer_runtime(puffer_c)
         _argv = sys.argv
         sys.argv = [_argv[0], "--slowly"]   # load_config parses argv; shield ours
         try:
@@ -609,6 +702,8 @@ class Match:
         finally:
             sys.argv = _argv
         args["train"]["horizon"] = 1
+        args["train"]["minibatch_size"] = 2
+        args["train"]["replay_ratio"] = 1.0
         args["vec"]["total_agents"] = 2
         args["vec"]["num_buffers"] = 1
         args["vec"]["num_threads"] = 1
@@ -633,9 +728,18 @@ class Match:
         self.device = self.p.device
         self.gpu = self.p.gpu
         self.vec = self.p._vec
-        self.obs = self.p.vec_obs                  # (2,2782) view (cpu or cuda)
+        self.obs = self.p.vec_obs                  # (2,2851) view (cpu or cuda)
+        if tuple(self.obs.shape) != (2, OBS_SIZE):
+            raise RuntimeError(
+                f"viewer requires observation shape (2, {OBS_SIZE}), "
+                f"got {tuple(self.obs.shape)}")
         self.mask = self.p.vec_action_mask         # (2,454) HOST view
         self.terms = self.p.vec_terminals
+        required_joint = ("vec_joint_actions", "vec_joint_offsets",
+                          "vec_joint_counts")
+        if any(getattr(self.p, name, None) is None for name in required_joint):
+            raise RuntimeError(
+                "viewer requires Puffer packed exact-joint action metadata")
 
         self.home_team, self.away_team = home_team, away_team
         pol_b = copy.deepcopy(self.p.policy)
@@ -881,6 +985,15 @@ class Match:
             self.active_kind = None
 
     # -- one engine decision ---------------------------------------------------
+    def _joint_support_row(self, row):
+        offset = int(self.p.vec_joint_offsets[row].item())
+        count = int(self.p.vec_joint_counts[row].item())
+        packed = self.p.vec_joint_actions
+        if count <= 0 or offset < 0 or offset + count > packed.numel():
+            raise RuntimeError(
+                f"viewer joint metadata escapes packed capacity for row {row}")
+        return packed[offset:offset + count].clone()
+
     @_torch_no_grad()
     def step(self):
         home_obs = self._home_obs_bytes()
@@ -897,13 +1010,11 @@ class Match:
             o[[0]], self.state_h)
         lg_a, _val_a, self.state_a = self.pols[self.away_key].forward_eval(
             o[[1]], self.state_a)
-        lg_h = tp.apply_action_mask(lg_h, m[[0]], ACT_SIZES)
-        lg_a = tp.apply_action_mask(lg_a, m[[1]], ACT_SIZES)
-        if getattr(self, "greedy", True):
-            act_h, act_a = greedy_logits(lg_h), greedy_logits(lg_a)
-        else:
-            act_h, _, _ = tp.sample_logits(lg_h)
-            act_a, _, _ = tp.sample_logits(lg_a)
+        greedy = getattr(self, "greedy", True)
+        act_h, lg_h, _mask_h = select_exact_joint_logits(
+            lg_h, self._joint_support_row(0), greedy)
+        act_a, lg_a, _mask_a = select_exact_joint_logits(
+            lg_a, self._joint_support_row(1), greedy)
 
         lg = lg_h if deciding_home else lg_a
         act_raw = (act_h if deciding_home else act_a).reshape(-1).tolist()

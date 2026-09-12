@@ -1,0 +1,2368 @@
+--- a/pufferlib/pufferl.py
++++ b/pufferlib/pufferl.py
+@@ -10,9 +10,12 @@
+ import json
+ import ast
+ import time
++import math
++import struct
+ import argparse
+ import configparser
+ from collections import defaultdict
++from collections.abc import Mapping
+ import multiprocessing as mp
+ from copy import deepcopy
+ 
+@@ -36,6 +39,11 @@
+ import signal # Aggressively exit on ctrl+c
+ signal.signal(signal.SIGINT, lambda sig, frame: os._exit(0))
+ 
++ENTROPY_SCHEDULE_CONTRACT = "cosine-update-index-over-total-updates-fp32-v1"
++_MAX_SIGNED_INT = (1 << 31) - 1
++_MAX_SIGNED_LONG = (1 << 63) - 1
++_MAX_BINARY32 = struct.unpack('!f', bytes.fromhex('7f7fffff'))[0]
++
+ def unroll_nested_dict(d):
+     if not isinstance(d, dict):
+         return d
+@@ -195,14 +203,165 @@
+     print('PUFFER_ENV_JSON ' + json.dumps(
+         env_json, sort_keys=True, allow_nan=False))
+ 
++def _config_mapping(value, name):
++    if not isinstance(value, Mapping):
++        raise TypeError(f'{name} must be a mapping')
++    return value
++
++
++def _config_field(config, name, parent):
++    if name not in config:
++        raise ValueError(f'{parent} is missing required field {name!r}')
++    return config[name]
++
++
++def _checked_config_integer(
++        value, name, minimum=1, maximum=_MAX_SIGNED_LONG):
++    if type(value) is not int:
++        raise TypeError(f'{name} must be an integer')
++    result = value
++    if result < minimum or result > maximum:
++        raise ValueError(
++            f'{name} must be in [{minimum}, {maximum}], '
++            f'got {result}')
++    return result
++
++
++def _checked_config_real(value, name):
++    if type(value) not in (int, float):
++        raise TypeError(f'{name} must be a real number')
++    try:
++        result = float(value)
++    except OverflowError:
++        raise ValueError(f'{name} must be finite')
++    if not math.isfinite(result):
++        raise ValueError(f'{name} must be finite')
++    return result
++
++
++def _finite_binary32(value, name):
++    if abs(value) > _MAX_BINARY32:
++        raise ValueError(f'{name} must be representable as finite binary32')
++    try:
++        result = struct.unpack('!f', struct.pack('!f', value))[0]
++    except (OverflowError, struct.error):
++        raise ValueError(f'{name} must be representable as finite binary32')
++    if not math.isfinite(result):
++        raise ValueError(f'{name} must be representable as finite binary32')
++    return result
++
++
++def _checked_config_bool(value, name):
++    if type(value) is bool:
++        return value
++    if type(value) is int and value in (0, 1):
++        return bool(value)
++    raise TypeError(f'{name} must be a boolean or the integer 0 or 1')
++
++
++def validate_entropy_schedule_config(args):
++    '''Validate schedule inputs before native or Torch narrowing.
++
++    Returns normalized values and the two exact loop counts. No assertion is
++    used: this contract remains active under ``python -O`` and is also called
++    after the multi-rank timestep division.
++    '''
++    root = _config_mapping(args, 'args')
++    train = _config_mapping(
++        _config_field(root, 'train', 'args'), "args['train']")
++    vec = _config_mapping(
++        _config_field(root, 'vec', 'args'), "args['vec']")
++
++    total_timesteps = _checked_config_integer(
++        _config_field(train, 'total_timesteps', "args['train']"),
++        "args['train']['total_timesteps']")
++    total_agents = _checked_config_integer(
++        _config_field(vec, 'total_agents', "args['vec']"),
++        "args['vec']['total_agents']", maximum=_MAX_SIGNED_INT)
++    horizon = _checked_config_integer(
++        _config_field(train, 'horizon', "args['train']"),
++        "args['train']['horizon']", maximum=_MAX_SIGNED_INT)
++    minibatch_size = _checked_config_integer(
++        _config_field(train, 'minibatch_size', "args['train']"),
++        "args['train']['minibatch_size']", maximum=_MAX_SIGNED_INT)
++
++    if total_agents > _MAX_SIGNED_INT // horizon:
++        raise ValueError(
++            'total_agents * horizon exceeds the supported batch range')
++    batch_size = total_agents * horizon
++    if minibatch_size % horizon != 0:
++        raise ValueError(
++            f'minibatch_size {minibatch_size} must be divisible by '
++            f'horizon {horizon}')
++    if minibatch_size > batch_size:
++        raise ValueError(
++            f'minibatch_size {minibatch_size} > total_agents '
++            f'{total_agents} * horizon {horizon}')
++    total_updates = total_timesteps // batch_size
++    if total_updates < 1:
++        raise ValueError(
++            'training has zero complete updates: total_timesteps must '
++            'contain at least one total_agents * horizon batch')
++
++    replay_ratio = _checked_config_real(
++        _config_field(train, 'replay_ratio', "args['train']"),
++        "args['train']['replay_ratio']")
++    if replay_ratio < 0:
++        raise ValueError("args['train']['replay_ratio'] must be nonnegative")
++    replay_ratio_fp32 = _finite_binary32(
++        replay_ratio, "args['train']['replay_ratio']")
++    minibatches_real = (
++        float(replay_ratio_fp32)
++        * float(batch_size)
++        / float(minibatch_size)
++    )
++    if (not math.isfinite(minibatches_real)
++            or minibatches_real > _MAX_SIGNED_INT):
++        raise ValueError(
++            'minibatches per update exceed the supported integer range')
++    minibatches_per_update = math.floor(minibatches_real)
++    if minibatches_per_update < 1:
++        raise ValueError(
++            'training has zero minibatches per update: increase '
++            'replay_ratio or batch_size, or decrease minibatch_size')
++    base_coefficient = _checked_config_real(
++        _config_field(train, 'ent_coef', "args['train']"),
++        "args['train']['ent_coef']")
++    if base_coefficient < 0:
++        raise ValueError("args['train']['ent_coef'] must be nonnegative")
++    _finite_binary32(base_coefficient, "args['train']['ent_coef']")
++
++    min_coefficient_ratio = _checked_config_real(
++        _config_field(train, 'min_ent_coef_ratio', "args['train']"),
++        "args['train']['min_ent_coef_ratio']")
++    if not 0 <= min_coefficient_ratio <= 1:
++        raise ValueError(
++            "args['train']['min_ent_coef_ratio'] must be in [0, 1]")
++    _finite_binary32(
++        min_coefficient_ratio, "args['train']['min_ent_coef_ratio']")
++
++    anneal_enabled = _checked_config_bool(
++        _config_field(train, 'anneal_ent_coef', "args['train']"),
++        "args['train']['anneal_ent_coef']")
++
++    return {
++        'contract': ENTROPY_SCHEDULE_CONTRACT,
++        'total_timesteps': total_timesteps,
++        'total_agents': total_agents,
++        'horizon': horizon,
++        'batch_size': batch_size,
++        'total_updates': total_updates,
++        'minibatch_size': minibatch_size,
++        'replay_ratio_fp32': replay_ratio_fp32,
++        'minibatches_per_update': minibatches_per_update,
++        'base_coefficient': base_coefficient,
++        'anneal_enabled': anneal_enabled,
++        'min_coefficient_ratio': min_coefficient_ratio,
++    }
++
++
+ def validate_config(args):
+-    minibatch_size = args['train']['minibatch_size']
+-    horizon = args['train']['horizon']
+-    total_agents = args['vec']['total_agents']
+-    assert (minibatch_size % horizon) == 0, \
+-        f'minibatch_size {minibatch_size} must be divisible by horizon {horizon}'
+-    assert minibatch_size <= horizon * total_agents, \
+-        f'minibatch_size {minibatch_size} > total_agents {total_agents} * horizon {horizon}'
++    return validate_entropy_schedule_config(args)
+ 
+ def require_training_state_reset(args):
+     if not args['reset_state']:
+@@ -220,9 +379,10 @@
+ def _train_worker(args):
+     require_training_state_reset(args)
+     backend = _resolve_backend(args)
++    entropy_config = validate_entropy_schedule_config(args)
+     pufferl = backend.create_pufferl(args)
+     args.pop('nccl_id', None)
+-    while pufferl.global_step < args['train']['total_timesteps']:
++    for _ in range(entropy_config['total_updates']):
+         backend.rollouts(pufferl)
+         backend.train(pufferl)
+ 
+@@ -458,6 +618,7 @@
+     subprocess = gpus is not None
+     gpus = list(gpus or range(args['train']['gpus']))
+     args['train']['total_timesteps'] //= len(gpus)
++    validate_config(args)
+     args['world_size'] = len(gpus)
+     args['nccl_id'] = _C.get_nccl_id() if len(gpus) > 1 else b''
+ 
+@@ -530,7 +691,7 @@
+ 
+         try:
+             validate_config(args)
+-        except (AssertionError, ValueError) as e:
++        except (TypeError, ValueError) as e:
+             print(f'WARNING: {e}, skipping')
+             sweep_obj.observe(args, 0, 0, is_failure=True)
+             continue
+--- a/pufferlib/sweep.py
++++ b/pufferlib/sweep.py
+@@ -245,7 +245,10 @@
+             if isinstance(space, dict):
+                 idx = self._fill(params[name], spaces[name], flat_sample, idx=idx)
+             else:
+-                params[name] = spaces[name].unnormalize(flat_sample[idx])
++                value = spaces[name].unnormalize(flat_sample[idx])
++                if isinstance(value, np.generic):
++                    value = value.item()
++                params[name] = value
+                 idx += 1
+ 
+         return idx
+--- a/pufferlib/torch_pufferl.py
++++ b/pufferlib/torch_pufferl.py
+@@ -5,6 +5,7 @@
+ import os
+ import glob
+ import time
++import math
+ import ctypes
+ from collections import defaultdict
+ 
+@@ -34,6 +35,53 @@
+     torch.float32: '<f4',
+ }
+ 
++ENTROPY_SCHEDULE_CONTRACT = "cosine-update-index-over-total-updates-fp32-v1"
++
++
++def entropy_schedule_point(*, base_coefficient, anneal_enabled,
++        min_coefficient_ratio, update_index, total_updates):
++    '''Return one independently inspectable entropy schedule point.
++
++    Schedule arithmetic is binary64. The value used by the objective is
++    explicitly rounded to finite IEEE-754 binary32.
++    '''
++    base = pufferlib.pufferl._checked_config_real(
++        base_coefficient, 'base_coefficient')
++    if base < 0:
++        raise ValueError('base_coefficient must be nonnegative')
++    pufferlib.pufferl._finite_binary32(base, 'base_coefficient')
++
++    enabled = pufferlib.pufferl._checked_config_bool(
++        anneal_enabled, 'anneal_enabled')
++    min_ratio = pufferlib.pufferl._checked_config_real(
++        min_coefficient_ratio, 'min_coefficient_ratio')
++    if not 0 <= min_ratio <= 1:
++        raise ValueError('min_coefficient_ratio must be in [0, 1]')
++    pufferlib.pufferl._finite_binary32(
++        min_ratio, 'min_coefficient_ratio')
++
++    updates = pufferlib.pufferl._checked_config_integer(
++        total_updates, 'total_updates')
++    index = pufferlib.pufferl._checked_config_integer(
++        update_index, 'update_index',
++        minimum=-pufferlib.pufferl._MAX_SIGNED_LONG)
++    progress = min(max(float(index) / float(updates), 0.0), 1.0)
++    if enabled:
++        floor = base * min_ratio
++        c_real = floor + 0.5 * (base - floor) * (
++            1.0 + math.cos(math.pi * progress))
++    else:
++        c_real = base
++    c_applied = pufferlib.pufferl._finite_binary32(c_real, 'c_real')
++    return {
++        'contract': ENTROPY_SCHEDULE_CONTRACT,
++        'update_index': index,
++        'progress': progress,
++        "c_real": c_real,
++        "c_applied": c_applied,
++    }
++
++
+ def _log_prob(logits, value):
+     value = value.long().unsqueeze(-1)
+     value, log_pmf = torch.broadcast_tensors(value, logits)
+@@ -212,6 +260,8 @@
+ 
+ class PuffeRL:
+     def __init__(self, args, vec, policy, verbose=True):
++        entropy_config = \
++            pufferlib.pufferl.validate_entropy_schedule_config(args)
+         config = args['train']
+         device = 'cuda' if _C.gpu else 'cpu'
+         self.device = device
+@@ -223,6 +273,9 @@
+         self._vec = vec
+         self.gpu = vec.gpu
+         total_agents = vec.total_agents
++        if total_agents != entropy_config['total_agents']:
++            raise ValueError(
++                'vector total_agents does not match validated configuration')
+         self.total_agents = total_agents
+         obs_dtype = _OBS_DTYPE_MAP.get(vec.obs_dtype, torch.uint8)
+ 
+@@ -284,9 +337,11 @@
+         self.pending_rewards = torch.zeros(total_agents, device=device)
+         self.pending_terminals = torch.zeros(total_agents, device=device)
+ 
+-        self.batch_size = total_agents * horizon
++        self.entropy_config = entropy_config
++        self.batch_size = entropy_config['batch_size']
+         self.minibatch_segments = config['minibatch_size'] // horizon
+-        self.total_epochs = max(1, config['total_timesteps'] // self.batch_size)
++        self.num_minibatches = entropy_config['minibatches_per_update']
++        self.total_epochs = entropy_config['total_updates']
+ 
+         self.policy = policy
+         self.optimizer = Muon(
+@@ -314,6 +369,9 @@
+         self.start_time = time.time()
+         self.profile = Profile(gpu=self.gpu)
+         self.verbose = verbose
++        self.losses = {}
++        self._train_log_interval = None
++        self._training_failed = False
+ 
+         self.model_size = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+         if verbose:
+@@ -322,16 +380,25 @@
+ 
+     @property
+     def uptime(self):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
+         return time.time() - self.start_time
+ 
+     @property
+     def sps(self):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
+         if self.global_step == self.last_log_step:
+             return 0
+ 
+         return (self.global_step - self.last_log_step) / (time.time() - self.last_log_time)
+ 
+     def num_params(self):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
+         return self.model_size
+ 
+     def set_evaluation_mode(self, enabled):
+@@ -446,16 +513,38 @@
+         self.env_logs = self._vec.log()
+ 
+     def train(self):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
+         if not self.reset_state or self.evaluation_mode:
+             raise RuntimeError(
+                 'training requires reset_state=True and evaluation_mode=False')
+         prof = self.profile
+         losses = defaultdict(float)
++        if self.epoch < 0 or self.epoch >= self.total_epochs:
++            raise RuntimeError(
++                'training update exceeds configured total_updates')
+         config = self.config
+         device = self.device
+         if not self.tail_valid:
+             raise RuntimeError(
+                 'training requires one fresh tail record')
++
++        self._training_failed = True
++
++        entropy_point = entropy_schedule_point(
++            base_coefficient=self.entropy_config['base_coefficient'],
++            anneal_enabled=self.entropy_config['anneal_enabled'],
++            min_coefficient_ratio=(
++                self.entropy_config['min_coefficient_ratio']),
++            update_index=self.epoch,
++            total_updates=self.total_epochs,
++        )
++        current_ent_coef = torch.tensor(
++            entropy_point['c_applied'],
++            dtype=torch.float32,
++            device=device,
++        )
+ 
+         b0 = config['prio_beta0']
+         a = config['prio_alpha']
+@@ -476,7 +565,9 @@
+         act = self.actions.transpose(0, 1).contiguous()
+         val = self.values.T.contiguous()
+         lp = self.logprobs.T.contiguous()
+-        rew = self.rewards.T.contiguous().clamp(-1, 1)
++        # Blood Bowl terminal utility and exact-PBRS payback can legitimately
++        # share an emission; keep this as a broad pathology bound.
++        rew = self.rewards.T.contiguous().clamp(-8, 8)
+         ter = self.terminals.T.contiguous()
+         masks = (self.action_masks.transpose(0, 1).contiguous()
+                  if self.action_masks is not None else None)
+@@ -486,7 +577,7 @@
+         tail_rew = self.tail_rewards.clamp(-8, 8)
+         tail_ter = self.tail_terminals
+         prof.mark(0)
+-        num_minibatches = int(config['replay_ratio'] * self.batch_size / config['minibatch_size'])
++        num_minibatches = self.num_minibatches
+         for mb in range(num_minibatches):
+             shape = val.shape
+             advantages = torch.zeros(shape, device=device)
+@@ -544,12 +635,16 @@
+             v_loss = 0.5*torch.max(v_loss_unclipped, v_loss_clipped).mean()
+ 
+             entropy_loss = entropy.mean()
+-            loss = pg_loss + config['vf_coef']*v_loss - config['ent_coef']*entropy_loss
++            entropy_term = -current_ent_coef * entropy_loss
++            loss = pg_loss + config['vf_coef']*v_loss + entropy_term
+             val[idx] = newvalue.detach().float()
+ 
+             losses['policy_loss'] += pg_loss
+             losses['value_loss'] += v_loss
+             losses['entropy'] += entropy_loss
++            losses['entropy_coefficient'] += current_ent_coef
++            losses['entropy_term'] += entropy_term
++            losses['total_loss'] += loss
+             losses['old_approx_kl'] += old_approx_kl
+             losses['approx_kl'] += approx_kl
+             losses['clipfrac'] += clipfrac
+@@ -571,19 +666,78 @@
+         explained_var = torch.nan if var_y == 0 else (1 - (y_true - y_pred).var() / var_y).item()
+         losses['explained_variance'] = explained_var
+ 
+-        self.losses = losses
++        logged_losses, train_log_interval = \
++            self._prepare_train_log(losses, entropy_point)
+         self.epoch += 1
+ 
+-    def log(self):
++        self.losses = logged_losses
++        self._train_log_interval = train_log_interval
++        self._training_failed = False
++
++    def _prepare_train_log(self, losses, entropy_point):
++        logged_losses = {
++            key: float(value) for key, value in losses.items()
++        }
++        interval = self._train_log_interval
++        if interval is None:
++            next_interval = {
++                'loss_totals': dict(logged_losses),
++                'update_count': 1,
++                'first_update_index': entropy_point['update_index'],
++                'last_point': dict(entropy_point),
++                'minibatch_count': self.num_minibatches,
++            }
++        else:
++            loss_totals = dict(interval['loss_totals'])
++            for key, value in logged_losses.items():
++                loss_totals[key] = loss_totals.get(key, 0.0) + value
++            next_interval = {
++                'loss_totals': loss_totals,
++                'update_count': interval['update_count'] + 1,
++                'first_update_index': interval['first_update_index'],
++                'last_point': dict(entropy_point),
++                'minibatch_count': (
++                    interval['minibatch_count'] + self.num_minibatches),
++            }
++        return logged_losses, next_interval
++
++    @staticmethod
++    def _format_train_log(interval):
++        if interval is None:
++            return {}, None
++        update_count = interval['update_count']
++        losses = {
++            key: value / update_count
++            for key, value in interval['loss_totals'].items()
++        }
++        point = interval['last_point']
++        schedule = {
++            'entropy_schedule_contract': ENTROPY_SCHEDULE_CONTRACT,
++            'entropy_first_applied_update_index': (
++                interval['first_update_index']),
++            'entropy_applied_update_index': point['update_index'],
++            'entropy_update_count': update_count,
++            'entropy_loss_minibatch_count': interval['minibatch_count'],
++            'entropy_c_real': point['c_real'],
++            'entropy_c_applied': point['c_applied'],
++        }
++        return losses, schedule
++
++    def _log(self, include_training):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
+         P = Profile
+         perf = self.profile.read_and_reset()
++        interval = self._train_log_interval if include_training else None
++        losses, entropy_schedule = self._format_train_log(interval)
+         logs = {
+             'SPS': self.sps * self.world_size,
+             'agent_steps': self.global_step * self.world_size,
+             'uptime': time.time() - self.start_time,
+             'epoch': self.epoch,
+             'env': dict(getattr(self, 'env_logs', {})),
+-            'loss': dict(getattr(self, 'losses', {})),
++            'loss': losses,
+             'perf': {
+                 'rollout': perf[P.ROLLOUT],
+                 'eval_gpu': perf[P.EVAL_GPU],
+@@ -594,16 +748,37 @@
+             },
+             'util': dict(_C.get_utilization(self.args.get('gpu_id', 0))) if self.gpu else {},
+         }
++        if entropy_schedule is not None:
++            logs['entropy_schedule'] = entropy_schedule
++        if include_training:
++            self.losses = {}
++            self._train_log_interval = None
+         self.last_log_time = time.time()
+         self.last_log_step = self.global_step
+         return logs
+ 
+-    eval_log = log
++    def log(self):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
++        return self._log(include_training=True)
+ 
++    def eval_log(self):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
++        return self._log(include_training=False)
++
+     def save_weights(self, path):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
+         torch.save(self.policy.state_dict(), path)
+ 
+     def load_weights(self, path):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
+         # Blood Bowl checkpoints are trusted local artifacts and include
+         # historical full-pickle state dicts rejected by PyTorch 2.6+'s new
+         # weights_only=True default.
+@@ -612,6 +787,9 @@
+         self.policy.load_state_dict(state_dict)
+ 
+     def render(self, env_id=0):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
+         self._vec.render(env_id)
+ 
+     def close(self):
+@@ -623,6 +801,7 @@
+     @classmethod
+     def create_pufferl(cls, args):
+         '''Matches _C.create_pufferl(args) interface.'''
++        pufferlib.pufferl.validate_entropy_schedule_config(args)
+         # DDP setup
+         if 'LOCAL_RANK' in os.environ:
+             world_size = int(os.environ.get('WORLD_SIZE', 1))
+@@ -731,3 +910,35 @@
+         policy.load_state_dict(state_dict)
+ 
+     return policy
++
++
++def _copy_public_callable_metadata(guarded, method):
++    guarded.__name__ = method.__name__
++    guarded.__qualname__ = method.__qualname__
++    guarded.__doc__ = method.__doc__
++    guarded.__module__ = method.__module__
++    guarded.__annotations__ = dict(getattr(method, '__annotations__', {}))
++    return guarded
++
++
++def _reject_incomplete_update_set_evaluation_mode(method):
++    def guarded(self, enabled):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
++        return method(self, enabled)
++    return _copy_public_callable_metadata(guarded, method)
++
++
++def _reject_incomplete_update_rollouts(method):
++    def guarded(self):
++        if self._training_failed:
++            raise RuntimeError(
++                'training object is unavailable during or after an incomplete update')
++        return method(self)
++    return _copy_public_callable_metadata(guarded, method)
++
++
++PuffeRL.set_evaluation_mode = _reject_incomplete_update_set_evaluation_mode(
++    PuffeRL.set_evaluation_mode)
++PuffeRL.rollouts = _reject_incomplete_update_rollouts(PuffeRL.rollouts)
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -3,8 +3,12 @@
+ #include <pybind11/pybind11.h>
+ #include <pybind11/stl.h>
+ #include <pybind11/numpy.h>
++#include <algorithm>
+ #include <cmath>
+ #include <cstring>
++#include <limits>
++#include <memory>
++#include <string>
+ #include "pufferlib.cu"
+ #include "exact_action_build_hash.h"
+ 
+@@ -13,6 +17,100 @@
+ 
+ namespace py = pybind11;
+ 
++static void require_idle_entropy_transaction(PuffeRL& pufferl) {
++    if (pufferl.training_failed) {
++        throw std::runtime_error(
++            "training object is unusable after an incomplete update");
++    }
++    if (pufferl.defer_entropy_schedule_commit) {
++        throw std::runtime_error(
++            "operation is unavailable during an active training transaction");
++    }
++    if (pufferl.entropy_schedule_commit_pending) {
++        throw std::runtime_error(
++            "training object has stale pending entropy evidence");
++    }
++}
++
++void rollouts(pybind11::object pufferl_obj);
++void set_evaluation_mode(pybind11::object pufferl_obj, bool enabled);
++
++void guarded_rollouts(pybind11::object pufferl_obj) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
++    rollouts(pufferl_obj);
++}
++
++void guarded_set_evaluation_mode(
++        pybind11::object pufferl_obj, bool enabled) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
++    set_evaluation_mode(pufferl_obj, enabled);
++}
++
++class PublicEntropyTransaction {
++public:
++    explicit PublicEntropyTransaction(PuffeRL& pufferl)
++        : pufferl_(pufferl) {
++        require_idle_entropy_transaction(pufferl_);
++        if (pufferl_.hypers.total_agents <= 0 ||
++                pufferl_.hypers.horizon <= 0 ||
++                static_cast<long long>(pufferl_.hypers.total_agents) >
++                    static_cast<long long>(
++                        std::numeric_limits<long>::max())
++                        / static_cast<long long>(pufferl_.hypers.horizon)) {
++            throw std::runtime_error(
++                "training batch is invalid before update dispatch");
++        }
++        long batch_size =
++            static_cast<long>(pufferl_.hypers.total_agents)
++            * static_cast<long>(pufferl_.hypers.horizon);
++        long total_updates =
++            pufferl_.hypers.total_timesteps / batch_size;
++        if (pufferl_.epoch < 0 || pufferl_.epoch >= total_updates) {
++            throw std::runtime_error(
++                "training update exceeds configured total updates");
++        }
++        pufferl_.defer_entropy_schedule_commit = true;
++    }
++
++    ~PublicEntropyTransaction() noexcept {
++        if (!complete_) {
++            pufferl_.defer_entropy_schedule_commit = false;
++            pufferl_.entropy_schedule_commit_pending = false;
++            if (dispatch_started_) {
++                pufferl_.training_failed = true;
++            }
++        }
++    }
++
++    void begin_dispatch() noexcept {
++        dispatch_started_ = true;
++    }
++
++    void complete() {
++        if (!dispatch_started_) {
++            throw std::runtime_error(
++                "public training entropy commit preceded update dispatch");
++        }
++        try {
++            commit_pending_entropy_schedule_update(pufferl_);
++        } catch (...) {
++            pufferl_.training_failed = true;
++            pufferl_.defer_entropy_schedule_commit = false;
++            pufferl_.entropy_schedule_commit_pending = false;
++            throw;
++        }
++        pufferl_.defer_entropy_schedule_commit = false;
++        complete_ = true;
++    }
++
++private:
++    PuffeRL& pufferl_;
++    bool dispatch_started_ = false;
++    bool complete_ = false;
++};
++
+ static void require_fresh_training_tail(PuffeRL& pufferl) {
+     std::vector<int> tail_valid(pufferl.hypers.num_buffers);
+     cudaError_t status = cudaMemcpy(
+@@ -44,6 +142,7 @@
+ // Wrapper functions for Python bindings
+ pybind11::dict puf_log(pybind11::object pufferl_obj) {
+     auto& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     pybind11::dict result;
+ 
+     // Summary
+@@ -72,21 +171,95 @@
+     // Losses
+     pybind11::dict losses_dict;
+     float losses_host[NUM_LOSSES];
+-    cudaMemcpy(losses_host, pufferl.losses_puf.data, sizeof(losses_host), cudaMemcpyDeviceToHost);
+-    float n = losses_host[LOSS_N];
+-    if (n > 0) {
+-        float inv_n = 1.0f / n;
++    cudaError_t loss_copy_status = cudaMemcpy(
++        losses_host,
++        pufferl.losses_puf.data,
++        sizeof(losses_host),
++        cudaMemcpyDeviceToHost);
++    if (loss_copy_status != cudaSuccess) {
++        pufferl.training_failed = true;
++        throw std::runtime_error(
++            std::string("entropy telemetry loss copy failed: ")
++            + cudaGetErrorName(loss_copy_status) + ": "
++            + cudaGetErrorString(loss_copy_status));
++    }
++    long exact_loss_count = pufferl.entropy_loss_minibatch_count;
++    if (exact_loss_count < 0) {
++        throw std::runtime_error(
++            "entropy telemetry loss count is invalid");
++    }
++    losses_dict["loss_minibatch_count"] = exact_loss_count;
++    if (exact_loss_count > 0) {
++        double inv_n = 1.0 / static_cast<double>(exact_loss_count);
+         losses_dict["policy"] = losses_host[LOSS_PG] * inv_n;
+         losses_dict["value"] = losses_host[LOSS_VF] * inv_n;
+         losses_dict["entropy"] = losses_host[LOSS_ENT] * inv_n;
+         losses_dict["total"] = losses_host[LOSS_TOTAL] * inv_n;
++        losses_dict["policy_loss"] = losses_host[LOSS_PG] * inv_n;
++        losses_dict["value_loss"] = losses_host[LOSS_VF] * inv_n;
++        losses_dict["total_loss"] = losses_host[LOSS_TOTAL] * inv_n;
++        losses_dict["entropy_coefficient"] =
++            losses_host[LOSS_ENT_COEF] * inv_n;
++        losses_dict["entropy_term"] =
++            losses_host[LOSS_ENT_TERM] * inv_n;
+         losses_dict["old_kl"] = losses_host[LOSS_OLD_APPROX_KL] * inv_n;
+         losses_dict["kl"] = losses_host[LOSS_APPROX_KL] * inv_n;
+         losses_dict["clipfrac"] = losses_host[LOSS_CLIPFRAC] * inv_n;
+     }
+-    cudaMemset(pufferl.losses_puf.data, 0, numel(pufferl.losses_puf.shape) * sizeof(float));
++    cudaError_t loss_reset_status = cudaMemsetAsync(
++        pufferl.losses_puf.data,
++        0,
++        numel(pufferl.losses_puf.shape) * sizeof(float),
++        pufferl.default_stream);
++    if (loss_reset_status != cudaSuccess) {
++        pufferl.training_failed = true;
++        throw std::runtime_error(
++            std::string("entropy telemetry loss reset failed: ")
++            + cudaGetErrorName(loss_reset_status) + ": "
++            + cudaGetErrorString(loss_reset_status));
++    }
++    loss_reset_status = cudaStreamSynchronize(pufferl.default_stream);
++    if (loss_reset_status != cudaSuccess) {
++        pufferl.training_failed = true;
++        throw std::runtime_error(
++            std::string("entropy telemetry loss reset sync failed: ")
++            + cudaGetErrorName(loss_reset_status) + ": "
++            + cudaGetErrorString(loss_reset_status));
++    }
+     result["loss"] = losses_dict;
+ 
++    // Closed-interval entropy schedule evidence. The loss accumulator above
++    // and these host counters are both read and cleared by this one call.
++    pybind11::dict entropy_schedule_dict;
++    entropy_schedule_dict["entropy_schedule_contract"] =
++        "cosine-update-index-over-total-updates-fp32-v1";
++    entropy_schedule_dict["schedule_update_count"] =
++        pufferl.entropy_schedule_update_count;
++    entropy_schedule_dict["loss_minibatch_count"] =
++        pufferl.entropy_loss_minibatch_count;
++    entropy_schedule_dict["first_update_index"] =
++        pufferl.entropy_first_update;
++    entropy_schedule_dict["last_update_index"] =
++        pufferl.entropy_last_update;
++    entropy_schedule_dict["first_effective_coefficient"] =
++        pufferl.entropy_first_coefficient;
++    entropy_schedule_dict["last_effective_coefficient"] =
++        pufferl.entropy_last_coefficient;
++    entropy_schedule_dict["interval_role"] =
++        pufferl.entropy_schedule_update_count == 0
++            ? "empty"
++            : "training";
++    entropy_schedule_dict["valid"] = pufferl.entropy_schedule_valid;
++    result["entropy_schedule"] = entropy_schedule_dict;
++
++    pufferl.entropy_schedule_update_count = 0;
++    pufferl.entropy_loss_minibatch_count = 0;
++    pufferl.entropy_first_update = -1;
++    pufferl.entropy_last_update = -1;
++    pufferl.entropy_first_coefficient = 0.0f;
++    pufferl.entropy_last_coefficient = 0.0f;
++    pufferl.entropy_schedule_valid = false;
++
+     // Profile
+     pybind11::dict perf_dict;
+     float train_total = 0;
+@@ -131,6 +304,7 @@
+ 
+ pybind11::dict puf_eval_log(pybind11::object pufferl_obj) {
+     auto& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     pybind11::dict result;
+ 
+     double now = wall_clock();
+@@ -151,15 +325,20 @@
+ }
+ 
+ void python_vec_recv(pybind11::object pufferl_obj, int buf) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     // Not used in static/OMP path
+ }
+ 
+ void python_vec_send(pybind11::object pufferl_obj, int buf) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     // Not used in static/OMP path
+ }
+ 
+ void render(pybind11::object pufferl_obj, int env_id) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     static_vec_render(pufferl.vec, env_id);
+ }
+ 
+@@ -491,15 +670,19 @@
+ 
+ pybind11::dict train(pybind11::object pufferl_obj) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     if (!pufferl.hypers.reset_state || pufferl.evaluation_mode) {
+         throw std::runtime_error(
+             "training requires reset_state=True and evaluation_mode=False");
+     }
+     {
++        PublicEntropyTransaction entropy_transaction(pufferl);
+         require_fresh_training_tail(pufferl);
+         pybind11::gil_scoped_release no_gil;
++        entropy_transaction.begin_dispatch();
+         train_impl(pufferl);
+         consume_training_tail(pufferl);
++        entropy_transaction.complete();
+     }
+     pybind11::dict losses;
+     return losses;
+@@ -512,6 +695,7 @@
+ 
+ void save_weights(pybind11::object pufferl_obj, const std::string& path) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     int64_t nbytes = numel(pufferl.master_weights.shape) * sizeof(float);
+     std::vector<char> buf(nbytes);
+     cudaMemcpy(buf.data(), pufferl.master_weights.data, nbytes, cudaMemcpyDeviceToHost);
+@@ -523,6 +707,7 @@
+ 
+ void load_weights(pybind11::object pufferl_obj, const std::string& path) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     int64_t nbytes = numel(pufferl.master_weights.shape) * sizeof(float);
+     FILE* f = fopen(path.c_str(), "rb");
+     if (!f) throw std::runtime_error("Failed to open " + path + " for reading");
+@@ -553,16 +738,19 @@
+ int py_add_frozen_bank(py::object pufferl_obj, int slice_size,
+                        int hidden_size, int num_layers) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     return pufferl_add_frozen_bank(&pufferl, slice_size, hidden_size, num_layers);
+ }
+ 
+ void py_load_frozen_bank(py::object pufferl_obj, int bank_idx, const std::string& path) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     pufferl_load_frozen_bank(&pufferl, bank_idx, path.c_str());
+ }
+ 
+ void py_set_agent_perm(py::object pufferl_obj, py::array_t<int> perm) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     auto buf = perm.request();
+     if (buf.ndim != 1) throw std::runtime_error("agent_perm must be 1-D");
+     if ((int)buf.shape[0] != pufferl.vec->total_agents) {
+@@ -573,6 +761,7 @@
+ 
+ void py_set_env_tags(py::object pufferl_obj, py::array_t<int> tags) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     auto buf = tags.request();
+     if (buf.ndim != 1) throw std::runtime_error("env_tags must be 1-D");
+     int num_envs = pufferl_num_envs(&pufferl);
+@@ -584,11 +773,13 @@
+ 
+ int py_count_aligned(py::object pufferl_obj, int tag_value, int reset_flags) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     return pufferl_count_aligned(&pufferl, tag_value, reset_flags);
+ }
+ 
+ int py_num_envs(py::object pufferl_obj) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    require_idle_entropy_transaction(pufferl);
+     return pufferl_num_envs(&pufferl);
+ }
+ 
+@@ -621,7 +812,178 @@
+         return kwargs[key].cast<double>();
+     } catch (const py::cast_error& e) {
+         throw std::runtime_error(std::string("Failed to cast config key '") + key + "': " + e.what());
++    }
++}
++
++static py::handle require_config_value(py::dict& kwargs, const char* key) {
++    if (!kwargs.contains(key)) {
++        throw std::runtime_error(std::string("Missing config key: ") + key);
++    }
++    return kwargs[key];
++}
++
++static long long exact_config_integer(
++        py::dict& kwargs, const char* key, long long minimum,
++        long long maximum) {
++    py::handle value = require_config_value(kwargs, key);
++    if (!PyLong_CheckExact(value.ptr()) || PyBool_Check(value.ptr())) {
++        throw std::runtime_error(
++            std::string(key) + " must be an exact integer");
++    }
++    long long result = PyLong_AsLongLong(value.ptr());
++    if (PyErr_Occurred()) {
++        PyErr_Clear();
++        throw std::runtime_error(
++            std::string(key) + " is outside the supported integer range");
++    }
++    if (result < minimum || result > maximum) {
++        throw std::runtime_error(
++            std::string(key) + " is outside the supported integer range");
++    }
++    return result;
++}
++
++static double finite_binary32_config(
++        py::dict& kwargs, const char* key, float minimum, float maximum,
++        const char* error) {
++    py::handle value = require_config_value(kwargs, key);
++    if (PyBool_Check(value.ptr()) ||
++            (!PyLong_CheckExact(value.ptr()) &&
++             !PyFloat_CheckExact(value.ptr()))) {
++        throw std::runtime_error(error);
++    }
++    double real = PyFloat_AsDouble(value.ptr());
++    if (PyErr_Occurred()) {
++        PyErr_Clear();
++        throw std::runtime_error(error);
++    }
++    float narrowed = static_cast<float>(real);
++    if (!std::isfinite(real) || !std::isfinite(narrowed) ||
++            real < static_cast<double>(minimum) ||
++            real > static_cast<double>(maximum)) {
++        throw std::runtime_error(error);
++    }
++    return real;
++}
++
++static bool exact_bool01_config(py::dict& kwargs, const char* key) {
++    py::handle value = require_config_value(kwargs, key);
++    if (PyBool_Check(value.ptr())) {
++        return value.ptr() == Py_True;
++    }
++    if (!PyLong_CheckExact(value.ptr())) {
++        throw std::runtime_error(
++            "anneal_ent_coef must be an exact boolean or 0/1");
++    }
++    long long raw = PyLong_AsLongLong(value.ptr());
++    if (PyErr_Occurred()) {
++        PyErr_Clear();
++        throw std::runtime_error(
++            "anneal_ent_coef must be an exact boolean or 0/1");
++    }
++    if (raw != 0 && raw != 1) {
++        throw std::runtime_error(
++            "anneal_ent_coef must be an exact boolean or 0/1");
++    }
++    return raw == 1;
++}
++
++struct EntropyTrainingConfig {
++    int total_agents;
++    int horizon;
++    int minibatch_size;
++    float replay_ratio;
++    long total_timesteps;
++    double ent_coef;
++    double min_ent_coef_ratio;
++    bool anneal_ent_coef;
++    long total_updates;
++    int minibatches_per_update;
++};
++
++static EntropyTrainingConfig validate_entropy_training_config(
++        py::dict& train_kwargs, py::dict& vec_kwargs) {
++    constexpr long long MAX_INT =
++        static_cast<long long>(std::numeric_limits<int>::max());
++    constexpr long long MAX_LONG =
++        static_cast<long long>(std::numeric_limits<long>::max());
++    long long total_agents = exact_config_integer(
++        vec_kwargs, "total_agents", 1, MAX_INT);
++    long long horizon = exact_config_integer(
++        train_kwargs, "horizon", 1, MAX_INT);
++    long long minibatch_size = exact_config_integer(
++        train_kwargs, "minibatch_size", 1, MAX_INT);
++    long long total_timesteps = exact_config_integer(
++        train_kwargs, "total_timesteps", 1, MAX_LONG);
++    if (total_agents > MAX_INT / horizon) {
++        throw std::runtime_error(
++            "total_agents * horizon exceeds the supported batch range");
++    }
++    long long batch_size = total_agents * horizon;
++    if (minibatch_size > batch_size ||
++            minibatch_size % horizon != 0) {
++        throw std::runtime_error(
++            "minibatch_size must be horizon-divisible and no larger than "
++            "total_agents * horizon");
++    }
++    long total_updates =
++        static_cast<long>(total_timesteps / batch_size);
++    if (total_updates <= 0) {
++        throw std::runtime_error(
++            "training has zero complete updates");
+     }
++
++    double replay_ratio_real = finite_binary32_config(
++        train_kwargs, "replay_ratio", 0.0f,
++        std::numeric_limits<float>::max(),
++        "replay_ratio must be finite, nonnegative, and representable as "
++        "float32");
++    float replay_ratio = static_cast<float>(replay_ratio_real);
++    double minibatches_real =
++        static_cast<double>(replay_ratio)
++        * static_cast<double>(batch_size)
++        / static_cast<double>(minibatch_size);
++    if (!std::isfinite(minibatches_real) ||
++            minibatches_real >
++                static_cast<double>(std::numeric_limits<int>::max())) {
++        throw std::runtime_error(
++            "minibatches per update exceed the supported integer range");
++    }
++    int minibatches_per_update =
++        static_cast<int>(std::floor(minibatches_real));
++    if (minibatches_per_update <= 0) {
++        throw std::runtime_error(
++            "training has zero minibatches per update");
++    }
++
++    double ent_coef = finite_binary32_config(
++        train_kwargs, "ent_coef", 0.0f,
++        std::numeric_limits<float>::max(),
++        "ent_coef must be finite, nonnegative, and representable as float32");
++    double min_ent_coef_ratio = finite_binary32_config(
++        train_kwargs, "min_ent_coef_ratio", 0.0f, 1.0f,
++        "min_ent_coef_ratio must be finite and in [0, 1]");
++    double floor_real = ent_coef * min_ent_coef_ratio;
++    float floor_applied = static_cast<float>(floor_real);
++    if (!std::isfinite(floor_real) || !std::isfinite(floor_applied)) {
++        throw std::runtime_error(
++            "entropy coefficient floor must be representable as float32");
++    }
++    bool anneal_ent_coef =
++        exact_bool01_config(train_kwargs, "anneal_ent_coef");
++
++    return EntropyTrainingConfig{
++        .total_agents = static_cast<int>(total_agents),
++        .horizon = static_cast<int>(horizon),
++        .minibatch_size = static_cast<int>(minibatch_size),
++        .replay_ratio = replay_ratio,
++        .total_timesteps = static_cast<long>(total_timesteps),
++        .ent_coef = ent_coef,
++        .min_ent_coef_ratio = min_ent_coef_ratio,
++        .anneal_ent_coef = anneal_ent_coef,
++        .total_updates = total_updates,
++        .minibatches_per_update = minibatches_per_update,
++    };
+ }
+ 
+ Dict* py_dict_to_c_dict(py::dict py_dict) {
+@@ -730,12 +1092,17 @@
+     py::dict env_kwargs = args["env"].cast<py::dict>();
+     py::dict policy_kwargs = args["policy"].cast<py::dict>();
+ 
++    // Validate the raw Python values before narrowing into bool/int/float
++    // HypersT fields. Direct _C callers bypass pufferl.validate_config.
++    EntropyTrainingConfig entropy =
++        validate_entropy_training_config(train_kwargs, vec_kwargs);
++
+     HypersT hypers;
+     // Layout (total_agents and num_buffers come from vec config)
+-    hypers.total_agents = get_config(vec_kwargs, "total_agents");
++    hypers.total_agents = entropy.total_agents;
+     hypers.num_buffers = get_config(vec_kwargs, "num_buffers");
+     hypers.num_threads = get_config(vec_kwargs, "num_threads");
+-    hypers.horizon = get_config(train_kwargs, "horizon");
++    hypers.horizon = entropy.horizon;
+     // Model architecture (num_atns computed from env in C++)
+     hypers.hidden_size = get_config(policy_kwargs, "hidden_size");
+     hypers.num_layers = get_config(policy_kwargs, "num_layers");
+@@ -748,17 +1115,17 @@
+     hypers.beta2 = get_config(train_kwargs, "beta2");
+     hypers.eps = get_config(train_kwargs, "eps");
+     // Training
+-    hypers.minibatch_size = get_config(train_kwargs, "minibatch_size");
+-    hypers.replay_ratio = get_config(train_kwargs, "replay_ratio");
+-    hypers.total_timesteps = get_config(train_kwargs, "total_timesteps");
++    hypers.minibatch_size = entropy.minibatch_size;
++    hypers.replay_ratio = entropy.replay_ratio;
++    hypers.total_timesteps = entropy.total_timesteps;
+     hypers.max_grad_norm = get_config(train_kwargs, "max_grad_norm");
+     // PPO
+     hypers.clip_coef = get_config(train_kwargs, "clip_coef");
+     hypers.vf_clip_coef = get_config(train_kwargs, "vf_clip_coef");
+     hypers.vf_coef = get_config(train_kwargs, "vf_coef");
+-    hypers.ent_coef = get_config(train_kwargs, "ent_coef");
+-    hypers.min_ent_coef_ratio = get_config(train_kwargs, "min_ent_coef_ratio");
+-    hypers.anneal_ent_coef = get_config(train_kwargs, "anneal_ent_coef");
++    hypers.ent_coef = entropy.ent_coef;
++    hypers.min_ent_coef_ratio = entropy.min_ent_coef_ratio;
++    hypers.anneal_ent_coef = entropy.anneal_ent_coef;
+     // GAE
+     hypers.gamma = get_config(train_kwargs, "gamma");
+     hypers.gae_lambda = get_config(train_kwargs, "gae_lambda");
+@@ -811,6 +1178,7 @@
+ }
+ 
+ PYBIND11_MODULE(_C, m) {
++    m.attr("entropy_schedule_contract") = "cosine-update-index-over-total-updates-fp32-v1";
+     // Multi-GPU: generate NCCL unique ID (call on rank 0, pass bytes to all ranks)
+     m.def("get_nccl_id", []() {
+         ncclUniqueId id;
+@@ -883,6 +1251,14 @@
+     m.def("count_aligned", &py_count_aligned);
+     m.def("num_envs", &py_num_envs);
+     m.def("python_vec_recv", &python_vec_recv);
++    m.attr("set_evaluation_mode") = py::cpp_function(
++        &guarded_set_evaluation_mode,
++        py::name("set_evaluation_mode"), py::scope(m),
++        py::arg("pufferl"), py::arg("enabled"));
++    m.attr("rollouts") = py::cpp_function(
++        &guarded_rollouts,
++        py::name("rollouts"), py::scope(m),
++        py::arg("pufferl"));
+     m.def("python_vec_send", &python_vec_send);
+     py::class_<Policy>(m, "Policy");
+     py::class_<Muon>(m, "Muon");
+@@ -890,13 +1266,13 @@
+         .def(py::init<>());
+ 
+     py::class_<HypersT>(m, "HypersT")
+-        .def_readwrite("horizon", &HypersT::horizon)
+-        .def_readwrite("total_agents", &HypersT::total_agents)
++        .def_readonly("horizon", &HypersT::horizon)
++        .def_readonly("total_agents", &HypersT::total_agents)
+         .def_readwrite("num_buffers", &HypersT::num_buffers)
+         .def_readwrite("num_atns", &HypersT::num_atns)
+         .def_readwrite("hidden_size", &HypersT::hidden_size)
+ 
+-        .def_readwrite("replay_ratio", &HypersT::replay_ratio)
++        .def_readonly("replay_ratio", &HypersT::replay_ratio)
+         .def_readwrite("num_layers", &HypersT::num_layers)
+         .def_readwrite("lr", &HypersT::lr)
+         .def_readwrite("min_lr_ratio", &HypersT::min_lr_ratio)
+@@ -904,14 +1280,14 @@
+         .def_readwrite("beta1", &HypersT::beta1)
+         .def_readwrite("beta2", &HypersT::beta2)
+         .def_readwrite("eps", &HypersT::eps)
+-        .def_readwrite("total_timesteps", &HypersT::total_timesteps)
++        .def_readonly("total_timesteps", &HypersT::total_timesteps)
+         .def_readwrite("max_grad_norm", &HypersT::max_grad_norm)
+         .def_readwrite("clip_coef", &HypersT::clip_coef)
+         .def_readwrite("vf_clip_coef", &HypersT::vf_clip_coef)
+         .def_readwrite("vf_coef", &HypersT::vf_coef)
+-        .def_readwrite("ent_coef", &HypersT::ent_coef)
+-        .def_readwrite("min_ent_coef_ratio", &HypersT::min_ent_coef_ratio)
+-        .def_readwrite("anneal_ent_coef", &HypersT::anneal_ent_coef)
++        .def_readonly("ent_coef", &HypersT::ent_coef)
++        .def_readonly("min_ent_coef_ratio", &HypersT::min_ent_coef_ratio)
++        .def_readonly("anneal_ent_coef", &HypersT::anneal_ent_coef)
+         .def_readwrite("gamma", &HypersT::gamma)
+         .def_readwrite("gae_lambda", &HypersT::gae_lambda)
+         .def_readwrite("vtrace_rho_clip", &HypersT::vtrace_rho_clip)
+@@ -946,6 +1322,7 @@
+ 
+     m.def("uptime", [](py::object pufferl_obj) -> double {
+         PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++        require_idle_entropy_transaction(pufferl);
+         double now = wall_clock();
+         return now - pufferl.start_time;
+     });
+@@ -999,6 +1376,7 @@
+         .def_readonly("global_step", &PuffeRL::global_step)
+         .def_readonly("last_log_time", &PuffeRL::last_log_time)
+         .def("num_params", [](PuffeRL& self) -> int64_t {
++            require_idle_entropy_transaction(self);
+             return numel(self.master_weights.shape);
+         });
+     m.attr("rollout_transition_contract") = "tail-bootstrap-v1";
+--- a/src/bindings_cpu.cpp
++++ b/src/bindings_cpu.cpp
+@@ -177,6 +177,7 @@
+ // ============================================================================
+ 
+ PYBIND11_MODULE(_C, m) {
++    m.attr("entropy_schedule_contract") = "cosine-update-index-over-total-updates-fp32-v1";
+     m.attr("precision_bytes") = 4;
+     m.attr("env_name") = PUFFER_STRINGIFY(ENV_NAME);
+     m.attr("gpu") = 0;
+--- a/src/pufferlib.cu
++++ b/src/pufferlib.cu
+@@ -34,7 +34,8 @@
+ enum LossIdx {
+     LOSS_PG = 0, LOSS_VF = 1, LOSS_ENT = 2, LOSS_TOTAL = 3,
+     LOSS_OLD_APPROX_KL = 4, LOSS_APPROX_KL = 5, LOSS_CLIPFRAC = 6,
+-    LOSS_N = 7, NUM_LOSSES = 8,
++    LOSS_ENT_COEF = 7, LOSS_ENT_TERM = 8,
++    LOSS_N = 9, NUM_LOSSES = 10,
+ };
+ 
+ enum ProfileIdx {
+@@ -177,7 +178,8 @@
+     const precision_t* action_mask; // (N, T, A_total) or nullptr
+     int mask_stride_n, mask_stride_t;
+     int num_atns;
+-    float clip_coef, vf_clip_coef, vf_coef, ent_coef;
++    float clip_coef, vf_clip_coef, vf_coef;
++    const float* ent_coef; // Stable device pointer; graph args are by value.
+     int T_seq, A_total, N;
+     int logits_stride_n, logits_stride_t, logits_stride_a;
+     int values_stride_n, values_stride_t;
+@@ -188,6 +190,7 @@
+     FloatTensor loss_output, grad_loss;
+     FloatTensor saved_for_bwd;
+     FloatTensor grad_logits, grad_values, grad_logstd, adv_scratch;
++    FloatTensor ent_coef;
+ };
+ 
+ void register_ppo_buffers(PPOBuffersPuf& bufs, Allocator* alloc, int N, int T, int A_total, bool is_continuous) {
+@@ -200,6 +203,7 @@
+         .grad_values = {.shape = {N, T, 1}},
+         .grad_logstd = {.shape = {N, T, A_total}},
+         .adv_scratch = {.shape = {2}},
++        .ent_coef = {.shape = {1}},
+     };
+     alloc_register(alloc, &bufs.loss_output);
+     alloc_register(alloc, &bufs.saved_for_bwd);
+@@ -210,6 +214,7 @@
+         alloc_register(alloc, &bufs.grad_logstd);
+     }
+     alloc_register(alloc, &bufs.adv_scratch);
++    alloc_register(alloc, &bufs.ent_coef);
+ }
+ 
+ // Prioritized replay over single-epoch data. These kernels are
+@@ -334,11 +339,13 @@
+     float clip_coef;
+     float vf_clip_coef;
+     float vf_coef;
+-    float ent_coef;
++    // Preserve validated Python binary64 inputs for the schedule oracle.
++    // Only the final coefficient applied to the kernel is rounded to f32.
++    double ent_coef;
+     // Entropy coefficient anneal — mirrors lr annealing. When anneal_ent_coef
+     // is set, ent_coef cosine-decays from its base value to
+     // min_ent_coef_ratio * ent_coef over total_timesteps.
+-    float min_ent_coef_ratio;
++    double min_ent_coef_ratio;
+     bool anneal_ent_coef;
+     // GAE
+     float gamma;
+@@ -440,6 +447,23 @@
+     double last_log_time;
+     bool training_failed;
+     long last_log_step;
++    // Entropy schedule state. current_ent_coef has a stable host address so it
++    // remains a valid source for cudaMemcpyAsync until the selected train
++    // stream has consumed the copy.
++    float current_ent_coef;
++    long current_ent_epoch;
++    long entropy_schedule_update_count;
++    long entropy_loss_minibatch_count;
++    long entropy_first_update;
++    long entropy_last_update;
++    float entropy_first_coefficient;
++    float entropy_last_coefficient;
++    bool entropy_schedule_valid;
++    bool defer_entropy_schedule_commit;
++    bool entropy_schedule_commit_pending;
++    long pending_entropy_update;
++    int pending_entropy_minibatches;
++    float pending_entropy_coefficient;
+     int train_warmup;
+     bool rollout_captured;
+     bool evaluation_mode;
+@@ -1071,10 +1095,14 @@
+     float adv_std = sqrtf(float(a.adv_var[0]));
+     float adv_normalized = (adv - float(a.adv_mean[0])) / (adv_std + 1e-8f);
+ 
++    // Load the graph-stable device scalar exactly once. Forward loss,
++    // backward gradient, and direct telemetry must all use this same value.
++    const float ent_coef = *a.ent_coef;
++
+     // grad_loss is always 1.0 (set in post_create, never changes)
+     float dL = inv_NT;
+     float d_pg_loss = dL;
+-    float d_entropy_term = dL * (-a.ent_coef);
++    float d_entropy_term = dL * (-ent_coef);
+ 
+     // Value loss (forward) + value gradient (backward)
+ 
+@@ -1195,7 +1223,9 @@
+     }
+ 
+     // Forward: loss partials
+-    float thread_loss = (pg_loss + a.vf_coef * v_loss - a.ent_coef * total_entropy) * inv_NT;
++    const float entropy_term = -ent_coef * total_entropy;
++    float thread_loss =
++        (pg_loss + a.vf_coef * v_loss + entropy_term) * inv_NT;
+     block_losses[LOSS_PG][tid] = pg_loss * inv_NT;
+     block_losses[LOSS_VF][tid] = v_loss * inv_NT;
+     block_losses[LOSS_ENT][tid] = total_entropy * inv_NT;
+@@ -1203,6 +1233,8 @@
+     block_losses[LOSS_OLD_APPROX_KL][tid] = (-logratio) * inv_NT;
+     block_losses[LOSS_APPROX_KL][tid] = ((ratio - 1.0f) - logratio) * inv_NT;
+     block_losses[LOSS_CLIPFRAC][tid] = (fabsf(ratio - 1.0f) > a.clip_coef ? 1.0f : 0.0f) * inv_NT;
++    block_losses[LOSS_ENT_COEF][tid] = idx == 0 ? ent_coef : 0.0f;
++    block_losses[LOSS_ENT_TERM][tid] = entropy_term * inv_NT;
+     } // end if (idx < total_elements)
+ 
+ // Deterministic aggregation
+@@ -1302,7 +1334,8 @@
+         PrecisionTensor& logstd,     // continuous logstd or empty
+         TrainGraph& graph,
+         IntTensor& act_sizes, FloatTensor& losses_acc,
+-        float clip_coef, float vf_clip_coef, float vf_coef, float ent_coef,
++        float clip_coef, float vf_clip_coef, float vf_coef,
++        const float* ent_coef,
+         PPOBuffersPuf& bufs, bool is_continuous,
+         cudaStream_t stream) {
+     int N = dec_out.shape[0], T = dec_out.shape[1], fused_cols = dec_out.shape[2];
+@@ -1795,15 +1828,206 @@
+     float ratio = (double )t / (double) T;
+     ratio = std::max(0.0f, std::min(1.0f, ratio));
+     return lr_min + 0.5f*(lr_base - lr_min)*(1.0f + std::cos(M_PI * ratio));
++}
++
++inline float entropy_coefficient_for_update(
++        double base, double min_ratio, bool anneal,
++        long update_index, long total_updates) {
++    if (!anneal) return static_cast<float>(base);
++    double progress =
++        static_cast<double>(update_index)
++        / static_cast<double>(total_updates);
++    progress = std::max(0.0, std::min(1.0, progress));
++    double floor_real = base * min_ratio;
++    constexpr double PI =
++        3.141592653589793238462643383279502884;
++    double coefficient_real =
++        floor_real
++        + 0.5 * (base - floor_real)
++            * (1.0 + std::cos(PI * progress));
++    return static_cast<float>(coefficient_real);
++}
++
++inline void validate_entropy_schedule_hypers(const HypersT& hypers) {
++    double base = hypers.ent_coef;
++    double min_ratio = hypers.min_ent_coef_ratio;
++    float applied_base = static_cast<float>(base);
++    float applied_ratio = static_cast<float>(min_ratio);
++    double floor_real = base * min_ratio;
++    float applied_floor = static_cast<float>(floor_real);
++    if (!std::isfinite(base) || base < 0.0
++            || !std::isfinite(applied_base)
++            || !std::isfinite(min_ratio)
++            || min_ratio < 0.0 || min_ratio > 1.0
++            || !std::isfinite(applied_ratio)
++            || !std::isfinite(floor_real)
++            || !std::isfinite(applied_floor)) {
++        throw std::runtime_error(
++            "invalid entropy schedule configuration");
++    }
++}
++
++inline void reset_entropy_schedule_state(PuffeRL& pufferl) {
++    validate_entropy_schedule_hypers(pufferl.hypers);
++    double base = pufferl.hypers.ent_coef;
++    float applied_base = static_cast<float>(base);
++    pufferl.current_ent_coef = applied_base;
++    pufferl.current_ent_epoch = -1;
++    pufferl.entropy_schedule_update_count = 0;
++    pufferl.entropy_loss_minibatch_count = 0;
++    pufferl.entropy_first_update = -1;
++    pufferl.entropy_last_update = -1;
++    pufferl.entropy_first_coefficient = 0.0f;
++    pufferl.entropy_last_coefficient = 0.0f;
++    pufferl.entropy_schedule_valid = false;
++    pufferl.training_failed = false;
++    pufferl.defer_entropy_schedule_commit = false;
++    pufferl.entropy_schedule_commit_pending = false;
++    pufferl.pending_entropy_update = -1;
++    pufferl.pending_entropy_minibatches = 0;
++    pufferl.pending_entropy_coefficient = 0.0f;
++}
++
++inline void commit_entropy_schedule_update(
++        PuffeRL& pufferl, long update_index,
++        int minibatches, float effective_coefficient) {
++    if (minibatches <= 0 ||
++            pufferl.entropy_loss_minibatch_count >
++                std::numeric_limits<long>::max() - minibatches) {
++        throw std::runtime_error(
++            "entropy telemetry minibatch count overflows");
++    }
++    if (pufferl.entropy_schedule_update_count == 0) {
++        pufferl.entropy_first_update = update_index;
++        pufferl.entropy_first_coefficient = effective_coefficient;
++    }
++    pufferl.current_ent_epoch = update_index;
++    pufferl.entropy_last_update = update_index;
++    pufferl.entropy_last_coefficient = effective_coefficient;
++    pufferl.entropy_schedule_update_count += 1;
++    pufferl.entropy_loss_minibatch_count += minibatches;
++    pufferl.entropy_schedule_valid = true;
+ }
+ 
++inline void commit_pending_entropy_schedule_update(PuffeRL& pufferl) {
++    if (!pufferl.entropy_schedule_commit_pending) {
++        throw std::runtime_error(
++            "public training completed without pending entropy evidence");
++    }
++    commit_entropy_schedule_update(
++        pufferl,
++        pufferl.pending_entropy_update,
++        pufferl.pending_entropy_minibatches,
++        pufferl.pending_entropy_coefficient);
++    pufferl.epoch = pufferl.pending_entropy_update + 1;
++    pufferl.entropy_schedule_commit_pending = false;
++    pufferl.pending_entropy_update = -1;
++    pufferl.pending_entropy_minibatches = 0;
++    pufferl.pending_entropy_coefficient = 0.0f;
++}
++
++inline void enqueue_entropy_coefficient(
++        PuffeRL& pufferl, cudaStream_t train_stream) {
++    cudaError_t status = cudaMemcpyAsync(
++        pufferl.ppo_bufs_puf.ent_coef.data,
++        &pufferl.current_ent_coef,
++        sizeof(float),
++        cudaMemcpyHostToDevice,
++        train_stream);
++    if (status != cudaSuccess) {
++        pufferl.training_failed = true;
++        throw std::runtime_error(
++            std::string("entropy coefficient copy failed: ")
++            + cudaGetErrorName(status) + ": "
++            + cudaGetErrorString(status));
++    }
++}
++
+ void train_impl(PuffeRL& pufferl) {
+     // Update to HypersT& p
+     HypersT& hypers = pufferl.hypers;
+ 
+-    cudaEventRecord(pufferl.profile.events[0]);  // pre-loop start
++    if (pufferl.training_failed) {
++        throw std::runtime_error(
++            "training object is unusable after an incomplete update");
++    }
++
+     cudaStream_t train_stream = pufferl.default_stream;
++    if (hypers.total_agents <= 0 || hypers.horizon <= 0) {
++        throw std::runtime_error(
++            "training requires positive total_agents and horizon");
++    }
++    long long batch_size_wide =
++        static_cast<long long>(hypers.total_agents)
++        * static_cast<long long>(hypers.horizon);
++    if (batch_size_wide >
++            static_cast<long long>(std::numeric_limits<int>::max())) {
++        throw std::runtime_error(
++            "training batch size exceeds the supported integer range");
++    }
++    int batch_size = static_cast<int>(batch_size_wide);
++    if (hypers.total_timesteps <= 0) {
++        throw std::runtime_error(
++            "training requires positive total_timesteps");
++    }
++    long total_updates = hypers.total_timesteps / batch_size;
++    if (total_updates <= 0) {
++        throw std::runtime_error(
++            "training has zero complete updates");
++    }
++    if (hypers.minibatch_size <= 0
++            || hypers.minibatch_size > batch_size
++            || hypers.minibatch_size % hypers.horizon != 0) {
++        throw std::runtime_error(
++            "training minibatch must be positive, horizon-divisible, "
++            "and no larger than the batch");
++    }
++    if (!std::isfinite(hypers.replay_ratio)
++            || hypers.replay_ratio < 0.0f) {
++        throw std::runtime_error(
++            "training replay_ratio must be finite and nonnegative");
++    }
++    double minibatches_real =
++        static_cast<double>(hypers.replay_ratio)
++        * static_cast<double>(batch_size)
++        / static_cast<double>(hypers.minibatch_size);
++    if (!std::isfinite(minibatches_real)
++            || minibatches_real >
++                static_cast<double>(std::numeric_limits<int>::max())) {
++        throw std::runtime_error(
++            "training minibatch count exceeds the supported integer range");
++    }
++    int total_minibatches =
++        static_cast<int>(std::floor(minibatches_real));
++    if (total_minibatches <= 0) {
++        throw std::runtime_error(
++            "training has zero minibatches per update");
++    }
++    int minibatch_size = hypers.minibatch_size;
++    int minibatch_segments = minibatch_size / hypers.horizon;
++    long current_epoch = pufferl.epoch;
++    if (current_epoch < 0) {
++        throw std::runtime_error(
++            "training update index must be nonnegative");
++    }
++    validate_entropy_schedule_hypers(hypers);
++    float effective_ent_coef = entropy_coefficient_for_update(
++        hypers.ent_coef,
++        hypers.min_ent_coef_ratio,
++        hypers.anneal_ent_coef,
++        current_epoch,
++        total_updates);
++    if (!std::isfinite(effective_ent_coef)) {
++        throw std::runtime_error(
++            "training entropy coefficient is nonfinite");
++    }
++    pufferl.current_ent_coef = effective_ent_coef;
++    // This same-stream write is deliberately outside graph capture. The
++    // captured kernel keeps the stable device address and reads fresh data.
++    enqueue_entropy_coefficient(pufferl, train_stream);
+ 
++    cudaEventRecord(pufferl.profile.events[0]);  // pre-loop start
++
+     // Transpose from rollout layout (T, B, ...) to train layout (B, T, ...)
+     RolloutBuf& src = pufferl.rollouts;
+     RolloutBuf& rollouts = pufferl.train_rollouts;
+@@ -1833,48 +2057,36 @@
+             rollouts.action_mask.data, src.action_mask.data, T, B, mask_size);
+     }
+ 
+-    // We hard-clamp rewards to -1, 1. Our envs are mostly designed to respect this range
++    // Blood Bowl terminal utility and exact-PBRS payback can legitimately
++    // share an emission; keep this as a broad pathology bound.
+     clamp_precision_kernel<<<grid_size(numel(rollouts.rewards.shape)), BLOCK_SIZE, 0, train_stream>>>(
+-        rollouts.rewards.data, -1.0f, 1.0f, numel(rollouts.rewards.shape));
++        rollouts.rewards.data, -8.0f, 8.0f, numel(rollouts.rewards.shape));
+ 
+     // Set importance weights to 1.0
+     fill_precision_kernel<<<grid_size(numel(rollouts.ratio.shape)), BLOCK_SIZE, 0, train_stream>>>(
+         rollouts.ratio.data, from_float(1.0f), numel(rollouts.ratio.shape));
+ 
+     // Inline any of these only used once
+-    int minibatch_size = hypers.minibatch_size;
+-    int batch_size = hypers.total_agents * hypers.horizon;
+-    int minibatch_segments = minibatch_size / hypers.horizon;
+     float prio_beta0 = hypers.prio_beta0;
+     float prio_alpha = hypers.prio_alpha;
+     bool anneal_lr = hypers.anneal_lr;
+-    int current_epoch = pufferl.epoch;
+ 
+     Muon* muon = &pufferl.muon;
+-    int total_epochs = hypers.total_timesteps / batch_size;
+     if (anneal_lr) {
+         float lr_min = hypers.min_lr_ratio * hypers.lr;
+-        float lr = cosine_annealing(hypers.lr, lr_min, current_epoch, total_epochs);
++        float lr = cosine_annealing(
++            hypers.lr, lr_min, current_epoch, total_updates);
+         cudaMemcpy(muon->lr_ptr, &lr, sizeof(float), cudaMemcpyHostToDevice);
+     }
+ 
+-    // Annealed entropy coefficient — same cosine shape as lr. With PG signal
+-    // alive, the entropy bonus that kept early-training exploratory becomes
+-    // load-bearing dead weight late in training; cosine-decay frees the policy
+-    // to commit harder on what it has already learned.
+-    float current_ent_coef = hypers.ent_coef;
+-    if (hypers.anneal_ent_coef) {
+-        float ent_min = hypers.min_ent_coef_ratio * hypers.ent_coef;
+-        current_ent_coef = cosine_annealing(hypers.ent_coef, ent_min,
+-                                            current_epoch, total_epochs);
+-    }
+-
+     // Annealed priority exponent
+-    float anneal_beta = prio_beta0 + (1.0f - prio_beta0) * prio_alpha * (float)current_epoch/(float)total_epochs;
++    float anneal_beta = prio_beta0
++        + (1.0f - prio_beta0) * prio_alpha
++            * static_cast<float>(current_epoch)
++            / static_cast<float>(total_updates);
+     TrainGraph& graph = pufferl.train_buf;
+     cudaEventRecord(pufferl.profile.events[1]);  // pre-loop end
+ 
+-    int total_minibatches = hypers.replay_ratio * batch_size / hypers.minibatch_size;
+     for (int mb = 0; mb < total_minibatches; ++mb) {
+         cudaEventRecord(pufferl.profile.events[2]);  // start of misc (overwritten each iter)
+         puf_zero(&advantages_puf, train_stream);
+@@ -1928,8 +2140,15 @@
+         } else {
+             bool capturing = pufferl.train_warmup == hypers.cudagraphs;
+             if (capturing) {
+-                assert(cudaStreamBeginCapture(train_stream, cudaStreamCaptureModeGlobal) == cudaSuccess
+-                        && "cudaStreamBeginCapture failed");
++                cudaError_t capture_status = cudaStreamBeginCapture(
++                    train_stream, cudaStreamCaptureModeGlobal);
++                if (capture_status != cudaSuccess) {
++                    pufferl.training_failed = true;
++                    throw std::runtime_error(
++                        std::string("train cudaStreamBeginCapture failed: ")
++                        + cudaGetErrorName(capture_status) + ": "
++                        + cudaGetErrorString(capture_status));
++                }
+             }
+ 
+             cudaStream_t stream = train_stream;
+@@ -1944,7 +2163,8 @@
+ 
+             ppo_loss_fwd_bwd(dec_puf, p_logstd, graph,
+                 pufferl.act_sizes_puf, pufferl.losses_puf,
+-                hypers.clip_coef, hypers.vf_clip_coef, hypers.vf_coef, current_ent_coef,
++                hypers.clip_coef, hypers.vf_clip_coef, hypers.vf_coef,
++                pufferl.ppo_bufs_puf.ent_coef.data,
+                 pufferl.ppo_bufs_puf, pufferl.is_continuous, stream);
+ 
+             FloatTensor grad_logits_puf = pufferl.ppo_bufs_puf.grad_logits;
+@@ -1961,12 +2181,41 @@
+             }
+             if (capturing) {
+                 cudaGraph_t _graph;
+-                assert(cudaStreamEndCapture(train_stream, &_graph) == cudaSuccess
+-                        && "cudaStreamEndCapture failed");
+-                assert(cudaGraphInstantiate(&pufferl.train_cudagraph, _graph, 0) == cudaSuccess
+-                        && "cudaGraphInstantiate failed");
+-                assert(cudaGraphDestroy(_graph) == cudaSuccess && "cudaGraphDestroy failed");
+-                cudaDeviceSynchronize();
++                cudaError_t capture_status =
++                    cudaStreamEndCapture(train_stream, &_graph);
++                if (capture_status != cudaSuccess) {
++                    pufferl.training_failed = true;
++                    throw std::runtime_error(
++                        std::string("train cudaStreamEndCapture failed: ")
++                        + cudaGetErrorName(capture_status) + ": "
++                        + cudaGetErrorString(capture_status));
++                }
++                capture_status = cudaGraphInstantiate(
++                    &pufferl.train_cudagraph, _graph, 0);
++                if (capture_status != cudaSuccess) {
++                    cudaGraphDestroy(_graph);
++                    pufferl.training_failed = true;
++                    throw std::runtime_error(
++                        std::string("train cudaGraphInstantiate failed: ")
++                        + cudaGetErrorName(capture_status) + ": "
++                        + cudaGetErrorString(capture_status));
++                }
++                capture_status = cudaGraphDestroy(_graph);
++                if (capture_status != cudaSuccess) {
++                    pufferl.training_failed = true;
++                    throw std::runtime_error(
++                        std::string("train cudaGraphDestroy failed: ")
++                        + cudaGetErrorName(capture_status) + ": "
++                        + cudaGetErrorString(capture_status));
++                }
++                capture_status = cudaDeviceSynchronize();
++                if (capture_status != cudaSuccess) {
++                    pufferl.training_failed = true;
++                    throw std::runtime_error(
++                        std::string("train graph capture execution failed: ")
++                        + cudaGetErrorName(capture_status) + ": "
++                        + cudaGetErrorString(capture_status));
++                }
+                 pufferl.train_captured = true;
+             }
+             if (!capturing) {
+@@ -1995,25 +2244,44 @@
+         }
+         cudaEventRecord(pufferl.profile.events[4]);  // end forward
+     }
+-    pufferl.epoch += 1;
+ 
+     if (cudaStreamSynchronize(train_stream) != cudaSuccess) {
+         throw std::runtime_error("training CUDA execution failed");
+     }
+ 
+-    if (total_minibatches > 0) {
+-        float ms;
+-        // Pre-loop setup (transpose, advantage, allocs)
+-        cudaEventElapsedTime(&ms, pufferl.profile.events[0], pufferl.profile.events[1]);
+-        pufferl.profile.accum[PROF_TRAIN_MISC] += ms;
+-        // In-loop misc (last iteration, representative) scaled by count
+-        cudaEventElapsedTime(&ms, pufferl.profile.events[2], pufferl.profile.events[3]);
+-        pufferl.profile.accum[PROF_TRAIN_MISC] += ms * total_minibatches;
+-        // In-loop forward (last iteration, representative) scaled by count
+-        cudaEventElapsedTime(&ms, pufferl.profile.events[3], pufferl.profile.events[4]);
+-        pufferl.profile.accum[PROF_TRAIN_FORWARD] += ms * total_minibatches;
++    // Commit the public-update identity only after every queued operation has
++    // completed successfully. Warmup uses this same path, then construction
++    // restores the entire interval state below.
++    if (pufferl.defer_entropy_schedule_commit) {
++        if (pufferl.entropy_schedule_commit_pending) {
++            pufferl.training_failed = true;
++            throw std::runtime_error(
++                "public training has stale pending entropy evidence");
++        }
++        pufferl.entropy_schedule_commit_pending = true;
++        pufferl.pending_entropy_update = current_epoch;
++        pufferl.pending_entropy_minibatches = total_minibatches;
++        pufferl.pending_entropy_coefficient = effective_ent_coef;
++    } else {
++        commit_entropy_schedule_update(
++            pufferl,
++            current_epoch,
++            total_minibatches,
++            effective_ent_coef);
++        pufferl.epoch = current_epoch + 1;
+     }
+ 
++    float ms;
++    // Pre-loop setup (transpose, advantage, allocs)
++    cudaEventElapsedTime(&ms, pufferl.profile.events[0], pufferl.profile.events[1]);
++    pufferl.profile.accum[PROF_TRAIN_MISC] += ms;
++    // In-loop misc (last iteration, representative) scaled by count
++    cudaEventElapsedTime(&ms, pufferl.profile.events[2], pufferl.profile.events[3]);
++    pufferl.profile.accum[PROF_TRAIN_MISC] += ms * total_minibatches;
++    // In-loop forward (last iteration, representative) scaled by count
++    cudaEventElapsedTime(&ms, pufferl.profile.events[3], pufferl.profile.events[4]);
++    pufferl.profile.accum[PROF_TRAIN_FORWARD] += ms * total_minibatches;
++
+ }
+ 
+ // Build a Policy value for a given env + arch. Encoder/decoder algorithms are
+@@ -2360,6 +2628,7 @@
+     }
+ 
+     cudaSetDevice(hypers.gpu_id);
++    reset_entropy_schedule_state(*pufferl);
+ 
+     // Multi-GPU: initialize NCCL
+     if (hypers.world_size > 1) {
+@@ -2489,6 +2758,12 @@
+     }
+     if (alloc_create(acts) != cudaSuccess) {
+         return nullptr;
++    }
++    float* entropy_device_address =
++        pufferl->ppo_bufs_puf.ent_coef.data;
++    if (entropy_device_address == nullptr) {
++        throw std::runtime_error(
++            "entropy coefficient device scalar was not allocated");
+     }
+ 
+     pufferl->grad_puf = {.data = (precision_t*)grads->mem, .shape = {grads->total_elems}};
+@@ -2520,7 +2795,11 @@
+     cudaMemset(pufferl->rng_offset_puf.data, 0,
+         (num_buffers + 1) * sizeof(long));
+     float one = 1.0f;
++    cudaMemset(
++        pufferl->ppo_bufs_puf.loss_output.data, 0, sizeof(float));
+     cudaMemcpy(pufferl->ppo_bufs_puf.grad_loss.data, &one, sizeof(float), cudaMemcpyHostToDevice);
++    enqueue_entropy_coefficient(
++        *pufferl, pufferl->default_stream);
+     muon_post_create(&pufferl->muon);
+ 
+     // Set up frozen banks declared in vec_kwargs (num_frozen_banks +
+@@ -2585,24 +2864,44 @@
+         // Snapshot weights + optimizer state before init-time capture
+         long wb_bytes = numel(pufferl->master_weights.shape) * sizeof(float);
+         void* saved_weights;
+-        cudaMalloc(&saved_weights, wb_bytes);
+-        cudaMemcpy(saved_weights, pufferl->master_weights.data, wb_bytes, cudaMemcpyDeviceToDevice);
++        require_cuda_success(
++            cudaMalloc(&saved_weights, wb_bytes),
++            "graph warmup weight snapshot allocation failed");
++        require_cuda_success(
++            cudaMemcpy(
++                saved_weights,
++                pufferl->master_weights.data,
++                wb_bytes,
++                cudaMemcpyDeviceToDevice),
++            "graph warmup weight snapshot copy failed");
+         void* saved_momentum;
+-        cudaMalloc(&saved_momentum, wb_bytes);
+-        cudaMemcpy(saved_momentum, pufferl->muon.mb_puf.data, wb_bytes, cudaMemcpyDeviceToDevice);
++        require_cuda_success(
++            cudaMalloc(&saved_momentum, wb_bytes),
++            "graph warmup momentum snapshot allocation failed");
++        require_cuda_success(
++            cudaMemcpy(
++                saved_momentum,
++                pufferl->muon.mb_puf.data,
++                wb_bytes,
++                cudaMemcpyDeviceToDevice),
++            "graph warmup momentum snapshot copy failed");
+ 
+         // Create per-buffer streams before capture so graphs are
+         // captured and replayed on the same streams.
+         pufferl->streams = (cudaStream_t*)calloc(num_buffers, sizeof(cudaStream_t));
+         for (int i = 0; i < num_buffers; i++) {
+-            cudaStreamCreate(&pufferl->streams[i]);
++            require_cuda_success(
++                cudaStreamCreate(&pufferl->streams[i]),
++                "graph rollout stream creation failed");
+             vec->streams[i] = pufferl->streams[i];
+         }
+ 
+         cudaStream_t saved_default = pufferl->default_stream;
+         cudaStream_t saved_tl = tl_stream;
+         cudaStream_t warmup_stream;
+-        cudaStreamCreate(&warmup_stream);
++        require_cuda_success(
++            cudaStreamCreate(&warmup_stream),
++            "graph training stream creation failed");
+         pufferl->default_stream = warmup_stream;
+ 
+         for (pufferl->epoch = 0; pufferl->epoch <= hypers.cudagraphs; pufferl->epoch++) {
+@@ -2610,7 +2909,9 @@
+                 int buf = i % num_buffers;
+                 tl_stream = pufferl->streams[buf];
+                 net_callback_wrapper(pufferl.get(), buf, i / num_buffers);
+-                cudaDeviceSynchronize();
++                require_cuda_success(
++                    cudaDeviceSynchronize(),
++                    "graph rollout warmup synchronization failed");
+             }
+         }
+         pufferl->rollout_captured = true;
+@@ -2657,17 +2958,39 @@
+             train_impl(*pufferl);
+         }
+ 
+-        cudaStreamSynchronize(warmup_stream);
+-        cudaDeviceSynchronize();
++        require_cuda_success(
++            cudaStreamSynchronize(warmup_stream),
++            "graph training warmup synchronization failed");
++        require_cuda_success(
++            cudaDeviceSynchronize(),
++            "graph construction device synchronization failed");
+         pufferl->default_stream = saved_default;
+         tl_stream = saved_tl;
+-        cudaStreamDestroy(warmup_stream);
++        require_cuda_success(
++            cudaStreamDestroy(warmup_stream),
++            "graph training stream destruction failed");
+ 
+         // Restore weights + optimizer state corrupted by warmup/capture
+-        cudaMemcpy(pufferl->master_weights.data, saved_weights, wb_bytes, cudaMemcpyDeviceToDevice);
+-        cudaFree(saved_weights);
+-        cudaMemcpy(pufferl->muon.mb_puf.data, saved_momentum, wb_bytes, cudaMemcpyDeviceToDevice);
+-        cudaFree(saved_momentum);
++        require_cuda_success(
++            cudaMemcpy(
++                pufferl->master_weights.data,
++                saved_weights,
++                wb_bytes,
++                cudaMemcpyDeviceToDevice),
++            "graph warmup weight restore copy failed");
++        require_cuda_success(
++            cudaFree(saved_weights),
++            "graph warmup weight snapshot release failed");
++        require_cuda_success(
++            cudaMemcpy(
++                pufferl->muon.mb_puf.data,
++                saved_momentum,
++                wb_bytes,
++                cudaMemcpyDeviceToDevice),
++            "graph warmup momentum restore copy failed");
++        require_cuda_success(
++            cudaFree(saved_momentum),
++            "graph warmup momentum snapshot release failed");
+         if (USE_BF16) {
+             int n = numel(pufferl->param_puf.shape);
+             cast<<<grid_size(n), BLOCK_SIZE, 0, pufferl->default_stream>>>(
+@@ -2688,6 +3011,11 @@
+         }
+         cudaDeviceSynchronize();
+ 
++        if (pufferl->ppo_bufs_puf.ent_coef.data !=
++                entropy_device_address) {
++            throw std::runtime_error(
++                "entropy coefficient device address changed during warmup");
++        }
+         pufferl->epoch = 0;
+         for (int bank = 0; bank < 1 + pufferl->num_frozen_banks; bank++) {
+             PrecisionTensor* tail_states = (bank == 0)
+@@ -2735,6 +3063,9 @@
+                 "post-warmup entropy/loss state restoration failed");
+         }
+         pufferl->global_step = 0;
++        reset_entropy_schedule_state(*pufferl);
++        enqueue_entropy_coefficient(
++            *pufferl, pufferl->default_stream);
+     }
+ 
+     // Create per-buffer streams if not already created by cudagraph path
+--- a/tests/profile_kernels.cu
++++ b/tests/profile_kernels.cu
+@@ -2,8 +2,11 @@
+ #include <memory>
+ #include <stdexcept>
+ #include <algorithm>
++#include <array>
+ #include <cmath>
+ #include <chrono>
++#include <limits>
++#include <vector>
+ 
+ #include "pufferlib.cu"
+ #include "ini.h"
+@@ -18,7 +21,17 @@
+ const int H_ = 128;
+ const int A_ = 4;
+ const int INPUT_SIZE = 96;
++constexpr float PPO_PROFILE_ENTROPY_COEFFICIENT = 0.01f;
++constexpr int PPO_ENTROPY_TELEMETRY_IRREGULAR_ROWS = 7;
++constexpr size_t PPO_GRAPH_REPLAY_MAX_ELEMENTS = 1u << 22;
+ 
++static_assert(
++    LOSS_ENT_COEF < LOSS_N,
++    "PPO profile must retain the direct entropy-coefficient slot");
++static_assert(
++    LOSS_ENT_TERM < LOSS_N,
++    "PPO profile must retain the signed entropy-objective slot");
++
+ #ifndef ENV_NAME
+ #error "ENV_NAME must be defined at compile time (e.g. -DENV_NAME=breakout)"
+ #endif
+@@ -322,6 +335,7 @@
+     PPOGraphArgs ga;
+     FloatTensor loss, losses_acc, ppo_partials;
+     FloatTensor grad_logits_t, grad_values_t, adv_mean_t, adv_var_t;
++    FloatTensor ent_coef_t;
+     PrecisionTensor logits_t, actions_t, old_logprobs_t, advantages_t, prio_t, values_t, returns_t;
+     PrecisionTensor ratio_t, newvalue_t;
+     IntTensor act_sizes_t;
+@@ -351,6 +365,7 @@
+     p->grad_values_t  = {.shape = {NT}};
+     p->adv_mean_t     = {.shape = {1}};
+     p->adv_var_t      = {.shape = {1}};
++    p->ent_coef_t     = {.shape = {1}};
+     p->loss           = {.shape = {1}};
+     p->losses_acc     = {.shape = {LOSS_N + 1}};
+     p->ppo_partials   = {.shape = {ppo_grid, LOSS_N + 1}};
+@@ -370,6 +385,7 @@
+     alloc_register(&p->alloc, &p->grad_values_t);
+     alloc_register(&p->alloc, &p->adv_mean_t);
+     alloc_register(&p->alloc, &p->adv_var_t);
++    alloc_register(&p->alloc, &p->ent_coef_t);
+     alloc_register(&p->alloc, &p->loss);
+     alloc_register(&p->alloc, &p->losses_acc);
+     alloc_register(&p->alloc, &p->ppo_partials);
+@@ -377,6 +393,14 @@
+     alloc_create(&p->alloc);
+ 
+     cudaMemcpy(p->act_sizes_t.data, &A, sizeof(int), cudaMemcpyHostToDevice);
++    float ent_coef = PPO_PROFILE_ENTROPY_COEFFICIENT;
++    cudaMemcpy(
++        p->ent_coef_t.data,
++        &ent_coef,
++        sizeof(float),
++        cudaMemcpyHostToDevice);
++    cudaMemset(
++        p->losses_acc.data, 0, (LOSS_N + 1) * sizeof(float));
+ 
+     // Fill with random data
+     float* buf = (float*)malloc(NT * fused_cols * sizeof(float));
+@@ -426,7 +450,8 @@
+         .adv_var = p->adv_var_t.data,
+         .act_sizes = p->act_sizes_t.data,
+         .num_atns = 1,
+-        .clip_coef = 0.1f, .vf_clip_coef = 0.1f, .vf_coef = 0.5f, .ent_coef = 0.01f,
++        .clip_coef = 0.1f, .vf_clip_coef = 0.1f, .vf_coef = 0.5f,
++        .ent_coef = p->ent_coef_t.data,
+         .T_seq = T, .A_total = A, .N = N,
+         .logits_stride_n = T * fused_cols, .logits_stride_t = fused_cols, .logits_stride_a = 1,
+         .values_stride_n = T * fused_cols, .values_stride_t = fused_cols,
+@@ -452,12 +477,322 @@
+         p->ppo_partials.data, p->ka, p->ga);
+     ppo_loss_reduce<<<1, LOSS_N + 1>>>(
+         p->loss.data, p->losses_acc.data, p->ppo_partials.data, p->ppo_grid);
++}
++
++inline void ppo_replay_cuda_check(cudaError_t status, const char* operation) {
++    if (status != cudaSuccess) {
++        throw std::runtime_error(
++            std::string("PPO entropy graph replay ") + operation +
++            " failed: " + cudaGetErrorString(status));
++    }
++}
++
++inline size_t ppo_replay_bounded_product(
++        size_t lhs, size_t rhs, const char* name) {
++    if (lhs == 0 || rhs == 0 ||
++            lhs > PPO_GRAPH_REPLAY_MAX_ELEMENTS / rhs) {
++        throw std::runtime_error(
++            std::string("PPO entropy graph replay invalid ") + name);
++    }
++    size_t count = lhs * rhs;
++    if (count > PPO_GRAPH_REPLAY_MAX_ELEMENTS) {
++        throw std::runtime_error(
++            std::string("PPO entropy graph replay oversized ") + name);
++    }
++    return count;
+ }
++
++inline bool ppo_replay_near(
++        float actual, float expected, float absolute_tolerance,
++        float relative_tolerance) {
++    if (!std::isfinite(actual) || !std::isfinite(expected)) {
++        return false;
++    }
++    float scale = std::max(std::fabs(actual), std::fabs(expected));
++    return std::fabs(actual - expected) <=
++        absolute_tolerance + relative_tolerance * scale;
++}
++
++struct PPOGraphReplayResult {
++    float requested_coefficient;
++    float reduced_loss;
++    std::array<float, LOSS_N + 1> losses;
++    std::vector<float> logits_gradient;
++    std::vector<float> value_gradient;
++};
++
++// Capture the profile's exact PPO loss launch sequence once, then prove that
++// graph replay reads the current value through the graph-stable device pointer.
++// This is a regression guard, not part of the timed region below.
++void verify_ppoloss_entropy_graph_replay(PPOProfile* p) {
++    if (p == nullptr || p->N <= 0 || p->T <= 0 || p->A <= 1 ||
++            p->ka.is_continuous) {
++        throw std::runtime_error(
++            "PPO entropy graph replay requires a nonempty discrete profile");
++    }
++    if (p->ka.ent_coef == nullptr ||
++            p->ka.ent_coef != p->ent_coef_t.data) {
++        throw std::runtime_error(
++            "PPO entropy graph replay coefficient pointer is not stable");
++    }
++
++    size_t sequence_count = ppo_replay_bounded_product(
++        static_cast<size_t>(p->N), static_cast<size_t>(p->T),
++        "sequence size");
++    size_t gradient_count = ppo_replay_bounded_product(
++        sequence_count, static_cast<size_t>(p->A), "gradient size");
++    size_t logits_count = ppo_replay_bounded_product(
++        sequence_count, static_cast<size_t>(p->A + 1), "logits size");
++    std::vector<precision_t> logits(logits_count);
+ 
++    // create_ppoloss initializes through the legacy default stream. Complete
++    // that work before using a nonblocking stream for the capture fixture.
++    ppo_replay_cuda_check(
++        cudaDeviceSynchronize(), "initial device synchronization");
++    ppo_replay_cuda_check(
++        cudaMemcpy(
++            logits.data(), p->logits_t.data,
++            logits.size() * sizeof(precision_t), cudaMemcpyDeviceToHost),
++        "logits copy");
++
++    cudaStream_t stream = nullptr;
++    cudaGraph_t graph = nullptr;
++    cudaGraphExec_t graph_exec = nullptr;
++    ppo_replay_cuda_check(
++        cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking),
++        "stream creation");
++    ppo_replay_cuda_check(
++        cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal),
++        "capture begin");
++    ppo_replay_cuda_check(
++        cudaMemsetAsync(p->loss.data, 0, sizeof(float), stream),
++        "captured loss reset");
++    ppo_replay_cuda_check(
++        cudaMemsetAsync(
++            p->losses_acc.data, 0,
++            (LOSS_N + 1) * sizeof(float), stream),
++        "captured telemetry reset");
++    ppo_loss_compute<<<p->ppo_grid, PPO_THREADS, 0, stream>>>(
++        p->ppo_partials.data, p->ka, p->ga);
++    ppo_replay_cuda_check(
++        cudaPeekAtLastError(), "captured PPO compute launch");
++    ppo_loss_reduce<<<1, LOSS_N + 1, 0, stream>>>(
++        p->loss.data, p->losses_acc.data,
++        p->ppo_partials.data, p->ppo_grid);
++    ppo_replay_cuda_check(
++        cudaPeekAtLastError(), "captured PPO reduction launch");
++    ppo_replay_cuda_check(
++        cudaStreamEndCapture(stream, &graph), "capture end");
++    if (graph == nullptr) {
++        throw std::runtime_error(
++            "PPO entropy graph replay capture returned a null graph");
++    }
++    ppo_replay_cuda_check(
++        cudaGraphInstantiate(&graph_exec, graph, 0),
++        "graph instantiation");
++    if (graph_exec == nullptr) {
++        throw std::runtime_error(
++            "PPO entropy graph replay instantiation returned a null graph");
++    }
++    ppo_replay_cuda_check(cudaGraphDestroy(graph), "graph destruction");
++    graph = nullptr;
++
++    constexpr std::array<float, 2> coefficients = {
++        0.03125f,
++        0.375f,
++    };
++    std::array<PPOGraphReplayResult, 2> results;
++    for (size_t replay = 0; replay < coefficients.size(); ++replay) {
++        PPOGraphReplayResult& result = results[replay];
++        result.requested_coefficient = coefficients[replay];
++        result.losses.fill(std::numeric_limits<float>::quiet_NaN());
++        result.logits_gradient.resize(gradient_count);
++        result.value_gradient.resize(sequence_count);
++
++        ppo_replay_cuda_check(
++            cudaMemcpyAsync(
++                p->ent_coef_t.data, &coefficients[replay], sizeof(float),
++                cudaMemcpyHostToDevice, stream),
++            "coefficient copy");
++        ppo_replay_cuda_check(
++            cudaGraphLaunch(graph_exec, stream), "graph launch");
++        ppo_replay_cuda_check(
++            cudaMemcpyAsync(
++                &result.reduced_loss, p->loss.data, sizeof(float),
++                cudaMemcpyDeviceToHost, stream),
++            "reduced loss copy");
++        ppo_replay_cuda_check(
++            cudaMemcpyAsync(
++                result.losses.data(), p->losses_acc.data,
++                result.losses.size() * sizeof(float),
++                cudaMemcpyDeviceToHost, stream),
++            "loss telemetry copy");
++        ppo_replay_cuda_check(
++            cudaMemcpyAsync(
++                result.logits_gradient.data(), p->grad_logits_t.data,
++                result.logits_gradient.size() * sizeof(float),
++                cudaMemcpyDeviceToHost, stream),
++            "logits gradient copy");
++        ppo_replay_cuda_check(
++            cudaMemcpyAsync(
++                result.value_gradient.data(), p->grad_values_t.data,
++                result.value_gradient.size() * sizeof(float),
++                cudaMemcpyDeviceToHost, stream),
++            "value gradient copy");
++        ppo_replay_cuda_check(
++            cudaStreamSynchronize(stream), "replay synchronization");
++        if (p->ka.ent_coef != p->ent_coef_t.data) {
++            throw std::runtime_error(
++                "PPO entropy graph replay coefficient address changed");
++        }
++    }
++
++    // Leave the microbenchmark in the same state create_ppoloss established.
++    float profile_coefficient = PPO_PROFILE_ENTROPY_COEFFICIENT;
++    ppo_replay_cuda_check(
++        cudaMemcpyAsync(
++            p->ent_coef_t.data, &profile_coefficient, sizeof(float),
++            cudaMemcpyHostToDevice, stream),
++        "profile coefficient restoration");
++    ppo_replay_cuda_check(
++        cudaMemsetAsync(
++            p->losses_acc.data, 0,
++            (LOSS_N + 1) * sizeof(float), stream),
++        "profile telemetry restoration");
++    ppo_replay_cuda_check(
++        cudaMemsetAsync(p->loss.data, 0, sizeof(float), stream),
++        "profile loss restoration");
++    ppo_replay_cuda_check(
++        cudaStreamSynchronize(stream), "restoration synchronization");
++    ppo_replay_cuda_check(
++        cudaGraphExecDestroy(graph_exec), "graph executable destruction");
++    graph_exec = nullptr;
++    ppo_replay_cuda_check(cudaStreamDestroy(stream), "stream destruction");
++    stream = nullptr;
++
++    for (const PPOGraphReplayResult& result : results) {
++        if (result.losses[LOSS_N] != 1.0f) {
++            throw std::runtime_error(
++                "PPO entropy graph replay did not execute exactly one loss");
++        }
++        if (result.losses[LOSS_ENT_COEF] !=
++                result.requested_coefficient) {
++            throw std::runtime_error(
++                "PPO entropy graph replay coefficient is not bit-exact");
++        }
++        float expected_entropy_term =
++            -result.requested_coefficient * result.losses[LOSS_ENT];
++        if (!ppo_replay_near(
++                result.losses[LOSS_ENT_TERM],
++                expected_entropy_term, 2e-6f, 2e-5f)) {
++            throw std::runtime_error(
++                "PPO entropy graph replay signed entropy term is invalid");
++        }
++        float expected_total =
++            result.losses[LOSS_PG] +
++            p->ka.vf_coef * result.losses[LOSS_VF] +
++            result.losses[LOSS_ENT_TERM];
++        if (!ppo_replay_near(
++                result.losses[LOSS_TOTAL],
++                expected_total, 3e-6f, 3e-5f) ||
++                !ppo_replay_near(
++                    result.reduced_loss, result.losses[LOSS_TOTAL],
++                    1e-6f, 1e-5f)) {
++            throw std::runtime_error(
++                "PPO entropy graph replay total loss decomposition is invalid");
++        }
++    }
++
++    const PPOGraphReplayResult& first = results[0];
++    const PPOGraphReplayResult& second = results[1];
++    for (int slot : {LOSS_PG, LOSS_VF, LOSS_ENT}) {
++        if (!std::isfinite(first.losses[slot]) ||
++                first.losses[slot] != second.losses[slot]) {
++            throw std::runtime_error(
++                "PPO entropy graph replay changed coefficient-independent losses");
++        }
++    }
++    if (first.losses[LOSS_ENT_COEF] == second.losses[LOSS_ENT_COEF] ||
++            first.losses[LOSS_ENT_TERM] == second.losses[LOSS_ENT_TERM] ||
++            first.losses[LOSS_TOTAL] == second.losses[LOSS_TOTAL]) {
++        throw std::runtime_error(
++            "PPO entropy graph replay did not change entropy-sensitive losses");
++    }
++    for (size_t idx = 0; idx < sequence_count; ++idx) {
++        if (!std::isfinite(first.value_gradient[idx]) ||
++                first.value_gradient[idx] != second.value_gradient[idx]) {
++            throw std::runtime_error(
++                "PPO entropy graph replay changed the value gradient");
++        }
++    }
++
++    float coefficient_delta =
++        second.requested_coefficient - first.requested_coefficient;
++    float max_expected_gradient_delta = 0.0f;
++    float max_observed_gradient_delta = 0.0f;
++    for (size_t row = 0; row < sequence_count; ++row) {
++        size_t logits_base = row * static_cast<size_t>(p->A + 1);
++        float max_logit = -std::numeric_limits<float>::infinity();
++        float exponential_sum = 0.0f;
++        for (int action = 0; action < p->A; ++action) {
++            float logit = to_float(logits[logits_base + action]);
++            if (logit > max_logit) {
++                exponential_sum *= std::exp(max_logit - logit);
++                max_logit = logit;
++            }
++            exponential_sum += std::exp(logit - max_logit);
++        }
++        float logsumexp = max_logit + std::log(exponential_sum);
++        float entropy = 0.0f;
++        for (int action = 0; action < p->A; ++action) {
++            float log_probability =
++                to_float(logits[logits_base + action]) - logsumexp;
++            float probability = std::exp(log_probability);
++            entropy -= probability * log_probability;
++        }
++        for (int action = 0; action < p->A; ++action) {
++            size_t gradient_index =
++                row * static_cast<size_t>(p->A) + action;
++            float log_probability =
++                to_float(logits[logits_base + action]) - logsumexp;
++            float probability = std::exp(log_probability);
++            float entropy_gradient =
++                probability * (-entropy - log_probability);
++            float expected_delta =
++                -coefficient_delta * entropy_gradient /
++                static_cast<float>(sequence_count);
++            float observed_delta =
++                second.logits_gradient[gradient_index] -
++                first.logits_gradient[gradient_index];
++            if (!ppo_replay_near(
++                    observed_delta, expected_delta, 5e-8f, 5e-3f)) {
++                throw std::runtime_error(
++                    "PPO entropy graph replay logits gradient ignored "
++                    "the replayed coefficient");
++            }
++            max_expected_gradient_delta = std::max(
++                max_expected_gradient_delta, std::fabs(expected_delta));
++            max_observed_gradient_delta = std::max(
++                max_observed_gradient_delta, std::fabs(observed_delta));
++        }
++    }
++    if (max_expected_gradient_delta <= 2e-7f ||
++            max_observed_gradient_delta <= 2e-7f) {
++        throw std::runtime_error(
++            "PPO entropy graph replay fixture lacks gradient sensitivity");
++    }
++}
++
+ void profile_ppoloss(int N, int T, int A) {
+     int NT = N * T;
+     printf("ppo_loss_fwd_bwd (NT=%d, %dx%d, A=%d)\n", NT, N, T, A);
++    auto* irregular = create_ppoloss(
++        1, PPO_ENTROPY_TELEMETRY_IRREGULAR_ROWS, A);
++    verify_ppoloss_entropy_graph_replay(irregular);
++    alloc_free(&irregular->alloc);
++    free(irregular);
+     auto* p = create_ppoloss(N, T, A);
++    verify_ppoloss_entropy_graph_replay(p);
+     float ms = profile_kernel((kernel_fn)run_ppoloss, p);
+     print_timing("fwd+bwd", ms, NT);
+     printf("\n");
+

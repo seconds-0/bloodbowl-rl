@@ -77,6 +77,30 @@ class ScriptedTrainingGuardTests(unittest.TestCase):
             env={"scripted_bank_tag": "3", "scripted_opponent_team": "1"},
             selfplay={"enabled": "1"}, vec={"num_frozen_banks": "4"})))
 
+    def test_mask_selects_multiple_banks_and_fails_closed(self):
+        self.assertIsNone(self.guard(args(
+            env={"scripted_bank_mask": 0b10000001},
+            vec={"num_frozen_banks": 8})))
+        with self.assertRaisesRegex(RuntimeError, "selected banks within"):
+            self.guard(args(env={"scripted_bank_mask": 0b10000}))
+        with self.assertRaisesRegex(RuntimeError, "mutually exclusive"):
+            self.guard(args(env={"scripted_bank_tag": 1,
+                                 "scripted_bank_mask": 1}))
+        with self.assertRaisesRegex(RuntimeError, "must be an integer"):
+            self.guard(args(env={"scripted_bank_mask": -1}))
+
+    def test_selectors_require_semantic_integers(self):
+        for value in (1.5, "1.5", float("nan"), float("inf"), 256):
+            with self.assertRaisesRegex(RuntimeError, "scripted_bank_mask must be an integer"):
+                self.guard(args(env={"scripted_bank_mask": value}))
+        for value in (1.5, "1.5", float("nan"), 9):
+            with self.assertRaisesRegex(RuntimeError, "scripted_bank_tag must be an integer"):
+                self.guard(args(env={"scripted_bank_tag": value}))
+        for value in (1.5, "1.5", float("nan"), 9):
+            with self.assertRaisesRegex(RuntimeError, "num_frozen_banks must be an integer"):
+                self.guard(args(env={"scripted_bank_mask": 1},
+                                vec={"num_frozen_banks": value}))
+
     def test_slowly_torch_row_filter_still_passes(self):
         self.assertIsNone(self.guard(args(slowly=True)))
         self.assertIsNone(self.guard(args(slowly=True, env={"scripted_bank_tag": 0})))

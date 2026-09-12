@@ -4,10 +4,12 @@
 # Required for every mode:
 #   TAG=<unique arm tag>
 #   REWARD_MANIFEST=<puffer/config/rewards/*.json>
-#   BOOTSTRAP_MODE=fresh-v6-qualification|fresh-v6-genesis|lineage-v6|graft-v6|bridge-v4
-# lineage-v6 additionally requires WARM and POOL with eligible obs-v6 lineage
-# sidecars. fresh-v6-qualification forbids both inputs.
-# graft-v6 is lineage-v6 across a reviewed source/patch-bundle change: the
+#   BOOTSTRAP_MODE=fresh-v7-qualification|fresh-v7-genesis|lineage-v7
+# lineage-v7 and graft-v7 require WARM and POOL with eligible obs-v7 lineage.
+# Shape-changing obs-v6 migration is admitted only through the explicit
+# migration contract implemented by checkpoint_lineage.py.
+# sidecars. fresh-v7-qualification forbids both inputs.
+# graft-v7 is lineage-v7 across a reviewed source/patch-bundle change: the
 # warm/pool sidecars are validated as internally consistent + eligible on
 # their OWN recorded implementation, and each must then bind EITHER this build
 # exactly OR the old build the operator declares with GRAFT_FROM_SOURCE_SHA256
@@ -22,16 +24,16 @@
 # declares BRIDGE_WARM_SHA256 (must equal sha256sum of WARM, hard-fail
 # otherwise), BRIDGE_WARM_OBS_VERSION (4|5), BRIDGE_PROVENANCE (<=300 chars,
 # e.g. the run dir + ANALYSIS.json) and BRIDGE_REASON (<=200 chars). POOL is
-# NOT bridged: its four banks are validated exactly as lineage-v6 validates
+# NOT bridged: its four banks are validated exactly as lineage-v7 validates
 # them. The run manifest carries initialization=bridge, the four bridge_*
 # keys and an EMPTY warm_lineage_sha256, so the published sidecar records
 # ancestry.bridged_from; the accepted checkpoint is then ordinary eligible
-# ancestry for lineage-v6 rungs.
+# ancestry for lineage-v7 rungs.
 #
 # Optional:
 #   STEPS=250000000 SEED=42 LOG=/tmp/$TAG.log
 #   TOTAL_AGENTS=2048 NUM_BUFFERS=2 NUM_THREADS=<cpu cap>
-#   FROZEN_BANK_PCT=0.06 EXPECT_BYTES=16066560
+#   FROZEN_BANK_PCT=0.06 EXPECT_BYTES=16207872
 #   LR=0.00028 ENT_COEF=0.009 GAMMA=0.995 GAE_LAMBDA=0.85
 #   HORIZON=64 MINIBATCH_SIZE=16384 CHECKPOINT_STEPS=50000000
 #   RIG_ALLOW_FLOAT=1   required for native fp32 on the RTX 2070/Turing rig
@@ -127,17 +129,17 @@ esac
 
 : "${BOOTSTRAP_MODE:?BOOTSTRAP_MODE is required}"
 case "$BOOTSTRAP_MODE" in
-  fresh-v6-qualification)
+  fresh-v7-qualification)
     [ -z "${WARM:-}" ] || {
-      echo "fresh-v6-qualification forbids WARM" >&2; exit 1; }
+      echo "fresh-v7-qualification forbids WARM" >&2; exit 1; }
     [ -z "${POOL:-}" ] || {
-      echo "fresh-v6-qualification forbids POOL" >&2; exit 1; }
+      echo "fresh-v7-qualification forbids POOL" >&2; exit 1; }
     WARM=""
     POOL=""
     QUALIFICATION_ONLY=1
     ;;
-  fresh-v6-genesis)
-    # The genesis of an obs-v6 lineage. Structurally identical to the
+  fresh-v7-genesis)
+    # The genesis of an obs-v7 lineage. Structurally identical to the
     # qualification canary -- fresh weights, no warm start, no opponent pool --
     # and differing in exactly one respect: its accepted checkpoint publishes an
     # ELIGIBLE lineage, so it can be warm-started from and can seed a pool.
@@ -155,61 +157,56 @@ case "$BOOTSTRAP_MODE" in
     # completed-game floor, the telemetry-schema check, exact final checkpoint
     # size -- and it must carry a complete reward manifest like any causal arm.
     # The only thing being granted is ancestry, which every lineage needs at its
-    # root; the alternative is that obs-v6 can never train at all.
+    # root; the alternative is that obs-v7 can never train at all.
     [ -z "${WARM:-}" ] || {
-      echo "fresh-v6-genesis forbids WARM; genesis is by definition unancestored" >&2
+      echo "fresh-v7-genesis forbids WARM; genesis is by definition unancestored" >&2
       exit 1; }
     [ -z "${POOL:-}" ] || {
-      echo "fresh-v6-genesis forbids POOL; there is no eligible pool to draw on yet" >&2
+      echo "fresh-v7-genesis forbids POOL; there is no eligible pool to draw on yet" >&2
       exit 1; }
     WARM=""
     POOL=""
     QUALIFICATION_ONLY=0
     ;;
-  lineage-v6)
-    : "${WARM:?WARM is required for lineage-v6}"
-    : "${POOL:?POOL is required for lineage-v6}"
+  lineage-v7)
+    : "${WARM:?WARM is required for lineage-v7}"
+    : "${POOL:?POOL is required for lineage-v7}"
     QUALIFICATION_ONLY=0
     ;;
-  graft-v6)
-    : "${WARM:?WARM is required for graft-v6}"
-    : "${POOL:?POOL is required for graft-v6}"
-    : "${GRAFT_FROM_SOURCE_SHA256:?GRAFT_FROM_SOURCE_SHA256 is required for graft-v6}"
-    : "${GRAFT_FROM_PATCH_BUNDLE_SHA256:?GRAFT_FROM_PATCH_BUNDLE_SHA256 is required for graft-v6}"
-    : "${GRAFT_REASON:?GRAFT_REASON is required for graft-v6 (e.g. the DECISIONS.md entry)}"
+  graft-v7)
+    : "${WARM:?WARM is required for graft-v7}"
+    : "${POOL:?POOL is required for graft-v7}"
+    : "${GRAFT_FROM_SOURCE_SHA256:?GRAFT_FROM_SOURCE_SHA256 is required for graft-v7}"
+    : "${GRAFT_FROM_PATCH_BUNDLE_SHA256:?GRAFT_FROM_PATCH_BUNDLE_SHA256 is required for graft-v7}"
+    : "${GRAFT_REASON:?GRAFT_REASON is required for graft-v7 (e.g. the DECISIONS.md entry)}"
     QUALIFICATION_ONLY=0
     ;;
-  bridge-v4)
-    : "${WARM:?WARM is required for bridge-v4 (the raw out-of-lineage blob)}"
-    : "${POOL:?POOL is required for bridge-v4}"
-    : "${BRIDGE_WARM_SHA256:?BRIDGE_WARM_SHA256 is required for bridge-v4}"
-    : "${BRIDGE_WARM_OBS_VERSION:?BRIDGE_WARM_OBS_VERSION is required for bridge-v4 (4 or 5)}"
-    : "${BRIDGE_PROVENANCE:?BRIDGE_PROVENANCE is required for bridge-v4 (e.g. the run dir + ANALYSIS.json)}"
-    : "${BRIDGE_REASON:?BRIDGE_REASON is required for bridge-v4 (e.g. the DECISIONS.md entry)}"
-    QUALIFICATION_ONLY=0
+  migration-v6)
+    echo "migration-v6 checkpoints are qualification/evaluation only; training cannot publish eligible ancestry from algebraic zero extension" >&2
+    exit 1
     ;;
   *)
-    echo "BOOTSTRAP_MODE must be fresh-v6-qualification, fresh-v6-genesis, lineage-v6, graft-v6, or bridge-v4" >&2
+    echo "BOOTSTRAP_MODE must be fresh-v7-qualification, fresh-v7-genesis, lineage-v7, or graft-v7" >&2
     exit 1
     ;;
 esac
 # POOL_MODE: the warm-started, four-bank modes. Everything downstream that
-# used to key on lineage-v6 keys on this, so a graft differs from lineage-v6 in
+# used to key on lineage-v7 keys on this, so a graft differs from lineage-v7 in
 # exactly one place: how the warm/pool sidecars' implementation is validated;
 # and a bridge differs in exactly one place: the warm has no sidecar to
 # validate, so its identity is declared instead.
 POOL_MODE=0
 case "$BOOTSTRAP_MODE" in
-  lineage-v6|graft-v6|bridge-v4) POOL_MODE=1 ;;
+  lineage-v7|graft-v7) POOL_MODE=1 ;;
 esac
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
 GRAFT_REASON="${GRAFT_REASON:-}"
-if [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
+if [ "$BOOTSTRAP_MODE" = "graft-v7" ]; then
   for digest_name in GRAFT_FROM_SOURCE_SHA256 GRAFT_FROM_PATCH_BUNDLE_SHA256; do
     digest="${!digest_name}"
     if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-      echo "$digest_name must be a lowercase SHA-256 digest for graft-v6" >&2
+      echo "$digest_name must be a lowercase SHA-256 digest for graft-v7" >&2
       exit 1
     fi
   done
@@ -218,7 +215,7 @@ if [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
     exit 1
   fi
 elif [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
-  echo "GRAFT_FROM_SOURCE_SHA256/GRAFT_FROM_PATCH_BUNDLE_SHA256/GRAFT_REASON are only valid with BOOTSTRAP_MODE=graft-v6" >&2
+  echo "GRAFT_FROM_SOURCE_SHA256/GRAFT_FROM_PATCH_BUNDLE_SHA256/GRAFT_REASON are only valid with BOOTSTRAP_MODE=graft-v7" >&2
   exit 1
 fi
 BRIDGE_WARM_SHA256="${BRIDGE_WARM_SHA256:-}"
@@ -264,19 +261,34 @@ fi
 # Both knobs default to 0 and are recorded explicitly in the run manifest, so
 # "no scripted opponent" is a declared value, never an omission.
 SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
+SCRIPTED_BANK_MASK="${SCRIPTED_BANK_MASK:-0}"
 SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
+NUM_FROZEN_BANKS="${NUM_FROZEN_BANKS:-4}"
 case "$SCRIPTED_BANK_TAG" in
-  0|1|2|3|4) ;;
-  *) echo "SCRIPTED_BANK_TAG must be an integer in 0..4, got '$SCRIPTED_BANK_TAG'" >&2
+  [0-8]) ;;
+  *) echo "SCRIPTED_BANK_TAG must be an integer in 0..8, got '$SCRIPTED_BANK_TAG'" >&2
      exit 1 ;;
 esac
+if [ "$SCRIPTED_BANK_TAG" -gt "$NUM_FROZEN_BANKS" ]; then
+  echo "SCRIPTED_BANK_TAG selects a bank outside NUM_FROZEN_BANKS=$NUM_FROZEN_BANKS" >&2; exit 1
+fi
+case "$SCRIPTED_BANK_MASK" in
+  0|[1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) ;;
+  *) echo "SCRIPTED_BANK_MASK must be an integer in 0..255, got '$SCRIPTED_BANK_MASK'" >&2; exit 1 ;;
+esac
+if [ "$SCRIPTED_BANK_TAG" != "0" ] && [ "$SCRIPTED_BANK_MASK" != "0" ]; then
+  echo "SCRIPTED_BANK_TAG and SCRIPTED_BANK_MASK are mutually exclusive" >&2; exit 1
+fi
+if [ "$SCRIPTED_BANK_MASK" -ge "$((1 << NUM_FROZEN_BANKS))" ]; then
+  echo "SCRIPTED_BANK_MASK selects a bank outside NUM_FROZEN_BANKS=$NUM_FROZEN_BANKS" >&2; exit 1
+fi
 case "$SCRIPTED_BOT_TYPE" in
   0|1) ;;
   *) echo "SCRIPTED_BOT_TYPE must be 0 (contact) or 1 (offense), got '$SCRIPTED_BOT_TYPE'" >&2
      exit 1 ;;
 esac
-if [ "$SCRIPTED_BANK_TAG" != "0" ] && [ "$POOL_MODE" != "1" ]; then
-  echo "SCRIPTED_BANK_TAG=$SCRIPTED_BANK_TAG requires BOOTSTRAP_MODE=lineage-v6 (or graft-v6 / bridge-v4):" >&2
+if { [ "$SCRIPTED_BANK_TAG" != "0" ] || [ "$SCRIPTED_BANK_MASK" != "0" ]; } && [ "$POOL_MODE" != "1" ]; then
+  echo "SCRIPTED_BANK_TAG=$SCRIPTED_BANK_TAG requires BOOTSTRAP_MODE=lineage-v7 (or graft-v7):" >&2
   echo "the bot seat is only excluded from PPO inside a frozen-bank row slice," >&2
   echo "and only the pool-backed modes allocate the four-bank pool" >&2
   exit 1
@@ -295,7 +307,7 @@ case "$NUM_FROZEN_BANKS_REQ" in
   [1-8]) ;;
   *) echo "NUM_FROZEN_BANKS must be an integer in 1..8 (BBE_MAX_BANKS), got '$NUM_FROZEN_BANKS_REQ'" >&2; exit 1 ;;
 esac
-EXPECT_BYTES="${EXPECT_BYTES:-16066560}"
+EXPECT_BYTES="${EXPECT_BYTES:-16207872}"
 LR="${LR:-0.00028}"
 ENT_COEF="${ENT_COEF:-0.009}"
 GAMMA="${GAMMA:-0.995}"
@@ -303,6 +315,7 @@ GAE_LAMBDA="${GAE_LAMBDA:-0.85}"
 HORIZON="${HORIZON:-64}"
 MINIBATCH_SIZE="${MINIBATCH_SIZE:-16384}"
 CHECKPOINT_STEPS="${CHECKPOINT_STEPS:-50000000}"
+CHECKPOINT_DIR="${CHECKPOINT_DIR:-}"
 REPLAY_RATIO="${REPLAY_RATIO:-0.25}"
 CLIP_COEF="${CLIP_COEF:-0.2}"
 VF_COEF="${VF_COEF:-1.0}"
@@ -360,6 +373,55 @@ REWARD_MANIFEST="$(abspath "$REWARD_MANIFEST")"
 [ -z "$WARM" ] || WARM="$(abspath "$WARM")"
 [ -z "$POOL" ] || POOL="$(abspath "$POOL")"
 LOG="$(abspath "$LOG")"
+PUFFER_LOG_DIR="${LOG}.puffer-logs"
+[ ! -L "$PUFFER_LOG_DIR" ] || {
+  echo "Puffer log directory must not be a symbolic link: $PUFFER_LOG_DIR" >&2
+  exit 1
+}
+[ ! -e "$PUFFER_LOG_DIR" ] || [ -d "$PUFFER_LOG_DIR" ] || {
+  echo "Puffer log directory exists and is not a directory: $PUFFER_LOG_DIR" >&2
+  exit 1
+}
+if [ -n "$CHECKPOINT_DIR" ]; then
+  case "$CHECKPOINT_DIR" in
+    /*) ;;
+    *) echo "CHECKPOINT_DIR must be an absolute path" >&2; exit 1 ;;
+  esac
+  [ "$CHECKPOINT_DIR" != "/" ] || {
+    echo "CHECKPOINT_DIR must not be the filesystem root" >&2; exit 1; }
+  CHECKPOINT_DIR="$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve())' "${CHECKPOINT_DIR%/}")"
+else
+  CHECKPOINT_DIR="$ROOT/vendor/PufferLib/checkpoints"
+fi
+[ "$CHECKPOINT_DIR" != "/" ] || {
+  echo "CHECKPOINT_DIR must not resolve to the filesystem root" >&2; exit 1; }
+CHECKPOINT_ROOT="$CHECKPOINT_DIR/bloodbowl"
+[ ! -L "$CHECKPOINT_ROOT" ] || {
+  echo "checkpoint root must not be a symbolic link: $CHECKPOINT_ROOT" >&2
+  exit 1
+}
+[ ! -e "$CHECKPOINT_ROOT" ] || [ -d "$CHECKPOINT_ROOT" ] || {
+  echo "checkpoint root exists and is not a directory: $CHECKPOINT_ROOT" >&2
+  exit 1
+}
+
+# CHECKPOINT_DISCOVERY_HELPERS_BEGIN
+snapshot_checkpoint_runs() {
+  local checkpoint_root=$1 destination=$2
+  find "$checkpoint_root" -mindepth 1 -maxdepth 1 -type d \
+    -exec basename {} \; 2>/dev/null | sort > "$destination" || true
+}
+
+new_checkpoint_runs() {
+  local checkpoint_root=$1 before=$2 directory base
+  for directory in "$checkpoint_root"/*/; do
+    [ -d "$directory" ] || continue
+    base=$(basename "$directory")
+    grep -Fxq "$base" "$before" && continue
+    printf '%s\n' "${directory%/}"
+  done
+}
+# CHECKPOINT_DISCOVERY_HELPERS_END
 
 case "$STEPS:$SEED:$TOTAL_AGENTS:$NUM_BUFFERS:$EXPECT_BYTES:$HORIZON:$MINIBATCH_SIZE:$CHECKPOINT_STEPS" in
   *[!0-9:]*)
@@ -373,8 +435,8 @@ if [ "$STEPS" -le 0 ] || [ "$TOTAL_AGENTS" -le 0 ] || \
   echo "step/agent/buffer/byte/horizon/minibatch/checkpoint values must be positive" >&2
   exit 1
 fi
-if [ "$EXPECT_BYTES" -ne 16066560 ]; then
-  echo "obs-v6/exact-joint-v1 requires EXPECT_BYTES=16066560; got $EXPECT_BYTES" >&2
+if [ "$EXPECT_BYTES" -ne 16207872 ]; then
+  echo "obs-v7/exact-joint-v1 requires EXPECT_BYTES=16207872; got $EXPECT_BYTES" >&2
   exit 1
 fi
 if [ $(( TOTAL_AGENTS % NUM_BUFFERS )) -ne 0 ]; then
@@ -407,7 +469,7 @@ if [ "$POOL_MODE" != "1" ]; then
   FROZEN_PER_BANK=0
   HISTORICAL_GAME_SHARE=0
   [ -z "$EXPECTED_POOL_HASH" ] || {
-    echo "fresh-v6-qualification forbids EXPECTED_POOL_HASH" >&2; exit 1; }
+    echo "fresh-v7-qualification forbids EXPECTED_POOL_HASH" >&2; exit 1; }
 else
   NUM_FROZEN_BANKS="$NUM_FROZEN_BANKS_REQ"
   [ -n "$EXPECTED_POOL_HASH" ] || {
@@ -601,6 +663,34 @@ grep -q "'_puffer_final_reprint'" pufferlib/pufferl.py || {
 grep -q "'_puffer_schema': 2" pufferlib/pufferl.py || {
   echo "vendored pufferl.py lacks explicit loop-phase/panel metadata" >&2; exit 1; }
 
+read -r VENDOR_SOURCE_HASH BACKEND_SOURCE_REGISTRY_HASH \
+  BACKEND_SOURCE_PATHS SUPPORTING_PYTHON_SOURCE_HASH \
+  SUPPORTING_INIT_HASH SUPPORTING_MODELS_HASH SUPPORTING_MUON_HASH < <(
+  "$PYBIN" - "$ROOT/training/puffer_compiled_backend_sources.txt" . <<'PY'
+import hashlib, pathlib, sys
+registry, vendor = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+sources = registry.read_text(encoding="utf-8").splitlines()
+if not sources or len(sources) != len(set(sources)):
+    raise SystemExit("canonical backend source registry is empty or duplicated")
+for relative in sources:
+    candidate = pathlib.PurePosixPath(relative)
+    if (not relative or candidate.is_absolute() or
+            candidate.as_posix() != relative or
+            any(part in ("", ".", "..") for part in candidate.parts)):
+        raise SystemExit(f"unsafe canonical backend source path: {relative!r}")
+def bundle(names):
+    payload = b"".join(
+        f"{hashlib.sha256((vendor / name).read_bytes()).hexdigest()}  {name}\n".encode()
+        for name in names)
+    return hashlib.sha256(payload).hexdigest()
+supporting = ["pufferlib/__init__.py", "pufferlib/models.py", "pufferlib/muon.py"]
+print(bundle(sources), hashlib.sha256(registry.read_bytes()).hexdigest(),
+      ",".join(sources), bundle(supporting),
+      *(hashlib.sha256((vendor / name).read_bytes()).hexdigest()
+        for name in supporting))
+PY
+)
+
 probe="$($PYBIN - "$ROOT" <<'PY'
 import pathlib, sys
 sys.path.insert(0, str(pathlib.Path(sys.argv[1]).resolve() / "tools"))
@@ -620,6 +710,8 @@ print(getattr(_C, "env_name", None), int(bool(getattr(_C, "gpu", False))),
       getattr(_C, "observation_abi", "<missing>"),
       getattr(_C, "observation_version", "<missing>"),
       getattr(_C, "action_abi", "<missing>"),
+      getattr(_C, "rollout_transition_contract", "<missing>"),
+      getattr(_C, "entropy_schedule_contract", "<missing>"),
       pathlib.Path(_C.__file__).resolve(),
       evidence["library"]["resolved_path"],
       evidence["library"]["sha256"],
@@ -628,22 +720,30 @@ PY
 )"
 read -r cenv cgpu precision COMPILED_EXACT_ACTION_SOURCE_HASH \
   COMPILED_ENVIRONMENT_SOURCE_HASH COMPILED_OBSERVATION_ABI \
-  COMPILED_OBSERVATION_VERSION COMPILED_ACTION_ABI MODULE_PATH \
+  COMPILED_OBSERVATION_VERSION COMPILED_ACTION_ABI \
+  COMPILED_ROLLOUT_TRANSITION_CONTRACT COMPILED_ENTROPY_SCHEDULE_CONTRACT \
+  MODULE_PATH \
   CUDA_RUNTIME_LIBRARY_PATH CUDA_RUNTIME_LIBRARY_SHA256 \
   CUDA_RUNTIME_DEVICE_COUNT <<< "$probe"
 if [ "$cenv" != "bloodbowl" ] || [ "$cgpu" != "1" ]; then
   echo "invalid native build: env=$cenv gpu=$cgpu" >&2; exit 1
 fi
-if [[ ! "$COMPILED_EXACT_ACTION_SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || \
+if [ "$COMPILED_EXACT_ACTION_SOURCE_HASH" != "$VENDOR_SOURCE_HASH" ] || \
    [ "$COMPILED_ENVIRONMENT_SOURCE_HASH" != "$SOURCE_HASH" ] || \
-   [ "$COMPILED_OBSERVATION_ABI" != "obs-v6" ] || \
-   [ "$COMPILED_OBSERVATION_VERSION" != "6" ] || \
-   [ "$COMPILED_ACTION_ABI" != "exact-joint-v1" ]; then
-  echo "compiled native module does not satisfy the obs-v6/exact-action contract" >&2
+   [ "$COMPILED_OBSERVATION_ABI" != "obs-v7" ] || \
+   [ "$COMPILED_OBSERVATION_VERSION" != "7" ] || \
+   [ "$COMPILED_ACTION_ABI" != "exact-joint-v1" ] || \
+   [ "$COMPILED_ROLLOUT_TRANSITION_CONTRACT" != "terminal-aware-tbptt-v1" ] || \
+   [ "$COMPILED_ENTROPY_SCHEDULE_CONTRACT" != \
+       "cosine-update-index-over-total-updates-fp32-v1" ]; then
+  echo "compiled native module does not satisfy the obs-v7/exact-action contract" >&2
   echo "  exact-action source: ${COMPILED_EXACT_ACTION_SOURCE_HASH:-<missing>}" >&2
   echo "  environment source: ${COMPILED_ENVIRONMENT_SOURCE_HASH:-<missing>} (expected $SOURCE_HASH)" >&2
   echo "  observation: ${COMPILED_OBSERVATION_ABI:-<missing>} / ${COMPILED_OBSERVATION_VERSION:-<missing>}" >&2
   echo "  action: ${COMPILED_ACTION_ABI:-<missing>}" >&2
+  echo "  backend source: ${COMPILED_EXACT_ACTION_SOURCE_HASH:-<missing>} (expected $VENDOR_SOURCE_HASH)" >&2
+  echo "  rollout transition: ${COMPILED_ROLLOUT_TRANSITION_CONTRACT:-<missing>}" >&2
+  echo "  entropy schedule: ${COMPILED_ENTROPY_SCHEDULE_CONTRACT:-<missing>}" >&2
   exit 1
 fi
 if [ "${RIG_ALLOW_FLOAT:-0}" = "1" ] && [ "$precision" != "4" ]; then
@@ -715,14 +815,21 @@ PATCH_HASH="$({
   sha256sum "$ROOT/training/puffer_exact_joint_actions.patch"
   sha256sum "$ROOT/training/puffer_recurrent_eval_state.patch"
   sha256sum "$ROOT/training/puffer_frozen_prio_mask.patch"
+  sha256sum "$ROOT/training/puffer_mingru_direct_recurrence_candidate.patch"
   sha256sum "$ROOT/training/puffer_recurrent_cuda_qualification.patch"
-  # D234. Must stay LAST and must mirror run_reward_screen.sh's list exactly:
+  sha256sum "$ROOT/training/puffer_rollout_transition_closure.patch"
+  sha256sum "$ROOT/training/puffer_entropy_schedule_parity.patch"
+  sha256sum "$ROOT/training/puffer_native_entropy_diagnostics.patch"
+  sha256sum "$ROOT/training/puffer_compact_qualification_snapshot.patch"
+  # D234. Preserve the historical order and mirror run_reward_screen.sh exactly:
   # the digest is order-sensitive and this script compares its result against
   # EXPECTED_PUFFER_PATCH_BUNDLE_SHA256, which the screen publishes. This entry
   # is what makes a pure-Python trainer edit visible to lineage validation --
   # torch_pufferl.py does not change compiled_module_sha256, and
-  # vendor_source_sha256 is recorded below but never validated.
+  # checkpoint lineage does not gate vendor_source_sha256 separately.
   sha256sum "$ROOT/training/puffer_reward_clamp_range.patch"
+  sha256sum "$ROOT/training/puffer_terminal_aware_torch.patch"
+  sha256sum "$ROOT/training/puffer_terminal_aware_native.patch"
 } | sha256sum | awk '{print $1}')"
 if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
    [ "$PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ]; then
@@ -731,27 +838,20 @@ if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
   exit 1
 fi
 VENDOR_HEAD="$(git rev-parse HEAD 2>/dev/null || printf '%s' '<not-a-git-checkout>')"
-VENDOR_SOURCE_HASH="$({
-  sha256sum pufferlib/__init__.py pufferlib/pufferl.py \
-    pufferlib/selfplay.py pufferlib/torch_pufferl.py pufferlib/models.py \
-    pufferlib/muon.py src/pufferlib.cu src/bindings.cu \
-    src/bindings_cpu.cpp src/kernels.cu src/vecenv.h
-} | sha256sum | awk '{print $1}')"
-
 GRAFT_FROM_MODULE_SHA256=""
 if [ "$POOL_MODE" = "1" ]; then
-  # lineage-v6: every sidecar must bind THIS build's source/module/patch
-  # digests. graft-v6: each sidecar is validated as internally consistent +
+  # lineage-v7: every sidecar must bind THIS build's source/module/patch
+  # digests. graft-v7: each sidecar is validated as internally consistent +
   # eligible on its OWN recorded implementation, then checkpoint_lineage
   # .graft_bridge requires every one of {warm, bank0..3} to bind either this
   # build exactly or the declared old build (GRAFT_FROM_*, any module), with at
   # least one old-build sidecar (else it is a no-op / rehost, refused here
   # rather than 5B steps later at publication) and one shared old module,
   # which becomes graft_from_module_sha256. The screen plan writer applies the
-  # identical function. bridge-v4: the warm is a raw out-of-lineage blob with
+  # identical function. Historical bridge-v4 was a raw out-of-lineage blob with
   # NO sidecar, so it is deliberately not validated here (its identity is the
   # declared BRIDGE_WARM_SHA256, asserted above) and WARM_LINEAGE_HASH stays
-  # empty; the four pool banks are validated exactly as lineage-v6 validates
+  # empty; the four pool banks were validated exactly as lineage-v6 validated
   # them, against this build's digests.
   read -r WARM_LINEAGE_HASH POOL_LINEAGE_BUNDLE_HASH GRAFT_FROM_MODULE_SHA256 < <(
     "$PYBIN" - "$ROOT" "$WARM" "$POOL" "$SOURCE_HASH" \
@@ -765,7 +865,7 @@ from checkpoint_lineage import lineage_digest, sidecar_path, validate_lineage
 
 from checkpoint_lineage import LineageError, graft_bridge
 
-graft = mode == "graft-v6"
+graft = mode == "graft-v7"
 bridge = mode == "bridge-v4"
 current = {
     "source_sha256": source_sha,
@@ -776,11 +876,11 @@ expected = None if graft else current
 warm = pathlib.Path(warm_path)
 if bridge:
     # No sidecar to validate; refuse one that exists, because a blob WITH
-    # eligible lineage belongs in lineage-v6 and a bridge would only hide it.
+    # eligible lineage belongs in lineage-v7 and a bridge would only hide it.
     if sidecar_path(warm).exists():
         raise SystemExit(
             f"bridge-v4 warm {warm} has a lineage sidecar; a sidecar-bearing "
-            "warm must go through lineage-v6 (or graft-v6), not a bridge")
+            "warm must go through lineage-v7 (or graft-v7), not a bridge")
     warm_payload = None
     warm_lineage = ""
 else:
@@ -827,7 +927,7 @@ PY
 fi
 
 echo "tag=$TAG seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS rollout_quantum=$ROLLOUT_QUANTUM"
-echo "bootstrap=$BOOTSTRAP_MODE observation_abi=obs-v6 observation_version=6 action_abi=exact-joint-v1 qualification_only=$QUALIFICATION_ONLY"
+echo "bootstrap=$BOOTSTRAP_MODE observation_abi=obs-v7 observation_version=7 action_abi=exact-joint-v1 qualification_only=$QUALIFICATION_ONLY"
 echo "reward=$REWARD_NAME reward_sha256=$REWARD_HASH"
 echo "pool=$POOL pool_identity_sha256=$POOL_HASH pool_manifest_sha256=$POOL_MANIFEST_HASH banks=$POOL_BANKS pct=$FROZEN_BANK_PCT rows_per_bank=$FROZEN_PER_BANK historical_game_share=$HISTORICAL_GAME_SHARE"
 echo "warm=$WARM warm_sha256=$WARM_HASH"
@@ -835,8 +935,8 @@ echo "source_sha256=$SOURCE_HASH config_sha256=$CONFIG_HASH module_sha256=$MODUL
 echo "compiled_exact_action_source_sha256=$COMPILED_EXACT_ACTION_SOURCE_HASH compiled_observation=$COMPILED_OBSERVATION_ABI/$COMPILED_OBSERVATION_VERSION compiled_action=$COMPILED_ACTION_ABI"
 echo "native_precision_bytes=$precision total_agents=$TOTAL_AGENTS buffers=$NUM_BUFFERS threads=$NUM_THREADS horizon=$HORIZON minibatch=$MINIBATCH_SIZE"
 echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
-echo "scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_BOT_TYPE"
-[ "$BOOTSTRAP_MODE" != "graft-v6" ] || \
+echo "scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bank_mask=$SCRIPTED_BANK_MASK scripted_bot_type=$SCRIPTED_BOT_TYPE"
+[ "$BOOTSTRAP_MODE" != "graft-v7" ] || \
   echo "graft_from source_sha256=$GRAFT_FROM_SOURCE_SHA256 patch_bundle_sha256=$GRAFT_FROM_PATCH_BUNDLE_SHA256 module_sha256=$GRAFT_FROM_MODULE_SHA256 warm_lineage_sha256=$WARM_LINEAGE_HASH reason=$GRAFT_REASON"
 [ "$BOOTSTRAP_MODE" != "bridge-v4" ] || \
   echo "bridged_from warm_sha256=$BRIDGE_WARM_SHA256 warm_observation_version=$BRIDGE_WARM_OBS_VERSION provenance=$BRIDGE_PROVENANCE reason=$BRIDGE_REASON"
@@ -847,6 +947,8 @@ CMD=(env PUFFER_CUDA_RUNTIME_MANIFEST="$RUN_MANIFEST" \
   --seed "$SEED" --train.seed "$SEED" --selfplay.seed "$SEED" --env.seed "$SEED" \
   --train.gpus 1 --eval-episodes 10000 \
   --checkpoint-interval "$CHECKPOINT_INTERVAL" \
+  --checkpoint-dir "$CHECKPOINT_DIR" \
+  --log-dir "$PUFFER_LOG_DIR" \
   --policy.hidden-size 512 --policy.num-layers 3 --policy.expansion-factor 1 \
   --vec.total-agents "$TOTAL_AGENTS" --vec.num-buffers "$NUM_BUFFERS" \
   --vec.num-threads "$NUM_THREADS" \
@@ -877,14 +979,15 @@ else
     --selfplay.snapshot-interval 1000000000000 \
     --vec.num-frozen-banks "$NUM_FROZEN_BANKS" --vec.frozen-bank-pct "$FROZEN_BANK_PCT" \
     --load-model-path "$WARM")
-  if [ "$SCRIPTED_BANK_TAG" != "0" ]; then
+  if [ "$SCRIPTED_BANK_TAG" != "0" ] || [ "$SCRIPTED_BANK_MASK" != "0" ]; then
     # Team 1 (AWAY) is where tagged envs seat the frozen bank, and the guard
     # in pufferl_scripted_training_guard.patch refuses anything else. When the
     # tag is 0 the installed config default (scripted_opponent = 0) applies.
     CMD+=(--env.scripted-opponent 1 \
       --env.scripted-opponent-type "$SCRIPTED_BOT_TYPE" \
       --env.scripted-opponent-team 1 \
-      --env.scripted-bank-tag "$SCRIPTED_BANK_TAG")
+      --env.scripted-bank-tag "$SCRIPTED_BANK_TAG" \
+      --env.scripted-bank-mask "$SCRIPTED_BANK_MASK")
   fi
 fi
 
@@ -896,19 +999,17 @@ if [ "${DRY_RUN:-0}" = "1" ]; then
 fi
 
 # The initialization string is what checkpoint_lineage keys its ancestry rules
-# on. Fresh modes have no ancestry; the pool-backed modes are lineage-v6 (a
-# graft is lineage-v6 plus a declaration) except the bridge, whose warm has no
-# lineage and must say so.
-INITIALIZATION=lineage-v6
+# on. Fresh modes have no ancestry; the pool-backed modes are lineage-v7 (a
+# graft is lineage-v7 plus a declaration).
+INITIALIZATION=lineage-v7
 case "$BOOTSTRAP_MODE" in
-  fresh-v6-qualification|fresh-v6-genesis) INITIALIZATION=fresh ;;
-  bridge-v4) INITIALIZATION=bridge ;;
+  fresh-v7-qualification|fresh-v7-genesis) INITIALIZATION=fresh ;;
 esac
 META_ARGS=(
   tag "$TAG" seed "$SEED" requested_steps "$STEPS" final_steps "$FINAL_STEPS"
   bootstrap_mode "$BOOTSTRAP_MODE" initialization "$INITIALIZATION" \
-  qualification_only "$QUALIFICATION_ONLY" observation_abi obs-v6 \
-  observation_version 6 action_abi exact-joint-v1 \
+  qualification_only "$QUALIFICATION_ONLY" observation_abi obs-v7 \
+  observation_version 7 action_abi exact-joint-v1 \
   policy_hidden_size 512 policy_num_layers 3 policy_expansion_factor 1 \
   ladder_reset_pct "$LADDER_RESET_PCT"
   ladder_endzone_maxdist "$LADDER_ENDZONE_MAXDIST"
@@ -917,6 +1018,7 @@ META_ARGS=(
   ladder_pass_maxrange "$LADDER_PASS_MAXRANGE"
   ladder_state_bank_sha256 "$LADDER_STATE_BANK_SHA256"
   scripted_bank_tag "$SCRIPTED_BANK_TAG"
+  scripted_bank_mask "$SCRIPTED_BANK_MASK"
   scripted_bot_type "$SCRIPTED_BOT_TYPE"
   rollout_quantum "$ROLLOUT_QUANTUM" reward_name "$REWARD_NAME"
   reward_sha256 "$REWARD_HASH" reward_manifest "$REWARD_MANIFEST"
@@ -934,6 +1036,8 @@ META_ARGS=(
   compiled_observation_abi "$COMPILED_OBSERVATION_ABI"
   compiled_observation_version "$COMPILED_OBSERVATION_VERSION"
   compiled_action_abi "$COMPILED_ACTION_ABI"
+  compiled_rollout_transition_contract "$COMPILED_ROLLOUT_TRANSITION_CONTRACT"
+  compiled_entropy_schedule_contract "$COMPILED_ENTROPY_SCHEDULE_CONTRACT"
   config_tree_sha256 "$CONFIG_TREE_HASH"
   default_config_sha256 "$DEFAULT_CONFIG_HASH"
   compiled_module "$MODULE_PATH" compiled_module_sha256 "$MODULE_HASH"
@@ -951,9 +1055,19 @@ META_ARGS=(
   live_integrity_max_silence "$LIVE_INTEGRITY_MAX_SILENCE"
   live_integrity_poll_seconds "$LIVE_INTEGRITY_POLL_SECONDS"
   vendor_head "$VENDOR_HEAD" vendor_source_sha256 "$VENDOR_SOURCE_HASH"
+  compiled_backend_source_registry_sha256 "$BACKEND_SOURCE_REGISTRY_HASH"
+  compiled_backend_sources "$BACKEND_SOURCE_PATHS"
+  compiled_backend_sources_sha256 "$VENDOR_SOURCE_HASH"
+  supporting_python_sources "pufferlib/__init__.py,pufferlib/models.py,pufferlib/muon.py"
+  supporting_python_sources_sha256 "$SUPPORTING_PYTHON_SOURCE_HASH"
+  supporting_python_init_sha256 "$SUPPORTING_INIT_HASH"
+  supporting_python_models_sha256 "$SUPPORTING_MODELS_HASH"
+  supporting_python_muon_sha256 "$SUPPORTING_MUON_HASH"
   native_precision_bytes "$precision" total_agents "$TOTAL_AGENTS"
   num_buffers "$NUM_BUFFERS" num_threads "$NUM_THREADS" horizon "$HORIZON"
   minibatch_size "$MINIBATCH_SIZE" checkpoint_interval "$CHECKPOINT_INTERVAL"
+  checkpoint_dir "$CHECKPOINT_DIR"
+  puffer_log_dir "$PUFFER_LOG_DIR"
   checkpoint_steps "$CHECKPOINT_STEPS" learning_rate "$LR"
   ent_coef "$ENT_COEF" gamma "$GAMMA" gae_lambda "$GAE_LAMBDA"
   replay_ratio "$REPLAY_RATIO" clip_coef "$CLIP_COEF" vf_coef "$VF_COEF"
@@ -961,7 +1075,7 @@ META_ARGS=(
   expected_checkpoint_bytes "$EXPECT_BYTES"
   screen_manifest_sha256 "$SCREEN_MANIFEST_SHA256"
 )
-if [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
+if [ "$BOOTSTRAP_MODE" = "graft-v7" ]; then
   # All four or none: checkpoint_lineage treats their presence as the graft
   # declaration and writes ancestry.grafted_from into the published sidecar.
   META_ARGS+=(
@@ -993,10 +1107,10 @@ if len(pairs) % 2:
 manifest = dict(zip(pairs[::2], pairs[1::2]))
 manifest.update({
     "schema_version": 1,
-    "mode": ("native_fresh_v6_qualification"
-             if manifest["bootstrap_mode"] == "fresh-v6-qualification"
-             else "native_fresh_v6_genesis"
-             if manifest["bootstrap_mode"] == "fresh-v6-genesis"
+    "mode": ("native_fresh_v7_qualification"
+             if manifest["bootstrap_mode"] == "fresh-v7-qualification"
+             else "native_fresh_v7_genesis"
+             if manifest["bootstrap_mode"] == "fresh-v7-genesis"
              else "native_static_pool_reward_ablation"),
     "command": sys.argv[split + 1:],
 })
@@ -1012,8 +1126,7 @@ print("BB_RUN_MANIFEST_PENDING " + json.dumps(
 PY
 
 BEFORE_RUNS=$(mktemp)
-find checkpoints/bloodbowl -mindepth 1 -maxdepth 1 -type d \
-  -exec basename {} \; 2>/dev/null | sort > "$BEFORE_RUNS" || true
+snapshot_checkpoint_runs "$CHECKPOINT_ROOT" "$BEFORE_RUNS"
 WRAPPER=(/bin/bash "$STATUS_WRAPPER" "$STATUS_FILE" "$LOG" "${CMD[@]}")
 WATCHDOG_ENV=()
 if [ -n "$SCREEN_MANIFEST_SHA256" ]; then
@@ -1051,10 +1164,7 @@ echo "LAUNCHED pid=$PID"
 (
   for _ in $(seq 1 60); do
     sleep 2
-    for directory in checkpoints/bloodbowl/*/; do
-      [ -d "$directory" ] || continue
-      base=$(basename "$directory")
-      grep -Fxq "$base" "$BEFORE_RUNS" && continue
+    while IFS= read -r directory; do
       if ! "$PYBIN" - "$RUN_MANIFEST" "$CUDA_RUNTIME_EVIDENCE" <<'PY'
 import hashlib, json, pathlib, sys
 manifest_path = pathlib.Path(sys.argv[1])
@@ -1077,20 +1187,20 @@ PY
       {
         echo "reward-ablation tag=$TAG"
         echo "reward=$REWARD_NAME sha256=$REWARD_HASH"
-        echo "bootstrap=$BOOTSTRAP_MODE qualification_only=$QUALIFICATION_ONLY obs=obs-v6 action=exact-joint-v1"
+        echo "bootstrap=$BOOTSTRAP_MODE qualification_only=$QUALIFICATION_ONLY obs=obs-v7 action=exact-joint-v1"
         echo "pool=$POOL identity_sha256=$POOL_HASH manifest_sha256=$POOL_MANIFEST_HASH lineage_bundle_sha256=$POOL_LINEAGE_BUNDLE_HASH pct=$FROZEN_BANK_PCT"
         echo "warm=$WARM sha256=$WARM_HASH lineage_sha256=$WARM_LINEAGE_HASH seed=$SEED requested_steps=$STEPS final_steps=$FINAL_STEPS"
         echo "run_manifest_sha256=$(sha256sum "$RUN_MANIFEST" | awk '{print $1}')"
       } > "${directory}PROFILE"
       cp "$RUN_MANIFEST" "${directory}RUN_MANIFEST.json"
       cp "$CUDA_RUNTIME_EVIDENCE" "${directory}CUDA_RUNTIME_EVIDENCE.json"
-      run_dir="$(pwd)/${directory%/}"
+      run_dir="${directory%/}"
       tmp="${RUN_DIR_FILE}.tmp.$$"
       printf '%s\n' "$run_dir" > "$tmp"
       mv "$tmp" "$RUN_DIR_FILE"
       rm -f "$BEFORE_RUNS"
       exit 0
-    done
+    done < <(new_checkpoint_runs "$CHECKPOINT_ROOT" "$BEFORE_RUNS")
   done
   rm -f "$BEFORE_RUNS"
   echo "warning: could not identify the new checkpoint directory for $TAG" >&2

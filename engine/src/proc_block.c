@@ -80,93 +80,6 @@ static void block_advance(bb_match* m, bb_rng* rng) {
         // FOUL APPEARANCE: "roll a D6 before any other dice ... On a 1, the
         // Block Action is immediately cancelled and the opposition player's
         // activation immediately ends." (No turnover.)
-        // TRICKSTER: before dice are determined, the defender may relocate
-        // to any unoccupied adjacent square (auto-policy: fewest markers;
-        // ties -> first). The block then proceeds against the new square.
-        if (bb_has_skill(&m->players[def].skills, BB_SK_TRICKSTER) &&
-            !(m->players[def].flags & BB_PF_DISTRACTED)) {
-            bb_player* dp2 = &m->players[def];
-            int bestx = -1, besty = -1, best_tz = 99;
-            for (int dx = -1; dx <= 1; dx++) {
-                for (int dy = -1; dy <= 1; dy++) {
-                    if (!dx && !dy) continue;
-                    int nx = dp2->x + dx, ny = dp2->y + dy;
-                    if (!bb_on_pitch_xy(nx, ny) || m->grid[nx][ny]) continue;
-                    int tz = bb_tackle_zones(m, BB_TEAM_OF(def), nx, ny);
-                    if (tz < best_tz) {
-                        best_tz = tz;
-                        bestx = nx;
-                        besty = ny;
-                    }
-                }
-            }
-            // Only worth it if it escapes adjacency to the attacker entirely
-            // (cancels the block) or reduces markers.
-            if (bestx >= 0 && !bb_adjacent(bestx, besty,
-                                           m->players[att].x, m->players[att].y)) {
-                bb_cover(BB_SK_TRICKSTER);
-                bb_place(m, def, bestx, besty);
-                if (dp2->flags & BB_PF_HAS_BALL) {
-                    m->ball.x = dp2->x;
-                    m->ball.y = dp2->y;
-                }
-                bb_pop(m); // target out of reach: the block fizzles
-                return;
-            }
-        }
-        // DUMP-OFF: a carrying defender may make an interruption Quick Pass
-        // that cannot cause a turnover (auto-policy: throw to the adjacent
-        // team-mate with the fewest markers, if any).
-        if ((m->players[def].flags & BB_PF_HAS_BALL) &&
-            bb_has_skill(&m->players[def].skills, BB_SK_DUMP_OFF) &&
-            !(m->players[def].flags & BB_PF_DISTRACTED) &&
-            m->players[def].pa > 0 && !(f->data & BLK_RR_USED /*once*/)) {
-            // Find a quick-range team-mate (d^2 <= 12), fewest markers.
-            bb_player* dp2 = &m->players[def];
-            int best = -1, best_tz = 99;
-            int dteam = BB_TEAM_OF(def);
-            for (int s2 = dteam * BB_TEAM_SLOTS; s2 < (dteam + 1) * BB_TEAM_SLOTS; s2++) {
-                if (s2 == def) continue;
-                const bb_player* q = &m->players[s2];
-                if (q->location != BB_LOC_ON_PITCH) continue;
-                if (!bb_can_catch(m, s2)) continue;
-                int ddx = q->x - dp2->x, ddy = q->y - dp2->y;
-                if (ddx * ddx + ddy * ddy > 12) continue;
-                int tz = bb_tackle_zones(m, dteam, q->x, q->y);
-                if (tz < best_tz) {
-                    best_tz = tz;
-                    best = s2;
-                }
-            }
-            if (best >= 0) {
-                bb_cover(BB_SK_DUMP_OFF);
-                // Resolve a simplified turnover-免 quick pass inline: PA test;
-                // accurate -> catch test by the receiver; any failure just
-                // drops the ball (bounce) with no turnover.
-                bb_player* rp = &m->players[best];
-                int pmod = -bb_tackle_zones(m, dteam, dp2->x, dp2->y);
-                int die = bb_d6(rng);
-                bool acc = die != 1 && (die == 6 || die >= bb_test_target(dp2->pa, pmod));
-                bb_drop_ball(m);
-                if (acc) {
-                    int cmod = -bb_tackle_zones(m, dteam, rp->x, rp->y);
-                    int cdie = bb_d6(rng);
-                    if (cdie != 1 && (cdie == 6 || cdie >= bb_test_target(rp->ag, cmod))) {
-                        bb_give_ball(m, best);
-                    } else {
-                        bb_ball_to(m, rp->x, rp->y);
-                        bb_push(m, BB_PROC_SCATTER, 0, 1, rp->x, rp->y);
-                    }
-                } else {
-                    bb_ball_to(m, dp2->x, dp2->y);
-                    bb_push(m, BB_PROC_SCATTER, 0, 1, dp2->x, dp2->y);
-                }
-                // No turnover from any of this. Return so the pass/scatter
-                // chain resolves; BLOCK re-enters phase 0 with the preamble
-                // latch set and proceeds to the dice.
-                return;
-            }
-        }
     }
     if (f->phase == 0) {
         // DAUNTLESS: against a higher unmodified ST, roll D6 + own ST; beat
@@ -695,8 +608,9 @@ static void push_advance(bb_match* m, bb_rng* rng) {
         }
         if (frenzy2) {
             if (blitz) m->players[att].moved++; // the second block's square
-            bb_push(m, BB_PROC_BLOCK, att, def, 0, 0);
-            bb_top(m)->data |= BLK_FRENZY_2ND | (blitz ? BLK_IS_BLITZ : 0);
+            bb_push_targeted_action(m, att, def, BB_TA_BLOCK,
+                                    BB_TA_FRENZY_SECOND |
+                                    (blitz ? BB_TA_FROM_BLITZ : 0));
         }
         return;
     }
@@ -704,10 +618,12 @@ static void push_advance(bb_match* m, bb_rng* rng) {
         // Frenzy second-block Rush (blitz with no movement left) resolved.
         int att = f->a;
         int def = f->b;
+        bool blitz = (f->data & PSH_FROM_BLITZ) != 0;
         bb_pop(m);
         if (m->ret & 1) {
-            bb_push(m, BB_PROC_BLOCK, att, def, 0, 0);
-            bb_top(m)->data |= BLK_FRENZY_2ND | BLK_IS_BLITZ;
+            bb_push_targeted_action(m, att, def, BB_TA_BLOCK,
+                                    BB_TA_FRENZY_SECOND |
+                                    (blitz ? BB_TA_FROM_BLITZ : 0));
         } else {
             // Failed rush: knocked down in place, no second block (turnover).
             bb_knockdown(m, att, BB_KD_FAILED_RUSH, 0);

@@ -1,0 +1,259 @@
+--- a/pufferlib/torch_pufferl.py
++++ b/pufferlib/torch_pufferl.py
+@@ -36,6 +36,7 @@
+ }
+ 
+ ENTROPY_SCHEDULE_CONTRACT = "cosine-update-index-over-total-updates-fp32-v1"
++RECURRENT_MEMORY_CONTRACT = "terminal-aware-tbptt-v1"
+ 
+ 
+ def entropy_schedule_point(*, base_coefficient, anneal_enabled,
+@@ -249,14 +250,87 @@
+         mask = terminals.to(device=tensor.device).view(1, -1, 1)
+         result.append(torch.where(mask, torch.zeros_like(tensor), tensor))
+     return tuple(result)
++
++def clone_recurrent_state(state):
++    return tuple(tensor.detach().clone() for tensor in state) if state else ()
++
++def require_empty_training_records(tail_valid, segment_state_valid):
++    if tail_valid or segment_state_valid:
++        raise RuntimeError(
++            'rollout would overwrite an unconsumed training segment')
++
++def require_complete_training_records(tail_valid, segment_state_valid):
++    if not tail_valid or not segment_state_valid:
++        raise RuntimeError(
++            'training requires one complete fresh segment and tail record')
+ 
++def gather_segment_initial_state(state, indices, total_agents):
++    result = []
++    for tensor in state:
++        if tensor.ndim != 3 or tensor.shape[1] != total_agents:
++            raise RuntimeError('stored recurrent state has wrong agent ownership')
++        result.append(tensor[:, indices].detach().clone())
++    return tuple(result)
++
+ def prepare_recurrent_rollout(state, rewards, terminals,
+         reset_state, evaluation_mode):
+-    if reset_state and not evaluation_mode:
+-        state = tuple(torch.zeros_like(s) for s in state) if state else ()
+-        rewards = torch.zeros_like(rewards)
+-        terminals = torch.zeros_like(terminals)
+-    return state, rewards, terminals
++    del reset_state, evaluation_mode
++    return reset_recurrent_state_rows(state, terminals), rewards, terminals
++
++def recurrent_forward_sequence(policy, observations, initial_state, terminals):
++    '''Recompute one TBPTT segment from its exact detached input state.
++
++    ``terminals[:, t]`` describes the transition immediately preceding
++    ``observations[:, t]``. This matches rollout storage, including t=0.
++    '''
++    if observations.ndim < 2 or terminals.shape != observations.shape[:2]:
++        raise RuntimeError('recurrent sequence observation/terminal shape mismatch')
++    state = clone_recurrent_state(initial_state)
++    logits_by_head = None
++    normal_loc, normal_scale = [], []
++    values = []
++    for t in range(observations.shape[1]):
++        state = reset_recurrent_state_rows(state, terminals[:, t])
++        logits, value, state = policy.forward_eval(observations[:, t], state)
++        if isinstance(logits, torch.distributions.Normal):
++            if logits_by_head is not None:
++                raise RuntimeError('recurrent policy changed action distribution type')
++            normal_loc.append(logits.loc)
++            normal_scale.append(logits.scale)
++        else:
++            if normal_loc:
++                raise RuntimeError('recurrent policy changed action distribution type')
++            heads = (logits,) if isinstance(logits, torch.Tensor) else tuple(logits)
++            if logits_by_head is None:
++                logits_by_head = [[] for _ in heads]
++            if len(heads) != len(logits_by_head):
++                raise RuntimeError('recurrent policy changed action-head count')
++            for output, head in zip(logits_by_head, heads):
++                output.append(head)
++        values.append(value.reshape(value.shape[0], -1)[:, 0])
++    if normal_loc:
++        loc = torch.stack(normal_loc, dim=1).reshape(-1, normal_loc[0].shape[-1])
++        scale = torch.stack(normal_scale, dim=1).reshape(
++            -1, normal_scale[0].shape[-1])
++        flat_logits = torch.distributions.Normal(loc, scale)
++    else:
++        flat_logits = [torch.stack(head, dim=1).reshape(
++            -1, head[0].shape[-1]) for head in logits_by_head]
++        if len(flat_logits) == 1:
++            flat_logits = flat_logits[0]
++    return flat_logits, torch.stack(values, dim=1), clone_recurrent_state(state)
++
++def evaluate_recurrent_tail(policy, observation, state, rewards, terminals):
++    '''Value the post-step observation without advancing behavior state.'''
++    behavior_before = clone_recurrent_state(state)
++    tail_state = reset_recurrent_state_rows(
++        clone_recurrent_state(state), terminals)
++    with torch.no_grad():
++        _, value, _ = policy.forward_eval(observation, tail_state)
++    value = value.flatten()
++    value = torch.where(terminals.bool(), torch.zeros_like(value), value)
++    return (value, rewards.detach().clone(), terminals.detach().clone(),
++            behavior_before)
+ 
+ class PuffeRL:
+     def __init__(self, args, vec, policy, verbose=True):
+@@ -326,12 +400,20 @@
+         self.logprobs = torch.zeros(horizon, total_agents, device=device)
+         self.rewards = torch.zeros(horizon, total_agents, device=device)
+         self.terminals = torch.zeros(horizon, total_agents, device=device)
++        # Observation-aligned preceding-transition terminal masks. Keep these
++        # separate from transition/GAE storage even while their values happen
++        # to share the current rollout indexing.
++        self.recurrent_reset_masks = torch.zeros(
++            horizon, total_agents, device=device)
+         self.action_masks = (torch.zeros(
+             horizon, total_agents, self.mask_size,
+             dtype=torch.uint8, device=device)
+             if self.mask_size > 0 else None)
+         self.ratio = torch.ones(total_agents, horizon, device=device)
+         self.state = policy.initial_state(total_agents, device=device)
++        self.segment_initial_state = tuple(
++            torch.zeros_like(s) for s in self.state)
++        self.segment_state_valid = False
+         self.reset_state = bool(args['reset_state'])
+         self.evaluation_mode = False
+         self.pending_rewards = torch.zeros(total_agents, device=device)
+@@ -405,6 +487,9 @@
+         enabled = bool(enabled)
+         if enabled == self.evaluation_mode:
+             return
++        if self.tail_valid or self.segment_state_valid:
++            raise RuntimeError(
++                'mode change would discard an unconsumed training segment')
+         if enabled and self.global_step > 0:
+             self._vec.reset()
+         self.state = tuple(torch.zeros_like(s) for s in self.state)
+@@ -413,9 +498,8 @@
+         self.evaluation_mode = enabled
+ 
+     def rollouts(self):
+-        if self.tail_valid:
+-            raise RuntimeError(
+-                'rollout would overwrite an unconsumed tail record')
++        require_empty_training_records(
++            self.tail_valid, self.segment_state_valid)
+         prof = self.profile
+         config = self.config
+         device = self.device
+@@ -425,6 +509,9 @@
+             self.state, self.pending_rewards, self.pending_terminals,
+             self.reset_state, self.evaluation_mode)
+         o = self.vec_obs
++        if not self.evaluation_mode:
++            self.segment_initial_state = clone_recurrent_state(self.state)
++            self.segment_state_valid = True
+ 
+         P = Profile
+         prof.mark(0)
+@@ -433,8 +520,7 @@
+ 
+             prof.mark(1)
+             with torch.no_grad():
+-                if self.evaluation_mode:
+-                    self.state = reset_recurrent_state_rows(self.state, d)
++                self.state = reset_recurrent_state_rows(self.state, d)
+                 logits, value, state = self.policy.forward_eval(o_device, self.state)
+                 if self.vec_joint_actions is not None:
+                     counts_cpu = self.vec_joint_counts.clone()
+@@ -459,12 +545,14 @@
+             prof.mark(2)
+ 
+             with torch.no_grad():
+-                self.state = state
++                self.state = clone_recurrent_state(state)
+                 self.observations[t] = o_device
+                 self.actions[t] = action
+                 self.logprobs[t] = logprob
+                 self.rewards[t] = torch.as_tensor(r, device=device)
+                 self.terminals[t] = torch.as_tensor(d, device=device).float()
++                self.recurrent_reset_masks[t] = torch.as_tensor(
++                    d, device=device).float()
+                 self.values[t] = value.flatten()
+                 if self.action_masks is not None:
+                     if effective_mask is None:
+@@ -486,20 +574,19 @@
+                     and not self.evaluation_mode):
+                 with torch.no_grad():
+                     tail_observation = torch.as_tensor(o, device=device)
+-                    tail_state = tuple(
+-                        torch.zeros_like(state) for state in self.state)
+-                    _, tail_value, _ = self.policy.forward_eval(
+-                        tail_observation, tail_state)
+-                    self.tail_rewards.copy_(
+-                        torch.as_tensor(r, device=device))
+-                    self.tail_terminals.copy_(
+-                        torch.as_tensor(d, device=device).float())
+-                    tail_value = tail_value.flatten()
+-                    self.tail_values.copy_(torch.where(
+-                        self.tail_terminals.bool(),
+-                        torch.zeros_like(tail_value),
+-                        tail_value,
+-                    ))
++                    tail_reward = torch.as_tensor(r, device=device)
++                    tail_terminal = torch.as_tensor(
++                        d, device=device).float()
++                    tail_value, tail_reward, tail_terminal, state_before = \
++                        evaluate_recurrent_tail(
++                            self.policy, tail_observation, self.state,
++                            tail_reward, tail_terminal)
++                    if any(not torch.equal(a, b) for a, b in zip(
++                            self.state, state_before)):
++                        raise RuntimeError('tail evaluation advanced behavior state')
++                    self.tail_rewards.copy_(tail_reward)
++                    self.tail_terminals.copy_(tail_terminal)
++                    self.tail_values.copy_(tail_value)
+                     self.tail_valid = True
+             prof.elapsed(P.EVAL_GPU, 1, 2)
+             prof.elapsed(P.EVAL_ENV, 2, 3)
+@@ -526,9 +613,8 @@
+                 'training update exceeds configured total_updates')
+         config = self.config
+         device = self.device
+-        if not self.tail_valid:
+-            raise RuntimeError(
+-                'training requires one fresh tail record')
++        require_complete_training_records(
++            self.tail_valid, self.segment_state_valid)
+ 
+         self._training_failed = True
+ 
+@@ -569,6 +655,7 @@
+         # share an emission; keep this as a broad pathology bound.
+         rew = self.rewards.T.contiguous().clamp(-8, 8)
+         ter = self.terminals.T.contiguous()
++        reset_masks = self.recurrent_reset_masks.T.contiguous()
+         masks = (self.action_masks.transpose(0, 1).contiguous()
+                  if self.action_masks is not None else None)
+ 
+@@ -600,9 +687,13 @@
+             mb_returns = advantages[idx] + mb_values
+             mb_advantages = advantages[idx]
+             mb_masks = masks[idx] if masks is not None else None
++            mb_initial_state = gather_segment_initial_state(
++                self.segment_initial_state, idx, self.total_agents)
++            mb_reset_masks = reset_masks[idx]
+ 
+             prof.mark(1)
+-            logits, newvalue = self.policy(mb_obs)
++            logits, newvalue, _ = recurrent_forward_sequence(
++                self.policy, mb_obs, mb_initial_state, mb_reset_masks)
+             if mb_masks is not None:
+                 logits = apply_action_mask(
+                     logits, mb_masks.reshape(-1, self.mask_size),
+@@ -658,6 +749,7 @@
+         prof.mark(1)
+         prof.elapsed(P.TRAIN, 0, 1)
+         self.tail_valid = False
++        self.segment_state_valid = False
+ 
+         losses = {k: v.item() / num_minibatches for k, v in losses.items()}
+         y_pred = val.flatten()

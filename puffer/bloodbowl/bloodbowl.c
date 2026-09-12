@@ -142,6 +142,7 @@ static void st_frame_param_kinds(int proc, int* a_is_slot, int* b_is_slot) {
     *a_is_slot = 0;
     *b_is_slot = 0;
     switch (proc) {
+    case BB_PROC_TARGETED_ACTION: // a = original actor, b = target
     case BB_PROC_BLOCK: // a = attacker, b = defender
     case BB_PROC_PUSH:  // a = pusher, b = pushee
     case BB_PROC_FOUL:  // a = fouler, b = victim

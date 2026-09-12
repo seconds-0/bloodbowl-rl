@@ -264,11 +264,12 @@ static void move_advance(bb_match* m, bb_rng* rng) {
             if (m->ret & 1) {
                 if (stab) {
                     f->data |= MV_AWAIT_ACTION;
-                    bb_push(m, BB_PROC_ARMOUR, target, 3 /* unmodifiable */, 0,
-                            slot + 1);
+                    bb_push_targeted_action(m, slot, target, BB_TA_STAB,
+                                            BB_TA_FROM_BLITZ);
                 } else {
                     f->data |= MV_AWAIT_BLOCK;
-                    bb_push(m, BB_PROC_BLOCK, slot, target, 0, 0);
+                    bb_push_targeted_action(m, slot, target, BB_TA_BLOCK,
+                                            BB_TA_FROM_BLITZ);
                     bb_top(m)->data |= 1 << 13; // BLK_IS_BLITZ (rush-for-block)
                 }
             } else {
@@ -385,7 +386,7 @@ static void move_advance(bb_match* m, bb_rng* rng) {
             if (m->ret & 1) {
                 p->stance = BB_STANCE_STANDING;
                 f->data |= MV_AWAIT_BLOCK | MV_BLOCK_DONE;
-                bb_push(m, BB_PROC_BLOCK, slot, target, 0, 0);
+                bb_push_targeted_action(m, slot, target, BB_TA_BLOCK, 0);
             } else {
                 finish_move(m); // stays prone; activation ends
             }
@@ -834,8 +835,8 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
                 }
                 p->moved++; // the blitz block costs one square of movement
             }
-            bb_push(m, BB_PROC_BLOCK, slot, target, 0, 0);
-            if (f->b == BB_ACT_BLITZ) bb_top(m)->data |= 1 << 13; // BLK_IS_BLITZ
+            bb_push_targeted_action(m, slot, target, BB_TA_BLOCK,
+                                    f->b == BB_ACT_BLITZ ? BB_TA_FROM_BLITZ : 0);
             return;
         }
 
@@ -895,45 +896,17 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
             }
             if (a.arg == 4) { // CHAINSAW: 2+ attack (+3 armour), 1 kick-back
                 f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
-                bb_cover(BB_SK_CHAINSAW);
-                if (bb_d6(rng) == 1) {
-                    bb_knockdown(m, slot, BB_KD_OTHER, 0); // kick-back (victim-
-                    return;                                 // side +3 in ARMOUR)
-                }
-                bb_push(m, BB_PROC_ARMOUR, target, 0, 3, slot + 1);
+                bb_push_targeted_action(m, slot, target, BB_TA_CHAINSAW, 0);
                 return;
             }
             if (a.arg == 5) { // BREATHE FIRE
                 f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
-                bb_cover(BB_SK_BREATHE_FIRE);
-                int mod = m->players[target].st >= 5 ? -1 : 0;
-                int die = bb_d6(rng);
-                if (die == 1) {
-                    bb_knockdown(m, slot, BB_KD_OTHER, 0);
-                    return;
-                }
-                if (die == 6) {
-                    bb_knockdown2(m, target, BB_KD_OTHER, 0, slot);
-                    return;
-                }
-                if (die + mod >= 4) {
-                    // Placed Prone: no armour; a carrier drops the ball.
-                    bb_player* t = &m->players[target];
-                    t->stance = BB_STANCE_PRONE;
-                    if (t->flags & BB_PF_HAS_BALL) {
-                        int bx = t->x, by = t->y;
-                        if (BB_TEAM_OF(target) == m->active_team) bb_turnover(m);
-                        bb_drop_ball(m);
-                        bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)bx, (uint8_t)by);
-                    }
-                }
+                bb_push_targeted_action(m, slot, target, BB_TA_BREATHE_FIRE, 0);
                 return;
             }
             if (a.arg == 6) { // PROJECTILE VOMIT: 2+ target, 1 self; unmodifiable
                 f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
-                bb_cover(BB_SK_PROJECTILE_VOMIT);
-                int victim = bb_d6(rng) >= 2 ? target : slot;
-                bb_push(m, BB_PROC_ARMOUR, victim, 3, 0, slot + 1);
+                bb_push_targeted_action(m, slot, target, BB_TA_VOMIT, 0);
                 return;
             }
             if (a.arg == 1) {
@@ -966,16 +939,14 @@ static void move_apply(bb_match* m, bb_action a, bb_rng* rng) {
                     p->moved++; // replaces the blitz block: costs the square
                 }
                 f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
-                bb_push(m, BB_PROC_ARMOUR, target, 3 /* unmodifiable */, 0,
-                        slot + 1);
+                bb_push_targeted_action(
+                    m, slot, target, BB_TA_STAB,
+                    f->b == BB_ACT_BLITZ ? BB_TA_FROM_BLITZ : 0);
                 return;
             }
             // GAZE (arg 2): D6 3+ -> target Distracted; activation ends.
-            f->data |= MV_ACTION_DONE;
-            if (bb_d6(rng) >= 3) {
-                m->players[target].flags |= BB_PF_DISTRACTED;
-            }
-            finish_move(m);
+            f->data |= MV_ACTION_DONE | MV_AWAIT_ACTION;
+            bb_push_targeted_action(m, slot, target, BB_TA_GAZE, 0);
             return;
         }
 

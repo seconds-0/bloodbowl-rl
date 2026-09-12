@@ -34,7 +34,7 @@ SELFPLAY_LEAGUE_PATCH="$ROOT/training/selfplay_league.patch"
 # generated build header and the --check gate both used to carry their own
 # literal, so an obs bump had to be edited in three places or the compiled
 # module would advertise the previous revision -- with no symptom, because
-# every observation revision since v4 has been 2782 bytes.
+# obs-v4 through obs-v6 were 2782 bytes; obs-v7 is 2851 bytes.
 ENV_HEADER="$ROOT/puffer/bloodbowl/bloodbowl.h"
 [ -f "$ENV_HEADER" ] || {
     echo "error: missing $ENV_HEADER" >&2; exit 1; }
@@ -43,6 +43,27 @@ SOURCE_OBSERVATION_VERSION="$(sed -n \
 [ -n "$SOURCE_OBSERVATION_VERSION" ] || {
     echo "error: could not read BBE_OBS_VERSION from $ENV_HEADER" >&2; exit 1; }
 SOURCE_OBSERVATION_ABI="obs-v$SOURCE_OBSERVATION_VERSION"
+
+# Only installed later patches belong in an earlier patch's shadow reverse
+# check. This also permits upgrading a previously qualified runtime in place.
+NATIVE_DIAGNOSTICS_REVERSE=()
+COMPACT_SNAPSHOT_REVERSE=()
+TERMINAL_AWARE_REVERSE=()
+if grep -Fq 'm.def("qualification_entropy_gradient_state"' "$PUFFER/src/bindings.cu" 2>/dev/null; then
+    NATIVE_DIAGNOSTICS_REVERSE+=("$ROOT/training/puffer_native_entropy_diagnostics.patch")
+fi
+if grep -Fq 'py::arg("include_rollout") = true' "$PUFFER/src/bindings.cu" 2>/dev/null; then
+    COMPACT_SNAPSHOT_REVERSE+=("$ROOT/training/puffer_compact_qualification_snapshot.patch")
+    NATIVE_DIAGNOSTICS_REVERSE+=("$ROOT/training/puffer_compact_qualification_snapshot.patch")
+fi
+if grep -Fq 'RECURRENT_MEMORY_CONTRACT = "terminal-aware-tbptt-v1"' \
+        "$PUFFER/pufferlib/torch_pufferl.py" 2>/dev/null; then
+    TERMINAL_AWARE_REVERSE+=("$ROOT/training/puffer_terminal_aware_torch.patch")
+fi
+if grep -R -Fq 'terminal-aware-tbptt-v1' \
+        "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp" 2>/dev/null; then
+    TERMINAL_AWARE_REVERSE+=("$ROOT/training/puffer_terminal_aware_native.patch")
+fi
 
 # Content hash of a tree with symlinks dereferenced (the puffer/bloodbowl
 # engine/ and bb/ links reach into engine/src and engine/include/bb, so any
@@ -61,19 +82,62 @@ snapshot_hash() {
 exact_backend_hash() {
     (
         cd "$PUFFER"
-        for rel in \
-            pufferlib/pufferl.py \
-            pufferlib/selfplay.py \
-            pufferlib/torch_pufferl.py \
-            src/bindings.cu \
-            src/bindings_cpu.cpp \
-            src/kernels.cu \
-            src/pufferlib.cu \
-            src/vecenv.h; do
+        while IFS= read -r rel; do
+            [ -n "$rel" ] || continue
             [ -f "$rel" ] || exit 1
             $SHA256 "$rel"
-        done | $SHA256 | awk '{print $1}'
-    )
+        done < "$ROOT/training/puffer_compiled_backend_sources.txt"
+    ) | $SHA256 | awk '{print $1}'
+}
+
+# Prove that an earlier patch is present beneath later overlapping patches
+# without mutating the installed tree. The shadow contains only paths named by
+# the participating patches; later patches are removed in reverse install order.
+patch_reverse_checks_beneath_later() {
+    local earlier_patch="$1"
+    shift
+    local shadow patch rel
+    shadow="$(mktemp -d "${TMPDIR:-/tmp}/puffer-patch-check.XXXXXX")" || return 1
+    for patch in "$earlier_patch" "$@"; do
+        while IFS= read -r rel; do
+            [ -n "$rel" ] || continue
+            # Overlapping patches name the same file more than once. Copy its
+            # final installed contents once, including from immutable runtimes.
+            # Re-copying a read-only file emits a misleading permission error.
+            if [ ! -f "$shadow/$rel" ]; then
+                if ! mkdir -p "$shadow/$(dirname "$rel")" || \
+                   ! cp "$PUFFER/$rel" "$shadow/$rel"; then
+                    rm -rf "$shadow"
+                    return 1
+                fi
+            fi
+        done < <(sed -n 's|^+++ b/||p' "$patch")
+    done
+    local earlier_paths=() later=() include_args=() i
+    while IFS= read -r rel; do
+        [ -n "$rel" ] && earlier_paths+=("$rel")
+    done < <(sed -n 's|^+++ b/||p' "$earlier_patch")
+    for patch in "$@"; do later+=("$patch"); done
+    for ((i=${#later[@]}-1; i>=0; i--)); do
+        include_args=()
+        for rel in "${earlier_paths[@]}"; do
+            if grep -Fq "+++ b/$rel" "${later[$i]}"; then
+                include_args+=("--include=$rel")
+            fi
+        done
+        [ "${#include_args[@]}" -gt 0 ] || continue
+        if ! git -C "$shadow" apply --reverse --no-index \
+                "${include_args[@]}" "${later[$i]}" \
+                >/dev/null 2>&1; then
+            rm -rf "$shadow"
+            return 1
+        fi
+    done
+    git -C "$shadow" apply --reverse --check --no-index "$earlier_patch" \
+        >/dev/null 2>&1
+    local status=$?
+    rm -rf "$shadow"
+    return "$status"
 }
 
 if [ "$MODE" = "check" ]; then
@@ -141,6 +205,24 @@ if [ "$MODE" = "check" ]; then
             exit 1
         fi
     done
+    for trainer_contract in \
+        'pufferlib/torch_pufferl.py:tail_observation' \
+        'src/pufferlib.cu:tail_callback_wrapper' \
+        'src/bindings.cu:rollout_transition_contract' \
+        'pufferlib/torch_pufferl.py:ENTROPY_SCHEDULE_CONTRACT' \
+        'src/pufferlib.cu:enqueue_entropy_coefficient' \
+        'src/bindings.cu:entropy_schedule_contract' \
+        'src/bindings.cu:qualification_entropy_gradient_state' \
+        'src/bindings.cu:qualification_graph_execution' \
+        'src/bindings.cu:bool include_rollout = true'; do
+        trainer_file="${trainer_contract%%:*}"
+        trainer_marker="${trainer_contract#*:}"
+        if ! grep -Fq "$trainer_marker" "$PUFFER/$trainer_file"; then
+            echo "drift check: trainer contract marker missing: $trainer_marker" >&2
+            echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+            exit 1
+        fi
+    done
     for qualification_marker in \
         'eligible_agents' \
         'qualification_recurrent_state' \
@@ -152,15 +234,41 @@ if [ "$MODE" = "check" ]; then
             exit 1
         fi
     done
-    for exact_patch in \
-        "$ROOT/training/puffer_recurrent_cuda_qualification.patch" \
-        "$ROOT/training/puffer_frozen_prio_mask.patch"; do
-        if ! git -C "$PUFFER" apply --reverse --check --no-index "$exact_patch"; then
-            echo "drift check: installed qualification patch is stale: $exact_patch" >&2
-            echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
-            exit 1
-        fi
-    done
+    TERMINAL_AWARE_TORCH_PATCH="$ROOT/training/puffer_terminal_aware_torch.patch"
+    TERMINAL_AWARE_NATIVE_PATCH="$ROOT/training/puffer_terminal_aware_native.patch"
+    if [ ! -f "$TERMINAL_AWARE_TORCH_PATCH" ] || \
+       [ ! -f "$TERMINAL_AWARE_NATIVE_PATCH" ] || \
+       ! grep -Fq 'RECURRENT_MEMORY_CONTRACT = "terminal-aware-tbptt-v1"' \
+            "$PUFFER/pufferlib/torch_pufferl.py" || \
+       ! patch_reverse_checks_beneath_later \
+            "$TERMINAL_AWARE_TORCH_PATCH" "$TERMINAL_AWARE_NATIVE_PATCH" || \
+       ! git -C "$PUFFER" apply --reverse --check --no-index \
+            "$TERMINAL_AWARE_NATIVE_PATCH"; then
+        echo "drift check: terminal-aware recurrent patch pair is missing or stale" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
+    if ! grep -Fq 'Training uses the same direct recurrence and fp32 rounding points as rollout.' \
+        "$PUFFER/src/models.cu" || \
+       ! grep -Fq 'state_history' "$PUFFER/src/models.cu" || \
+       ! patch_reverse_checks_beneath_later \
+            "$ROOT/training/puffer_mingru_direct_recurrence_candidate.patch" \
+            "${TERMINAL_AWARE_REVERSE[@]}"; then
+        echo "drift check: direct min-GRU recurrence patch is missing or stale" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
+    if ! patch_reverse_checks_beneath_later \
+            "$ROOT/training/puffer_recurrent_cuda_qualification.patch" \
+            "$ROOT/training/puffer_entropy_schedule_parity.patch" \
+            "${NATIVE_DIAGNOSTICS_REVERSE[@]}" \
+            "$ROOT/training/pufferl_scripted_training_guard.patch" \
+            "$ROOT/training/pufferl_warm_start.patch" \
+            "${TERMINAL_AWARE_REVERSE[@]}"; then
+        echo "drift check: qualification patch is not exact beneath later trainer patches" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
     # The two local pufferl.py patches (scripted-training guard, warm start)
     # are outside the hashed patch bundle, so their identity is only ever
     # proven here: each must reverse-apply cleanly, which a tree still carrying
@@ -225,11 +333,12 @@ if [ "$MODE" = "check" ]; then
         's/^#define PUFFER_ACTION_ABI "\([^"]*\)"$/\1/p' \
         "$PUFFER/src/exact_action_build_hash.h" 2>/dev/null || true)"
     compiled_contract="$(cd "$PUFFER" && "$PYBIN" -c \
-        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"))' \
+        'from pufferlib import _C; print(getattr(_C, "exact_action_source_hash", "<missing>"), getattr(_C, "environment_source_hash", "<missing>"), getattr(_C, "observation_abi", "<missing>"), getattr(_C, "observation_version", "<missing>"), getattr(_C, "action_abi", "<missing>"), getattr(_C, "rollout_transition_contract", "<missing>"), getattr(_C, "entropy_schedule_contract", "<missing>"))' \
         2>/dev/null || true)"
     read -r compiled_backend_hash compiled_environment_hash \
         compiled_observation_abi compiled_observation_version \
-        compiled_action_abi <<< "$compiled_contract"
+        compiled_action_abi compiled_rollout_transition_contract \
+        compiled_entropy_schedule_contract <<< "$compiled_contract"
     if [ "$current_backend_hash" != "$header_backend_hash" ] || \
        [ "$current_backend_hash" != "$compiled_backend_hash" ]; then
         echo "drift check: exact-action source/module digest mismatch" >&2
@@ -254,6 +363,16 @@ if [ "$MODE" = "check" ]; then
         echo "  header/module obs ABI: ${header_observation_abi:-<missing>} / ${compiled_observation_abi:-<missing>}" >&2
         echo "  header/module obs: ${header_observation_version:-<missing>} / ${compiled_observation_version:-<missing>}" >&2
         echo "  header/module action: ${header_action_abi:-<missing>} / ${compiled_action_abi:-<missing>}" >&2
+        echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
+        exit 1
+    fi
+    if [ "$compiled_rollout_transition_contract" != \
+            "terminal-aware-tbptt-v1" ] || \
+       [ "$compiled_entropy_schedule_contract" != \
+            "cosine-update-index-over-total-updates-fp32-v1" ]; then
+        echo "drift check: compiled trainer semantic contract mismatch" >&2
+        echo "  rollout: ${compiled_rollout_transition_contract:-<missing>}" >&2
+        echo "  entropy: ${compiled_entropy_schedule_contract:-<missing>}" >&2
         echo "  fix: reinstall, then rebuild PufferLib for bloodbowl" >&2
         exit 1
     fi
@@ -368,7 +487,7 @@ if [ -f "$DASHBOARD_PY" ] && \
         echo "warning: exact eval-game gate patch did not apply" >&2
     fi
 fi
-if [ -f "$DASHBOARD_PY" ] && ! grep -q 'metrics.setdefault' "$DASHBOARD_PY"; then
+if [ -f "$DASHBOARD_PY" ] && ! grep -q 'def _downsample_logs' "$DASHBOARD_PY"; then
     if git -C "$PUFFER" apply \
         "$ROOT/training/pufferl_metrics_keyerror.patch"; then
         echo "upgraded:  dynamic post-run metric keys -> pufferlib/pufferl.py"
@@ -380,7 +499,7 @@ if [ -f "$DASHBOARD_PY" ] && \
    { ! grep -q "'_puffer_final_reprint'" "$DASHBOARD_PY" || \
      ! grep -q "'_puffer_schema': 2" "$DASHBOARD_PY" || \
      ! grep -q "'_puffer_eval_episodes_completed'" "$DASHBOARD_PY" || \
-     ! grep -q 'metrics.setdefault' "$DASHBOARD_PY"; }; then
+     ! grep -q 'def _downsample_logs' "$DASHBOARD_PY"; }; then
     echo "warning: full-fidelity phase/panel/reprint/eval-gate/dynamic-key support is missing" >&2
 fi
 
@@ -467,6 +586,29 @@ if ! grep -q 'reset_recurrent_state_on_terminal' "$PUFFER/src/pufferlib.cu" || \
     exit 1
 fi
 
+# Rollout-transition closure. Install after recurrent boundary handling so the
+# final executed transition and bootstrap state obey the same reset contract.
+ROLLOUT_TRANSITION_PATCH="$ROOT/training/puffer_rollout_transition_closure.patch"
+if [ ! -f "$ROLLOUT_TRANSITION_PATCH" ]; then
+    echo "error: missing $ROLLOUT_TRANSITION_PATCH" >&2
+    exit 1
+fi
+if grep -Fq 'tail_observation' "$TORCH_PUFFERL_PY" && \
+   grep -Fq 'tail_callback_wrapper' "$PUFFER/src/pufferlib.cu"; then
+    :
+elif git -C "$PUFFER" apply --check --no-index "$ROLLOUT_TRANSITION_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$ROLLOUT_TRANSITION_PATCH"
+    echo "applied:   rollout-transition closure -> Puffer native/Torch backends"
+else
+    echo "error: rollout-transition patch is neither applicable nor installed" >&2
+    exit 1
+fi
+if ! grep -Fq 'tail_observation' "$TORCH_PUFFERL_PY" || \
+   ! grep -Fq 'tail_callback_wrapper' "$PUFFER/src/pufferlib.cu"; then
+    echo "error: rollout-transition closure is incomplete" >&2
+    exit 1
+fi
+
 # Frozen PPO rows must be mathematically ineligible for priority sampling;
 # zero advantages are insufficient when alpha=0 because pow(0, 0) is one.
 FROZEN_PRIO_PATCH="$ROOT/training/puffer_frozen_prio_mask.patch"
@@ -479,13 +621,39 @@ if [ -f "$FROZEN_PRIO_PATCH" ] && \
         exit 1
     fi
 elif [ -f "$FROZEN_PRIO_PATCH" ] && \
-     ! git -C "$PUFFER" apply --reverse --check --no-index "$FROZEN_PRIO_PATCH"; then
+     ! patch_reverse_checks_beneath_later \
+        "$FROZEN_PRIO_PATCH" "${TERMINAL_AWARE_REVERSE[@]}"; then
     echo "error: installed frozen-row priority-mask patch is stale" >&2
     echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
     exit 1
 fi
 if ! grep -q 'eligible_agents' "$PUFFER/src/pufferlib.cu"; then
     echo "error: exact frozen-row exclusion is incomplete" >&2
+    exit 1
+fi
+
+# Use the same direct min-GRU recurrence and fp32 rounding points for training
+# that native rollout already uses. The accepted patch name is retained so its
+# canonical SHA-256 continues to identify the qualification evidence.
+MINGRU_DIRECT_PATCH="$ROOT/training/puffer_mingru_direct_recurrence_candidate.patch"
+if [ ! -f "$MINGRU_DIRECT_PATCH" ]; then
+    echo "error: missing $MINGRU_DIRECT_PATCH" >&2
+    exit 1
+fi
+if patch_reverse_checks_beneath_later \
+        "$MINGRU_DIRECT_PATCH" "${TERMINAL_AWARE_REVERSE[@]}"; then
+    :
+elif git -C "$PUFFER" apply --check --no-index "$MINGRU_DIRECT_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$MINGRU_DIRECT_PATCH"
+    echo "applied:   direct min-GRU training recurrence -> native CUDA backend"
+else
+    echo "error: direct min-GRU recurrence patch is neither exact nor applicable" >&2
+    exit 1
+fi
+if ! grep -Fq 'Training uses the same direct recurrence and fp32 rounding points as rollout.' \
+        "$PUFFER/src/models.cu" || \
+   ! grep -Fq 'state_history' "$PUFFER/src/models.cu"; then
+    echo "error: direct min-GRU recurrence support is incomplete" >&2
     exit 1
 fi
 
@@ -502,7 +670,13 @@ if [ -f "$QUALIFICATION_PATCH" ] && \
         exit 1
     fi
 elif [ -f "$QUALIFICATION_PATCH" ] && \
-     ! git -C "$PUFFER" apply --reverse --check --no-index "$QUALIFICATION_PATCH"; then
+     ! patch_reverse_checks_beneath_later \
+        "$QUALIFICATION_PATCH" \
+        "$ROOT/training/puffer_entropy_schedule_parity.patch" \
+            "${NATIVE_DIAGNOSTICS_REVERSE[@]}" \
+        "$ROOT/training/pufferl_scripted_training_guard.patch" \
+        "$ROOT/training/pufferl_warm_start.patch" \
+        "${TERMINAL_AWARE_REVERSE[@]}"; then
     echo "error: installed recurrent CUDA qualification patch is stale" >&2
     echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
     exit 1
@@ -510,6 +684,68 @@ fi
 if ! grep -q 'qualification_recurrent_state' "$PUFFER/src/bindings.cu" || \
    ! grep -q 'qualification_snapshot' "$PUFFER/src/bindings.cu"; then
     echo "error: recurrent CUDA qualification evidence is incomplete" >&2
+    exit 1
+fi
+
+# Entropy-schedule parity. Install after all native qualification hooks because
+# both touch the public binding surface; the semantic patch remains part of the
+# compiled identity and its transaction guard covers those hooks.
+ENTROPY_SCHEDULE_PATCH="$ROOT/training/puffer_entropy_schedule_parity.patch"
+if [ ! -f "$ENTROPY_SCHEDULE_PATCH" ]; then
+    echo "error: missing $ENTROPY_SCHEDULE_PATCH" >&2
+    exit 1
+fi
+if grep -Fq 'ENTROPY_SCHEDULE_CONTRACT' "$TORCH_PUFFERL_PY" && \
+   grep -Fq 'enqueue_entropy_coefficient' "$PUFFER/src/pufferlib.cu"; then
+    :
+elif git -C "$PUFFER" apply --check --no-index "$ENTROPY_SCHEDULE_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$ENTROPY_SCHEDULE_PATCH"
+    echo "applied:   entropy-schedule objective parity -> Puffer native/Torch backends"
+else
+    echo "error: entropy-schedule patch is neither applicable nor installed" >&2
+    exit 1
+fi
+if ! grep -Fq 'ENTROPY_SCHEDULE_CONTRACT' "$TORCH_PUFFERL_PY" || \
+   ! grep -Fq 'enqueue_entropy_coefficient' "$PUFFER/src/pufferlib.cu"; then
+    echo "error: entropy-schedule objective parity is incomplete" >&2
+    exit 1
+fi
+
+
+# Read-only native entropy and graph execution diagnostics. These accessors
+# expose existing tensors/counters; they do not alter training or graph replay.
+NATIVE_ENTROPY_DIAGNOSTICS_PATCH="$ROOT/training/puffer_native_entropy_diagnostics.patch"
+if [ ! -f "$NATIVE_ENTROPY_DIAGNOSTICS_PATCH" ]; then
+    echo "error: missing $NATIVE_ENTROPY_DIAGNOSTICS_PATCH" >&2
+    exit 1
+fi
+if patch_reverse_checks_beneath_later "$NATIVE_ENTROPY_DIAGNOSTICS_PATCH" \
+        "${COMPACT_SNAPSHOT_REVERSE[@]}" \
+        "${TERMINAL_AWARE_REVERSE[@]}"; then
+    :
+elif git -C "$PUFFER" apply --check --no-index "$NATIVE_ENTROPY_DIAGNOSTICS_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$NATIVE_ENTROPY_DIAGNOSTICS_PATCH"
+    echo "applied:   read-only entropy gradients and graph counters -> native binding"
+else
+    echo "error: native entropy diagnostics patch is neither exact nor applicable" >&2
+    exit 1
+fi
+
+# Keep the existing snapshot default while allowing bounded diagnostics to
+# omit full rollout tensors that they do not consume.
+COMPACT_SNAPSHOT_PATCH="$ROOT/training/puffer_compact_qualification_snapshot.patch"
+if [ ! -f "$COMPACT_SNAPSHOT_PATCH" ]; then
+    echo "error: missing $COMPACT_SNAPSHOT_PATCH" >&2
+    exit 1
+fi
+if patch_reverse_checks_beneath_later \
+        "$COMPACT_SNAPSHOT_PATCH" "${TERMINAL_AWARE_REVERSE[@]}"; then
+    :
+elif git -C "$PUFFER" apply --check --no-index "$COMPACT_SNAPSHOT_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$COMPACT_SNAPSHOT_PATCH"
+    echo "applied:   optional compact qualification snapshot -> native binding"
+else
+    echo "error: compact snapshot patch is neither exact nor applicable" >&2
     exit 1
 fi
 
@@ -526,17 +762,17 @@ if [ ! -f "$REWARD_CLAMP_PATCH" ]; then
     echo "error: missing $REWARD_CLAMP_PATCH" >&2
     exit 1
 fi
-if ! grep -Fq 'clamp(-8, 8)' "$TORCH_PUFFERL_PY"; then
+if grep -Fq 'clamp(-8, 8)' "$TORCH_PUFFERL_PY" && \
+   grep -Fq -- '-8.0f, 8.0f, numel(rollouts.rewards.shape)' \
+        "$PUFFER/src/pufferlib.cu"; then
+    :
+else
     if git -C "$PUFFER" apply --no-index "$REWARD_CLAMP_PATCH"; then
         echo "applied:   +-8 trainer reward clamp -> Puffer native/Torch backends"
     else
         echo "error: reward-clamp range patch did not apply" >&2
         exit 1
     fi
-elif ! git -C "$PUFFER" apply --reverse --check --no-index "$REWARD_CLAMP_PATCH"; then
-    echo "error: installed reward-clamp range patch is stale" >&2
-    echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
-    exit 1
 fi
 # Both backends, checked independently: a one-file install silently trains the
 # torch path on truncated rewards while the CUDA path is correct (or vice
@@ -593,19 +829,31 @@ fi
 # qualification.py builds one to exercise the selfplay state machine alone), not a
 # trainer tree with drifted patches. Hard-fail on the latter, skip the former.
 if grep -Fq 'require_training_state_reset' "$PUFFER/pufferlib/pufferl.py" 2>/dev/null; then
-    # The scripted-training guard was revised (scripted_bank_tag: native
-    # training vs a bot confined to one frozen bank). A tree that already
-    # carries the previous guard cannot take the new patch -- its first hunk
-    # sits on the same lines -- so the retired revision is kept as
-    # training/pufferl_scripted_training_guard.v1.patch and reverse-applied
-    # first when, and only when, it is what the tree holds. The new patch is
-    # then applied by the ordinary logic below. A fresh tree and an already
-    # upgraded tree both fail the v1 reverse-check and skip this step.
+    # The retired v1 guard predates the entropy/config stack now beneath the
+    # current guard. Preserve the historical patch bytes, and only upgrade an
+    # installed v1 when a shadow transaction proves that reverse-v1 followed
+    # by apply-current is clean. Otherwise fail before mutating the tree: an
+    # old mixed stack cannot be safely rebased in place.
     GUARD_V1_PATCH="$ROOT/training/pufferl_scripted_training_guard.v1.patch"
     if [ -f "$GUARD_V1_PATCH" ] && \
        git -C "$PUFFER" apply --reverse --check --no-index "$GUARD_V1_PATCH" 2>/dev/null; then
-        git -C "$PUFFER" apply --reverse --no-index "$GUARD_V1_PATCH"
-        echo "reversed:  $(basename "$GUARD_V1_PATCH") <- pufferlib/pufferl.py (upgrading the scripted guard)"
+        GUARD_CURRENT_PATCH="$ROOT/training/pufferl_scripted_training_guard.patch"
+        guard_shadow="$(mktemp -d "${TMPDIR:-/tmp}/puffer-guard-upgrade.XXXXXX")"
+        mkdir -p "$guard_shadow/pufferlib"
+        cp "$PUFFER/pufferlib/pufferl.py" "$guard_shadow/pufferlib/pufferl.py"
+        if git -C "$guard_shadow" apply --reverse --no-index "$GUARD_V1_PATCH" \
+                >/dev/null 2>&1 && \
+           git -C "$guard_shadow" apply --check --no-index "$GUARD_CURRENT_PATCH" \
+                >/dev/null 2>&1; then
+            rm -rf "$guard_shadow"
+            git -C "$PUFFER" apply --reverse --no-index "$GUARD_V1_PATCH"
+            echo "reversed:  $(basename "$GUARD_V1_PATCH") <- pufferlib/pufferl.py (upgrading the scripted guard)"
+        else
+            rm -rf "$guard_shadow"
+            echo "error: installed legacy scripted-training guard v1 cannot be upgraded" >&2
+            echo "  fix: recreate a fresh pinned Puffer tree and reinstall the complete current patch stack" >&2
+            exit 1
+        fi
     fi
     for local_pufferl_patch in \
         "$ROOT/training/pufferl_scripted_training_guard.patch" \
@@ -632,6 +880,48 @@ if grep -Fq 'require_training_state_reset' "$PUFFER/pufferlib/pufferl.py" 2>/dev
             exit 1
         fi
     done
+fi
+
+# The terminal-aware recurrent-memory contract is an atomic two-backend change.
+# Apply it after every older trainer patch so its preimage is the complete
+# reducer-v1 runtime, and before computing the generated backend-source hash.
+TERMINAL_AWARE_TORCH_PATCH="$ROOT/training/puffer_terminal_aware_torch.patch"
+TERMINAL_AWARE_NATIVE_PATCH="$ROOT/training/puffer_terminal_aware_native.patch"
+for terminal_aware_patch in \
+        "$TERMINAL_AWARE_TORCH_PATCH" "$TERMINAL_AWARE_NATIVE_PATCH"; do
+    if [ ! -f "$terminal_aware_patch" ]; then
+        echo "error: missing $terminal_aware_patch" >&2
+        exit 1
+    fi
+done
+if patch_reverse_checks_beneath_later \
+        "$TERMINAL_AWARE_TORCH_PATCH" "$TERMINAL_AWARE_NATIVE_PATCH"; then
+    :
+elif git -C "$PUFFER" apply --check --no-index \
+        "$TERMINAL_AWARE_TORCH_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$TERMINAL_AWARE_TORCH_PATCH"
+    echo "applied:   terminal-aware TBPTT -> Puffer Torch backend"
+else
+    echo "error: terminal-aware Torch patch is neither exact nor applicable" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index \
+        "$TERMINAL_AWARE_NATIVE_PATCH" 2>/dev/null; then
+    :
+elif git -C "$PUFFER" apply --check --no-index \
+        "$TERMINAL_AWARE_NATIVE_PATCH" 2>/dev/null; then
+    git -C "$PUFFER" apply --no-index "$TERMINAL_AWARE_NATIVE_PATCH"
+    echo "applied:   terminal-aware TBPTT -> Puffer native backends"
+else
+    echo "error: terminal-aware native patch is neither exact nor applicable" >&2
+    exit 1
+fi
+if ! grep -Fq 'RECURRENT_MEMORY_CONTRACT = "terminal-aware-tbptt-v1"' \
+        "$TORCH_PUFFERL_PY" || \
+   ! grep -R -Fq 'terminal-aware-tbptt-v1' \
+        "$PUFFER/src/bindings.cu" "$PUFFER/src/bindings_cpu.cpp"; then
+    echo "error: terminal-aware-tbptt-v1 is incomplete across backends" >&2
+    exit 1
 fi
 
 EXACT_BACKEND_HASH="$(exact_backend_hash)" || {

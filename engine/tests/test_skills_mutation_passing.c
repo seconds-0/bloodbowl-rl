@@ -185,6 +185,9 @@ BB_TEST(skmp_very_long_legs_intercept_plus_two) {
     fx_activate(&m, &rng, thrower, BB_ACT_PASS);
     bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng);
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(rng.script_pos, 1); // choice precedes the interception die
+    st = fx_apply(&m, mk(BB_A_CHOOSE_OPTION, 0, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK(!bb_rng_error(&rng));
     BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
     BB_CHECK_EQ(m.ball.carrier, opp);
@@ -209,8 +212,8 @@ BB_TEST(skmp_catch_skill_no_reroll_on_interception) {
     int opp = fx_lineman(&m, 1, 0, 7, 7); // AG 3+, on the ruler
     fx_give_skill(&m, opp, BB_SK_CATCH);
     fx_ball_held(&m, thrower);
-    // Short pass (dx=4): PA 2+ -1, roll 5 -> Accurate. Interception (auto:
-    // single candidate): AG 3+ -3 -> needs 6; roll 5 FAILS. Pre-fix the Catch
+    // Short pass (dx=4): PA 2+ -1, roll 5 -> Accurate. Selected interception:
+    // AG 3+ -3 -> needs 6; roll 5 FAILS. Pre-fix the Catch
     // skill opened a re-roll window here; post-fix the flight resolves and
     // the receiver catches unmodified (3+) on a 4.
     static const uint8_t dice[] = {5, 5, 4};
@@ -220,6 +223,9 @@ BB_TEST(skmp_catch_skill_no_reroll_on_interception) {
     fx_run(&m, &rng);
     fx_activate(&m, &rng, thrower, BB_ACT_PASS);
     bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(rng.script_pos, 1); // choice precedes the interception die
+    st = fx_apply(&m, mk(BB_A_CHOOSE_OPTION, 0, 0, 0), &rng);
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK(!fx_has_type(&m, BB_A_USE_REROLL)); // no re-roll window opened
     BB_CHECK(!bb_rng_error(&rng));
@@ -283,6 +289,9 @@ BB_TEST(skmp_nerves_of_steel_no_effect_on_interception) {
     fx_run(&m, &rng);
     fx_activate(&m, &rng, thrower, BB_ACT_PASS);
     bb_status st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(rng.script_pos, 1); // choice precedes the interception die
+    st = fx_apply(&m, mk(BB_A_CHOOSE_OPTION, 0, 0, 0), &rng);
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK(!bb_rng_error(&rng));
     BB_CHECK(!(m.players[opp].flags & BB_PF_HAS_BALL)); // no interception

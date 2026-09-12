@@ -194,8 +194,8 @@ class BuildLeagueTest(unittest.TestCase):
                           '0000000000000002.bin'])
 
     def test_default_expect_bytes_is_the_cuda_blob(self):
-        # Historical obs-v4 flat-fp32 artifact (test_convert_checkpoint.py).
-        self.assertEqual(DEFAULT_EXPECT_BYTES, 16_066_560)
+        # Current obs-v7 H512/L3 flat-fp32 artifact.
+        self.assertEqual(DEFAULT_EXPECT_BYTES, 16_207_872)
 
     def test_rejects_wrong_size(self):
         bad = os.path.join(self.tmp, 'bad.bin')
@@ -271,10 +271,10 @@ class BuildLeagueTest(unittest.TestCase):
                     'schema_version': 1,
                     'mode': 'native_static_pool_reward_ablation',
                     'seed': str(index),
-                    'observation_abi': 'obs-v6',
-                    'observation_version': '6',
+                    'observation_abi': 'obs-v7',
+                    'observation_version': '7',
                     'action_abi': 'exact-joint-v1',
-                    'initialization': 'lineage-v6',
+                    'initialization': 'lineage-v7',
                     'qualification_only': '0',
                     'policy_hidden_size': '512',
                     'policy_num_layers': '3',

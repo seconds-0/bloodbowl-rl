@@ -1,0 +1,67 @@
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -637,7 +637,8 @@
+ 
+ py::dict qualification_snapshot(
+         py::object pufferl_obj,
+-        size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++        size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES,
++        bool include_rollout = true) {
+     if (max_bytes == 0 || max_bytes > QUALIFICATION_MAX_SNAPSHOT_BYTES) {
+         throw std::runtime_error("invalid qualification snapshot byte limit");
+     }
+@@ -647,20 +648,22 @@
+     }
+     size_t used = 0;
+     py::dict tensors;
+-    tensors["observations"] = qualification_precision_tensor(
+-        "observations", pufferl.rollouts.observations, &used, max_bytes);
+-    tensors["actions"] = qualification_precision_tensor(
+-        "actions", pufferl.rollouts.actions, &used, max_bytes);
+-    tensors["values"] = qualification_precision_tensor(
+-        "values", pufferl.rollouts.values, &used, max_bytes);
+-    tensors["logprobs"] = qualification_precision_tensor(
+-        "logprobs", pufferl.rollouts.logprobs, &used, max_bytes);
+-    tensors["rewards"] = qualification_precision_tensor(
+-        "rewards", pufferl.rollouts.rewards, &used, max_bytes);
+-    tensors["terminals"] = qualification_precision_tensor(
+-        "terminals", pufferl.rollouts.terminals, &used, max_bytes);
+-    tensors["action_mask"] = qualification_precision_tensor(
+-        "action_mask", pufferl.rollouts.action_mask, &used, max_bytes);
++    if (include_rollout) {
++        tensors["observations"] = qualification_precision_tensor(
++            "observations", pufferl.rollouts.observations, &used, max_bytes);
++        tensors["actions"] = qualification_precision_tensor(
++            "actions", pufferl.rollouts.actions, &used, max_bytes);
++        tensors["values"] = qualification_precision_tensor(
++            "values", pufferl.rollouts.values, &used, max_bytes);
++        tensors["logprobs"] = qualification_precision_tensor(
++            "logprobs", pufferl.rollouts.logprobs, &used, max_bytes);
++        tensors["rewards"] = qualification_precision_tensor(
++            "rewards", pufferl.rollouts.rewards, &used, max_bytes);
++        tensors["terminals"] = qualification_precision_tensor(
++            "terminals", pufferl.rollouts.terminals, &used, max_bytes);
++        tensors["action_mask"] = qualification_precision_tensor(
++            "action_mask", pufferl.rollouts.action_mask, &used, max_bytes);
++    }
+     tensors["mb_ratio"] = qualification_precision_tensor(
+         "mb_ratio", pufferl.train_buf.mb_ratio, &used, max_bytes);
+     tensors["selected_rows"] = qualification_int_tensor(
+@@ -697,6 +700,7 @@
+     }
+ 
+     py::dict result;
++    result["include_rollout"] = include_rollout;
+     result["max_bytes"] = max_bytes;
+     result["used_bytes"] = used;
+     result["num_banks"] = 1 + pufferl.num_frozen_banks;
+@@ -1462,7 +1466,8 @@
+     m.def("qualification_recurrent_state", &qualification_recurrent_state,
+         py::arg("pufferl"), py::arg("clear") = false);
+     m.def("qualification_snapshot", &qualification_snapshot,
+-        py::arg("pufferl"), py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
++        py::arg("pufferl"), py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES,
++        py::arg("include_rollout") = true);
+     m.def("qualification_entropy_gradient_state",
+         &qualification_entropy_gradient_state,
+         py::arg("pufferl"),

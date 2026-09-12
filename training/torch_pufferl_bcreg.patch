@@ -43,7 +43,7 @@
 +# ===========================================================================
 +import struct
 +
-+_BC_MAGIC, _BC_VERSIONS, _BC_HEADER_LEN = b'BBP1', (1, 2, 3, 4), 16
++_BC_MAGIC, _BC_VERSIONS, _BC_HEADER_LEN = b'BBP1', (5,), 16
 +
 +def _bc_resolve_pairs_dir(path):
 +    '''Resolve a relative bc_pairs_dir against the CWD first, then the repo
@@ -74,8 +74,8 @@
 +        if magic != _BC_MAGIC or ver not in _BC_VERSIONS:
 +            raise ValueError(f'{p}: bad .bbp header {magic!r} v{ver}')
 +        if hdr is None:
-+            hdr = (osz, msz)
-+        elif (osz, msz) != hdr:
++            hdr = (ver, osz, msz)
++        elif (ver, osz, msz) != hdr:
 +            raise ValueError(f'{p}: .bbp header mismatch across shards')
 +        rec_dtype = np.dtype([
 +            ('replay', '<u4'), ('cmd', '<u4'), ('agent', 'u1'), ('pad', 'u1', (3,)),
@@ -83,7 +83,7 @@
 +            ('type', 'u1'), ('arg', 'u1'), ('sq', '<u2'),
 +        ])
 +        shards.append(np.frombuffer(raw[_BC_HEADER_LEN:], dtype=rec_dtype))
-+    osz, msz = hdr
++    _ver, osz, msz = hdr
 +    if osz != obs_size:
 +        raise ValueError(f'.bbp obs size {osz} != vec obs size {obs_size}')
 +    if msz != int(sum(act_sizes)):

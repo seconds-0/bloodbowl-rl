@@ -149,11 +149,11 @@ echo "  bank 3 anneal stage-1 final $SEED_S1"
 echo "  bank 4 anneal graduate      $SEED_GRAD   (also the warm start)"
 
 # --- Build the pre-seeded pool ------------------------------------------------
-# Blob size guard: 16066560 = obs-v4 arch (4,016,640 fp32 params). Override
+# Blob size guard: 16207872 = obs-v7 arch (4,051,968 fp32 params). Override
 # LEAGUE_EXPECT_BYTES only for a genuinely different architecture.
 LEAGUE_DIR="$PUFFER/checkpoints/bloodbowl/league-$(date +%Y%m%d-%H%M%S)"
 $PYBIN "$ROOT/tools/build_league.py" --out "$LEAGUE_DIR" \
-  --expect-bytes "${LEAGUE_EXPECT_BYTES:-16066560}" --seeds \
+  --expect-bytes "${LEAGUE_EXPECT_BYTES:-16207872}" --seeds \
   "profile-A-final=$SEED_A" \
   "profile-D-final=$SEED_D" \
   "bc-init=$SEED_BC" \

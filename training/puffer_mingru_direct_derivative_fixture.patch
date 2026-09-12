@@ -1,0 +1,112 @@
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -1072,6 +1072,99 @@
+     result["used_bytes"] = used;
+     result["max_bytes"] = max_bytes;
+     result["tensors"] = tensors;
++    return result;
++}
++
++py::dict qualification_direct_mingru_derivatives(
++        int T, int layers, size_t max_bytes = 16ULL << 20) {
++    constexpr int B = 2, H = 5;
++    if ((T != 1 && T != 2 && T != 7 && T != 64) || layers < 1 || layers > 3 ||
++            max_bytes == 0 || max_bytes > (16ULL << 20) || USE_BF16) {
++        throw std::runtime_error("invalid direct min-GRU derivative fixture request");
++    }
++    int rows = B*T;
++    size_t layer_values = static_cast<size_t>(layers)*rows*H;
++    size_t combined_values = 3*layer_values;
++    size_t state_values = static_cast<size_t>(layers)*B*H;
++    size_t history_values = static_cast<size_t>(layers)*B*(T+1)*H;
++    QualificationCudaBuffer combined(combined_values*sizeof(precision_t));
++    QualificationCudaBuffer layer_inputs(layer_values*sizeof(precision_t));
++    QualificationCudaBuffer initial(state_values*sizeof(precision_t));
++    QualificationCudaBuffer outputs(layer_values*sizeof(precision_t));
++    QualificationCudaBuffer final_states(state_values*sizeof(precision_t));
++    QualificationCudaBuffer histories(history_values*sizeof(float));
++    QualificationCudaBuffer grad_combined(combined_values*sizeof(precision_t));
++    QualificationCudaBuffer grad_inputs(layer_values*sizeof(precision_t));
++    QualificationCudaBuffer grad_initial(state_values*sizeof(precision_t));
++    QualificationCudaBuffer grad_top(static_cast<size_t>(rows)*H*sizeof(precision_t));
++    QualificationCudaBuffer grad_next(state_values*sizeof(precision_t));
++    std::vector<float> hc(combined_values), hi(static_cast<size_t>(rows)*H),
++        hs(state_values), hgo(static_cast<size_t>(rows)*H), hgn(state_values);
++    for (size_t i=0;i<hc.size();++i) hc[i] = 0.7f*sinf(0.17f*(i+1)) + 0.13f;
++    for (size_t i=0;i<hi.size();++i) hi[i] = 0.5f*cosf(0.11f*(i+2));
++    for (size_t i=0;i<hs.size();++i) hs[i] = 0.2f + 0.3f*fabsf(sinf(0.07f*(i+3)));
++    for (size_t i=0;i<hgo.size();++i) hgo[i] = 0.4f*sinf(0.19f*(i+4));
++    for (size_t i=0;i<hgn.size();++i) hgn[i] = 0.3f*cosf(0.23f*(i+5));
++    if (T > 1) { hc[0] = -0.125f; hc[3*H] = -20.0f; }
++    cudaStream_t stream = 0;
++    cudaMemcpyAsync(combined.data,hc.data(),hc.size()*sizeof(float),cudaMemcpyHostToDevice,stream);
++    cudaMemcpyAsync(layer_inputs.data,hi.data(),hi.size()*sizeof(float),cudaMemcpyHostToDevice,stream);
++    cudaMemcpyAsync(initial.data,hs.data(),hs.size()*sizeof(float),cudaMemcpyHostToDevice,stream);
++    cudaMemcpyAsync(grad_top.data,hgo.data(),hgo.size()*sizeof(float),cudaMemcpyHostToDevice,stream);
++    cudaMemcpyAsync(grad_next.data,hgn.data(),hgn.size()*sizeof(float),cudaMemcpyHostToDevice,stream);
++    std::vector<PrefixScan> scans(layers);
++    for (int l=0;l<layers;++l) {
++        precision_t* input = static_cast<precision_t*>(layer_inputs.data)+static_cast<size_t>(l)*rows*H;
++        if (l>0) cudaMemcpyAsync(input,
++            static_cast<precision_t*>(outputs.data)+static_cast<size_t>(l-1)*rows*H,
++            static_cast<size_t>(rows)*H*sizeof(precision_t),cudaMemcpyDeviceToDevice,stream);
++        scans[l] = {
++            .combined_ptr=static_cast<precision_t*>(combined.data)+static_cast<size_t>(l)*rows*3*H,
++            .state_ptr=static_cast<precision_t*>(initial.data)+static_cast<size_t>(l)*B*H,
++            .input_ptr=input,.B=B,.T=T,.H=H,
++            .state_history={.data=static_cast<float*>(histories.data)+static_cast<size_t>(l)*B*(T+1)*H,
++                            .shape={B,T+1,H}},
++            .out={.data=static_cast<precision_t*>(outputs.data)+static_cast<size_t>(l)*rows*H,
++                  .shape={B,T,H}},
++            .next_state={.data=static_cast<precision_t*>(final_states.data)+static_cast<size_t>(l)*B*H,
++                         .shape={B,1,H}},
++            .grad_combined={.data=static_cast<precision_t*>(grad_combined.data)+static_cast<size_t>(l)*rows*3*H,
++                            .shape={B,T,3*H}},
++            .grad_state={.data=static_cast<precision_t*>(grad_initial.data)+static_cast<size_t>(l)*B*H,
++                         .shape={B,1,H}},
++            .grad_input={.data=static_cast<precision_t*>(grad_inputs.data)+static_cast<size_t>(l)*rows*H,
++                         .shape={B,T,H}},
++        };
++        mingru_scan_forward<<<grid_size(B*H),BLOCK_SIZE,0,stream>>>(scans[l]);
++    }
++    for (int l=layers-1;l>=0;--l) {
++        const precision_t* gout = l==layers-1
++            ? static_cast<precision_t*>(grad_top.data)
++            : static_cast<precision_t*>(grad_inputs.data)+static_cast<size_t>(l+1)*rows*H;
++        mingru_scan_backward<<<grid_size(B*H),BLOCK_SIZE,0,stream>>>(scans[l],gout,
++            static_cast<precision_t*>(grad_next.data)+static_cast<size_t>(l)*B*H);
++    }
++    if (cudaStreamSynchronize(stream)!=cudaSuccess)
++        throw std::runtime_error("direct min-GRU derivative fixture failed");
++    size_t used=0; py::dict tensors;
++    auto pt=[&](const char* n,void* d,std::initializer_list<int64_t> shape) {
++        PrecisionTensor value={.data=static_cast<precision_t*>(d)};
++        int k=0; for (auto dim:shape) value.shape[k++]=dim;
++        return qualification_precision_tensor(n,value,&used,max_bytes);
++    };
++    tensors["combined"]=pt("combined",combined.data,{layers,B,T,3*H});
++    tensors["layer_inputs"]=pt("layer_inputs",layer_inputs.data,{layers,B,T,H});
++    tensors["initial_state"]=pt("initial_state",initial.data,{layers,B,H});
++    tensors["outputs"]=pt("outputs",outputs.data,{layers,B,T,H});
++    tensors["final_states"]=pt("final_states",final_states.data,{layers,B,H});
++    tensors["grad_top_output"]=pt("grad_top_output",grad_top.data,{B,T,H});
++    tensors["grad_next_state"]=pt("grad_next_state",grad_next.data,{layers,B,H});
++    tensors["grad_combined"]=pt("grad_combined",grad_combined.data,{layers,B,T,3*H});
++    tensors["grad_layer_inputs"]=pt("grad_layer_inputs",grad_inputs.data,{layers,B,T,H});
++    tensors["grad_initial_state"]=pt("grad_initial_state",grad_initial.data,{layers,B,H});
++    py::dict result; result["contract"]="direct-mingru-derivatives-fp32-v1";
++    result["B"]=B; result["T"]=T; result["H"]=H; result["layers"]=layers;
++    result["used_bytes"]=used; result["max_bytes"]=max_bytes; result["tensors"]=tensors;
+     return result;
+ }
+ 
+@@ -1711,6 +1804,9 @@
+         py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
+     m.def("qualification_dual_forward", &qualification_dual_forward,
+         py::arg("pufferl"), py::arg("max_bytes") = 128ULL << 20);
++    m.def("qualification_direct_mingru_derivatives",
++        &qualification_direct_mingru_derivatives, py::arg("T"), py::arg("layers"),
++        py::arg("max_bytes") = 16ULL << 20);
+     m.def("qualification_graph_execution", &qualification_graph_execution,
+         py::arg("pufferl"));
+     m.def("train", &train);

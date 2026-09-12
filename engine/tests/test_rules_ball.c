@@ -567,10 +567,47 @@ BB_TEST(ball_pass_interception_accurate_minus_three) {
     bb_rng_script(&rng, script, 2);
     fx_run(&m, &rng);
     fx_activate(&m, &rng, thrower, BB_ACT_PASS);
-    fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(rng.script_pos, 1); // interception die waits for the choice
+    BB_CHECK(fx_find(&m, mk(BB_A_CHOOSE_OPTION, 0, 0, 0)) >= 0);
+    BB_CHECK(fx_find(&m, mk(BB_A_CHOOSE_OPTION, 0xFE, 0, 0)) >= 0);
+    fx_apply(&m, mk(BB_A_CHOOSE_OPTION, 0, 0, 0), &rng);
     BB_CHECK_EQ(m.ball.carrier, opp);
     BB_CHECK(m.players[opp].flags & BB_PF_HAS_BALL);
     BB_CHECK_EQ(m.decision_team, 1);             // interception = turnover
+}
+
+// INTERCEPTIONS: choosing an eligible interceptor is optional even when the
+// ruler overlaps exactly one opposition player. Exercise the opposite team
+// orientation from the attempt test above and prove declining spends no
+// interception die before the pass settles normally.
+BB_TEST(ball_pass_sole_interceptor_may_decline_away_throw) {
+    bb_match m;
+    fx_match_midturn(&m, BB_AWAY, 0);
+    int thrower = fx_player(&m, BB_AWAY, 0, 20, 7, 6, 3, 3, 2, 9);
+    int receiver = fx_lineman(&m, BB_AWAY, 1, 16, 7);
+    fx_player(&m, BB_HOME, 0, 18, 7, 6, 3, 2, 3, 9);
+    fx_ball_held(&m, thrower);
+    const uint8_t script[] = {6, 6}; // accurate pass; receiver catches
+    bb_rng rng;
+    bb_rng_script(&rng, script, 2);
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, thrower, BB_ACT_PASS),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 16, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(rng.script_pos, 1);
+    BB_CHECK(fx_find(&m, mk(BB_A_CHOOSE_OPTION, 0, 0, 0)) >= 0);
+    BB_CHECK(fx_find(&m, mk(BB_A_CHOOSE_OPTION, 0xFE, 0, 0)) >= 0);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_CHOOSE_OPTION, 0xFE, 0, 0), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(rng.script_pos, 2);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
 }
 
 // GAME/NO BALL: this player "may not attempt to Intercept a Pass" and may
@@ -987,9 +1024,10 @@ BB_TEST(ball_handoff_failed_catch_rest_turnover) {
 // SK "Pro (Active)": "The Skill cannot be used to re-roll ... a roll made
 // outside of the player's activation." A hand-off catch is the RECEIVER's
 // roll during the THROWER's activation: the receiver's Pro must NOT be
-// offered, even when the Catch skill re-roll opens the window (adversarial
-// review M1 refuter caveat — the offer condition was over-broad).
-BB_TEST(ball_handoff_catch_pro_not_offered_outside_own_activation) {
+// offered, even when the Catch skill re-roll opens the window. The hand-off is
+// not settled at that window: the old carrier has released it, but the Catch
+// has not yet succeeded or produced its final Bounce destination.
+BB_TEST(ball_handoff_settlement_catch_skill_receiver_pro_illegal) {
     bb_match m;
     fx_match_midturn(&m, 0, 0); // no team re-rolls
     int carrier = fx_lineman(&m, 0, 0, 5, 7);
@@ -1008,11 +1046,1017 @@ BB_TEST(ball_handoff_catch_pro_not_offered_outside_own_activation) {
     // The Catch skill re-roll IS offered; Pro is NOT (not their activation).
     BB_CHECK(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
     BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)), -1);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)), -1);
+    BB_CHECK(fx_find(&m, mk(BB_A_DECLINE_REROLL, 0, 0, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 6);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK(m.players[carrier].flags & BB_PF_ACTIVATING);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(rng.script_pos, 1);
+
     st = fx_apply(&m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0), &rng);
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 2);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
     BB_CHECK_EQ(m.ball.carrier, receiver);
-    BB_CHECK_EQ(m.decision_team, 0); // no turnover
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK(m.players[receiver].flags & BB_PF_HAS_BALL);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME); // no turnover
+    BB_CHECK_EQ(m.turn[BB_HOME], 1);
+    BB_CHECK_EQ(m.turn[BB_AWAY], 1);
+}
+
+// An active-team receiver may use a Team Re-roll on the failed Catch. Merely
+// choosing that source does not change what is being resolved: the transfer
+// remains airborne until the replacement die settles it.
+BB_TEST(ball_handoff_settlement_team_reroll_success) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 1);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 5, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 6, 7);
+    fx_lineman(&m, BB_AWAY, 0, 20, 2);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {2, 3}; // Catch fails; team re-roll succeeds
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)) >= 0);
+    BB_CHECK_EQ(
+        fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)), -1);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)), -1);
+    BB_CHECK(fx_find(&m, mk(BB_A_DECLINE_REROLL, 0, 0, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 6);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.rerolls[BB_HOME], 1);
+
+    BB_CHECK_EQ(
+        fx_apply(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 2);
+    BB_CHECK_EQ(m.rerolls[BB_HOME], 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK(m.players[receiver].flags & BB_PF_HAS_BALL);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+}
+
+// SK "Loner (X+)": passing the Loner gate allows the selected Team Re-roll to
+// replace the failed Catch. The gate and replacement die are nested inside the
+// same unresolved hand-off transfer.
+BB_TEST(ball_handoff_settlement_loner_gate_pass) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 1);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 5, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 6, 7);
+    fx_give_skill(&m, receiver, BB_SK_LONER);
+    fx_lineman(&m, BB_AWAY, 0, 20, 2);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {2, 4, 3}; // Catch; Loner 4+; replacement Catch
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 6);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+
+    BB_CHECK_EQ(
+        fx_apply(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 3);
+    BB_CHECK_EQ(m.rerolls[BB_HOME], 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+}
+
+// A failed Loner gate consumes the Team Re-roll but leaves the original failed
+// Catch in force. Only the ensuing final empty Bounce settles the hand-off as
+// a loose ball and causes the active team's turnover.
+BB_TEST(ball_handoff_settlement_loner_gate_fail) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 1);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 5, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 6, 7);
+    fx_give_skill(&m, receiver, BB_SK_LONER);
+    fx_lineman(&m, BB_AWAY, 0, 20, 2);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {
+        2, // Catch fails
+        3, // Loner gate fails below the default 4+
+        5, // final Bounce (+1,0) to empty (7,7)
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 6);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+
+    BB_CHECK_EQ(
+        fx_apply(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 3);
+    BB_CHECK_EQ(m.rerolls[BB_HOME], 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 7);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_AWAY);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(m.turn[BB_HOME], 1);
+    BB_CHECK_EQ(m.turn[BB_AWAY], 2);
+}
+
+// Declining an available Catch re-roll makes the failed Catch final, but the
+// transfer does not settle until its scripted Bounce comes to rest.
+BB_TEST(ball_handoff_settlement_declined_retry_ground_turnover) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 5, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 6, 7);
+    fx_give_skill(&m, receiver, BB_SK_CATCH);
+    fx_lineman(&m, BB_AWAY, 0, 20, 2);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {
+        2, // Catch fails
+        5, // after decline, Bounce (+1,0) to empty (7,7)
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(
+                 &m,
+                 mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK(fx_find(&m, mk(BB_A_DECLINE_REROLL, 0, 0, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 6);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+
+    BB_CHECK_EQ(
+        fx_apply(&m, mk(BB_A_DECLINE_REROLL, 0, 0, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 2);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 7);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_AWAY);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(m.turn[BB_HOME], 1);
+    BB_CHECK_EQ(m.turn[BB_AWAY], 2);
+}
+
+// A used Catch re-roll replaces the original die exactly once. If it also
+// fails, no second re-roll window opens; the following empty Bounce settles
+// the hand-off loose and the pending MOVE books the turnover.
+BB_TEST(ball_handoff_settlement_failed_retry_ground_turnover) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 5, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 6, 7);
+    fx_give_skill(&m, receiver, BB_SK_CATCH);
+    fx_lineman(&m, BB_AWAY, 0, 20, 2);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {
+        2, // Catch fails
+        2, // Catch re-roll also fails
+        5, // Bounce (+1,0) to empty (7,7)
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(
+                 &m,
+                 mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 6);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+
+    BB_CHECK_EQ(
+        fx_apply(
+            &m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 3);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 7);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.active_team, BB_AWAY);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(m.turn[BB_HOME], 1);
+    BB_CHECK_EQ(m.turn[BB_AWAY], 2);
+    BB_CHECK(!fx_has_type(&m, BB_A_USE_REROLL));
+}
+
+// RR/THE TURNOVER carve-out: a failed hand-off Catch may Bounce directly to a
+// second active-team player. If that player's Catch re-roll succeeds, the same
+// unresolved transfer settles HELD by the active team and no turnover occurs.
+BB_TEST(ball_handoff_settlement_same_team_rebound_retry) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 5, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 6, 7);
+    int rebound = fx_lineman(&m, BB_HOME, 2, 7, 7);
+    fx_give_skill(&m, rebound, BB_SK_CATCH);
+    fx_lineman(&m, BB_AWAY, 0, 20, 2);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {
+        2, // receiver Catch fails
+        5, // Bounce (+1,0) onto rebound at (7,7)
+        3, // bounced Catch needs 4+, fails
+        4, // Catch re-roll succeeds
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 4);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(
+                 &m,
+                 mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)), -1);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)), -1);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 7);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[rebound].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+
+    BB_CHECK_EQ(
+        fx_apply(
+            &m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 4);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, rebound);
+    BB_CHECK(m.players[rebound].flags & BB_PF_HAS_BALL);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+}
+
+// If the rebound catcher belongs to the inactive team, that coach may use the
+// player's Catch skill but not a Team Re-roll or Pro: the roll is outside that
+// team's turn and outside that player's activation. Success settles possession
+// on the opponent and ends the handing team's turn.
+BB_TEST(ball_handoff_settlement_opponent_rebound_retry) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 5, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 6, 7);
+    int opponent =
+        fx_player(&m, BB_AWAY, 0, 7, 7, 6, 3, 2, 3, 9); // AG 2+
+    fx_give_skill(&m, opponent, BB_SK_CATCH);
+    fx_give_skill(&m, opponent, BB_SK_PRO);
+    m.rerolls[BB_AWAY] = m.rerolls_start[BB_AWAY] = 1;
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {
+        2, // receiver Catch fails
+        5, // Bounce (+1,0) onto opponent
+        3, // AG 2+, Bounce -1 and one marker: needs 4+, fails
+        4, // Catch re-roll succeeds
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 4);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(
+                 &m,
+                 mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)), -1);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)), -1);
+    BB_CHECK(fx_find(&m, mk(BB_A_DECLINE_REROLL, 0, 0, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 7);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[opponent].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.rerolls[BB_AWAY], 1);
+
+    BB_CHECK_EQ(
+        fx_apply(
+            &m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 4);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, opponent);
+    BB_CHECK(m.players[opponent].flags & BB_PF_HAS_BALL);
+    BB_CHECK_EQ(m.rerolls[BB_AWAY], 1);
+    BB_CHECK_EQ(m.active_team, BB_AWAY);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(m.turn[BB_HOME], 1);
+    BB_CHECK_EQ(m.turn[BB_AWAY], 2);
+}
+
+// Merely reaching an inactive-team Catch retry is not a turnover. If that
+// Catch skill re-roll also fails and the next Bounce is caught by the active
+// team, the hand-off remains with the handing team and the turn continues.
+BB_TEST(ball_handoff_settlement_opponent_retry_fails_active_team_recovers) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 5, 7);
+    int receiver =
+        fx_player(&m, BB_HOME, 1, 6, 7, 6, 3, 2, 3, 9); // AG 2+
+    int opponent =
+        fx_player(&m, BB_AWAY, 0, 7, 7, 6, 3, 2, 3, 9); // AG 2+
+    fx_give_skill(&m, opponent, BB_SK_CATCH);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {
+        2, // receiver Catch fails (marked: AG 2+ needs 3+)
+        5, // Bounce (+1,0) onto opponent
+        3, // opponent bounced Catch needs 4+, fails
+        2, // Catch-skill retry also fails
+        4, // Bounce (-1,0) back onto receiver
+        4, // receiver's distinct bounced Catch succeeds
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 6);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(
+                 &m,
+                 mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)), -1);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)), -1);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 7);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(rng.script_pos, 3);
+
+    BB_CHECK_EQ(
+        fx_apply(
+            &m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 6);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK(m.players[receiver].flags & BB_PF_HAS_BALL);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[opponent].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turn[BB_HOME], 1);
+    BB_CHECK_EQ(m.turn[BB_AWAY], 1);
+}
+
+// The receiver's Pro is illegal above, but Pro becomes legal if the failed
+// Catch Bounces back to the original carrier: that player is still ACTIVATING
+// while MOVE awaits the complete hand-off settlement chain.
+BB_TEST(ball_handoff_settlement_rebound_to_activating_carrier_pro) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 5, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 6, 7);
+    fx_give_skill(&m, carrier, BB_SK_PRO);
+    fx_lineman(&m, BB_AWAY, 0, 20, 2);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {
+        2, // receiver Catch fails
+        4, // Bounce (-1,0) back onto carrier at (5,7)
+        3, // bounced Catch needs 4+, fails
+        3, // Pro gate succeeds on 3+
+        4, // replacement Catch succeeds
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 5);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)) >= 0);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)), -1);
+    BB_CHECK_EQ(
+        fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)), -1);
+    BB_CHECK(fx_find(&m, mk(BB_A_DECLINE_REROLL, 0, 0, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 5);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK(m.players[carrier].flags & BB_PF_ACTIVATING);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+
+    BB_CHECK_EQ(
+        fx_apply(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 5);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, carrier);
+    BB_CHECK(m.players[carrier].flags & BB_PF_HAS_BALL);
+    BB_CHECK(m.players[carrier].flags & BB_PF_USED_SKILL_B);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+}
+
+// A failed Pro gate leaves the original bounced Catch result in force. The
+// hand-off stays unresolved while that failure resumes its Bounce, then turns
+// over only when the ball finally rests on an empty square.
+BB_TEST(ball_handoff_settlement_activating_carrier_pro_gate_fail_resumes) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 5, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 6, 7);
+    fx_give_skill(&m, carrier, BB_SK_PRO);
+    fx_lineman(&m, BB_AWAY, 0, 20, 2);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {
+        2, // receiver Catch fails
+        4, // Bounce (-1,0) back onto the activating carrier
+        3, // bounced Catch needs 4+, fails
+        2, // Pro 3+ gate fails
+        2, // resumed Bounce (0,-1) to empty (5,6)
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 5);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 6, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)) >= 0);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)), -1);
+    BB_CHECK_EQ(
+        fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)), -1);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 5);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK(m.players[carrier].flags & BB_PF_ACTIVATING);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(rng.script_pos, 3);
+
+    BB_CHECK_EQ(
+        fx_apply(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 5);
+    BB_CHECK(m.players[carrier].flags & BB_PF_USED_SKILL_B);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 5);
+    BB_CHECK_EQ(m.ball.y, 6);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_AWAY);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(m.turn[BB_HOME], 1);
+    BB_CHECK_EQ(m.turn[BB_AWAY], 2);
+}
+
+// An inactive-team Catch in that team's endzone pushes TOUCHDOWN and unwinds
+// the pending MOVE before MOVE can run its normal possession check. CATCH must
+// therefore latch the hand-off turnover before checking the touchdown.
+BB_TEST(ball_handoff_settlement_opponent_endzone_retry_td_unwinds_move) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 2, 7);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 1, 7);
+    int opponent =
+        fx_player(&m, BB_AWAY, 0, 0, 7, 6, 3, 2, 3, 9); // AG 2+
+    fx_give_skill(&m, opponent, BB_SK_CATCH);
+    fx_give_skill(&m, opponent, BB_SK_PRO);
+    m.rerolls[BB_AWAY] = m.rerolls_start[BB_AWAY] = 1;
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {
+        2, // marked receiver Catch fails
+        4, // Bounce (-1,0) onto opponent in away scoring endzone
+        3, // AG 2+, Bounce -1 and one marker: needs 4+, fails
+        4, // Catch re-roll succeeds and scores
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 4);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 1, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(
+                 &m,
+                 mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)), -1);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)), -1);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 0);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[opponent].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.turn[BB_HOME], 1);
+    BB_CHECK_EQ(m.turn[BB_AWAY], 1);
+
+    BB_CHECK_EQ(
+        fx_apply(
+            &m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 4);
+    BB_CHECK_EQ(m.score[BB_HOME], 0);
+    BB_CHECK_EQ(m.score[BB_AWAY], 1);
+    BB_CHECK_EQ(m.turns_completed[BB_HOME], 1);
+    BB_CHECK_EQ(m.turns_completed_held[BB_HOME], 0);
+    BB_CHECK_EQ(m.turnovers_completed[BB_HOME], 1);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_OFF_PITCH);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[opponent].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.turnover, 0); // booked, then cleared at the drive boundary
+    BB_CHECK_EQ(m.active_team, BB_HOME);   // changes only after the next kickoff
+    BB_CHECK_EQ(m.decision_team, BB_AWAY); // scoring team sets up to kick
+    BB_CHECK_EQ(m.turn[BB_HOME], 1);
+    BB_CHECK_EQ(m.turn[BB_AWAY], 2); // scorer skips its next turn
+    bool has_move = false;
+    for (int i = 0; i < m.stack_top; i++) {
+        if (m.stack[i].proc == BB_PROC_MOVE) has_move = true;
+    }
+    BB_CHECK(!has_move);
+}
+
+// A failed hand-off Catch can Bounce into the crowd. The resulting Throw-in is
+// still the same unresolved transfer: its landing Catch retry must expose air,
+// then settle HELD only when that retry succeeds.
+BB_TEST(ball_handoff_settlement_throw_in_catch_retry) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 10, 13);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 10, 14);
+    int catcher = fx_player(&m, BB_HOME, 2, 10, 10, 6, 3, 2, 3, 9);
+    fx_give_skill(&m, catcher, BB_SK_CATCH);
+    fx_lineman(&m, BB_AWAY, 0, 20, 2);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {
+        2,    // receiver Catch fails
+        7,    // Bounce (0,+1) exits from bottom-edge square (10,14)
+        3,    // centre Throw-in arrow: (0,-1)
+        3, 2, // distance 5 => four inward steps, landing at (10,10)
+        2,    // AG 2+ with thrown-in -1 needs 3+, fails
+        3,    // Catch re-roll succeeds
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 7);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 10, 14), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(
+                 &m,
+                 mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_TEAM, 0, 0)), -1);
+    BB_CHECK_EQ(fx_find(&m, mk(BB_A_USE_REROLL, BB_RR_PRO, 0, 0)), -1);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 10);
+    BB_CHECK_EQ(m.ball.y, 10);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[catcher].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(rng.script_pos, 6);
+
+    BB_CHECK_EQ(
+        fx_apply(
+            &m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 7);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, catcher);
+    BB_CHECK(m.players[catcher].flags & BB_PF_HAS_BALL);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+}
+
+// If the crowd return instead lands on an empty square, the same unresolved
+// hand-off settles ON_GROUND only at that final Throw-in destination. The
+// handing team's turnover is therefore booked once, after the crowd chain.
+BB_TEST(ball_handoff_settlement_throw_in_empty_ground_turnover) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int carrier = fx_lineman(&m, BB_HOME, 0, 10, 13);
+    int receiver = fx_lineman(&m, BB_HOME, 1, 10, 14);
+    fx_give_skill(&m, receiver, BB_SK_CATCH);
+    fx_lineman(&m, BB_AWAY, 0, 20, 2);
+    fx_ball_held(&m, carrier);
+    const uint8_t dice[] = {
+        2,    // receiver Catch fails and exposes the Catch-skill retry
+        7,    // after decline, Bounce (0,+1) enters the crowd
+        3,    // centre Throw-in arrow: (0,-1)
+        3, 2, // distance 5 => final empty landing at (10,10)
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 5);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, carrier, BB_ACT_HANDOFF),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_HANDOFF_TARGET, 0, 10, 14), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(
+                 &m,
+                 mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK(fx_find(&m, mk(BB_A_DECLINE_REROLL, 0, 0, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 10);
+    BB_CHECK_EQ(m.ball.y, 14);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(rng.script_pos, 1);
+
+    BB_CHECK_EQ(
+        fx_apply(&m, mk(BB_A_DECLINE_REROLL, 0, 0, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 5);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 10);
+    BB_CHECK_EQ(m.ball.y, 10);
+    BB_CHECK_EQ(m.players[carrier].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.players[receiver].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_AWAY);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(m.turn[BB_HOME], 1);
+    BB_CHECK_EQ(m.turn[BB_AWAY], 2);
+}
+
+// Negative control for the conditional propagation helper: a genuinely
+// ground-originated Bounce remains ground-based at its Catch retry. The hand-
+// off fix must not turn every loose-ball Catch chain into air.
+BB_TEST(ball_handoff_settlement_ground_bounce_negative_control) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int catcher = fx_player(&m, BB_HOME, 0, 6, 7, 6, 3, 2, 3, 9);
+    fx_give_skill(&m, catcher, BB_SK_CATCH);
+    fx_lineman(&m, BB_AWAY, 0, 20, 2);
+    fx_ball_ground(&m, 5, 7);
+    const uint8_t dice[] = {
+        5, // ground-originated Bounce (+1,0) onto catcher
+        2, // bounced Catch needs 3+, fails
+        3, // Catch re-roll succeeds
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    bb_push(&m, BB_PROC_SCATTER, 0, 1, 5, 7);
+    m.status = BB_STATUS_RUNNING;
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK(fx_find(
+                 &m,
+                 mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 6);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[catcher].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(rng.script_pos, 2);
+
+    BB_CHECK_EQ(
+        fx_apply(
+            &m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0), &rng),
+        BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(rng.script_pos, 3);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, catcher);
+    BB_CHECK(m.players[catcher].flags & BB_PF_HAS_BALL);
+    BB_CHECK_EQ(m.turnover, 0);
+    BB_CHECK_EQ(m.active_team, BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+}
+
+// Once a successful throw releases the ball, a receiver's Catch re-roll is
+// still part of unresolved flight even though the PASS frame has already
+// popped. The public ball state must remain airborne until the retry settles.
+BB_TEST(ball_pass_catch_reroll_stays_airborne) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9);
+    int receiver = fx_lineman(&m, 0, 1, 8, 7);
+    fx_give_skill(&m, receiver, BB_SK_CATCH);
+    fx_lineman(&m, 1, 0, 20, 2);
+    fx_ball_held(&m, thrower);
+    const uint8_t dice[] = {6, 2, 3}; // accurate; catch fails; skill retry succeeds
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, thrower, BB_ACT_PASS),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 8, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m,
+                     mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 8);
+    BB_CHECK_EQ(m.ball.y, 7);
+
+    BB_CHECK_EQ(fx_apply(
+                    &m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0),
+                    &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+}
+
+// A sole interceptor is explicitly selected. If that attempt fails and
+// the intended receiver then opens a Catch re-roll window, the flight state
+// must survive both nested tests.
+BB_TEST(ball_pass_one_interceptor_then_catch_reroll_stays_airborne) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9);
+    int receiver = fx_lineman(&m, 0, 1, 9, 7);
+    fx_give_skill(&m, receiver, BB_SK_CATCH);
+    fx_lineman(&m, 1, 0, 7, 7); // the sole ruler candidate
+    fx_ball_held(&m, thrower);
+    const uint8_t dice[] = {
+        6, // accurate pass
+        1, // selected interception fails
+        2, // receiver catch fails
+        3, // Catch skill retry succeeds
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 4);
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, thrower, BB_ACT_PASS),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 9, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+    BB_CHECK_EQ(rng.script_pos, 1);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_CHOOSE_OPTION, 0, 0, 0), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m,
+                     mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.x, 9);
+    BB_CHECK_EQ(m.ball.y, 7);
+
+    BB_CHECK_EQ(fx_apply(
+                    &m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0),
+                    &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+}
+
+// Declining the receiver's available retry finally resolves the failed Catch.
+// The subsequent Bounce is still flight until it lands, then settles exactly
+// once as a loose ground ball.
+BB_TEST(ball_pass_declined_catch_reroll_settles_ground) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 2, 9);
+    int receiver = fx_lineman(&m, 0, 1, 8, 7);
+    fx_give_skill(&m, receiver, BB_SK_CATCH);
+    fx_lineman(&m, 1, 0, 20, 2);
+    fx_ball_held(&m, thrower);
+    const uint8_t dice[] = {6, 2, 5}; // accurate; catch fails; bounce (+1,0)
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 3);
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, thrower, BB_ACT_PASS),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 8, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK(fx_find(&m, mk(BB_A_DECLINE_REROLL, 0, 0, 0)) >= 0);
+
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_DECLINE_REROLL, 0, 0, 0), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 9);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+}
+
+// Inaccurate pass Scatter is still unresolved flight. Landing on a receiver
+// who invokes Catch therefore exposes IN_AIR, not a prematurely grounded ball.
+BB_TEST(ball_inaccurate_pass_catch_reroll_stays_airborne) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_player(&m, 0, 0, 5, 7, 6, 3, 3, 3, 9);
+    int receiver = fx_lineman(&m, 0, 1, 11, 7);
+    fx_give_skill(&m, receiver, BB_SK_CATCH);
+    fx_lineman(&m, 1, 0, 20, 2);
+    fx_ball_held(&m, thrower);
+    const uint8_t dice[] = {
+        2,       // failed but non-fumbled quick pass: inaccurate
+        5, 5, 5, // Scatter (3) to receiver at (11,7)
+        2,       // unmodified Catch fails
+        3,       // Catch skill retry succeeds
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 6);
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, thrower, BB_ACT_PASS),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 8, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m,
+                     mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.x, 11);
+    BB_CHECK_EQ(m.ball.y, 7);
+
+    BB_CHECK_EQ(fx_apply(
+                    &m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0),
+                    &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+}
+
+// A pass that Bounces into the crowd remains unresolved throughout the
+// resulting Throw-in. If the crowd return lands on a catcher and opens a
+// retry window, it is still the same airborne possession transition.
+BB_TEST(ball_pass_throw_in_catch_reroll_stays_airborne) {
+    bb_match m;
+    fx_match_midturn(&m, BB_HOME, 0);
+    int thrower = fx_player(&m, 0, 0, 10, 11, 6, 3, 3, 2, 9);
+    int receiver = fx_player(&m, 0, 1, 10, 10, 6, 3, 2, 3, 9);
+    fx_give_skill(&m, receiver, BB_SK_CATCH);
+    fx_lineman(&m, 1, 0, 20, 2);
+    fx_ball_held(&m, thrower);
+    const uint8_t dice[] = {
+        6,       // accurate pass to empty edge square
+        7,       // landing Bounce exits the pitch
+        3,       // centre Throw-in arrow
+        3, 2,    // distance 5, landing at (10,10)
+        2,       // thrown-in Catch (-1) fails for AG 2+
+        3,       // Catch skill retry succeeds
+    };
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 7);
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, thrower, BB_ACT_PASS),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 10, 14), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(fx_find(&m,
+                     mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0)) >= 0);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.x, 10);
+    BB_CHECK_EQ(m.ball.y, 10);
+
+    BB_CHECK_EQ(fx_apply(
+                    &m, mk(BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0),
+                    &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
 }
 
 // GAME/PERFORMING A PASS ACTION: "A player does not have to be in possession of
@@ -1372,15 +2416,16 @@ BB_TEST(ball_interception_options_are_candidate_indices) {
     fx_match_midturn(&m, BB_AWAY, 0); // away throws; HOME defends and picks
     int thrower = fx_lineman(&m, 1, 0, 10, 7);
     fx_ball_held(&m, thrower);
-    fx_lineman(&m, 1, 1, 16, 7); // receiver target square holder
+    int receiver = fx_lineman(&m, 1, 1, 16, 7);
     // Two home interceptor candidates under the ruler path.
     fx_lineman(&m, 0, 0, 13, 7);
     fx_lineman(&m, 0, 1, 12, 7);
 
+    const uint8_t dice[] = {6, 3}; // accurate pass; receiver catches after decline
     bb_rng rng;
-    bb_rng_script(&rng, 0, 0);
+    bb_rng_script(&rng, dice, 2);
     bb_status st = fx_run(&m, &rng);
-    fx_run(&m, &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
     st = fx_activate(&m, &rng, thrower, BB_ACT_PASS);
     BB_CHECK_EQ(st, BB_STATUS_DECISION);
     // Throwing across both candidates' columns. The interception window must
@@ -1388,18 +2433,68 @@ BB_TEST(ball_interception_options_are_candidate_indices) {
     // would be indistinguishable from indices, so check args form a dense
     // 0..nc-1 prefix with nothing in the slot range.
     st = fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 16, 7), &rng);
-    if (st == BB_STATUS_DECISION) {
-        bb_action legal[BB_LEGAL_MAX];
-        int n = bb_legal_actions(&m, legal);
-        int nc = 0;
-        bool decline = false;
-        for (int i = 0; i < n; i++) {
-            if (legal[i].type != BB_A_CHOOSE_OPTION) continue;
-            if (legal[i].arg == 0xFE) { decline = true; continue; }
-            BB_CHECK(legal[i].arg < 16); // dense small indices, never slots
-            if (legal[i].arg + 1 > nc) nc = legal[i].arg + 1;
-        }
-        BB_CHECK(decline);
-        BB_CHECK(nc >= 1); // at least one candidate offered as index
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
+    // The throw has been released, but the defending coach has not settled
+    // its destination. Keep the public ball state in flight and its
+    // coordinates at the release square so telemetry cannot detour through
+    // the target before a successful interception.
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m.ball.x, 10);
+    BB_CHECK_EQ(m.ball.y, 7);
+    BB_CHECK_EQ(m.players[thrower].flags & BB_PF_HAS_BALL, 0);
+
+    bb_action legal[BB_LEGAL_MAX];
+    int n = bb_legal_actions(&m, legal);
+    int nc = 0;
+    bool decline = false;
+    for (int i = 0; i < n; i++) {
+        if (legal[i].type != BB_A_CHOOSE_OPTION) continue;
+        if (legal[i].arg == 0xFE) { decline = true; continue; }
+        BB_CHECK(legal[i].arg < 16); // dense small indices, never slots
+        if (legal[i].arg + 1 > nc) nc = legal[i].arg + 1;
     }
+    BB_CHECK(decline);
+    BB_CHECK(nc >= 2);
+
+    st = fx_apply(&m, mk(BB_A_CHOOSE_OPTION, 0xFE, 0, 0), &rng);
+    BB_CHECK_EQ(st, BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(m.ball.carrier, receiver);
+    BB_CHECK_EQ(m.decision_team, BB_AWAY);
+}
+
+// A multi-candidate interception choice is the longest policy-visible pass
+// window. The ball remains airborne until the chosen test settles, then moves
+// directly from the release square to the successful interceptor.
+BB_TEST(ball_pass_chosen_interception_settles_from_air) {
+    bb_match m;
+    fx_match_midturn(&m, BB_AWAY, 0);
+    int thrower = fx_lineman(&m, 1, 0, 10, 7);
+    fx_ball_held(&m, thrower);
+    fx_lineman(&m, 1, 1, 16, 7);
+    fx_lineman(&m, 0, 0, 13, 7);
+    fx_lineman(&m, 0, 1, 12, 7);
+
+    const uint8_t dice[] = {6, 6}; // accurate pass; chosen interception succeeds
+    bb_rng rng;
+    bb_rng_script(&rng, dice, 2);
+    BB_CHECK_EQ(fx_run(&m, &rng), BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_activate(&m, &rng, thrower, BB_ACT_PASS),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_PASS_TARGET, 0, 16, 7), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK_EQ(m.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m.ball.x, 10);
+    BB_CHECK_EQ(m.ball.y, 7);
+
+    BB_CHECK_EQ(fx_apply(&m, mk(BB_A_CHOOSE_OPTION, 0, 0, 0), &rng),
+                BB_STATUS_DECISION);
+    BB_CHECK(!bb_rng_error(&rng));
+    BB_CHECK_EQ(m.ball.state, BB_BALL_HELD);
+    BB_CHECK(m.ball.carrier < BB_TEAM_SLOTS);
+    BB_CHECK_EQ(BB_TEAM_OF(m.ball.carrier), BB_HOME);
+    BB_CHECK_EQ(m.decision_team, BB_HOME);
 }

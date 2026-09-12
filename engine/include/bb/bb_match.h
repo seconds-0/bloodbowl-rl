@@ -51,6 +51,9 @@ typedef enum {
     BB_PROC_TURNOVER,
     BB_PROC_END_DRIVE,
     BB_PROC_KO_RECOVERY,
+    // Generic directly-targeted opposition Action wrapper. Appended so old
+    // serialized procedure ids remain stable.
+    BB_PROC_TARGETED_ACTION,
     BB_PROC_COUNT
 } bb_proc;
 

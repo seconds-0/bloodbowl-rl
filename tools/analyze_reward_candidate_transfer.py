@@ -170,13 +170,18 @@ def _validate_plan(directory: Path) -> dict[str, Any]:
     for key in sorted(IMPLEMENTATION_KEYS):
         _sha(implementation.get(key), f"implementation.{key}")
     if set(conversion) != {
-        "converter_sha256", "config_sha256", "obs_size", "bias_contract"
+        "converter_sha256", "config_sha256", "observation_abi",
+        "observation_version", "obs_size", "bias_contract"
     }:
         raise TransferError("conversion has unknown or missing fields")
     _sha(conversion.get("converter_sha256"), "conversion.converter_sha256")
     _sha(conversion.get("config_sha256"), "conversion.config_sha256")
-    if conversion.get("obs_size") != 2782:
-        raise TransferError("conversion.obs_size must be 2782")
+    if conversion.get("observation_abi") != "obs-v7":
+        raise TransferError("conversion.observation_abi must be obs-v7")
+    if conversion.get("observation_version") != 7:
+        raise TransferError("conversion.observation_version must be 7")
+    if conversion.get("obs_size") != 2851:
+        raise TransferError("conversion.obs_size must be 2851")
     if conversion.get("bias_contract") != "native-to-torch zero-fills biases":
         raise TransferError("conversion.bias_contract is unsupported")
     if not orchestration:

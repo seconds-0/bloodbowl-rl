@@ -219,19 +219,21 @@ static void report_divergence(runner* R, long cmd, const char* cls,
 }
 
 // --- BC pair dump (--dump-pairs <out.bbp>) -----------------------------------
-// .bbp format v4: binary, little-endian, written by this runner; consumed by
+// .bbp format v5: binary, little-endian, written by this runner; consumed by
 // training/bc_pretrain.py (extraction orchestrated by
 // validation/extract_pairs.py). Also documented in validation/README.md.
-// v4 identifies exact sequential action support and canonical inactive-head
-// sentinels. v3 identifies obs-v5's semantic ABI at the same 2782-byte shape.
+// v5 identifies obs-v7 and exact sequential action support. v4 identifies
+// obs-v6 exact support and canonical inactive-head sentinels. v3 identifies
+// obs-v5's semantic ABI at the same 2782-byte shape.
 // Historical v2 spans obs-v3 (1612 B) and obs-v4 (2782 B); v1 carried 832 B.
 // Readers size records from the header and include VERSION in lineage checks:
-// v2/2782, v3/2782, and v4/2782 must never mix despite equal physical shape.
+// v2/2782, v3/2782, and v4/2782 must never mix despite equal physical shape;
+// none may be silently padded into v5/2851.
 //
 //   header (16 bytes):
 //     magic     char[4]  "BBP1"
-//     version   u32      4 (exact-action semantics; layout unchanged)
-//     obs_size  u32      BBE_OBS_SIZE  (2782; historical v2 may also be 2782)
+//     version   u32      5 (obs-v7 plus exact-action semantics)
+//     obs_size  u32      BBE_OBS_SIZE  (2851)
 //     mask_size u32      BBE_MASK_SIZE (454)
 //   record (12 + obs_size + mask_size + 4 = 3252 bytes), one per
 //   successfully applied act/place op (a place op is a BB_A_SETUP_PLACE
@@ -241,7 +243,7 @@ static void report_divergence(runner* R, long cmd, const char* cls,
 //     agent     u8       deciding team (0 home / 1 away); obs, mask and the
 //                        action targets are in this agent's egocentric frame
 //     pad       u8[3]    zero
-//     obs       u8[2782] bbe_encode_obs at the decision, BEFORE the action
+//     obs       u8[2851] bbe_encode_obs at the decision, BEFORE the action
 //     mask      u8[454]  exact masks used for this target: type support,
 //                        arg conditioned on type, square on type+arg
 //     type      u8       action-type head target (bb_action_type)
@@ -300,7 +302,7 @@ static void pd_open(const char* path) {
         exit(2);
     }
     fwrite("BBP1", 1, 4, PD.f);
-    pd_u32(4); // v4: exact sequential action semantics; layout unchanged
+    pd_u32(5); // v5: obs-v7 plus exact sequential action semantics
     pd_u32(BBE_OBS_SIZE);
     pd_u32(BBE_MASK_SIZE);
     PD.env.num_agents = BBE_AGENTS;
@@ -587,7 +589,10 @@ static const char* PROC_NAMES[] = {
     "MOVE", "DODGE", "RUSH", "PICKUP", "BLOCK", "PUSH", "KNOCKDOWN", "ARMOUR",
     "INJURY", "CASUALTY", "PASS", "CATCH", "SCATTER", "THROW_IN", "HANDOFF",
     "FOUL", "TTM", "TEST", "TOUCHDOWN", "TURNOVER", "END_DRIVE", "KO_RECOVERY",
+    "TARGETED_ACTION",
 };
+_Static_assert(sizeof PROC_NAMES / sizeof PROC_NAMES[0] == BB_PROC_COUNT,
+               "replay procedure names must cover every engine procedure");
 
 static void print_stack(FILE* out, const bb_match* m) {
     for (int i = 0; i < m->stack_top; i++) {

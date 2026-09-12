@@ -12,6 +12,26 @@ static const int8_t DIR8[8][2] = {
     {-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1},
 };
 
+// Reposition an unresolved pass/kick/handoff without prematurely settling it
+// on the ground. Ground-originated bounces, fumbles, and throw-ins retain their
+// existing state; only a ball that was already unresolved stays unresolved.
+static void ball_to_preserving_air(bb_match* m, int x, int y) {
+    bool was_in_air = m->ball.state == BB_BALL_IN_AIR;
+    bb_ball_to(m, x, y);
+    if (was_in_air) m->ball.state = BB_BALL_IN_AIR;
+}
+
+// PASS pops before its flight's Catch/Scatter chain resolves. The targeted
+// Action wrapper remains below the entire chain as Dump-off's durable owner.
+static bool pending_ball_action_allows_turnover(const bb_match* m) {
+    for (int i = m->stack_top - 1; i >= 0; i--) {
+        const bb_frame* f = &m->stack[i];
+        if (f->proc == BB_PROC_TARGETED_ACTION &&
+            (f->data & BB_TA_DUMP_PASS)) return false;
+    }
+    return true;
+}
+
 // ===== SCATTER ================================================================
 // b = number of single-square hops, x,y = current ball square.
 // data bit0 = 1: this is a pass-flight SCATTER (landing catch unmodified, and
@@ -46,13 +66,13 @@ static void scatter_advance(bb_match* m, bb_rng* rng) {
     }
     int s = bb_slot_at(m, x, y);
     if (s >= 0 && bb_can_catch(m, s)) {
-        bb_ball_to(m, x, y);
+        ball_to_preserving_air(m, x, y);
         bb_push(m, BB_PROC_CATCH, s, (uint8_t)(int8_t)(is_bounce ? -1 : 0), 0, 0);
         return;
     }
     if (s >= 0) {
         // Prone/stunned/distracted occupant: auto-fail, the ball bounces on.
-        bb_ball_to(m, x, y);
+        ball_to_preserving_air(m, x, y);
         bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);
         return;
     }
@@ -60,7 +80,7 @@ static void scatter_advance(bb_match* m, bb_rng* rng) {
         // Pass-flight scatter landing in an unoccupied square: GAME/RESOLVE
         // PASS ACTION — "If the ball lands in an unoccupied square, then it
         // will Bounce from that square." One final Bounce (catch at -1).
-        bb_ball_to(m, x, y);
+        ball_to_preserving_air(m, x, y);
         bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);
         return;
     }
@@ -117,13 +137,13 @@ static void throw_in_advance(bb_match* m, bb_rng* rng) {
     }
     int s = bb_slot_at(m, cx, cy);
     if (s >= 0 && bb_can_catch(m, s)) {
-        bb_ball_to(m, cx, cy);
+        ball_to_preserving_air(m, cx, cy);
         bb_push(m, BB_PROC_CATCH, s, (uint8_t)(int8_t)-1, 0, 0); // thrown-in -1
         return;
     }
     if (s >= 0) {
         // Occupied by a player who cannot catch: the ball bounces.
-        bb_ball_to(m, cx, cy);
+        ball_to_preserving_air(m, cx, cy);
         bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)cx, (uint8_t)cy);
         return;
     }
@@ -165,7 +185,8 @@ static void catch_advance(bb_match* m, bb_rng* rng) {
         // MOVE frame before its normal post-action possession check.  Latch
         // the Pass/Hand-off turnover now, while preserving standalone catches.
         if (BB_TEAM_OF(slot) != m->active_team &&
-            bb_in_pending_ball_action(m)) {
+            bb_in_pending_ball_action(m) &&
+            pending_ball_action_allows_turnover(m)) {
             bb_turnover(m);
         }
         bb_check_td(m);
@@ -176,7 +197,8 @@ static void catch_advance(bb_match* m, bb_rng* rng) {
 
 // ===== PASS ===================================================================
 // a = thrower, x,y = target square. data: low 8 bits = signed PA-test modifier
-// total (for the fumble check), bit8 = inaccurate latch.
+// total (for the fumble check), bit8 = inaccurate latch, bit9 = Hail Mary,
+// BB_PASS_NO_TURNOVER = interruption pass whose outcomes cannot turn over.
 //
 // BB2025 sequence: PA test (range 0/-1/-2/-3, -1 per marking opponent,
 // Very Sunny -1; rain does NOT modify the PA test) -> fumble if natural 1 OR
@@ -233,13 +255,13 @@ static int interception_candidates(const bb_match* m, int thrower, int tx, int t
 static void pass_resolve_flight(bb_match* m, bb_frame fr) {
     bool inaccurate = (fr.data & 0x100) != 0;
     if (inaccurate) {
-        bb_ball_to(m, fr.x, fr.y);
+        ball_to_preserving_air(m, fr.x, fr.y);
         bb_push(m, BB_PROC_SCATTER, 0, 3, fr.x, fr.y);
         bb_top(m)->data |= 1; // pass-flight scatter: catch mod 0
         return;
     }
     int s = bb_slot_at(m, fr.x, fr.y);
-    bb_ball_to(m, fr.x, fr.y);
+    ball_to_preserving_air(m, fr.x, fr.y);
     if (s >= 0) {
         bb_push(m, BB_PROC_CATCH, s, 0, 0, 0);
         bb_top(m)->data |= 1; // catching an accurate pass in the target square
@@ -273,7 +295,8 @@ static void pass_advance(bb_match* m, bb_rng* rng) {
         mod -= bb_tackle_zones(m, BB_TEAM_OF(slot), p->x, p->y);
         mod += bb_hook_mods(m, &c);
         if (m->weather == BB_WEATHER_SUNNY) mod -= 1; // Very Sunny: -1 to PA tests
-        f->data = (uint16_t)((f->data & 0x200) | (mod & 0xFF)); // keep HMP latch
+        f->data = (uint16_t)((f->data & (0x200 | BB_PASS_NO_TURNOVER)) |
+                             (mod & 0xFF));
         f->phase = 1;
         bb_push(m, BB_PROC_TEST, slot, BB_TEST_PASS, bb_test_target(p->pa, mod), 0);
         return;
@@ -292,9 +315,10 @@ static void pass_advance(bb_match* m, bb_rng* rng) {
             }
             // Fumble: ball bounces from the thrower; unconditional turnover.
             int x = p->x, y = p->y;
+            bool no_turnover = (f->data & BB_PASS_NO_TURNOVER) != 0;
             bb_pop(m);
             bb_drop_ball(m);
-            bb_turnover(m);
+            if (!no_turnover) bb_turnover(m);
             bb_push(m, BB_PROC_SCATTER, 0, 1, (uint8_t)x, (uint8_t)y);
             return;
         }
@@ -304,17 +328,19 @@ static void pass_advance(bb_match* m, bb_rng* rng) {
         bool hmp = (f->data & 0x200) != 0;
         if (hmp) f->data |= 0x100;
         bb_drop_ball(m);
-        // Interception window. Attempting is cost-free, so a single candidate
-        // attempts automatically; with several the defending coach chooses.
+        // The successful throw has been released but possession has not
+        // settled. Keep the release coordinates through any interception
+        // choice; flight resolution moves them to the target/scatter landing,
+        // while a successful interception moves directly to its catcher.
+        m->ball.state = BB_BALL_IN_AIR;
+        // Interception window. The defending coach may choose one eligible
+        // player to attempt the Interception, or decline, even when there is
+        // only one candidate.
         uint8_t cands[16];
         int nc = hmp ? 0 : interception_candidates(m, slot, f->x, f->y, cands);
-        if (nc > 1) {
+        if (nc >= 1) {
             f->phase = 2;
             bb_need_decision(m, 1 - BB_TEAM_OF(slot));
-            return;
-        }
-        if (nc == 1) {
-            pass_start_interception(m, f, cands[0]);
             return;
         }
         bb_frame fr = *f;
@@ -330,7 +356,7 @@ static void pass_advance(bb_match* m, bb_rng* rng) {
         bb_pop(m);
         if (m->ret & 1) {
             bb_give_ball(m, interceptor);
-            bb_turnover(m); // successful interception is always a turnover
+            if (!(fr.data & BB_PASS_NO_TURNOVER)) bb_turnover(m);
             bb_check_td(m);
             return;
         }
@@ -415,6 +441,10 @@ static void handoff_advance(bb_match* m, bb_rng* rng) {
     bb_pop(m);
     bb_drop_ball(m);
     bb_ball_to(m, m->players[f.b].x, m->players[f.b].y);
+    // A policy-visible Catch re-roll is still part of the transfer. Preserve
+    // carrierless limbo through its complete Catch/Bounce/Throw-in chain;
+    // bb_give_ball() or a terminal raw bb_ball_to() settles the result.
+    m->ball.state = BB_BALL_IN_AIR;
     bb_push(m, BB_PROC_CATCH, f.b, 0, 0, 0);
 }
 

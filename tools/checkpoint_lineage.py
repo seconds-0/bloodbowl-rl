@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Content-addressed policy lineage for current Blood Bowl checkpoints.
 
-Flat Puffer checkpoints carry no header, and obs-v4/obs-v5/obs-v6 plus
-marginal/exact action policies have identical tensor shapes -- 2782 bytes of
-observation and 16,066,560 bytes of weights for all three observation
-revisions. This module is the single launch authority for proving that a blob
-belongs to the current semantic lineage, and the observation version is the
-ONLY thing that separates v4 from v5 from v6.
+Flat Puffer checkpoints carry no header. Historical obs-v4, obs-v5 and obs-v6
+shared a 2782-byte observation shape despite different semantics. Current
+obs-v7 uses 2851 inputs and 16,207,872 bytes of H512/L3 fp32 weights. Shape
+alone never proves semantic or action compatibility; this module validates
+explicit provenance before accepting a checkpoint for its declared use.
 """
 
 import argparse
@@ -17,14 +16,25 @@ from pathlib import Path
 
 
 SCHEMA_VERSION = 1
-OBSERVATION_ABI = "obs-v6"
-OBSERVATION_VERSION = 6
+OBSERVATION_ABI = "obs-v7"
+OBSERVATION_VERSION = 7
 ACTION_ABI = "exact-joint-v1"
+ROLLOUT_TRANSITION_CONTRACT = "terminal-aware-tbptt-v1"
+HISTORICAL_ROLLOUT_TRANSITION_CONTRACT = "tail-bootstrap-v1"
+SUPPORTED_ROLLOUT_TRANSITION_CONTRACTS = frozenset((
+    HISTORICAL_ROLLOUT_TRANSITION_CONTRACT,
+    ROLLOUT_TRANSITION_CONTRACT,
+))
+RECURRENT_CONTRACT_MODES = frozenset((
+    "historical-readable", "inference", "qualification", "training",
+))
 POLICY_HIDDEN_SIZE = 512
 POLICY_NUM_LAYERS = 3
 POLICY_EXPANSION_FACTOR = 1
-EXPECTED_CHECKPOINT_BYTES = 16_066_560
-ALLOWED_INITIALIZATIONS = frozenset(("fresh", "lineage-v6", "bridge"))
+EXPECTED_CHECKPOINT_BYTES = 16_207_872
+MIGRATION_INITIALIZATION = "native_obs_v6_to_v7_zero_extended"
+ALLOWED_INITIALIZATIONS = frozenset(("fresh", "lineage-v7",
+                                     MIGRATION_INITIALIZATION))
 SHA256_KEYS = (
     "source_sha256",
     "compiled_module_sha256",
@@ -56,21 +66,21 @@ GRAFTED_FROM_KEYS = (
 GRAFT_REASON_MAX_CHARS = 200
 # A BRIDGE is the reviewed warm start from an OUT-OF-LINEAGE blob: a raw
 # checkpoint with no sidecar at all, produced under an older observation
-# revision (obs-v4 or obs-v5) whose tensor shapes are identical to obs-v6's.
+# revision (obs-v4 or obs-v5) whose tensor shapes are identical to obs-v7's.
 # The 2026-08-20 audit (docs/audit-2026-08-20.md, F2) measured the July obs-v4
 # R0 checkpoint loading unmodified on the current build and playing ~6x better
-# than the whole obs-v6 lineage, which had been restarted from random weights
+# than the whole obs-v7 lineage, which had been restarted from random weights
 # only because the lineage tooling had no entry point for such a warm. A bridge
 # is that entry point, and it is deliberately narrow: the warm has NO lineage
 # digest (there is nothing to validate, so the manifest must say so rather
 # than carry an empty string by accident), the pool banks must still be
-# eligible obs-v6 sidecars validated exactly as lineage-v6 validates them, and
+# eligible obs-v7 sidecars validated exactly as lineage-v7 validates them, and
 # the manifest names the raw blob by content hash, its original observation
 # version, where it came from and why. The sidecar records all of that as
 # `ancestry.bridged_from`, so the out-of-lineage origin is visible to every
-# later rung instead of being laundered into an ordinary lineage-v6 ancestor.
+# later rung instead of being laundered into an ordinary lineage-v7 ancestor.
 # The bridge output itself IS eligible ancestry: later rungs warm from it with
-# lineage-v6 like any other accepted checkpoint.
+# lineage-v7 like any other accepted checkpoint.
 BRIDGE_MANIFEST_KEYS = (
     "bridge_warm_sha256",
     "bridge_warm_observation_version",
@@ -84,10 +94,14 @@ BRIDGED_FROM_KEYS = (
     "reason",
 )
 # Only the two older same-shape revisions may be bridged. obs-v3 and older are
-# input-shape incompatible and could not load anyway; obs-v6 is in lineage and
-# must come with a sidecar (lineage-v6), never through a bridge.
+# input-shape incompatible and could not load anyway; obs-v7 is in lineage and
+# must come with a sidecar (lineage-v7), never through a bridge.
 BRIDGE_OBSERVATION_VERSIONS = (4, 5)
 BRIDGE_PROVENANCE_MAX_CHARS = 300
+MIGRATED_FROM_KEYS = (
+    "source_checkpoint_sha256", "source_lineage_sha256",
+    "migration_manifest_sha256", "zeroed_columns", "appended_columns",
+)
 
 
 class LineageError(RuntimeError):
@@ -195,6 +209,8 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     observation_version = _need_int(
         manifest.get("observation_version"), "observation_version")
     action_abi = manifest.get("action_abi")
+    rollout_transition_contract = manifest.get(
+        "compiled_rollout_transition_contract")
     if observation_abi != OBSERVATION_ABI:
         raise LineageError(
             f"observation_abi must be {OBSERVATION_ABI}, got {observation_abi!r}")
@@ -205,6 +221,12 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     if action_abi != ACTION_ABI:
         raise LineageError(
             f"action_abi must be {ACTION_ABI}, got {action_abi!r}")
+    if rollout_transition_contract not in SUPPORTED_ROLLOUT_TRANSITION_CONTRACTS:
+        raise LineageError(
+            "unsupported rollout transition contract in "
+            "compiled_rollout_transition_contract: "
+            f"{rollout_transition_contract!r}; expected one of "
+            f"{sorted(SUPPORTED_ROLLOUT_TRANSITION_CONTRACTS)}")
 
     initialization = manifest.get("initialization")
     if initialization not in ALLOWED_INITIALIZATIONS:
@@ -219,7 +241,7 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     # itself the GENESIS of the lineage. Without that exception the rules form a
     # closed loop with no entry point -- eligible output requires non-fresh
     # initialization, non-fresh requires an eligible warm checkpoint and pool,
-    # and eligible may only be published by an accepted screen -- so obs-v6
+    # and eligible may only be published by an accepted screen -- so obs-v7
     # could never train at all. Measured on the training host: zero
     # .lineage.json files existed anywhere, i.e. no ancestor and no way to mint
     # one. The exception is narrow on purpose: the mode string must SAY genesis,
@@ -227,19 +249,19 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     # the caller must still be accepted-screen materialization (checked below).
     mode = manifest.get("mode")
     if initialization == "fresh" and not qualification_only \
-            and mode != "native_fresh_v6_genesis":
+            and mode != "native_fresh_v7_genesis":
         raise LineageError(
             "fresh initialization may only publish eligible lineage as declared "
-            "genesis (mode native_fresh_v6_genesis)")
-    if mode == "native_fresh_v6_genesis":
+            "genesis (mode native_fresh_v7_genesis)")
+    if mode == "native_fresh_v7_genesis":
         if qualification_only:
             raise LineageError(
                 "genesis output is eligible ancestry, not qualification-only")
         if initialization != "fresh":
             raise LineageError("genesis output must use fresh initialization")
     expected_mode = (
-        "native_fresh_v6_qualification" if qualification_only
-        else "native_fresh_v6_genesis" if mode == "native_fresh_v6_genesis"
+        "native_fresh_v7_qualification" if qualification_only
+        else "native_fresh_v7_genesis" if mode == "native_fresh_v7_genesis"
         else "native_static_pool_reward_ablation")
     if manifest.get("mode") != expected_mode:
         raise LineageError(
@@ -249,6 +271,13 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
         raise LineageError(
             "eligible lineage may only be published by accepted screen "
             "result materialization")
+    if not qualification_only and rollout_transition_contract != \
+            ROLLOUT_TRANSITION_CONTRACT:
+        raise LineageError(
+            "new eligible lineage publication requires the current "
+            "compiled_rollout_transition_contract "
+            f"{ROLLOUT_TRANSITION_CONTRACT!r}, got "
+            f"{rollout_transition_contract!r}")
 
     policy = {
         "hidden_size": _need_int(
@@ -293,8 +322,8 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
         "pool_lineage_bundle_sha256", allow_empty=True)
     if initialization == "fresh" and (warm_lineage or pool_lineage):
         raise LineageError("fresh initialization cannot declare warm/pool ancestry")
-    if initialization == "lineage-v6" and not (warm_lineage and pool_lineage):
-        raise LineageError("lineage-v6 requires warm and pool lineage digests")
+    if initialization == "lineage-v7" and not (warm_lineage and pool_lineage):
+        raise LineageError("lineage-v7 requires warm and pool lineage digests")
 
     screen_sha = _need_sha(
         manifest.get("screen_manifest_sha256"), "screen_manifest_sha256")
@@ -329,13 +358,13 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
             raise LineageError(
                 "bridge initialization must leave warm_lineage_sha256 empty: "
                 "the bridged warm has no lineage sidecar")
-        # The pool is NOT bridged: its four banks are ordinary eligible obs-v6
-        # sidecars, so their bundle digest is required exactly as lineage-v6
+        # The pool is NOT bridged: its four banks are ordinary eligible obs-v7
+        # sidecars, so their bundle digest is required exactly as lineage-v7
         # requires it.
         if not pool_lineage:
             raise LineageError(
                 "bridge initialization requires pool_lineage_bundle_sha256: "
-                "the pool banks must be eligible obs-v6 lineage")
+                "the pool banks must be eligible obs-v7 lineage")
         bridged_from = {
             "warm_checkpoint_sha256": _need_sha(
                 manifest.get("bridge_warm_sha256"), "bridge_warm_sha256"),
@@ -355,8 +384,8 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
             raise LineageError(
                 "graft_from_* keys are all-or-none; run manifest lacks "
                 f"{missing}")
-        if initialization != "lineage-v6":
-            raise LineageError("a graft requires lineage-v6 initialization")
+        if initialization != "lineage-v7":
+            raise LineageError("a graft requires lineage-v7 initialization")
         grafted_from = {
             "warm_lineage_sha256": _need_sha(
                 manifest.get("graft_from_warm_lineage_sha256"),
@@ -383,7 +412,7 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
             raise LineageError(
                 "graft is a no-op: the declared old source/patch bundle equal "
                 "the new build's, so there is nothing to graft; a module-only "
-                "difference is a `rehost`, otherwise run an ordinary lineage-v6 "
+                "difference is a `rehost`, otherwise run an ordinary lineage-v7 "
                 "arm")
 
     ancestry = {
@@ -413,6 +442,7 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
             "observation_abi": observation_abi,
             "observation_version": observation_version,
             "action_abi": action_abi,
+            "rollout_transition_contract": rollout_transition_contract,
             "policy_hidden_size": policy["hidden_size"],
             "policy_num_layers": policy["num_layers"],
             "policy_expansion_factor": policy["expansion_factor"],
@@ -424,6 +454,72 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
             "seed": seed,
         },
         "ancestry": ancestry,
+    }
+
+
+def migration_lineage(checkpoint, migration_manifest, source_lineage, *,
+                      target_module, target_source_sha256,
+                      target_patch_bundle_sha256):
+    """Create an ineligible v7 evaluation sidecar for a proven zero extension."""
+    checkpoint = Path(checkpoint)
+    manifest, manifest_raw = _load_object(migration_manifest, "migration manifest")
+    source, source_raw = _load_object(source_lineage, "source v6 lineage")
+    if manifest.get("schema") != "bloodbowl-checkpoint-observation-migration-v1":
+        raise LineageError("unsupported observation migration manifest schema")
+    src = manifest.get("source", {})
+    dst = manifest.get("destination", {})
+    if (src.get("observation_abi"), src.get("observation_version"),
+            src.get("observation_size")) != ("obs-v6", 6, 2782):
+        raise LineageError("migration source must be obs-v6/6 with size 2782")
+    if (dst.get("observation_abi"), dst.get("observation_version"),
+            dst.get("observation_size")) != (OBSERVATION_ABI,
+                                               OBSERVATION_VERSION, 2851):
+        raise LineageError("migration destination must be obs-v7/7 size 2851")
+    if dst.get("sha256") != sha256_file(checkpoint):
+        raise LineageError("migration destination hash differs from checkpoint")
+    source_sha = source.get("checkpoint", {}).get("sha256")
+    if src.get("sha256") != source_sha:
+        raise LineageError("migration source hash differs from source lineage")
+    source_compat = source.get("compatibility", {})
+    if (source_compat.get("observation_abi"),
+            source_compat.get("observation_version"),
+            source_compat.get("action_abi")) != ("obs-v6", 6, ACTION_ABI):
+        raise LineageError("source lineage is not obs-v6/6 exact-joint-v1")
+    source_lineage_sha = hashlib.sha256(source_raw).hexdigest()
+    if src.get("lineage_sha256") != source_lineage_sha:
+        raise LineageError("migration manifest source-lineage hash mismatch")
+    zero = manifest.get("zero_effect_inputs", {})
+    if zero != {"repurposed_v6_zero_columns": [814, 815],
+                "appended_columns": [2782, 2850]}:
+        raise LineageError("migration zero-extension column audit mismatch")
+    module_sha = sha256_file(target_module)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "checkpoint": {"bytes": checkpoint.stat().st_size,
+                       "sha256": sha256_file(checkpoint)},
+        "compatibility": {"observation_abi": OBSERVATION_ABI,
+                          "observation_version": OBSERVATION_VERSION,
+                          "action_abi": ACTION_ABI,
+                          "policy_hidden_size": POLICY_HIDDEN_SIZE,
+                          "policy_num_layers": POLICY_NUM_LAYERS,
+                          "policy_expansion_factor": POLICY_EXPANSION_FACTOR},
+        "implementation": {"source_sha256": _need_sha(target_source_sha256,
+                                                         "target source"),
+                           "compiled_module_sha256": module_sha,
+                           "puffer_patch_bundle_sha256": _need_sha(
+                               target_patch_bundle_sha256, "target patch bundle")},
+        "producer": {"run_manifest_sha256": hashlib.sha256(manifest_raw).hexdigest(),
+                     "screen_manifest_sha256": source_lineage_sha, "seed": 0},
+        "ancestry": {"initialization": MIGRATION_INITIALIZATION,
+                     "mode": MIGRATION_INITIALIZATION,
+                     "qualification_only": True, "eligible": False,
+                     "warm_lineage_sha256": "", "pool_lineage_bundle_sha256": "",
+                     "migrated_from": {
+                         "source_checkpoint_sha256": source_sha,
+                         "source_lineage_sha256": source_lineage_sha,
+                         "migration_manifest_sha256": hashlib.sha256(manifest_raw).hexdigest(),
+                         "zeroed_columns": [814, 815],
+                         "appended_columns": [2782, 2850]}},
     }
 
 
@@ -496,10 +592,10 @@ def graft_bridge(sidecars, *, current, old_source_sha256,
     """Classify validated warm/pool sidecars for a graft; return the old module.
 
     ``sidecars`` is a sequence of ``(label, payload)`` where each payload has
-    already passed ``validate_lineage`` (eligible, hash-bound, obs-v6) with no
+    already passed ``validate_lineage`` (eligible, hash-bound, obs-v7) with no
     implementation overrides. ``current`` is this build's three implementation
     digests. Every sidecar must bind EITHER this build exactly (source, module
-    and patch bundle -- what lineage-v6 would demand) OR the declared old
+    and patch bundle -- what lineage-v7 would demand) OR the declared old
     build's source and patch bundle with any module; anything else is refused.
     At least one sidecar must be old-build (else there is nothing to graft), and
     every old-build sidecar must record the same module, which is returned so
@@ -508,7 +604,7 @@ def graft_bridge(sidecars, *, current, old_source_sha256,
     This is the single definition both the per-arm launcher and the screen plan
     writer use, so a graft the screen plans is a graft the launcher accepts. It
     is what lets a lineage keep chaining after a graft: the next rung's warm is
-    new-build while its pool still holds old-build banks, and lineage-v6 alone
+    new-build while its pool still holds old-build banks, and lineage-v7 alone
     would refuse that pool forever.
     """
     for key in SHA256_KEYS:
@@ -520,7 +616,7 @@ def graft_bridge(sidecars, *, current, old_source_sha256,
         raise LineageError(
             "graft refused: the declared old source/patch bundle ARE this "
             "build's, so there is nothing to graft; a module-only difference "
-            "is a `rehost`, otherwise use lineage-v6")
+            "is a `rehost`, otherwise use lineage-v7")
     old_modules = {}
     for label, payload in sidecars:
         implementation = payload["implementation"]
@@ -541,7 +637,7 @@ def graft_bridge(sidecars, *, current, old_source_sha256,
     if not old_modules:
         raise LineageError(
             "graft refused as a no-op: every sidecar already binds this build, "
-            "so there is nothing to graft; use lineage-v6 (or `rehost` for a "
+            "so there is nothing to graft; use lineage-v7 (or `rehost` for a "
             "module-only difference)")
     modules = sorted(set(old_modules.values()))
     if len(modules) != 1:
@@ -554,7 +650,9 @@ def graft_bridge(sidecars, *, current, old_source_sha256,
 
 
 def validate_lineage(checkpoint, sidecar=None, *, expected=None,
-                     require_eligible=True):
+                     require_eligible=True,
+                     recurrent_contract_mode="historical-readable",
+                     expected_rollout_transition_contract=None):
     checkpoint = Path(checkpoint)
     if not checkpoint.is_file():
         raise LineageError(f"missing checkpoint: {checkpoint}")
@@ -569,6 +667,20 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
     if payload.get("schema_version") != SCHEMA_VERSION:
         raise LineageError(
             f"unsupported checkpoint lineage schema: {payload.get('schema_version')!r}")
+    if recurrent_contract_mode not in RECURRENT_CONTRACT_MODES:
+        raise LineageError(
+            "invalid recurrent_contract_mode: "
+            f"{recurrent_contract_mode!r}; expected one of "
+            f"{sorted(RECURRENT_CONTRACT_MODES)}")
+    if expected_rollout_transition_contract is not None and \
+            expected_rollout_transition_contract not in \
+            SUPPORTED_ROLLOUT_TRANSITION_CONTRACTS:
+        raise LineageError(
+            "unsupported expected_rollout_transition_contract: "
+            f"{expected_rollout_transition_contract!r}")
+    if recurrent_contract_mode == "training" and \
+            expected_rollout_transition_contract is None:
+        expected_rollout_transition_contract = ROLLOUT_TRANSITION_CONTRACT
 
     checkpoint_record = payload.get("checkpoint")
     compatibility = payload.get("compatibility")
@@ -585,13 +697,8 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
         if not isinstance(value, dict):
             raise LineageError(f"checkpoint lineage {name} must be an object")
 
-    # The observation revision is checked FIRST, explicitly, and with a message
-    # that names the failure. obs-v4, obs-v5 and obs-v6 are all 2782-byte
-    # observations producing 16,066,560-byte checkpoints, so the byte checks
-    # below cannot see the difference and every other field can agree while the
-    # semantics silently do not. A v4/v5 mixup of exactly this shape already
-    # cost a 12B-step run; warm-starting an obs-v6 module from an obs-v5
-    # sidecar would repeat it with no symptom other than a bad learning curve.
+    # Check explicit semantics before shape. Historical v4/v5/v6 had the same
+    # shape, and current v7 still requires provenance rather than size inference.
     sidecar_abi = compatibility.get("observation_abi")
     sidecar_version = compatibility.get("observation_version")
     if sidecar_abi != OBSERVATION_ABI or sidecar_version != OBSERVATION_VERSION:
@@ -603,6 +710,28 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
             "revision has the same blob size, so this cannot be detected by "
             "checkpoint bytes -- there is no warm start, replay mix or curve "
             "comparison across the boundary without a reviewed bridge")
+    sidecar_rollout_contract = compatibility.get(
+        "rollout_transition_contract")
+    if sidecar_rollout_contract is not None and \
+            sidecar_rollout_contract not in \
+            SUPPORTED_ROLLOUT_TRANSITION_CONTRACTS:
+        raise LineageError(
+            "unsupported rollout_transition_contract in checkpoint lineage: "
+            f"{sidecar_rollout_contract!r}")
+    required_rollout_contract = expected_rollout_transition_contract
+    if require_eligible and required_rollout_contract is None:
+        required_rollout_contract = ROLLOUT_TRANSITION_CONTRACT
+    if required_rollout_contract is not None:
+        if sidecar_rollout_contract is None:
+            raise LineageError(
+                "training eligibility requires an explicit "
+                "rollout_transition_contract; this historical sidecar is "
+                "readable only for inference or qualification")
+        if sidecar_rollout_contract != required_rollout_contract:
+            raise LineageError(
+                "rollout_transition_contract lineage mismatch: "
+                f"{sidecar_rollout_contract!r} != "
+                f"{required_rollout_contract!r}")
 
     actual_bytes = checkpoint.stat().st_size
     actual_sha = sha256_file(checkpoint)
@@ -669,7 +798,7 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
         # canary is not. The mode string carries that declaration and is itself
         # bound into the sidecar, so this cannot be loosened by editing the
         # eligibility flag alone.
-        genesis = ancestry.get("mode") == "native_fresh_v6_genesis"
+        genesis = ancestry.get("mode") == "native_fresh_v7_genesis"
         if warm_lineage or pool_lineage:
             raise LineageError("fresh lineage must be ancestry-free")
         if genesis:
@@ -680,6 +809,19 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
             raise LineageError(
                 "fresh lineage must be qualification-only and ineligible unless "
                 "it is declared genesis")
+    elif initialization == MIGRATION_INITIALIZATION:
+        if not qualification_only or eligible or warm_lineage or pool_lineage:
+            raise LineageError("zero-extended migration must be ancestry-free, "
+                               "qualification-only, and ineligible")
+        migrated = ancestry.get("migrated_from")
+        if not isinstance(migrated, dict) or set(migrated) != set(MIGRATED_FROM_KEYS):
+            raise LineageError("migration lineage has malformed migrated_from")
+        for key in ("source_checkpoint_sha256", "source_lineage_sha256",
+                    "migration_manifest_sha256"):
+            _need_sha(migrated.get(key), f"migrated_from.{key}")
+        if migrated.get("zeroed_columns") != [814, 815] or \
+                migrated.get("appended_columns") != [2782, 2850]:
+            raise LineageError("migration lineage column audit mismatch")
     elif initialization == "bridge":
         # A bridge is eligible ancestry with a pool but NO warm lineage: the
         # warm was a raw out-of-lineage blob, and its identity lives in
@@ -696,7 +838,7 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
             raise LineageError("bridge lineage must record ancestry.bridged_from")
     elif qualification_only or not eligible or not warm_lineage or not pool_lineage:
         raise LineageError(
-            "lineage-v6 must be eligible and bind warm/pool ancestry")
+            "lineage-v7 must be eligible and bind warm/pool ancestry")
     if "bridged_from" in ancestry:
         # Exact shape, like grafted_from: the raw warm's content hash, its
         # original observation revision, where it came from and why. Only a
@@ -726,7 +868,7 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
             raise LineageError("only bridge lineage may record bridged_from")
     if "rehosted_from" in ancestry:
         _need_sha(ancestry.get("rehosted_from"), "ancestry.rehosted_from")
-        if initialization == "fresh" and ancestry.get("mode") != "native_fresh_v6_genesis":
+        if initialization == "fresh" and ancestry.get("mode") != "native_fresh_v7_genesis":
             raise LineageError("only eligible lineage may be rehosted")
     if "grafted_from" in ancestry:
         # Optional, and otherwise unchanged: a graft records the OLD build the
@@ -744,8 +886,8 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
                 _need_reason(grafted_from.get(key), "ancestry.grafted_from.reason")
             else:
                 _need_sha(grafted_from.get(key), f"ancestry.grafted_from.{key}")
-        if initialization != "lineage-v6":
-            raise LineageError("only lineage-v6 lineage may be grafted")
+        if initialization != "lineage-v7":
+            raise LineageError("only lineage-v7 lineage may be grafted")
         if grafted_from["warm_lineage_sha256"] != warm_lineage:
             raise LineageError(
                 "ancestry.grafted_from.warm_lineage_sha256 differs from "
@@ -789,6 +931,12 @@ def main(argv=None):
     validate.add_argument("--lineage")
     validate.add_argument("--expect", action="append", default=[])
     validate.add_argument("--allow-qualification", action="store_true")
+    validate.add_argument(
+        "--recurrent-contract-mode", choices=sorted(RECURRENT_CONTRACT_MODES),
+        default="historical-readable")
+    validate.add_argument(
+        "--expected-rollout-transition-contract",
+        choices=sorted(SUPPORTED_ROLLOUT_TRANSITION_CONTRACTS))
     rehost = subparsers.add_parser(
         "rehost", help="re-bind an eligible sidecar to another build of the "
         "same source + patch bundle (writes <out>, default in place)")
@@ -798,9 +946,28 @@ def main(argv=None):
     rehost.add_argument("--target-source-sha256", required=True)
     rehost.add_argument("--target-patch-bundle-sha256", required=True)
     rehost.add_argument("--out")
+    migrate = subparsers.add_parser(
+        "migrate-v6", help="publish qualification-only v7 lineage for a "
+        "proven converter zero extension")
+    migrate.add_argument("--checkpoint", required=True)
+    migrate.add_argument("--migration-manifest", required=True)
+    migrate.add_argument("--source-lineage", required=True)
+    migrate.add_argument("--target-module", required=True)
+    migrate.add_argument("--target-source-sha256", required=True)
+    migrate.add_argument("--target-patch-bundle-sha256", required=True)
+    migrate.add_argument("--out")
     args = parser.parse_args(argv)
     try:
-        if args.command == "rehost":
+        if args.command == "migrate-v6":
+            payload = migration_lineage(
+                args.checkpoint, args.migration_manifest, args.source_lineage,
+                target_module=args.target_module,
+                target_source_sha256=args.target_source_sha256,
+                target_patch_bundle_sha256=args.target_patch_bundle_sha256)
+            output = Path(args.out) if args.out else sidecar_path(args.checkpoint)
+            write_lineage(output, payload)
+            print(lineage_digest(payload), output)
+        elif args.command == "rehost":
             payload = rehost_lineage(
                 args.checkpoint, sidecar=args.lineage,
                 target_module=args.target_module,
@@ -819,7 +986,10 @@ def main(argv=None):
             expected = _parse_expected(args.expect)
             payload = validate_lineage(
                 args.checkpoint, args.lineage, expected=expected,
-                require_eligible=not args.allow_qualification)
+                require_eligible=not args.allow_qualification,
+                recurrent_contract_mode=args.recurrent_contract_mode,
+                expected_rollout_transition_contract=
+                args.expected_rollout_transition_contract)
             print(lineage_digest(payload),
                   Path(args.lineage) if args.lineage else sidecar_path(args.checkpoint))
     except LineageError as exc:

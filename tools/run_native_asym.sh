@@ -19,7 +19,7 @@
 #   TEACHER=<cuda blob>      flat-fp32 save_weights blob (NOT a torch
 #                            state_dict — convert first:
 #                            python training/convert_checkpoint.py --to-cuda
-#                            bc_v4.bin -o bc_v4_cuda.bin   # obs-size 2782 default).
+#                            policy.bin -o policy_cuda.bin # obs-size 2851 default).
 #                            Default training/bc_v4_cuda.bin. bc anchors live
 #                            PER-BOX only (fleet.sh setup excludes
 #                            training/*.bin) — ship box-to-box via ssh -A.
@@ -32,7 +32,7 @@
 #   LOG=<path>               default /tmp/$TAG.log
 #   POOL=<dir>               league pool dir, default training/league_$TAG.
 #                            Built/refreshed here from TEACHER every launch.
-#   EXPECT_BYTES=<n>         teacher/warm blob size, default 16066560 = obs-v4
+#   EXPECT_BYTES=<n>         teacher/warm blob size, default 16207872 = obs-v7
 #                            policy (4,016,640 fp32 params). 13670400 = obs-v3
 #                            lineage (input-shape INCOMPATIBLE), 12072960 =
 #                            dead obs-832 lineage. Override only for a new arch.
@@ -79,7 +79,7 @@ STEPS="${STEPS:-30000000000}"
 OPP_TIMEOUT=$(( STEPS * 10 ))
 LOG="${LOG:-/tmp/${TAG}.log}"
 POOL="${POOL:-$ROOT/training/league_${TAG}}"
-EXPECT_BYTES="${EXPECT_BYTES:-16066560}"
+EXPECT_BYTES="${EXPECT_BYTES:-16207872}"
 
 # Relative paths would break after the cd below — anchor them to the
 # invocation cwd now.

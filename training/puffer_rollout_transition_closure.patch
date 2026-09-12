@@ -1,0 +1,1102 @@
+--- a/pufferlib/torch_pufferl.py
++++ b/pufferlib/torch_pufferl.py
+@@ -295,6 +295,14 @@
+             momentum=config['beta1'],
+             eps=config['eps'],
+         )
++
++        self.tail_rewards = torch.zeros(
++            total_agents, dtype=torch.float32, device=device)
++        self.tail_terminals = torch.zeros(
++            total_agents, dtype=torch.float32, device=device)
++        self.tail_values = torch.zeros(
++            total_agents, dtype=torch.float32, device=device)
++        self.tail_valid = False
+ 
+         self.args = args
+         self.config = config
+@@ -338,6 +346,9 @@
+         self.evaluation_mode = enabled
+ 
+     def rollouts(self):
++        if self.tail_valid:
++            raise RuntimeError(
++                'rollout would overwrite an unconsumed tail record')
+         prof = self.profile
+         config = self.config
+         device = self.device
+@@ -404,6 +415,25 @@
+ 
+             o, r, d = self.vec_obs, self.vec_rewards, self.vec_terminals
+             prof.mark(3)
++            if (t == horizon - 1 and self.reset_state
++                    and not self.evaluation_mode):
++                with torch.no_grad():
++                    tail_observation = torch.as_tensor(o, device=device)
++                    tail_state = tuple(
++                        torch.zeros_like(state) for state in self.state)
++                    _, tail_value, _ = self.policy.forward_eval(
++                        tail_observation, tail_state)
++                    self.tail_rewards.copy_(
++                        torch.as_tensor(r, device=device))
++                    self.tail_terminals.copy_(
++                        torch.as_tensor(d, device=device).float())
++                    tail_value = tail_value.flatten()
++                    self.tail_values.copy_(torch.where(
++                        self.tail_terminals.bool(),
++                        torch.zeros_like(tail_value),
++                        tail_value,
++                    ))
++                    self.tail_valid = True
+             prof.elapsed(P.EVAL_GPU, 1, 2)
+             prof.elapsed(P.EVAL_ENV, 2, 3)
+ 
+@@ -423,6 +453,9 @@
+         losses = defaultdict(float)
+         config = self.config
+         device = self.device
++        if not self.tail_valid:
++            raise RuntimeError(
++                'training requires one fresh tail record')
+ 
+         b0 = config['prio_beta0']
+         a = config['prio_alpha']
+@@ -449,13 +482,17 @@
+                  if self.action_masks is not None else None)
+ 
+         P = Profile
++        tail_val = self.tail_values
++        tail_rew = self.tail_rewards.clamp(-8, 8)
++        tail_ter = self.tail_terminals
+         prof.mark(0)
+         num_minibatches = int(config['replay_ratio'] * self.batch_size / config['minibatch_size'])
+         for mb in range(num_minibatches):
+             shape = val.shape
+             advantages = torch.zeros(shape, device=device)
+             advantages = compute_puff_advantage(val, rew,
+-                ter, self.ratio, advantages, config['gamma'],
++                ter, self.ratio, tail_val, tail_rew, tail_ter,
++                advantages, config['gamma'],
+                 config['gae_lambda'], config['vtrace_rho_clip'], config['vtrace_c_clip'])
+ 
+             adv = advantages.abs().sum(axis=1)
+@@ -525,6 +562,7 @@
+ 
+         prof.mark(1)
+         prof.elapsed(P.TRAIN, 0, 1)
++        self.tail_valid = False
+ 
+         losses = {k: v.item() / num_minibatches for k, v in losses.items()}
+         y_pred = val.flatten()
+@@ -609,13 +647,15 @@
+ 
+         return cls(args, vec, policy)
+ 
+-def compute_puff_advantage(values, rewards, terminals,
+-        ratio, advantages, gamma, gae_lambda, vtrace_rho_clip, vtrace_c_clip):
++def compute_puff_advantage(values, rewards, terminals, ratio,
++        tail_values, tail_rewards, tail_terminals,
++        advantages, gamma, gae_lambda, vtrace_rho_clip, vtrace_c_clip):
+     num_steps, horizon = values.shape
+     fn = _C.puff_advantage if values.is_cuda else _C.puff_advantage_cpu
+     fn(
+         values.data_ptr(), rewards.data_ptr(), terminals.data_ptr(),
+-        ratio.data_ptr(), advantages.data_ptr(),
++        ratio.data_ptr(), tail_values.data_ptr(), tail_rewards.data_ptr(),
++        tail_terminals.data_ptr(), advantages.data_ptr(),
+         num_steps, horizon,
+         gamma, gae_lambda, vtrace_rho_clip, vtrace_c_clip)
+     return advantages
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -10,6 +10,34 @@
+ #define PUFFER_STRINGIFY(x) _PUFFER_STRINGIFY(x)
+ 
+ namespace py = pybind11;
++
++static void require_fresh_training_tail(PuffeRL& pufferl) {
++    std::vector<int> tail_valid(pufferl.hypers.num_buffers);
++    cudaError_t status = cudaMemcpy(
++        tail_valid.data(), pufferl.tail_valid.data,
++        tail_valid.size() * sizeof(int), cudaMemcpyDeviceToHost);
++    if (status != cudaSuccess) {
++        pufferl.training_failed = true;
++        throw std::runtime_error("training could not read tail-record validity");
++    }
++    for (int valid : tail_valid) {
++        if (valid != 1) {
++            throw std::runtime_error(
++                "training requires one valid tail record per rollout buffer");
++        }
++    }
++}
++
++static void consume_training_tail(PuffeRL& pufferl) {
++    cudaError_t status = cudaMemsetAsync(
++        pufferl.tail_valid.data, 0,
++        pufferl.hypers.num_buffers * sizeof(int), pufferl.default_stream);
++    if (status == cudaSuccess) status = cudaStreamSynchronize(pufferl.default_stream);
++    if (status != cudaSuccess) {
++        pufferl.training_failed = true;
++        throw std::runtime_error("training could not clear consumed tail records");
++    }
++}
+ 
+ // Wrapper functions for Python bindings
+ pybind11::dict puf_log(pybind11::object pufferl_obj) {
+@@ -135,6 +163,19 @@
+ 
+ void rollouts(pybind11::object pufferl_obj) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    std::vector<int> tail_valid(pufferl.hypers.num_buffers);
++    if (cudaMemcpy(tail_valid.data(), pufferl.tail_valid.data,
++            tail_valid.size() * sizeof(int),
++            cudaMemcpyDeviceToHost) != cudaSuccess) {
++        throw std::runtime_error(
++            "rollout could not read tail-record validity");
++    }
++    for (int valid : tail_valid) {
++        if (valid != 0) {
++            throw std::runtime_error(
++                "rollout would overwrite an unconsumed tail record");
++        }
++    }
+     pybind11::gil_scoped_release no_gil;
+     double t0 = wall_clock();
+ 
+@@ -152,7 +193,12 @@
+         }
+     }
+ 
+-    static_vec_omp_step(pufferl.vec);
++    if (cudaStreamSynchronize(pufferl.default_stream) != cudaSuccess) {
++        throw std::runtime_error("rollout CUDA execution failed");
++    }
++
++    static_vec_omp_step(
++        pufferl.vec);
+     float sec = (float)(wall_clock() - t0);
+     pufferl.profile.accum[PROF_ROLLOUT] += sec * 1000.0f;  // store as ms
+ 
+@@ -192,8 +238,10 @@
+             "training requires reset_state=True and evaluation_mode=False");
+     }
+     {
++        require_fresh_training_tail(pufferl);
+         pybind11::gil_scoped_release no_gil;
+         train_impl(pufferl);
++        consume_training_tail(pufferl);
+     }
+     pybind11::dict losses;
+     return losses;
+@@ -289,6 +337,8 @@
+ void py_puff_advantage(
+         long long values_ptr, long long rewards_ptr,
+         long long dones_ptr,  long long importance_ptr,
++        long long tail_values_ptr, long long tail_rewards_ptr,
++        long long tail_dones_ptr,
+         long long advantages_ptr,
+         int num_steps, int horizon,
+         float gamma, float lambda, float rho_clip, float c_clip) {
+@@ -298,6 +348,9 @@
+     kernel<<<blocks, 256>>>(
+         (const precision_t*)values_ptr, (const precision_t*)rewards_ptr,
+         (const precision_t*)dones_ptr,  (const precision_t*)importance_ptr,
++        (const precision_t*)tail_values_ptr,
++        (const precision_t*)tail_rewards_ptr,
++        (const precision_t*)tail_dones_ptr,
+         (precision_t*)advantages_ptr,
+         gamma, lambda, rho_clip, c_clip, num_steps, horizon);
+ }
+@@ -677,4 +730,5 @@
+         .def("num_params", [](PuffeRL& self) -> int64_t {
+             return numel(self.master_weights.shape);
+         });
++    m.attr("rollout_transition_contract") = "tail-bootstrap-v1";
+ }
+--- a/src/bindings_cpu.cpp
++++ b/src/bindings_cpu.cpp
+@@ -39,6 +39,8 @@
+ static void py_puff_advantage_cpu(
+         long long values_ptr, long long rewards_ptr,
+         long long dones_ptr, long long importance_ptr,
++        long long tail_values_ptr, long long tail_rewards_ptr,
++        long long tail_dones_ptr,
+         long long advantages_ptr,
+         int num_steps, int horizon,
+         float gamma, float lambda, float rho_clip, float c_clip) {
+@@ -46,22 +48,35 @@
+     const float* rewards = (const float*)rewards_ptr;
+     const float* dones = (const float*)dones_ptr;
+     const float* importance = (const float*)importance_ptr;
++    const float* tail_values = (const float*)tail_values_ptr;
++    const float* tail_rewards = (const float*)tail_rewards_ptr;
++    const float* tail_dones = (const float*)tail_dones_ptr;
+     float* advantages = (float*)advantages_ptr;
+     for (int row = 0; row < num_steps; row++) {
+         int off = row * horizon;
+         float lastpufferlam = 0;
+-        for (int t = horizon - 2; t >= 0; t--) {
+-            int t_next = t + 1;
+-            float nextnonterminal = 1.0f - dones[off + t_next];
++        float next_value = tail_values[row];
++        float next_reward = tail_rewards[row] < -8.0f ? -8.0f :
++            (tail_rewards[row] > 8.0f ? 8.0f : tail_rewards[row]);
++        float next_done = tail_dones[row];
++        for (int t = horizon - 1; t >= 0; t--) {
++            bool nextnonterminal = next_done == 0.0f;
+             float imp = importance[off + t];
+             float rho_t = imp < rho_clip ? imp : rho_clip;
+             float c_t = imp < c_clip ? imp : c_clip;
+-            float r_nxt = rewards[off + t_next];
+             float v = values[off + t];
+-            float v_nxt = values[off + t_next];
+-            float delta = rho_t * r_nxt + gamma * v_nxt * nextnonterminal - v;
+-            lastpufferlam = delta + gamma * lambda * c_t * lastpufferlam * nextnonterminal;
++            float bootstrap =
++                nextnonterminal ? gamma * next_value : 0.0f;
++            float delta =
++                rho_t * (next_reward + bootstrap - v);
++            lastpufferlam = delta + (nextnonterminal
++                ? gamma * lambda * c_t * lastpufferlam : 0.0f);
+             advantages[off + t] = lastpufferlam;
++            next_value = v;
++            float reward = rewards[off + t];
++            next_reward = reward < -8.0f ? -8.0f :
++                (reward > 8.0f ? 8.0f : reward);
++            next_done = dones[off + t];
+         }
+     }
+ }
+@@ -204,4 +219,5 @@
+         .def("render", [](VecEnv& ve, int env_id) { static_vec_render(ve.vec, env_id); })
+         .def("log", &vec_log)
+         .def("close", &vec_close);
++    m.attr("rollout_transition_contract") = "tail-bootstrap-v1";
+ }
+--- a/src/pufferlib.cu
++++ b/src/pufferlib.cu
+@@ -3,6 +3,11 @@
+ #include <nvtx3/nvToolsExt.h>
+ #include <nvml.h>
+ #include <nccl.h>
++#include <atomic>
++#include <cmath>
++#include <limits>
++#include <stdexcept>
++#include <string>
+ #include <vector>
+ 
+ #include <time.h>
+@@ -15,6 +20,15 @@
+     struct timespec ts;
+     clock_gettime(CLOCK_REALTIME, &ts);
+     return ts.tv_sec + ts.tv_nsec * 1e-9;
++}
++
++inline void require_cuda_success(cudaError_t status, const char* operation) {
++    if (status != cudaSuccess) {
++        throw std::runtime_error(
++            std::string(operation) + ": "
++            + cudaGetErrorName(status) + ": "
++            + cudaGetErrorString(status));
++    }
+ }
+ 
+ enum LossIdx {
+@@ -361,11 +375,23 @@
+     FloatTensor master_weights;
+     PrecisionTensor* buffer_states;         // [num_buffers]
+     PolicyActivations* buffer_activations;  // [num_buffers]
++    PrecisionTensor* tail_states;           // [num_buffers], fresh zero state
++    PolicyActivations* tail_activations;    // [num_buffers], value-only scratch
+     int slice_size;  // # agents per buffer this bank owns; sets activation/state batch dim
+     int hidden_size;
+     int num_layers;
+ } WeightBank;
+ 
++enum QualificationExecutionCounter {
++    QUAL_GRAPH_ROLLOUT = 0,
++    QUAL_GRAPH_TAIL,
++    QUAL_GRAPH_TRAIN,
++    QUAL_EAGER_ROLLOUT,
++    QUAL_EAGER_TAIL,
++    QUAL_EAGER_TRAIN,
++    NUM_QUAL_EXECUTION_COUNTERS,
++};
++
+ typedef struct {
+     Policy policy;
+     PolicyWeights weights;       // current precision_t weights (structured)
+@@ -373,6 +399,7 @@
+     Allocator params_alloc;
+     Allocator grads_alloc;
+     Allocator activations_alloc;
++    Allocator tail_acts_alloc;
+     StaticVec* vec;
+     Muon muon;
+     ncclComm_t nccl_comm;  // NCCL communicator for multi-GPU
+@@ -380,12 +407,20 @@
+     bool is_continuous;  // True if all action dimensions are continuous (size==1)
+     PrecisionTensor* buffer_states;  // Per-buffer states for contiguous access
+     PolicyActivations* buffer_activations;  // Per-buffer inference activations
++    PrecisionTensor* tail_states;  // Per-buffer zero-state bootstrap scratch
++    PolicyActivations* tail_activations;  // Dedicated value-only activations
++    PrecisionTensor tail_observations;  // (agents, input_size), post-horizon
++    PrecisionTensor tail_rewards;       // (agents,), post-final-action outcome
++    PrecisionTensor tail_terminals;     // (agents,)
++    PrecisionTensor tail_values;        // (agents,), zero-state bootstrap value
++    IntTensor tail_valid;                // Tail callback counts, one per buffer
+     RolloutBuf rollouts;
+     RolloutBuf train_rollouts;  // Pre-allocated transposed copy for train_impl
+     EnvBuf env;
+     TrainGraph train_buf;
+     PrecisionTensor advantages_puf;  // Pre-allocated for train_impl (B, T)
+     cudaGraphExec_t* fused_rollout_cudagraphs;  // [horizon][num_buffers]
++    cudaGraphExec_t* tail_rollout_cudagraphs;   // [num_buffers]
+     cudaGraphExec_t train_cudagraph;
+     cudaStream_t* streams;  // per-buffer raw CUDA streams
+     cudaStream_t default_stream;  // main-thread stream (captured once at init)
+@@ -403,12 +438,14 @@
+     long global_step;
+     double start_time;
+     double last_log_time;
++    bool training_failed;
+     long last_log_step;
+     int train_warmup;
+     bool rollout_captured;
+     bool evaluation_mode;
+     int* evaluation_mode_puf;
+     bool train_captured;
++    bool tail_captured;
+     ulong seed;
+     curandStatePhilox4_32_10_t** rng_states;  // per-buffer persistent RNG states [num_buffers]
+     // Optional frozen weight banks for match / league.
+@@ -421,6 +458,8 @@
+     // worker thread only writes inside its own physical chunk.
+     // Bank 0 = primary (learner). NULL = no layout set (primary owns full chunk).
+     int* bank_layout;
++    std::atomic<unsigned long long>
++        qualification_execution_counts[NUM_QUAL_EXECUTION_COUNTERS];
+ } PuffeRL;
+ 
+ __global__ void reset_recurrent_state_on_terminal(
+@@ -678,8 +717,13 @@
+ 
+     cudaStream_t current_stream = tl_stream;
+     if (pufferl->rollout_captured) {
+-        assert(cudaGraphLaunch(pufferl->fused_rollout_cudagraphs[graph], current_stream) == cudaSuccess
+-                && "cudaGraphLaunch failed");
++        cudaError_t launch_status = cudaGraphLaunch(
++            pufferl->fused_rollout_cudagraphs[graph], current_stream);
++        if (launch_status != cudaSuccess) {
++            throw std::runtime_error("rollout cudaGraphLaunch failed");
++        }
++        pufferl->qualification_execution_counts[QUAL_GRAPH_ROLLOUT].fetch_add(
++            1, std::memory_order_relaxed);
+         profile_end(hypers.profile);
+         return;
+     }
+@@ -805,10 +849,116 @@
+         assert(cudaGraphDestroy(_graph) == cudaSuccess && "cudaGraphDestroy failed");
+         cudaDeviceSynchronize();
+     }
++    if (!capturing) {
++        pufferl->qualification_execution_counts[QUAL_EAGER_ROLLOUT].fetch_add(
++            1, std::memory_order_relaxed);
++    }
+     profile_end(hypers.profile);
+ }
+ 
++__global__ void copy_tail_decoder_values(
++        PrecisionTensor decoder, precision_t* tail_values,
++        const precision_t* tail_terminals, int output_start, int rows) {
++    int row = blockIdx.x * blockDim.x + threadIdx.x;
++    if (row >= rows) return;
++    int output_row = output_start + row;
++    int stride = decoder.shape[1];
++    precision_t value = decoder.data[(long)row * stride + stride - 1];
++    tail_values[output_row] = to_float(tail_terminals[output_row]) == 0.0f
++        ? value : from_float(0.0f);
++}
+ 
++__global__ void mark_tail_valid(int* valid, int buf) {
++    if (blockIdx.x == 0 && threadIdx.x == 0) {
++        atomicAdd(valid + buf, 1);
++    }
++}
++
++static void tail_forward_impl(PuffeRL* pufferl, int buf, cudaStream_t stream) {
++    HypersT& hypers = pufferl->hypers;
++    EnvBuf& env = pufferl->env;
++    int block_size = pufferl->vec->total_agents / hypers.num_buffers;
++    int start = buf * block_size;
++    int input_size = env.obs.shape[1];
++
++    int observation_count = block_size * input_size;
++    cast_dispatch(
++        pufferl->tail_observations.data + (long)start * input_size,
++        env.obs.data + (long)start * input_size,
++        observation_count, stream);
++    cast<<<grid_size(block_size), BLOCK_SIZE, 0, stream>>>(
++        pufferl->tail_rewards.data + start,
++        env.rewards.data + start, block_size);
++    cast<<<grid_size(block_size), BLOCK_SIZE, 0, stream>>>(
++        pufferl->tail_terminals.data + start,
++        env.terminals.data + start, block_size);
++
++    int num_banks = 1 + pufferl->num_frozen_banks;
++    for (int bank = 0; bank < num_banks; bank++) {
++        int bank_off = pufferl->bank_layout
++            ? pufferl->bank_layout[bank] : 0;
++        int bank_end = pufferl->bank_layout
++            ? pufferl->bank_layout[bank + 1] : block_size;
++        int bank_size = bank_end - bank_off;
++        if (bank_size == 0) continue;
++
++        Policy* policy;
++        PolicyWeights* weights;
++        PolicyActivations* activations;
++        PrecisionTensor* state;
++        if (bank == 0) {
++            policy = &pufferl->policy;
++            weights = &pufferl->weights;
++            activations = &pufferl->tail_activations[buf];
++            state = &pufferl->tail_states[buf];
++        } else {
++            WeightBank* frozen = &pufferl->frozen_banks[bank - 1];
++            policy = &frozen->policy;
++            weights = &frozen->weights;
++            activations = &frozen->tail_activations[buf];
++            state = &frozen->tail_states[buf];
++        }
++
++        int sub_start = start + bank_off;
++        PrecisionTensor observation = {
++            .data = pufferl->tail_observations.data
++                + (long)sub_start * input_size,
++            .shape = {bank_size, input_size},
++        };
++        PrecisionTensor& tail_state = *state;
++        puf_zero(&tail_state, stream);
++        PrecisionTensor decoder = policy_forward(
++            policy, *weights, *activations, observation, tail_state, stream);
++        copy_tail_decoder_values<<<
++            grid_size(bank_size), BLOCK_SIZE, 0, stream>>>(
++                decoder, pufferl->tail_values.data,
++                pufferl->tail_terminals.data, sub_start, bank_size);
++    }
++}
++
++extern "C" void tail_callback_wrapper(void* ctx, int buf) {
++    PuffeRL* pufferl = (PuffeRL*)ctx;
++    if (!(pufferl->hypers.reset_state && !pufferl->evaluation_mode)) {
++        return;
++    }
++
++    cudaStream_t stream = tl_stream;
++    if (pufferl->tail_captured) {
++        cudaGraphExec_t graph = pufferl->tail_rollout_cudagraphs[buf];
++        if (graph == nullptr || cudaGraphLaunch(graph, stream) != cudaSuccess) {
++            throw std::runtime_error("tail cudaGraphLaunch failed");
++        }
++        pufferl->qualification_execution_counts[QUAL_GRAPH_TAIL].fetch_add(
++            1, std::memory_order_relaxed);
++    } else {
++        tail_forward_impl(pufferl, buf, stream);
++        pufferl->qualification_execution_counts[QUAL_EAGER_TAIL].fetch_add(
++            1, std::memory_order_relaxed);
++    }
++    mark_tail_valid<<<1, 1, 0, stream>>>(pufferl->tail_valid.data, buf);
++}
++
++
+ __device__ __forceinline__ float load_logit(
+         const precision_t* __restrict__ logits, int logits_base,
+         int logits_stride_a, int logits_offset, int a) {
+@@ -1364,23 +1514,37 @@
+ 
+ // Experience the puffer advantage! Generalized advantage estimation + V-Trace
+ // importance sampling correction in a single streamlined operation
++__device__ __forceinline__ float clamp_advantage_reward(float reward) {
++    return fminf(fmaxf(reward, -8.0f), 8.0f);
++}
++
+ __device__ void puff_advantage_row_scalar(
+         const precision_t* values, const precision_t* rewards, const precision_t* dones,
+-        const precision_t* importance, precision_t* advantages, float gamma, float lambda,
++        const precision_t* importance,
++        const precision_t* tail_values, const precision_t* tail_rewards,
++        const precision_t* tail_dones,
++        precision_t* advantages, float gamma, float lambda,
+         float rho_clip, float c_clip, int horizon) {
+     float lastpufferlam = 0;
+-    for (int t = horizon-2; t >= 0; t--) {
+-        int t_next = t + 1;
+-        float nextnonterminal = 1.0f - to_float(dones[t_next]);
++    float next_value = to_float(tail_values[0]);
++    float next_reward = clamp_advantage_reward(to_float(tail_rewards[0]));
++    float next_done = to_float(tail_dones[0]);
++    for (int t = horizon - 1; t >= 0; t--) {
++        bool nextnonterminal = next_done == 0.0f;
+         float imp = to_float(importance[t]);
+         float rho_t = fminf(imp, rho_clip);
+         float c_t = fminf(imp, c_clip);
+-        float r_nxt = to_float(rewards[t_next]);
+         float v = to_float(values[t]);
+-        float v_nxt = to_float(values[t_next]);
+-        float delta = rho_t*r_nxt + gamma*v_nxt*nextnonterminal - v;
+-        lastpufferlam = delta + gamma*lambda*c_t*lastpufferlam*nextnonterminal;
++        float bootstrap =
++            nextnonterminal ? gamma * next_value : 0.0f;
++        float delta =
++            rho_t * (next_reward + bootstrap - v);
++        lastpufferlam = delta + (nextnonterminal
++            ? gamma * lambda * c_t * lastpufferlam : 0.0f);
+         advantages[t] = from_float(lastpufferlam);
++        next_value = v;
++        next_reward = clamp_advantage_reward(to_float(rewards[t]));
++        next_done = to_float(dones[t]);
+     }
+ }
+ 
+@@ -1415,16 +1579,19 @@
+ 
+ __device__ __forceinline__ void puff_advantage_row_vec(
+         const precision_t* values, const precision_t* rewards, const precision_t* dones,
+-        const precision_t* importance, precision_t* advantages, float gamma, float lambda,
++        const precision_t* importance,
++        const precision_t* tail_values, const precision_t* tail_rewards,
++        const precision_t* tail_dones,
++        precision_t* advantages, float gamma, float lambda,
+         float rho_clip, float c_clip, int horizon) {
+     constexpr int N = 16 / sizeof(precision_t);
+ 
+     float lastpufferlam = 0.0f;
+     int num_chunks = horizon / N;
+ 
+-    float next_value = to_float(values[horizon - 1]);
+-    float next_done = to_float(dones[horizon - 1]);
+-    float next_reward = to_float(rewards[horizon - 1]);
++    float next_value = to_float(tail_values[0]);
++    float next_done = to_float(tail_dones[0]);
++    float next_reward = clamp_advantage_reward(to_float(tail_rewards[0]));
+ 
+     for (int chunk = num_chunks - 1; chunk >= 0; chunk--) {
+         int base = chunk * N;
+@@ -1436,19 +1603,21 @@
+         adv_vec_load(importance + base, imp);
+ 
+         float adv[N] = {0};
+-        int start_idx = (chunk == num_chunks - 1) ? (N - 2) : (N - 1);
+-
+         #pragma unroll
+-        for (int i = start_idx; i >= 0; i--) {
+-            float nextnonterminal = 1.0f - next_done;
++        for (int i = N - 1; i >= 0; i--) {
++            bool nextnonterminal = next_done == 0.0f;
+             float rho_t = fminf(imp[i], rho_clip);
+             float c_t = fminf(imp[i], c_clip);
+-            float delta = rho_t * (next_reward + gamma * next_value * nextnonterminal - v[i]);
+-            lastpufferlam = delta + gamma * lambda * c_t * lastpufferlam * nextnonterminal;
++            float bootstrap =
++                nextnonterminal ? gamma * next_value : 0.0f;
++            float delta =
++                rho_t * (next_reward + bootstrap - v[i]);
++            lastpufferlam = delta + (nextnonterminal
++                ? gamma * lambda * c_t * lastpufferlam : 0.0f);
+             adv[i] = lastpufferlam;
+             next_value = v[i];
+             next_done = d[i];
+-            next_reward = r[i];
++            next_reward = clamp_advantage_reward(r[i]);
+         }
+ 
+         adv_vec_store(advantages + base, adv);
+@@ -1456,7 +1625,10 @@
+ }
+ 
+ __global__ void puff_advantage(const precision_t* values, const precision_t* rewards,
+-        const precision_t* dones, const precision_t* importance, precision_t* advantages, float gamma,
++        const precision_t* dones, const precision_t* importance,
++        const precision_t* tail_values, const precision_t* tail_rewards,
++        const precision_t* tail_dones,
++        precision_t* advantages, float gamma,
+         float lambda, float rho_clip, float c_clip, int num_steps, int horizon) {
+     int row = blockIdx.x*blockDim.x + threadIdx.x;
+     if (row >= num_steps) {
+@@ -1464,11 +1636,16 @@
+     }
+     int offset = row*horizon;
+     puff_advantage_row_vec(values + offset, rewards + offset, dones + offset,
+-        importance + offset, advantages + offset, gamma, lambda, rho_clip, c_clip, horizon);
++        importance + offset, tail_values + row, tail_rewards + row,
++        tail_dones + row, advantages + offset,
++        gamma, lambda, rho_clip, c_clip, horizon);
+ }
+ 
+ __global__ void puff_advantage_scalar(const precision_t* values, const precision_t* rewards,
+-        const precision_t* dones, const precision_t* importance, precision_t* advantages, float gamma,
++        const precision_t* dones, const precision_t* importance,
++        const precision_t* tail_values, const precision_t* tail_rewards,
++        const precision_t* tail_dones,
++        precision_t* advantages, float gamma,
+         float lambda, float rho_clip, float c_clip, int num_steps, int horizon) {
+     int row = blockIdx.x*blockDim.x + threadIdx.x;
+     if (row >= num_steps) {
+@@ -1476,11 +1653,15 @@
+     }
+     int offset = row*horizon;
+     puff_advantage_row_scalar(values + offset, rewards + offset, dones + offset,
+-        importance + offset, advantages + offset, gamma, lambda, rho_clip, c_clip, horizon);
++        importance + offset, tail_values + row, tail_rewards + row,
++        tail_dones + row, advantages + offset,
++        gamma, lambda, rho_clip, c_clip, horizon);
+ }
+ 
+ void puff_advantage_cuda(PrecisionTensor& values, PrecisionTensor& rewards,
+-        PrecisionTensor& dones, PrecisionTensor& importance, PrecisionTensor& advantages,
++        PrecisionTensor& dones, PrecisionTensor& importance,
++        PrecisionTensor& tail_values, PrecisionTensor& tail_rewards,
++        PrecisionTensor& tail_dones, PrecisionTensor& advantages,
+         float gamma, float lambda, float rho_clip, float c_clip, cudaStream_t stream) {
+     int num_steps = values.shape[0], horizon = values.shape[1];
+     int blocks = grid_size(num_steps);
+@@ -1488,6 +1669,7 @@
+     auto kernel = (horizon % N == 0) ? puff_advantage : puff_advantage_scalar;
+     kernel<<<blocks, 256, 0, stream>>>(
+         values.data, rewards.data, dones.data, importance.data,
++        tail_values.data, tail_rewards.data, tail_dones.data,
+         advantages.data, gamma, lambda, rho_clip, c_clip, num_steps, horizon);
+ }
+ 
+@@ -1681,7 +1863,9 @@
+ 
+         profile_begin("compute_advantage", hypers.profile);
+         puff_advantage_cuda(rollouts.values, rollouts.rewards, rollouts.terminals,
+-            rollouts.ratio, advantages_puf, hypers.gamma, hypers.gae_lambda,
++            rollouts.ratio, pufferl.tail_values, pufferl.tail_rewards,
++            pufferl.tail_terminals, advantages_puf,
++            hypers.gamma, hypers.gae_lambda,
+             hypers.vtrace_rho_clip, hypers.vtrace_c_clip, train_stream);
+         if (pufferl.num_frozen_banks > 0 && pufferl.bank_layout != NULL) {
+             int apb = hypers.total_agents / hypers.num_buffers;
+@@ -1714,7 +1898,12 @@
+         cudaEventRecord(pufferl.profile.events[3]);  // end misc / start forward
+         profile_begin("train_forward_backward", hypers.profile);
+         if (pufferl.train_captured) {
+-            cudaGraphLaunch(pufferl.train_cudagraph, train_stream);
++            if (cudaGraphLaunch(
++                    pufferl.train_cudagraph, train_stream) != cudaSuccess) {
++                throw std::runtime_error("train cudaGraphLaunch failed");
++            }
++            pufferl.qualification_execution_counts[QUAL_GRAPH_TRAIN].fetch_add(
++                1, std::memory_order_relaxed);
+         } else {
+             bool capturing = pufferl.train_warmup == hypers.cudagraphs;
+             if (capturing) {
+@@ -1759,6 +1948,10 @@
+                 cudaDeviceSynchronize();
+                 pufferl.train_captured = true;
+             }
++            if (!capturing) {
++                pufferl.qualification_execution_counts[
++                    QUAL_EAGER_TRAIN].fetch_add(1, std::memory_order_relaxed);
++            }
+             pufferl.train_warmup++;
+         }
+         profile_end(hypers.profile);
+@@ -1783,7 +1976,9 @@
+     }
+     pufferl.epoch += 1;
+ 
+-    cudaStreamSynchronize(pufferl.default_stream);
++    if (cudaStreamSynchronize(train_stream) != cudaSuccess) {
++        throw std::runtime_error("training CUDA execution failed");
++    }
+ 
+     if (total_minibatches > 0) {
+         float ms;
+@@ -1878,10 +2073,20 @@
+     bank->weights = policy_weights_create(&bank->policy, params);
+     bank->buffer_activations = (PolicyActivations*)calloc(num_buffers, sizeof(PolicyActivations));
+     bank->buffer_states = (PrecisionTensor*)calloc(num_buffers, sizeof(PrecisionTensor));
++    bank->tail_activations = (PolicyActivations*)calloc(
++        num_buffers, sizeof(PolicyActivations));
++    bank->tail_states = (PrecisionTensor*)calloc(
++        num_buffers, sizeof(PrecisionTensor));
+     for (int i = 0; i < num_buffers; i++) {
+         bank->buffer_activations[i] = policy_reg_rollout(&bank->policy, bank->weights, acts, slice_size);
+         bank->buffer_states[i] = {.shape = {num_layers, slice_size, hidden_size}};
+         alloc_register(acts, &bank->buffer_states[i]);
++        bank->tail_activations[i] = policy_reg_rollout(
++            &bank->policy, bank->weights, acts, slice_size);
++        bank->tail_states[i] = {
++            .shape = {num_layers, slice_size, hidden_size},
++        };
++        alloc_register(acts, &bank->tail_states[i]);
+     }
+ 
+     alloc_create(params);
+@@ -1892,8 +2097,14 @@
+         bank->master_weights = {.shape = {params->total_elems}};
+         cudaMalloc(&bank->master_weights.data, params->total_elems * sizeof(float));
+     } else {
+-        bank->master_weights = {.data = (float*)bank->param_puf.data, .shape = {params->total_elems}};
++        bank->master_weights = {
++            .data = (float*)bank->param_puf.data,
++            .shape = {params->total_elems},
++        };
+     }
++    for (int i = 0; i < num_buffers; i++) {
++        puf_zero(&bank->tail_states[i], pufferl->default_stream);
++    }
+ }
+ 
+ // Mirror of weight_bank_create_for_pufferl. Frees the bank's weights, per-buffer
+@@ -1908,12 +2119,71 @@
+         }
+         free(bank->buffer_activations);
+     }
++    if (bank->tail_activations != NULL) {
++        for (int i = 0; i < num_buffers; i++) {
++            policy_activations_free(&bank->policy, bank->tail_activations[i]);
++        }
++        free(bank->tail_activations);
++    }
+     free(bank->buffer_states);
++    free(bank->tail_states);
+     alloc_free(&bank->params_alloc);
+     alloc_free(&bank->acts_alloc);
+     if (USE_BF16 && bank->master_weights.data != NULL) {
+         cudaFree(bank->master_weights.data);
++    }
++}
++
++static bool primary_tail_storage_create(PuffeRL* pufferl, int primary_slice,
++        int input_size, int hidden_size, int num_layers) {
++    int total_agents = pufferl->hypers.total_agents;
++    int num_buffers = pufferl->hypers.num_buffers;
++    Allocator* tail_acts = &pufferl->tail_acts_alloc;
++
++    pufferl->tail_observations = {
++        .shape = {total_agents, input_size},
++    };
++    pufferl->tail_rewards = {.shape = {total_agents}};
++    pufferl->tail_terminals = {.shape = {total_agents}};
++    pufferl->tail_values = {.shape = {total_agents}};
++    alloc_register(tail_acts, &pufferl->tail_observations);
++    alloc_register(tail_acts, &pufferl->tail_rewards);
++    alloc_register(tail_acts, &pufferl->tail_terminals);
++    alloc_register(tail_acts, &pufferl->tail_values);
++
++    pufferl->tail_activations = (PolicyActivations*)calloc(
++        num_buffers, sizeof(PolicyActivations));
++    pufferl->tail_states = (PrecisionTensor*)calloc(
++        num_buffers, sizeof(PrecisionTensor));
++    if (pufferl->tail_activations == nullptr ||
++            pufferl->tail_states == nullptr) {
++        return false;
++    }
++    pufferl->tail_valid = {.shape = {num_buffers}};
++    alloc_register(tail_acts, &pufferl->tail_valid);
++
++    for (int i = 0; i < num_buffers; i++) {
++        pufferl->tail_activations[i] = policy_reg_rollout(
++            &pufferl->policy, pufferl->weights, tail_acts, primary_slice);
++        pufferl->tail_states[i] = {
++            .shape = {num_layers, primary_slice, hidden_size},
++        };
++        alloc_register(tail_acts, &pufferl->tail_states[i]);
++    }
++    if (alloc_create(tail_acts) != cudaSuccess) {
++        return false;
+     }
++
++    puf_zero(&pufferl->tail_observations, pufferl->default_stream);
++    puf_zero(&pufferl->tail_rewards, pufferl->default_stream);
++    puf_zero(&pufferl->tail_terminals, pufferl->default_stream);
++    puf_zero(&pufferl->tail_values, pufferl->default_stream);
++    cudaMemsetAsync(pufferl->tail_valid.data, 0,
++        num_buffers * sizeof(int), pufferl->default_stream);
++    for (int i = 0; i < num_buffers; i++) {
++        puf_zero(&pufferl->tail_states[i], pufferl->default_stream);
++    }
++    return true;
+ }
+ 
+ // Append a fresh frozen bank with the given per-buffer slice size; returns its
+@@ -1921,6 +2191,13 @@
+ // add order). Must be called BEFORE cudagraph capture (pointers get baked in).
+ extern "C" int pufferl_add_frozen_bank(PuffeRL* pufferl, int slice_size,
+         int hidden_size, int num_layers) {
++    if (pufferl->tail_observations.data != nullptr ||
++            pufferl->rollout_captured || pufferl->tail_captured) {
++        fprintf(stderr,
++            "pufferl_add_frozen_bank: banks must be configured before tail "
++            "storage and rollout graphs\n");
++        return -1;
++    }
+     int idx = pufferl->num_frozen_banks;
+     pufferl->frozen_banks = (WeightBank*)realloc(
+         pufferl->frozen_banks, (idx + 1) * sizeof(WeightBank));
+@@ -2042,6 +2319,24 @@
+     pufferl->nccl_comm = nullptr;
+     pufferl->default_stream = 0;
+     pufferl->env_name = env_name;
++    pufferl->train_cudagraph = nullptr;
++    pufferl->fused_rollout_cudagraphs = nullptr;
++    pufferl->tail_rollout_cudagraphs = nullptr;
++    pufferl->training_failed = false;
++    pufferl->train_captured = false;
++    pufferl->rollout_captured = false;
++    pufferl->tail_captured = false;
++    pufferl->streams = nullptr;
++    pufferl->tail_states = nullptr;
++    pufferl->tail_activations = nullptr;
++    pufferl->tail_valid = {};
++    pufferl->tail_acts_alloc = {};
++    pufferl->epoch = 0;
++    pufferl->global_step = 0;
++    for (int i = 0; i < NUM_QUAL_EXECUTION_COUNTERS; i++) {
++        pufferl->qualification_execution_counts[i].store(
++            0, std::memory_order_relaxed);
++    }
+ 
+     cudaSetDevice(hypers.gpu_id);
+ 
+@@ -2201,6 +2496,8 @@
+     // Post-create initialization
+     cudaMemcpy(pufferl->act_sizes_puf.data, raw_act_sizes, num_action_heads * sizeof(int), cudaMemcpyHostToDevice);
+     cudaMemset(pufferl->losses_puf.data, 0, NUM_LOSSES * sizeof(float));
++    cudaMemset(pufferl->rng_offset_puf.data, 0,
++        (num_buffers + 1) * sizeof(long));
+     float one = 1.0f;
+     cudaMemcpy(pufferl->ppo_bufs_puf.grad_loss.data, &one, sizeof(float), cudaMemcpyHostToDevice);
+     muon_post_create(&pufferl->muon);
+@@ -2233,6 +2530,19 @@
+         }
+     }
+ 
++    int primary_slice = pufferl->bank_layout
++        ? pufferl->bank_layout[1] : agents_per_buf;
++    if (primary_slice <= 0 || !primary_tail_storage_create(
++            pufferl.get(), primary_slice, input_size, hidden_size, num_layers)) {
++        fprintf(stderr,
++            "create_pufferl: failed to allocate primary tail bootstrap storage\n");
++        return nullptr;
++    }
++    if (cudaStreamSynchronize(pufferl->default_stream) != cudaSuccess) {
++        throw std::runtime_error(
++            "post-create CUDA initialization failed");
++    }
++
+     // Exact-action environments allocate ragged joint metadata outside the
+     // activations allocator. Populate and upload it before graph warmup calls
+     // sample_logits; cudaMalloc storage is otherwise uninitialized here.
+@@ -2241,6 +2551,14 @@
+     // Cudagraph rolluts and entire training step
+     if (hypers.cudagraphs >= 0) {
+         pufferl->fused_rollout_cudagraphs = (cudaGraphExec_t*)calloc(horizon*num_buffers, sizeof(cudaGraphExec_t));
++        pufferl->tail_rollout_cudagraphs = (cudaGraphExec_t*)calloc(
++            num_buffers, sizeof(cudaGraphExec_t));
++        for (int i = 0; i < horizon * num_buffers; i++) {
++            pufferl->fused_rollout_cudagraphs[i] = nullptr;
++        }
++        for (int i = 0; i < num_buffers; i++) {
++            pufferl->tail_rollout_cudagraphs[i] = nullptr;
++        }
+         pufferl->train_warmup = 0;
+ 
+         // Snapshot weights + optimizer state before init-time capture
+@@ -2276,6 +2594,43 @@
+         }
+         pufferl->rollout_captured = true;
+ 
++        for (int buf = 0; buf < num_buffers; buf++) {
++            cudaStream_t stream = pufferl->streams[buf];
++            tl_stream = stream;
++            for (int warmup = 0; warmup < hypers.cudagraphs; warmup++) {
++                tail_forward_impl(pufferl.get(), buf, stream);
++                require_cuda_success(
++                    cudaStreamSynchronize(stream),
++                    "graph tail warmup synchronization failed");
++            }
++            cudaGraph_t tail_graph = nullptr;
++            require_cuda_success(
++                cudaStreamBeginCapture(
++                    stream, cudaStreamCaptureModeGlobal),
++                "tail cudaStreamBeginCapture failed");
++            tail_forward_impl(pufferl.get(), buf, stream);
++            require_cuda_success(
++                cudaStreamEndCapture(stream, &tail_graph),
++                "tail cudaStreamEndCapture failed");
++            cudaError_t tail_instantiate_status = cudaGraphInstantiate(
++                &pufferl->tail_rollout_cudagraphs[buf],
++                tail_graph,
++                0);
++            if (tail_instantiate_status != cudaSuccess) {
++                cudaGraphDestroy(tail_graph);
++                require_cuda_success(
++                    tail_instantiate_status,
++                    "tail cudaGraphInstantiate failed");
++            }
++            require_cuda_success(
++                cudaGraphDestroy(tail_graph),
++                "tail cudaGraphDestroy failed");
++            require_cuda_success(
++                cudaStreamSynchronize(stream),
++                "graph tail capture synchronization failed");
++        }
++        pufferl->tail_captured = true;
++
+         tl_stream = warmup_stream;
+         for (int i = 0; i <= hypers.cudagraphs; i++) {
+             train_impl(*pufferl);
+@@ -2313,6 +2668,51 @@
+         cudaDeviceSynchronize();
+ 
+         pufferl->epoch = 0;
++        for (int bank = 0; bank < 1 + pufferl->num_frozen_banks; bank++) {
++            PrecisionTensor* tail_states = (bank == 0)
++                ? pufferl->tail_states
++                : pufferl->frozen_banks[bank - 1].tail_states;
++            for (int b = 0; b < num_buffers; b++) {
++                puf_zero(&tail_states[b], pufferl->default_stream);
++            }
++        }
++        puf_zero(&pufferl->tail_observations, pufferl->default_stream);
++        puf_zero(&pufferl->tail_rewards, pufferl->default_stream);
++        puf_zero(&pufferl->tail_terminals, pufferl->default_stream);
++        puf_zero(&pufferl->tail_values, pufferl->default_stream);
++        require_cuda_success(
++            cudaMemsetAsync(
++                pufferl->tail_valid.data,
++                0,
++                num_buffers * sizeof(int),
++                pufferl->default_stream),
++            "post-warmup tail-valid reset failed");
++        require_cuda_success(
++            cudaMemsetAsync(
++                pufferl->rng_offset_puf.data,
++                0,
++                (num_buffers + 1) * sizeof(long),
++                pufferl->default_stream),
++            "post-warmup RNG-offset reset failed");
++        require_cuda_success(
++            cudaMemsetAsync(
++                pufferl->losses_puf.data,
++                0,
++                NUM_LOSSES * sizeof(float),
++                pufferl->default_stream),
++            "post-warmup loss-accumulator reset failed");
++        require_cuda_success(
++            cudaMemsetAsync(
++                pufferl->ppo_bufs_puf.loss_output.data,
++                0,
++                sizeof(float),
++                pufferl->default_stream),
++            "post-warmup scalar-loss reset failed");
++        memset(pufferl->profile.accum, 0, sizeof(pufferl->profile.accum));
++        if (cudaDeviceSynchronize() != cudaSuccess) {
++            throw std::runtime_error(
++                "post-warmup entropy/loss state restoration failed");
++        }
+         pufferl->global_step = 0;
+     }
+ 
+@@ -2333,11 +2733,16 @@
+         cudaDeviceSynchronize();
+         cudaProfilerStart();
+     }
++    for (int i = 0; i < NUM_QUAL_EXECUTION_COUNTERS; i++) {
++        pufferl->qualification_execution_counts[i].store(
++            0, std::memory_order_relaxed);
++    }
+ 
+-    double now = wall_clock();
+-    pufferl->start_time = now;
+-    pufferl->last_log_time = now;
++    double construction_complete_time = wall_clock();
++    pufferl->start_time = construction_complete_time;
++    pufferl->last_log_time = construction_complete_time;
+     pufferl->last_log_step = 0;
++    vec->rollout_tail_callback = tail_callback_wrapper;
+ 
+     return pufferl;
+ }
+@@ -2348,11 +2753,32 @@
+         cudaProfilerStop();
+     }
+ 
+-    cudaGraphExecDestroy(pufferl.train_cudagraph);
+-    for (int i = 0; i < pufferl.hypers.horizon * pufferl.hypers.num_buffers; i++) {
+-        cudaGraphExecDestroy(pufferl.fused_rollout_cudagraphs[i]);
++    if (pufferl.train_captured && pufferl.train_cudagraph != nullptr) {
++        cudaGraphExecDestroy(pufferl.train_cudagraph);
+     }
++    if (pufferl.fused_rollout_cudagraphs != nullptr) {
++        int graph_count =
++            pufferl.hypers.horizon * pufferl.hypers.num_buffers;
++        for (int i = 0; i < graph_count; i++) {
++            if (pufferl.fused_rollout_cudagraphs[i] != nullptr) {
++                cudaGraphExecDestroy(pufferl.fused_rollout_cudagraphs[i]);
++            }
++        }
++    }
++    if (pufferl.tail_rollout_cudagraphs != nullptr) {
++        for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
++            if (pufferl.tail_rollout_cudagraphs[i] != nullptr) {
++                cudaGraphExecDestroy(pufferl.tail_rollout_cudagraphs[i]);
++            }
++        }
++    }
++    free(pufferl.fused_rollout_cudagraphs);
++    free(pufferl.tail_rollout_cudagraphs);
+ 
++    for (int buf = 0; buf < pufferl.hypers.num_buffers; buf++) {
++        policy_activations_free(
++            &pufferl.policy, pufferl.tail_activations[buf]);
++    }
+     policy_weights_free(&pufferl.policy, &pufferl.weights);
+     policy_activations_free(&pufferl.policy, pufferl.train_activations);
+     for (int buf = 0; buf < pufferl.hypers.num_buffers; buf++) {
+@@ -2371,6 +2797,7 @@
+     alloc_free(&pufferl.params_alloc);
+     alloc_free(&pufferl.grads_alloc);
+     alloc_free(&pufferl.activations_alloc);
++    alloc_free(&pufferl.tail_acts_alloc);
+ 
+     for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
+         cudaStreamDestroy(pufferl.streams[i]);
+@@ -2384,7 +2811,8 @@
+ 
+     free(pufferl.buffer_states);
+     free(pufferl.buffer_activations);
+-    free(pufferl.fused_rollout_cudagraphs);
++    free(pufferl.tail_states);
++    free(pufferl.tail_activations);
+     free(pufferl.streams);
+ 
+     for (int b = 0; b < pufferl.num_frozen_banks; b++) {
+--- a/src/vecenv.h
++++ b/src/vecenv.h
+@@ -103,6 +103,7 @@
+     int joint_action_max;
+     cudaStream_t* streams;
+     StaticThreading* threading;
++    void (*rollout_tail_callback)(void* ctx, int buf);
+     int obs_size;
+     int num_atns;
+     int action_mask_size;        // 0 unless env defines MY_ACTION_MASK
+@@ -354,6 +355,9 @@
+                 (size_t)vec->joint_buffer_counts[buf] * sizeof(uint32_t),
+                 cudaMemcpyHostToDevice, stream);
+ #endif
++        }
++        if (vec->rollout_tail_callback != NULL) {
++            vec->rollout_tail_callback(ctx, buf);
+         }
+         cudaStreamSynchronize(stream);
+         atomic_store(&buffer_states[buf], OMP_WAITING);
+

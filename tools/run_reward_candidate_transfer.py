@@ -30,7 +30,10 @@ FULL_ARMS = ("both", "possession_only", "gain_only", "neither")
 SEEDS = (42, 43)
 BOT_TYPES = (0, 1)
 BOT_TEAMS = (0, 1)
-EXPECTED_NATIVE_BYTES = 16_066_560
+EXPECTED_NATIVE_BYTES = 16_207_872
+OBSERVATION_ABI = "obs-v7"
+OBSERVATION_VERSION = 7
+OBS_SIZE = 2851
 
 
 def transfer_settings() -> dict[str, int]:
@@ -197,7 +200,9 @@ def convert_checkpoints(
                     "source_sha256": record["native_sha256"],
                     "converter_sha256": sha256(converter),
                     "config_sha256": sha256(config),
-                    "obs_size": 2782,
+                    "observation_abi": OBSERVATION_ABI,
+                    "observation_version": OBSERVATION_VERSION,
+                    "obs_size": OBS_SIZE,
                     "output": str(output),
                     "output_sha256": sha256(output),
                 }
@@ -207,7 +212,7 @@ def convert_checkpoints(
                 temporary = output.with_suffix(output.suffix + f".tmp.{os.getpid()}")
                 result = run_checked([
                     str(python), str(converter), "--to-torch", record["native"],
-                    "--config", str(config), "--obs-size", "2782",
+                    "--config", str(config), "--obs-size", str(OBS_SIZE),
                     "-o", str(temporary),
                 ], cwd=root)
                 if not temporary.is_file() or temporary.stat().st_size < 1_000_000:
@@ -221,7 +226,9 @@ def convert_checkpoints(
                     "converter_sha256": sha256(converter),
                     "config": str(config),
                     "config_sha256": sha256(config),
-                    "obs_size": 2782,
+                    "observation_abi": OBSERVATION_ABI,
+                    "observation_version": OBSERVATION_VERSION,
+                    "obs_size": OBS_SIZE,
                     "output": str(output),
                     "output_bytes": output.stat().st_size,
                     "output_sha256": sha256(output),
@@ -301,7 +308,9 @@ def transfer_contract_identity(root: Path) -> dict[str, Any]:
         "conversion": {
             "converter_sha256": sha256(root / "training/convert_checkpoint.py"),
             "config_sha256": sha256(root / "puffer/config/bloodbowl.ini"),
-            "obs_size": 2782,
+            "observation_abi": OBSERVATION_ABI,
+            "observation_version": OBSERVATION_VERSION,
+            "obs_size": OBS_SIZE,
             "bias_contract": "native-to-torch zero-fills biases",
         },
         "gates": transfer_gates(),

@@ -18,13 +18,14 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 from bt_fit import anchored_elo, connected_components, decisive_counts, fit_bt, parse_rows
+from checkpoint_lineage import EXPECTED_CHECKPOINT_BYTES
 
 
 DEFAULT_LADDER = "tools/anchored_ladder.csv"
 DEFAULT_REGISTRY = "docs/checkpoint_registry.json"
 DEFAULT_ANCHOR = "gen1"
 DEFAULT_CHECKPOINT_DIR = "training"
-DEFAULT_EXPECT_BYTES = 16_066_560
+DEFAULT_EXPECT_BYTES = EXPECTED_CHECKPOINT_BYTES
 ELO_SCALE = 400.0
 POOL_BANKS = 8
 

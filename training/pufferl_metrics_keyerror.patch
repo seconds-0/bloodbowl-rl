@@ -1,30 +1,89 @@
 --- a/pufferlib/pufferl.py
 +++ b/pufferlib/pufferl.py
-@@ -428,18 +428,24 @@
-     next_bin = logged_timesteps / (n - 1) if n > 1 else np.inf
-     for log in all_logs:
-         for k, v in log.items():
--            metrics[k][-1].append(v)
-+            metrics.setdefault(k, [[]])[-1].append(v)
+@@ -455,4 +455,52 @@
+     backend.close(pufferl)
  
-         if log['agent_steps'] < next_bin:
-             continue
- 
-         next_bin += logged_timesteps / (n - 1)
-         for k in metrics:
--            metrics[k][-1] = np.mean(metrics[k][-1])
++def _downsample_logs(all_logs, n):
++    """Downsample numeric curves and retain the latest text metadata."""
++    metrics = {}
++    metadata = {}
++    value_kinds = {}
++    logged_timesteps = all_logs[-1]['agent_steps']
++    next_bin = logged_timesteps / (n - 1) if n > 1 else np.inf
++    for log in all_logs:
++        for k, v in log.items():
++            if isinstance(v, str):
++                kind = 'metadata'
++            elif isinstance(v, (
++                    bool, int, float, np.bool_, np.integer, np.floating)):
++                kind = 'metric'
++            else:
++                raise TypeError(
++                    f'log field {k!r} has unsupported value type '
++                    f'{type(v).__name__}')
++
++            previous_kind = value_kinds.setdefault(k, kind)
++            if previous_kind != kind:
++                raise TypeError(
++                    f'log field {k!r} changed from {previous_kind} to {kind}')
++            if kind == 'metadata':
++                metadata[k] = v
++            else:
++                metrics.setdefault(k, [[]])[-1].append(v)
++
++        if log['agent_steps'] < next_bin:
++            continue
++
++        next_bin += logged_timesteps / (n - 1)
++        for k in metrics:
 +            metrics[k][-1] = (
 +                np.mean(metrics[k][-1]) if metrics[k][-1] else float("nan"))
-             metrics[k].append([])
- 
-     for k in metrics:
--        metrics[k][-1] = all_logs[-1][k]
++            metrics[k].append([])
++
++    for k in metrics:
 +        if k in all_logs[-1]:
 +            metrics[k][-1] = all_logs[-1][k]
 +        elif metrics[k][-1]:
 +            metrics[k][-1] = np.mean(metrics[k][-1])
 +        else:
 +            metrics[k][-1] = float("nan")
++
++    return metrics, metadata
++
++
+ def _train(env_name, args, sweep_obj=None, result_queue=None, verbose=False):
+     '''Single-GPU training worker. Process target for both DDP ranks and sweep trials.'''
+@@ -633,23 +681,7 @@
+ 
+     # Downsample results
+     n = args['sweep']['downsample']
+-    metrics = {k: [[]] for k in all_logs[0]}
+-    logged_timesteps = all_logs[-1]['agent_steps']
+-    next_bin = logged_timesteps / (n - 1) if n > 1 else np.inf
+-    for log in all_logs:
+-        for k, v in log.items():
+-            metrics[k][-1].append(v)
+-
+-        if log['agent_steps'] < next_bin:
+-            continue
+-
+-        next_bin += logged_timesteps / (n - 1)
+-        for k in metrics:
+-            metrics[k][-1] = np.mean(metrics[k][-1])
+-            metrics[k].append([])
+-
+-    for k in metrics:
+-        metrics[k][-1] = all_logs[-1][k]
++    metrics, metadata = _downsample_logs(all_logs, n)
  
      # Match-mode: single observation at final-training cost. Protein's curve
      # fit collapses to one point — we only trust the match winrate, not any
+@@ -670,7 +702,7 @@
+     log_dir = os.path.join(args['log_dir'], args['env_name'])
+     os.makedirs(log_dir, exist_ok=True)
+     with open(os.path.join(log_dir, run_id + '.json'), 'w') as f:
+-        json.dump({**args, 'metrics': metrics}, f)
++        json.dump({**args, 'metrics': metrics, 'metadata': metadata}, f)
+ 
+     if args['wandb']:
+         if sweep_obj is None and model_path: # Don't spam uploads during sweeps

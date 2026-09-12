@@ -5,7 +5,7 @@
 // engine to the next decision, and emits observations + per-head legality
 // masks. Episodes are full matches over procedurally generated rosters.
 //
-// Observation (uint8, BBE_OBS_SIZE = 2782B, obs v6), egocentric: each agent
+// Observation (uint8, BBE_OBS_SIZE = 2851B, obs v7), egocentric: each agent
 // sees its own players first and the pitch x-mirrored for the away coach, so
 // "forward" is always +x. Layout (offsets from the BBE_* macros below):
 //   [0..767]   32 players x BBE_PLAYER_BYTES (24): rows 0-15 = my team,
@@ -58,12 +58,12 @@
 //                     0 = not a placement window)
 //                [28] stashed MOVE target row + 1 (0 = no live stash)
 //                [29] ktm_used
-//                [30..31] reserved, always zero (obs-v6 slack)
+//                [30] my drive-scoped bonus rerolls, [31] opponent's
 //                [32..47] CHOOSE_OPTION option index -> row + 1 (0 = no
 //                         such option / not a player-valued option list)
 //              Team ids are deliberately NOT observed — see the encoder
 //              comment; it forces roster-reading. Full spec:
-//              docs/obs-v6-spec.md.
+//              docs/obs-v7-spec.md.
 //   [832..1611] tackle-zone planes (obs v3, BBE_TZ_OFF): two per-square
 //              TZ-count planes of 390 bytes each (index y*26 + x, x
 //              mirrored for the away agent like every spatial feature):
@@ -72,6 +72,10 @@
 //              The opponent plane is destination danger: dodging into /
 //              out of coverage was unobservable per-square before v3 (only
 //              the mover's own marked count, player byte [23], was visible).
+//   [1612..2781] three 390-byte decision-support probability planes (v4/v5).
+//   [2782..2813] Loner X+ parameter for egocentric player rows 0..31.
+//   [2814..2845] Bloodlust X+ parameter for egocentric player rows 0..31.
+//   [2846..2848] targeted-action variant, context, and projected choice state.
 //
 // Action heads (ACT_SIZES {30, 33, 391}): bb_action type | arg (0-31 direct,
 // 32 = inactive/sentinel) | square (y*26+x, 390 = inactive/none). The Puffer
@@ -107,6 +111,7 @@
 #include "engine/proc_table.c"
 #include "engine/proc_test.c"
 #include "engine/proc_turn.c"
+#include "engine/proc_targeted.c"
 #include "engine/proc_move.c"
 #include "engine/proc_block.c"
 #include "engine/proc_ttm.c"
@@ -132,10 +137,10 @@
 // tools/checkpoint_lineage.py refuses a sidecar whose observation_version
 // differs from it. Never warm-start, mix replays, or compare curves across a
 // bump without a reviewed bridge (docs/obs-v6-spec.md).
-#define BBE_OBS_VERSION 6
+#define BBE_OBS_VERSION 7
 #define BBE_PLAYER_BYTES 24    // 11 stat/state bytes + 12 skill-id slots + TZ byte
 #define BBE_SKILL_SLOTS 12     // >= max base-roster skills (10) + procgen cap
-#define BBE_OBS_SIZE 2782      // v4 shape retained; decision context is obs v6
+#define BBE_OBS_SIZE 2851      // obs v7 parameters + targeted-action context
 #define BBE_CTX_OFF (BB_NUM_PLAYERS * BBE_PLAYER_BYTES) // 768
 #define BBE_SCALAR_OFF (BBE_CTX_OFF + 16)               // 784
 #define BBE_TZ_OFF (BBE_SCALAR_OFF + 48)                // 832
@@ -152,7 +157,8 @@
 #define BBE_S_PLACEMENT_BUDGET 27 // 811  remaining placements + 1 (0 = not a placement window)
 #define BBE_S_MOVE_TARGET 28      // 812  stashed MOVE target: ego slot + 1
 #define BBE_S_KTM_USED 29         // 813  m->ktm_used
-// s[30..31] (814..815) reserved: the 2 bytes of slack, always zero.
+#define BBE_S_BONUS_REROLLS_OWN 30 // 814 drive-scoped bonus rerolls, me
+#define BBE_S_BONUS_REROLLS_OPP 31 // 815 drive-scoped bonus rerolls, opponent
 #define BBE_S_OPTION_TABLE 32     // 816..831  CHOOSE_OPTION index -> ego slot + 1
 #define BBE_S_OPTION_SLOTS 16
 _Static_assert(BBE_S_OPTION_TABLE + BBE_S_OPTION_SLOTS ==
@@ -183,6 +189,14 @@ enum {
 #define BBE_AGENTS 2
 #define BBE_MAX_DECISIONS 4096 // episode safety bound
 #define BBE_MAX_BANKS 8        // frozen selfplay-pool banks (matches selfplay.py)
+
+static int bbe_parse_scripted_selector(double raw, unsigned int maximum,
+                                       unsigned int* out) {
+    if (!isfinite(raw) || raw < 0.0 || raw > (double)maximum ||
+        raw != floor(raw)) return 0;
+    *out = (unsigned int)raw;
+    return 1;
+}
 #define BBE_DEFAULT_REWARD_TD 0.4f
 #define BBE_DEFAULT_REWARD_WIN 0.6f
 #define BBE_DEFAULT_REWARD_DRAW 0.0f
@@ -236,8 +250,15 @@ _Static_assert(BBE_TZ_OFF == BBE_SCALAR_OFF + 48, "obs layout out of sync");
 #define BBE_A1_OFF (BBE_TZ_OFF + 2 * BBE_TZ_PLANE)  // 1612
 #define BBE_A2_OFF (BBE_A1_OFF + BBE_TZ_PLANE)      // 2002
 #define BBE_B_OFF (BBE_A2_OFF + BBE_TZ_PLANE)       // 2392
-_Static_assert(BBE_OBS_SIZE == BBE_B_OFF + BBE_TZ_PLANE,
-               "obs size out of sync with the v4 plane layout");
+#define BBE_LONER_OFF (BBE_B_OFF + BBE_TZ_PLANE)     // 2782, 32 player rows
+#define BBE_BLOODLUST_OFF (BBE_LONER_OFF + BB_NUM_PLAYERS) // 2814
+#define BBE_TARGETED_VARIANT_OFF (BBE_BLOODLUST_OFF + BB_NUM_PLAYERS) // 2846
+#define BBE_TARGETED_CONTEXT_OFF (BBE_TARGETED_VARIANT_OFF + 1)       // 2847
+#define BBE_TARGETED_STATE_OFF (BBE_TARGETED_CONTEXT_OFF + 1)         // 2848
+#define BBE_TARGETED_ACTOR_OFF (BBE_TARGETED_STATE_OFF + 1)            // 2849
+#define BBE_TARGETED_TARGET_OFF (BBE_TARGETED_ACTOR_OFF + 1)           // 2850
+_Static_assert(BBE_OBS_SIZE == BBE_TARGETED_TARGET_OFF + 1,
+               "obs size out of sync with the v7 parameter layout");
 _Static_assert(BB_SKILL_COUNT <= 254, "skill id + 1 must fit a byte");
 
 // Engine-compat stamp for demo-state bank files (.bbs "BBS1": written by
@@ -678,6 +699,10 @@ typedef struct {
     // mechanism that excludes frozen-bank rows -- no CUDA change. 0 = global
     // scripted_opponent semantics (every env; only legal when not learning).
     int scripted_bank_tag;
+    // Multi-seat form of scripted_bank_tag. Bit b selects selfplay tag b+1.
+    // Zero preserves legacy tag/global semantics. The binding rejects a
+    // nonzero tag and mask together, so routing is always unambiguous.
+    unsigned int scripted_bank_mask;
     int max_decisions;
     // Spectator rendering (bbe_render.h); NULL until c_render is first called.
     int render_fps;
@@ -796,10 +821,10 @@ typedef struct {
     int ep_ball_possessions;
     float poss_pickup_fwd, poss_path;
     int poss_last_x, poss_last_y;
-    // Bootstrap potentials, per channel: deltas emitted only WITHIN a regime
-    // (ball stays loose / same team keeps carrying); regime transitions emit
-    // nothing — pickup itself is priced by reward_ball_gain. NaN = inactive;
-    // finite negative values are valid potentials at any configured scale.
+    // Distance-potential history, per channel. Exact PBRS stores a finite TOTAL
+    // potential for every state (inactive = 0) and emits across every regime
+    // transition. Legacy raw-delta mode stores NaN while inactive and emits only
+    // within one uninterrupted regime; finite negative legacy values are valid.
     float pot_fetch_prev[2];
     float pot_carry_prev[2];
     float prev_contact_fav[2];
@@ -905,6 +930,40 @@ static float bbe_potential(float coeff, int dist) {
         abort();
     }
     return phi;
+}
+
+static void bbe_reset_potential_history(Bloodbowl* env) {
+    if (env->reward_dist_pbrs_gamma > 0.0f) {
+        for (int team = 0; team < BBE_AGENTS; team++) {
+            env->pot_fetch_prev[team] =
+                bbe_potential(
+                    env->reward_dist_ball,
+                    bbe_dist_fetch(&env->match, team));
+            env->pot_carry_prev[team] =
+                bbe_potential(
+                    env->reward_dist_endzone,
+                    bbe_dist_carry(&env->match, team));
+        }
+        return;
+    }
+    // Historical raw-delta mode: NaN is the inactive/unprimed sentinel.
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
+}
+
+static void bbe_require_exact_potential_history(
+        const Bloodbowl* env, int team) {
+    if (isfinite(env->pot_fetch_prev[team]) &&
+        isfinite(env->pot_carry_prev[team])) {
+        return;
+    }
+    fprintf(stderr,
+            "bloodbowl: exact PBRS history must be finite before stepping "
+            "(team=%d fetch=%g carry=%g); reset lifecycle was bypassed or "
+            "corrupted\n",
+            team, (double)env->pot_fetch_prev[team],
+            (double)env->pot_carry_prev[team]);
+    abort();
 }
 
 // The vendored trainer's reward clamp, applied in BOTH backends by
@@ -1139,6 +1198,7 @@ static bool bbe_frame_a_is_slot(int proc) {
     case BB_PROC_FOUL:        // a = fouler
     case BB_PROC_KO_RECOVERY: // a = KO-patch candidate
     case BB_PROC_PASS:        // a = thrower (interception window)
+    case BB_PROC_TARGETED_ACTION: // a = actor
         return true;
     default:
         return false;
@@ -1150,10 +1210,21 @@ static bool bbe_frame_b_is_slot(int proc) {
     case BB_PROC_BLOCK: // b = defender
     case BB_PROC_PUSH:  // b = pushee
     case BB_PROC_FOUL:  // b = victim
+    case BB_PROC_TARGETED_ACTION: // b = target
         return true;
     default:
         return false;
     }
+}
+
+// The wrapper remains on the active stack while PASS/PICKUP TEST children ask
+// for reroll choices. Walk from the top so the nearest wrapper supplies the
+// actor, target, variant, context, and reviewed public choice projection.
+static const bb_frame* bbe_targeted_action_frame(const bb_match* m) {
+    for (int i = (int)m->stack_top - 1; i >= 0; i--) {
+        if (m->stack[i].proc == BB_PROC_TARGETED_ACTION) return &m->stack[i];
+    }
+    return NULL;
 }
 
 // Find the currently active movement procedure even when a nested TEST,
@@ -1223,6 +1294,23 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
     }
     bb_match* m = &env->match;
     int me = agent; // agent 0 = home coach, 1 = away
+    // Targeted-action public state remains visible through nested child TEST
+    // windows. Never expose the wrapper's raw overloaded frame.data bits.
+    o[BBE_TARGETED_VARIANT_OFF] = 0;
+    o[BBE_TARGETED_CONTEXT_OFF] = 0;
+    o[BBE_TARGETED_STATE_OFF] = 0;
+    o[BBE_TARGETED_ACTOR_OFF] = 0;
+    o[BBE_TARGETED_TARGET_OFF] = 0;
+    const bb_frame* targeted = bbe_targeted_action_frame(m);
+    if (targeted != NULL) {
+        o[BBE_TARGETED_VARIANT_OFF] = (unsigned char)(targeted->x + 1);
+        o[BBE_TARGETED_CONTEXT_OFF] = (unsigned char)targeted->y;
+        o[BBE_TARGETED_STATE_OFF] = bb_targeted_action_public_state(targeted);
+        o[BBE_TARGETED_ACTOR_OFF] = targeted->a < BB_NUM_PLAYERS
+            ? (unsigned char)(1 + bbe_ego_slot(me, targeted->a)) : 0;
+        o[BBE_TARGETED_TARGET_OFF] = targeted->b < BB_NUM_PLAYERS
+            ? (unsigned char)(1 + bbe_ego_slot(me, targeted->b)) : 0;
+    }
 
     for (int i = 0; i < BB_NUM_PLAYERS; i++) {
         // Egocentric ordering: my players first (row = bbe_ego_slot(slot)).
@@ -1268,6 +1356,20 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
             }
         }
         memcpy(t + 11, env->skill_rows[slot], BBE_SKILL_SLOTS);
+
+        // obs-v7 typed effective X+ parameters. Keep engine fallbacks intact:
+        // Loner with raw p_loner=0 behaves as 4+ via bb_loner_value, while
+        // Bloodlust with raw p_bloodlust=0 is inert even if the trait bit is
+        // present. Zero therefore means "mechanic has no current effect".
+        // Both fields are int8_t, so every positive target fits losslessly in
+        // a byte. Encoding adds no new engine validity or termination rule.
+        bool has_loner = bb_has_skill(&p->skills, BB_SK_LONER);
+        bool has_bloodlust = bb_has_skill(&p->skills, BB_SK_BLOODLUST);
+        int loner_target = has_loner ? bb_loner_value(m, slot) : 0;
+        int bloodlust_target =
+            has_bloodlust && p->p_bloodlust > 0 ? p->p_bloodlust : 0;
+        o[BBE_LONER_OFF + i] = (unsigned char)loner_target;
+        o[BBE_BLOODLUST_OFF + i] = (unsigned char)bloodlust_target;
     }
 
     unsigned char* b = o + BBE_CTX_OFF;
@@ -1391,6 +1493,8 @@ static void bbe_encode_obs(Bloodbowl* env, int agent) {
     s[5] = m->rerolls[me];
     s[6] = m->rerolls[1 - me];
     s[7] = m->weather;
+    s[BBE_S_BONUS_REROLLS_OWN] = m->bonus_rerolls[me];
+    s[BBE_S_BONUS_REROLLS_OPP] = m->bonus_rerolls[1 - me];
     s[8] = m->blitz_used;
     s[9] = m->pass_used;
     s[10] = m->handoff_used;
@@ -2730,11 +2834,10 @@ static void bbe_reset_match(Bloodbowl* env) {
         bbe_ball_xy(&env->match, &x, &y);
         bbe_start_ball_possession(env, env->possessor, x, y);
     }
-    // Potentials start inactive in both channels: the first post-reset step
-    // primes them without emitting a delta, so a resumed carrier/loose ball
-    // never books a phantom potential jump against the inactive sentinel.
-    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
-    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
+    // Exact PBRS must begin from the actual first policy-visible state s0;
+    // otherwise its first transition silently substitutes Phi(s1) for Phi(s0).
+    // Legacy raw-delta lineages retain their historical NaN priming semantics.
+    bbe_reset_potential_history(env);
     if (env->reward_k_assist != 0.0f) {
         env->prev_contact_fav[0] = bb_team_contact_favorability(&env->match, 0);
         env->prev_contact_fav[1] = bb_team_contact_favorability(&env->match, 1);
@@ -2956,8 +3059,8 @@ static void bbe_finish_episode(Bloodbowl* env) {
             // The `decisions >= max_decisions` TRUNCATION at the bottom of
             // c_step ends mid-drive with the ball typically still HELD, so
             // Phi(s_T) > 0 there, terminal is set to 1.0 so PPO does not
-            // bootstrap it away, and the next reset NaN-primes pot_*_prev --
-            // the accumulated potential debt was simply forgiven. Since
+            // bootstrap it away. Before terminal payback was added, the
+            // accumulated potential debt was simply forgiven. Since
             // truncation still pays the full result bonus from the current
             // score, that made "pad decisions to the cap while parked deep with
             // the ball" worth up to k_fetch*25 + k_carry*25 on top of it, and
@@ -3463,8 +3566,13 @@ static void c_step(Bloodbowl* env) {
         int scripted_team = env->scripted_opponent_team == BB_HOME
                                 ? BB_HOME : BB_AWAY;
         bb_action act;
+        int scripted_selected_bank = env->scripted_bank_tag > 0
+            ? env->tag == env->scripted_bank_tag
+            : (env->scripted_bank_mask != 0 && env->tag > 0 &&
+               (env->scripted_bank_mask & (1u << (env->tag - 1))) != 0);
         int scripted_env = env->scripted_opponent &&
-            (env->scripted_bank_tag <= 0 || env->tag == env->scripted_bank_tag);
+            ((env->scripted_bank_tag <= 0 && env->scripted_bank_mask == 0) ||
+             scripted_selected_bank);
         if (scripted_env && (scripted_both || agent == scripted_team)) {
             act = env->scripted_opponent_type == 1
                       ? bbe_offense_bot_pick(m, env->legal, env->n_legal)
@@ -3989,12 +4097,11 @@ static void c_step(Bloodbowl* env) {
                     // the emission happens on EVERY transition -- including
                     // across a score or drive boundary, because skipping one is
                     // exactly what breaks telescoping.
+                    bbe_require_exact_potential_history(env, t);
                     float phf = bbe_potential(env->reward_dist_ball, df);
                     float phc = bbe_potential(env->reward_dist_endzone, dc);
-                    float pf0 = isnan(env->pot_fetch_prev[t])
-                                    ? phf : env->pot_fetch_prev[t];
-                    float pc0 = isnan(env->pot_carry_prev[t])
-                                    ? phc : env->pot_carry_prev[t];
+                    float pf0 = env->pot_fetch_prev[t];
+                    float pc0 = env->pot_carry_prev[t];
                     if (env->reward_dist_ball != 0.0f) {
                         bbe_reward_add(env, t, BBE_REWARD_DISTANCE_BALL,
                                        gam * phf - pf0);

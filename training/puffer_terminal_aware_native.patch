@@ -1,0 +1,1187 @@
+--- a/src/models.cu
++++ b/src/models.cu
+@@ -28,7 +28,8 @@
+ typedef PrecisionTensor (*network_forward_fn)(void* weights, PrecisionTensor x,
+     PrecisionTensor state, void* activations, cudaStream_t stream);
+ typedef PrecisionTensor (*network_forward_train_fn)(void* weights, PrecisionTensor x,
+-    PrecisionTensor state, void* activations, cudaStream_t stream);
++    PrecisionTensor state, PrecisionTensor terminals,
++    void* activations, cudaStream_t stream);
+ typedef PrecisionTensor (*network_backward_fn)(void* weights,
+     PrecisionTensor grad, void* activations, cudaStream_t stream);
+ 
+@@ -149,6 +150,7 @@
+     precision_t* combined_ptr = nullptr;
+     precision_t* state_ptr = nullptr;
+     precision_t* input_ptr = nullptr;
++    precision_t* terminal_ptr = nullptr;
+     int B = 0, T = 0, H = 0;
+     FloatTensor state_history; // raw state_t; recurrent carry is precision-rounded
+     PrecisionTensor out, next_state;
+@@ -167,6 +169,10 @@
+     float state = to_float(from_float(to_float(scan.state_ptr[state_idx])));
+     scan.state_history.data[b * (T + 1) * H + h] = state;
+     for (int t = 0; t < T; ++t) {
++        if (scan.terminal_ptr != nullptr &&
++                to_float(scan.terminal_ptr[b * T + t]) != 0.0f) {
++            state = 0.0f;
++        }
+         int c = combined_base + t * 3 * H + h;
+         float hidden = to_float(scan.combined_ptr[c]);
+         float gate = to_float(scan.combined_ptr[c + H]);
+@@ -203,8 +209,11 @@
+         float gate = to_float(scan.combined_ptr[c + H]);
+         float proj = to_float(scan.combined_ptr[c + 2 * H]);
+         float input = to_float(scan.input_ptr[row]);
+-        float previous = to_float(from_float(
+-            scan.state_history.data[history_base + t * H]));
++        float previous = scan.terminal_ptr != nullptr &&
++                to_float(scan.terminal_ptr[b * T + t]) != 0.0f
++            ? 0.0f
++            : to_float(from_float(
++                scan.state_history.data[history_base + t * H]));
+         float current = scan.state_history.data[history_base + (t + 1) * H];
+         float grad_output = to_float(grad_out[row]);
+         float p = sigmoid(proj);
+@@ -222,6 +231,13 @@
+             grad_output * (current - input) * p * (1.0f - p));
+         scan.grad_input.data[row] = from_float(grad_output * (1.0f - p));
+         grad_state *= 1.0f - g;
++        // A terminal bit is aligned with the observation at this timestep:
++        // behavior cleared before its forward, so recompute must not propagate
++        // recurrent gradients into the preceding episode.
++        if (scan.terminal_ptr != nullptr &&
++                to_float(scan.terminal_ptr[b * T + t]) != 0.0f) {
++            grad_state = 0.0f;
++        }
+     }
+     scan.grad_state.data[state_idx] = from_float(grad_state);
+ }
+@@ -556,10 +572,11 @@
+ }
+ 
+ static PrecisionTensor mingru_forward_train(void* w, PrecisionTensor x, PrecisionTensor state,
+-        void* activations, cudaStream_t stream) {
++        PrecisionTensor terminals, void* activations, cudaStream_t stream) {
+     MinGRUWeights* m = (MinGRUWeights*)w;
+     MinGRUActivations* a = (MinGRUActivations*)activations;
+     int B = x.shape[0];
++    puf_zero(&a->grad_next_state, stream);
+     for (int i = 0; i < m->num_layers; i++) {
+         puf_copy(&a->saved_inputs[i], &x, stream);
+         PrecisionTensor state_i = mingru_state_layer(m, state, i);
+@@ -567,6 +584,7 @@
+         a->scan_bufs[i].combined_ptr = a->combined_bufs[i].data;
+         a->scan_bufs[i].state_ptr = state_i.data;
+         a->scan_bufs[i].input_ptr = a->saved_inputs[i].data;
++        a->scan_bufs[i].terminal_ptr = terminals.data;
+         mingru_scan_forward<<<grid_size(B*m->hidden), BLOCK_SIZE, 0, stream>>>(a->scan_bufs[i]);
+         x = a->scan_bufs[i].out;
+     }
+@@ -624,10 +642,12 @@
+ }
+ 
+ PrecisionTensor policy_forward_train(Policy* p, PolicyWeights& w, PolicyActivations& activations,
+-        PrecisionTensor x, PrecisionTensor state, cudaStream_t stream) {
++        PrecisionTensor x, PrecisionTensor state, PrecisionTensor terminals,
++        cudaStream_t stream) {
+     int B = x.shape[0], TT = x.shape[1];
+     PrecisionTensor h = p->encoder.forward(w.encoder, activations.encoder, *puf_squeeze(&x, 0), stream);
+-    h = p->network.forward_train(w.network, *puf_unsqueeze(&h, 0, B, TT), state, activations.network, stream);
++    h = p->network.forward_train(w.network, *puf_unsqueeze(&h, 0, B, TT),
++        state, terminals, activations.network, stream);
+     PrecisionTensor dec_out = p->decoder.forward(w.decoder, activations.decoder, *puf_squeeze(&h, 0), stream);
+     return *puf_unsqueeze(&dec_out, 0, B, TT);
+ }
+--- a/src/pufferlib.cu
++++ b/src/pufferlib.cu
+@@ -109,6 +109,7 @@
+ // training to perform several (though not all) ops in contiguous memory
+ struct TrainGraph {
+     PrecisionTensor mb_state;       // (layers, B, hidden)
++    PrecisionTensor mb_terminals;   // (B, T), observation-aligned reset mask
+     PrecisionTensor mb_obs;         // (B, T, input_size)
+     PrecisionTensor mb_actions;     // (B, T, num_atns)
+     PrecisionTensor mb_logprobs;    // (B, T)
+@@ -125,6 +126,7 @@
+         int hidden_size, int num_atns, int num_layers, int mask_size) {
+     bufs = (TrainGraph){
+         .mb_state =         {.shape = {num_layers, B, hidden_size}},
++        .mb_terminals =     {.shape = {B, T}},
+         .mb_obs =           {.shape = {B, T, input_size}},
+         .mb_actions =       {.shape = {B, T, num_atns}},
+         .mb_logprobs =      {.shape = {B, T}},
+@@ -138,6 +140,7 @@
+     };
+     alloc_register(alloc, &bufs.mb_obs);
+     alloc_register(alloc, &bufs.mb_state);
++    alloc_register(alloc, &bufs.mb_terminals);
+     alloc_register(alloc, &bufs.mb_actions);
+     alloc_register(alloc, &bufs.mb_logprobs);
+     alloc_register(alloc, &bufs.mb_advantages);
+@@ -382,7 +385,8 @@
+     FloatTensor master_weights;
+     PrecisionTensor* buffer_states;         // [num_buffers]
+     PolicyActivations* buffer_activations;  // [num_buffers]
+-    PrecisionTensor* tail_states;           // [num_buffers], fresh zero state
++    PrecisionTensor* tail_states;           // [num_buffers], detached tail work state
++    PrecisionTensor* tail_input_states;     // [num_buffers], detached effective input
+     PolicyActivations* tail_activations;    // [num_buffers], value-only scratch
+     int slice_size;  // # agents per buffer this bank owns; sets activation/state batch dim
+     int hidden_size;
+@@ -414,13 +418,17 @@
+     bool is_continuous;  // True if all action dimensions are continuous (size==1)
+     PrecisionTensor* buffer_states;  // Per-buffer states for contiguous access
+     PolicyActivations* buffer_activations;  // Per-buffer inference activations
+-    PrecisionTensor* tail_states;  // Per-buffer zero-state bootstrap scratch
++    PrecisionTensor* tail_states;  // Per-buffer detached tail work state
++    PrecisionTensor* tail_input_states; // Per-buffer detached effective tail input
+     PolicyActivations* tail_activations;  // Dedicated value-only activations
+     PrecisionTensor tail_observations;  // (agents, input_size), post-horizon
+     PrecisionTensor tail_rewards;       // (agents,), post-final-action outcome
+     PrecisionTensor tail_terminals;     // (agents,)
+     PrecisionTensor tail_values;        // (agents,), zero-state bootstrap value
+     IntTensor tail_valid;                // Tail callback counts, one per buffer
++    PrecisionTensor segment_initial_states; // (layers, agents, hidden)
++    IntTensor segment_initial_valid;        // t==0 record counts, per buffer
++    PrecisionTensor qualification_terminal_fixture; // (horizon, agents)
+     RolloutBuf rollouts;
+     RolloutBuf train_rollouts;  // Pre-allocated transposed copy for train_impl
+     EnvBuf env;
+@@ -470,6 +478,7 @@
+     int* evaluation_mode_puf;
+     bool train_captured;
+     bool tail_captured;
++    bool lifecycle_enforced;
+     ulong seed;
+     curandStatePhilox4_32_10_t** rng_states;  // per-buffer persistent RNG states [num_buffers]
+     // Optional frozen weight banks for match / league.
+@@ -488,16 +497,37 @@
+ 
+ __global__ void reset_recurrent_state_on_terminal(
+         precision_t* state, const float* terminals,
+-        const int* evaluation_mode, int state_stride, int active_rows,
++        int state_stride, int active_rows,
+         int hidden_size, int num_layers) {
+     int row = blockIdx.x * blockDim.x + threadIdx.x;
+-    if (row >= active_rows || *evaluation_mode == 0 ||
+-            terminals[row] == 0.0f) return;
++    if (row >= active_rows || terminals[row] == 0.0f) return;
+     for (int layer = 0; layer < num_layers; layer++) {
+         for (int column = 0; column < hidden_size; column++) {
+             state[(layer * state_stride + row) * hidden_size + column] =
+                 from_float(0.0f);
+         }
++    }
++}
++
++__global__ void copy_segment_initial_state(
++        precision_t* dst, const precision_t* src,
++        int dst_rows, int dst_row_start, int src_rows,
++        int active_rows, int hidden_size, int num_layers,
++        const int* evaluation_mode) {
++    int idx = blockIdx.x * blockDim.x + threadIdx.x;
++    int count = num_layers * active_rows * hidden_size;
++    if (idx >= count || (evaluation_mode != nullptr && *evaluation_mode != 0)) return;
++    int column = idx % hidden_size;
++    int row = (idx / hidden_size) % active_rows;
++    int layer = idx / (hidden_size * active_rows);
++    dst[((int64_t)layer * dst_rows + dst_row_start + row) * hidden_size + column] =
++        src[((int64_t)layer * src_rows + row) * hidden_size + column];
++}
++
++__global__ void mark_segment_initial_valid(
++        int* valid, int buf, const int* evaluation_mode) {
++    if (blockIdx.x == 0 && threadIdx.x == 0 && *evaluation_mode == 0) {
++        atomicAdd(valid + buf, 1);
+     }
+ }
+ 
+@@ -837,8 +867,20 @@
+         reset_recurrent_state_on_terminal<<<
+             grid_size(bank_size), BLOCK_SIZE, 0, stream>>>(
+                 s_bank->data, env.terminals.data + sub_start,
+-                pufferl->evaluation_mode_puf, s_bank->shape[1], bank_size,
++                s_bank->shape[1], bank_size,
+                 s_bank->shape[2], s_bank->shape[0]);
++        if (t == 0 && b == 0) {
++            int state_elements = s_bank->shape[0] * bank_size * s_bank->shape[2];
++            copy_segment_initial_state<<<
++                grid_size(state_elements), BLOCK_SIZE, 0, stream>>>(
++                    pufferl->segment_initial_states.data, s_bank->data,
++                    hypers.total_agents, sub_start, s_bank->shape[1], bank_size,
++                    s_bank->shape[2], s_bank->shape[0],
++                    pufferl->evaluation_mode_puf);
++            mark_segment_initial_valid<<<1, 1, 0, stream>>>(
++                pufferl->segment_initial_valid.data, buf,
++                pufferl->evaluation_mode_puf);
++        }
+         PrecisionTensor dec_puf = policy_forward(p_bank, *w_bank, *a_bank, obs_b, *s_bank, stream);
+ 
+         PrecisionTensor p_logstd = {};
+@@ -930,17 +972,20 @@
+         PolicyWeights* weights;
+         PolicyActivations* activations;
+         PrecisionTensor* state;
++        PrecisionTensor* input_state;
+         if (bank == 0) {
+             policy = &pufferl->policy;
+             weights = &pufferl->weights;
+             activations = &pufferl->tail_activations[buf];
+             state = &pufferl->tail_states[buf];
++            input_state = &pufferl->tail_input_states[buf];
+         } else {
+             WeightBank* frozen = &pufferl->frozen_banks[bank - 1];
+             policy = &frozen->policy;
+             weights = &frozen->weights;
+             activations = &frozen->tail_activations[buf];
+             state = &frozen->tail_states[buf];
++            input_state = &frozen->tail_input_states[buf];
+         }
+ 
+         int sub_start = start + bank_off;
+@@ -950,7 +995,23 @@
+             .shape = {bank_size, input_size},
+         };
+         PrecisionTensor& tail_state = *state;
+-        puf_zero(&tail_state, stream);
++        PrecisionTensor* behavior_state = bank == 0
++            ? &pufferl->buffer_states[buf]
++            : &pufferl->frozen_banks[bank - 1].buffer_states[buf];
++        int tail_state_elements = input_state->shape[0] * bank_size
++            * input_state->shape[2];
++        copy_segment_initial_state<<<
++            grid_size(tail_state_elements), BLOCK_SIZE, 0, stream>>>(
++                input_state->data, behavior_state->data,
++                input_state->shape[1], 0, behavior_state->shape[1], bank_size,
++                input_state->shape[2], input_state->shape[0], nullptr);
++        reset_recurrent_state_on_terminal<<<
++            grid_size(bank_size), BLOCK_SIZE, 0, stream>>>(
++                input_state->data,
++                env.terminals.data + sub_start,
++                input_state->shape[1], bank_size,
++                input_state->shape[2], input_state->shape[0]);
++        puf_copy(&tail_state, input_state, stream);
+         PrecisionTensor decoder = policy_forward(
+             policy, *weights, *activations, observation, tail_state, stream);
+         copy_tail_decoder_values<<<
+@@ -1781,7 +1842,9 @@
+ 
+ __global__ void select_copy(RolloutBuf rollouts, TrainGraph graph,
+         const int* __restrict__ idx, const precision_t* __restrict__ advantages,
+-        const float* __restrict__ mb_prio) {
++        const float* __restrict__ mb_prio,
++        const precision_t* __restrict__ segment_initial_states,
++        int total_rows, int num_layers, int hidden_size) {
+     int mb = blockIdx.x;
+     int ch = blockIdx.y;
+     int src_row = idx[mb];
+@@ -1820,9 +1883,45 @@
+                        (char*)graph.mb_action_mask.data, src_row, mb, mask_row_bytes);
+         }
+         break;
++    case 6:
++        copy_bytes((const char*)rollouts.terminals.data,
++            (char*)graph.mb_terminals.data, src_row, mb,
++            horizon * sizeof(precision_t));
++        break;
++    case 7:
++        for (int i = threadIdx.x; i < num_layers * hidden_size;
++                i += blockDim.x) {
++            int layer = i / hidden_size;
++            int column = i % hidden_size;
++            graph.mb_state.data[(layer * graph.mb_state.shape[1] + mb)
++                    * hidden_size + column] =
++                segment_initial_states[(layer * total_rows + src_row)
++                    * hidden_size + column];
++        }
++        break;
+     }
+ }
+ 
++static void require_complete_memory_batch(PuffeRL& pufferl) {
++    if (!pufferl.lifecycle_enforced) return;
++    int buffers = pufferl.hypers.num_buffers;
++    std::vector<int> initial_valid(buffers);
++    std::vector<int> tail_valid(buffers);
++    require_cuda_success(cudaMemcpy(initial_valid.data(),
++        pufferl.segment_initial_valid.data, buffers * sizeof(int),
++        cudaMemcpyDeviceToHost), "segment-initial lifecycle copy failed");
++    require_cuda_success(cudaMemcpy(tail_valid.data(), pufferl.tail_valid.data,
++        buffers * sizeof(int), cudaMemcpyDeviceToHost),
++        "tail lifecycle copy failed");
++    for (int buffer = 0; buffer < buffers; buffer++) {
++        if (initial_valid[buffer] != 1 || tail_valid[buffer] != 1) {
++            throw std::runtime_error(
++                "training requires exactly one segment-initial record and "
++                "one tail record per buffer");
++        }
++    }
++}
++
+ inline float cosine_annealing(float lr_base, float lr_min, long t, long T) {
+     if (T == 0) return lr_base;
+     float ratio = (double )t / (double) T;
+@@ -1951,6 +2050,7 @@
+         throw std::runtime_error(
+             "training object is unusable after an incomplete update");
+     }
++    require_complete_memory_batch(pufferl);
+ 
+     cudaStream_t train_stream = pufferl.default_stream;
+     if (hypers.total_agents <= 0 || hypers.horizon <= 0) {
+@@ -2116,15 +2216,16 @@
+         profile_end(hypers.profile);
+ 
+         profile_begin("train_select_and_copy", hypers.profile);
+-        if (hypers.reset_state) puf_zero(&graph.mb_state, train_stream);
+         {
+             RolloutBuf sel_src = rollouts;
+             sel_src.values = rollouts.values;
+             int mb_segs = pufferl.prio_bufs.idx.shape[0];
+-            int channels = (graph.mb_action_mask.data != nullptr) ? 6 : 5;
++            int channels = 8;
+             select_copy<<<dim3(mb_segs, channels), SELECT_COPY_THREADS, 0, train_stream>>>(
+                 sel_src, graph, pufferl.prio_bufs.idx.data,
+-                advantages_puf.data, pufferl.prio_bufs.mb_prio.data);
++                advantages_puf.data, pufferl.prio_bufs.mb_prio.data,
++                pufferl.segment_initial_states.data, hypers.total_agents,
++                hypers.num_layers, hypers.hidden_size);
+         }
+         profile_end(hypers.profile);
+ 
+@@ -2154,7 +2255,9 @@
+             cudaStream_t stream = train_stream;
+             PrecisionTensor obs_puf = graph.mb_obs;
+             PrecisionTensor state_puf = graph.mb_state;
+-            PrecisionTensor dec_puf = policy_forward_train(&pufferl.policy, pufferl.weights, pufferl.train_activations, obs_puf, state_puf, stream);
++            PrecisionTensor dec_puf = policy_forward_train(
++                &pufferl.policy, pufferl.weights, pufferl.train_activations,
++                obs_puf, state_puf, graph.mb_terminals, stream);
+             DecoderWeights* dw_train = (DecoderWeights*)pufferl.weights.decoder;
+             PrecisionTensor p_logstd;
+             if (dw_train->continuous) {
+@@ -2248,7 +2351,6 @@
+     if (cudaStreamSynchronize(train_stream) != cudaSuccess) {
+         throw std::runtime_error("training CUDA execution failed");
+     }
+-
+     // Commit the public-update identity only after every queued operation has
+     // completed successfully. Warmup uses this same path, then construction
+     // restores the entire interval state below.
+@@ -2342,6 +2444,12 @@
+ static void weight_bank_create_for_pufferl(WeightBank* bank, PuffeRL* pufferl,
+         int slice_size, int hidden_size, int num_layers) {
+     int num_buffers = pufferl->hypers.num_buffers;
++    if (slice_size <= 0 || hidden_size <= 0 || num_layers <= 0 ||
++            static_cast<int64_t>(slice_size) * hidden_size * num_layers >
++                std::numeric_limits<int>::max()) {
++        throw std::runtime_error(
++            "frozen recurrent state shape overflows supported indexing");
++    }
+ 
+     // Rebuild arch-varying Policy from env metadata already on pufferl.
+     int input_size = pufferl->env.obs.shape[1];
+@@ -2366,6 +2474,8 @@
+         num_buffers, sizeof(PolicyActivations));
+     bank->tail_states = (PrecisionTensor*)calloc(
+         num_buffers, sizeof(PrecisionTensor));
++    bank->tail_input_states = (PrecisionTensor*)calloc(
++        num_buffers, sizeof(PrecisionTensor));
+     for (int i = 0; i < num_buffers; i++) {
+         bank->buffer_activations[i] = policy_reg_rollout(&bank->policy, bank->weights, acts, slice_size);
+         bank->buffer_states[i] = {.shape = {num_layers, slice_size, hidden_size}};
+@@ -2376,6 +2486,10 @@
+             .shape = {num_layers, slice_size, hidden_size},
+         };
+         alloc_register(acts, &bank->tail_states[i]);
++        bank->tail_input_states[i] = {
++            .shape = {num_layers, slice_size, hidden_size},
++        };
++        alloc_register(acts, &bank->tail_input_states[i]);
+     }
+ 
+     alloc_create(params);
+@@ -2393,6 +2507,7 @@
+     }
+     for (int i = 0; i < num_buffers; i++) {
+         puf_zero(&bank->tail_states[i], pufferl->default_stream);
++        puf_zero(&bank->tail_input_states[i], pufferl->default_stream);
+     }
+ }
+ 
+@@ -2416,6 +2531,7 @@
+     }
+     free(bank->buffer_states);
+     free(bank->tail_states);
++    free(bank->tail_input_states);
+     alloc_free(&bank->params_alloc);
+     alloc_free(&bank->acts_alloc);
+     if (USE_BF16 && bank->master_weights.data != NULL) {
+@@ -2444,8 +2560,11 @@
+         num_buffers, sizeof(PolicyActivations));
+     pufferl->tail_states = (PrecisionTensor*)calloc(
+         num_buffers, sizeof(PrecisionTensor));
++    pufferl->tail_input_states = (PrecisionTensor*)calloc(
++        num_buffers, sizeof(PrecisionTensor));
+     if (pufferl->tail_activations == nullptr ||
+-            pufferl->tail_states == nullptr) {
++            pufferl->tail_states == nullptr ||
++            pufferl->tail_input_states == nullptr) {
+         return false;
+     }
+     pufferl->tail_valid = {.shape = {num_buffers}};
+@@ -2458,6 +2577,10 @@
+             .shape = {num_layers, primary_slice, hidden_size},
+         };
+         alloc_register(tail_acts, &pufferl->tail_states[i]);
++        pufferl->tail_input_states[i] = {
++            .shape = {num_layers, primary_slice, hidden_size},
++        };
++        alloc_register(tail_acts, &pufferl->tail_input_states[i]);
+     }
+     if (alloc_create(tail_acts) != cudaSuccess) {
+         return false;
+@@ -2471,6 +2594,7 @@
+         num_buffers * sizeof(int), pufferl->default_stream);
+     for (int i = 0; i < num_buffers; i++) {
+         puf_zero(&pufferl->tail_states[i], pufferl->default_stream);
++        puf_zero(&pufferl->tail_input_states[i], pufferl->default_stream);
+     }
+     return true;
+ }
+@@ -2617,8 +2741,13 @@
+     pufferl->tail_captured = false;
+     pufferl->streams = nullptr;
+     pufferl->tail_states = nullptr;
++    pufferl->tail_input_states = nullptr;
+     pufferl->tail_activations = nullptr;
+     pufferl->tail_valid = {};
++    pufferl->segment_initial_states = {};
++    pufferl->segment_initial_valid = {};
++    pufferl->qualification_terminal_fixture = {};
++    pufferl->lifecycle_enforced = false;
+     pufferl->tail_acts_alloc = {};
+     pufferl->epoch = 0;
+     pufferl->global_step = 0;
+@@ -2744,6 +2873,31 @@
+ 
+     pufferl->advantages_puf = {.shape = {total_agents, horizon}};
+     alloc_register(acts, &pufferl->advantages_puf);
++
++    if (num_layers <= 0 || total_agents <= 0 || hidden_size <= 0 ||
++            static_cast<uint64_t>(num_layers) >
++                std::numeric_limits<size_t>::max() /
++                    static_cast<uint64_t>(total_agents) ||
++            static_cast<uint64_t>(num_layers) * total_agents >
++                std::numeric_limits<size_t>::max() /
++                    static_cast<uint64_t>(hidden_size) ||
++            static_cast<uint64_t>(num_layers) * total_agents * hidden_size >
++                std::numeric_limits<size_t>::max() / sizeof(precision_t) ||
++            static_cast<uint64_t>(num_layers) * total_agents * hidden_size >
++                static_cast<uint64_t>(std::numeric_limits<int>::max())) {
++        throw std::runtime_error(
++            "segment-initial state shape overflows supported indexing");
++    }
++    pufferl->segment_initial_states = {
++        .shape = {num_layers, total_agents, hidden_size},
++    };
++    alloc_register(acts, &pufferl->segment_initial_states);
++    pufferl->segment_initial_valid = {.shape = {num_buffers}};
++    alloc_register(acts, &pufferl->segment_initial_valid);
++    pufferl->qualification_terminal_fixture = {
++        .shape = {horizon, total_agents},
++    };
++    alloc_register(acts, &pufferl->qualification_terminal_fixture);
+ 
+     muon_init(&pufferl->muon, params, hypers.lr, hypers.beta1, hypers.eps, 0.0, acts);
+     pufferl->muon.nccl_comm = pufferl->nccl_comm;
+@@ -2794,6 +2948,11 @@
+     cudaMemset(pufferl->losses_puf.data, 0, NUM_LOSSES * sizeof(float));
+     cudaMemset(pufferl->rng_offset_puf.data, 0,
+         (num_buffers + 1) * sizeof(long));
++    puf_zero(&pufferl->segment_initial_states, pufferl->default_stream);
++    cudaMemset(pufferl->segment_initial_valid.data, 0,
++        num_buffers * sizeof(int));
++    puf_zero(&pufferl->qualification_terminal_fixture,
++        pufferl->default_stream);
+     float one = 1.0f;
+     cudaMemset(
+         pufferl->ppo_bufs_puf.loss_output.data, 0, sizeof(float));
+@@ -2843,6 +3002,33 @@
+             "post-create CUDA initialization failed");
+     }
+ 
++    // Every recurrent allocation has an explicit construction value. This is
++    // required in graph-off mode too; allocator contents are not a contract.
++    for (int bank = 0; bank < 1 + pufferl->num_frozen_banks; bank++) {
++        PrecisionTensor* behavior = bank == 0
++            ? pufferl->buffer_states
++            : pufferl->frozen_banks[bank - 1].buffer_states;
++        PrecisionTensor* tail_work = bank == 0
++            ? pufferl->tail_states
++            : pufferl->frozen_banks[bank - 1].tail_states;
++        PrecisionTensor* tail_input = bank == 0
++            ? pufferl->tail_input_states
++            : pufferl->frozen_banks[bank - 1].tail_input_states;
++        for (int buffer = 0; buffer < num_buffers; buffer++) {
++            puf_zero(&behavior[buffer], pufferl->default_stream);
++            puf_zero(&tail_work[buffer], pufferl->default_stream);
++            puf_zero(&tail_input[buffer], pufferl->default_stream);
++        }
++    }
++    puf_zero(&pufferl->segment_initial_states, pufferl->default_stream);
++    puf_zero(&pufferl->train_buf.mb_state, pufferl->default_stream);
++    puf_zero(&pufferl->train_buf.mb_terminals, pufferl->default_stream);
++    require_cuda_success(cudaMemsetAsync(pufferl->segment_initial_valid.data,
++        0, num_buffers * sizeof(int), pufferl->default_stream),
++        "construction segment-initial-valid reset failed");
++    require_cuda_success(cudaStreamSynchronize(pufferl->default_stream),
++        "construction recurrent state initialization failed");
++
+     // Exact-action environments allocate ragged joint metadata outside the
+     // activations allocator. Populate and upload it before graph warmup calls
+     // sample_logits; cudaMalloc storage is otherwise uninitialized here.
+@@ -3023,14 +3209,30 @@
+                 : pufferl->frozen_banks[bank - 1].tail_states;
+             for (int b = 0; b < num_buffers; b++) {
+                 puf_zero(&tail_states[b], pufferl->default_stream);
++                PrecisionTensor* tail_inputs = (bank == 0)
++                    ? pufferl->tail_input_states
++                    : pufferl->frozen_banks[bank - 1].tail_input_states;
++                puf_zero(&tail_inputs[b], pufferl->default_stream);
+             }
+         }
++        puf_zero(&pufferl->segment_initial_states, pufferl->default_stream);
++        puf_zero(&pufferl->train_buf.mb_state, pufferl->default_stream);
++        puf_zero(&pufferl->train_buf.mb_terminals, pufferl->default_stream);
++        puf_zero(&pufferl->qualification_terminal_fixture,
++            pufferl->default_stream);
+         puf_zero(&pufferl->tail_observations, pufferl->default_stream);
+         puf_zero(&pufferl->tail_rewards, pufferl->default_stream);
+         puf_zero(&pufferl->tail_terminals, pufferl->default_stream);
+         puf_zero(&pufferl->tail_values, pufferl->default_stream);
+         require_cuda_success(
+             cudaMemsetAsync(
++                pufferl->segment_initial_valid.data,
++                0,
++                num_buffers * sizeof(int),
++                pufferl->default_stream),
++            "post-warmup segment-initial-valid reset failed");
++        require_cuda_success(
++            cudaMemsetAsync(
+                 pufferl->tail_valid.data,
+                 0,
+                 num_buffers * sizeof(int),
+@@ -3095,6 +3297,7 @@
+     pufferl->last_log_time = construction_complete_time;
+     pufferl->last_log_step = 0;
+     vec->rollout_tail_callback = tail_callback_wrapper;
++    pufferl->lifecycle_enforced = true;
+ 
+     return pufferl;
+ }
+@@ -3164,6 +3367,7 @@
+     free(pufferl.buffer_states);
+     free(pufferl.buffer_activations);
+     free(pufferl.tail_states);
++    free(pufferl.tail_input_states);
+     free(pufferl.tail_activations);
+     free(pufferl.streams);
+ 
+
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -126,16 +126,33 @@
+                 "training requires one valid tail record per rollout buffer");
+         }
+     }
++    std::vector<int> initial_valid(pufferl.hypers.num_buffers);
++    status = cudaMemcpy(initial_valid.data(),
++        pufferl.segment_initial_valid.data,
++        initial_valid.size() * sizeof(int), cudaMemcpyDeviceToHost);
++    if (status != cudaSuccess) {
++        pufferl.training_failed = true;
++        throw std::runtime_error(
++            "training could not read segment-initial validity");
++    }
++    for (int valid : initial_valid) {
++        if (valid != 1) {
++            throw std::runtime_error(
++                "training requires one segment-initial record per rollout buffer");
++        }
++    }
+ }
+ 
+-static void consume_training_tail(PuffeRL& pufferl) {
+-    cudaError_t status = cudaMemsetAsync(
+-        pufferl.tail_valid.data, 0,
++static void consume_training_memory(PuffeRL& pufferl) {
++    cudaError_t status = cudaMemsetAsync(pufferl.tail_valid.data, 0,
+         pufferl.hypers.num_buffers * sizeof(int), pufferl.default_stream);
++    if (status == cudaSuccess) status = cudaMemsetAsync(
++        pufferl.segment_initial_valid.data, 0,
++        pufferl.hypers.num_buffers * sizeof(int), pufferl.default_stream);
+     if (status == cudaSuccess) status = cudaStreamSynchronize(pufferl.default_stream);
+     if (status != cudaSuccess) {
+         pufferl.training_failed = true;
+-        throw std::runtime_error("training could not clear consumed tail records");
++        throw std::runtime_error("training could not clear consumed memory records");
+     }
+ }
+ 
+@@ -357,22 +374,21 @@
+                 "rollout would overwrite an unconsumed tail record");
+         }
+     }
+-    pybind11::gil_scoped_release no_gil;
+-    double t0 = wall_clock();
+-
+-    // Zero state buffers (primary + every frozen bank, so all banks see fresh
+-    // state symmetrically — otherwise frozen banks accumulate indefinitely while
+-    // primary resets, giving primary an unfair in-distribution advantage).
+-    if (pufferl.hypers.reset_state && !pufferl.evaluation_mode) {
+-        for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
+-            puf_zero(&pufferl.buffer_states[i], pufferl.default_stream);
++    std::vector<int> initial_valid(pufferl.hypers.num_buffers);
++    if (cudaMemcpy(initial_valid.data(), pufferl.segment_initial_valid.data,
++            initial_valid.size() * sizeof(int),
++            cudaMemcpyDeviceToHost) != cudaSuccess) {
++        throw std::runtime_error(
++            "rollout could not read segment-initial validity");
++    }
++    for (int valid : initial_valid) {
++        if (valid != 0) {
++            throw std::runtime_error(
++                "rollout would overwrite unconsumed segment initial state");
+         }
+-        for (int b = 0; b < pufferl.num_frozen_banks; b++) {
+-            for (int i = 0; i < pufferl.hypers.num_buffers; i++) {
+-                puf_zero(&pufferl.frozen_banks[b].buffer_states[i], pufferl.default_stream);
+-            }
+-        }
+     }
++    pybind11::gil_scoped_release no_gil;
++    double t0 = wall_clock();
+ 
+     if (cudaStreamSynchronize(pufferl.default_stream) != cudaSuccess) {
+         throw std::runtime_error("rollout CUDA execution failed");
+@@ -393,6 +409,21 @@
+ void set_evaluation_mode(pybind11::object pufferl_obj, bool enabled) {
+     PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
+     if (enabled == pufferl.evaluation_mode) return;
++    std::vector<int> initial_valid(pufferl.hypers.num_buffers);
++    std::vector<int> tail_valid(pufferl.hypers.num_buffers);
++    require_cuda_success(cudaMemcpy(initial_valid.data(),
++        pufferl.segment_initial_valid.data,
++        initial_valid.size() * sizeof(int), cudaMemcpyDeviceToHost),
++        "mode change initial-valid read failed");
++    require_cuda_success(cudaMemcpy(tail_valid.data(), pufferl.tail_valid.data,
++        tail_valid.size() * sizeof(int), cudaMemcpyDeviceToHost),
++        "mode change tail-valid read failed");
++    for (int buffer = 0; buffer < pufferl.hypers.num_buffers; buffer++) {
++        if (initial_valid[buffer] != 0 || tail_valid[buffer] != 0) {
++            throw std::runtime_error(
++                "mode change would discard unconsumed recurrent evidence");
++        }
++    }
+     if (enabled && pufferl.global_step > 0) {
+         static_vec_reset(pufferl.vec);
+     }
+@@ -405,6 +436,11 @@
+                 pufferl.default_stream);
+         }
+     }
++    puf_zero(&pufferl.segment_initial_states, pufferl.default_stream);
++    cudaMemsetAsync(pufferl.segment_initial_valid.data, 0,
++        pufferl.hypers.num_buffers * sizeof(int), pufferl.default_stream);
++    cudaMemsetAsync(pufferl.tail_valid.data, 0,
++        pufferl.hypers.num_buffers * sizeof(int), pufferl.default_stream);
+     int device_enabled = enabled ? 1 : 0;
+     cudaMemcpyAsync(pufferl.evaluation_mode_puf, &device_enabled, sizeof(int),
+         cudaMemcpyHostToDevice, pufferl.default_stream);
+@@ -668,6 +704,20 @@
+         "mb_ratio", pufferl.train_buf.mb_ratio, &used, max_bytes);
+     tensors["selected_rows"] = qualification_int_tensor(
+         "selected_rows", pufferl.prio_bufs.idx, &used, max_bytes);
++    tensors["segment_initial_states"] = qualification_precision_tensor(
++        "segment_initial_states", pufferl.segment_initial_states, &used, max_bytes);
++    tensors["mb_initial_states"] = qualification_precision_tensor(
++        "mb_initial_states", pufferl.train_buf.mb_state, &used, max_bytes);
++    tensors["mb_observation_terminals"] = qualification_precision_tensor(
++        "mb_observation_terminals", pufferl.train_buf.mb_terminals, &used, max_bytes);
++    tensors["segment_initial_valid"] = qualification_int_tensor(
++        "segment_initial_valid", pufferl.segment_initial_valid, &used, max_bytes);
++    tensors["tail_valid"] = qualification_int_tensor(
++        "tail_valid", pufferl.tail_valid, &used, max_bytes);
++    tensors["tail_values"] = qualification_precision_tensor(
++        "tail_values", pufferl.tail_values, &used, max_bytes);
++    tensors["tail_terminals"] = qualification_precision_tensor(
++        "tail_terminals", pufferl.tail_terminals, &used, max_bytes);
+ 
+     py::list decoder_outputs;
+     int block_size = pufferl.vec->total_agents / pufferl.hypers.num_buffers;
+@@ -710,6 +760,412 @@
+     return result;
+ }
+ 
++void qualification_require_fp32_memory(PuffeRL& pufferl) {
++    require_idle_entropy_transaction(pufferl);
++    if (USE_BF16) {
++        throw std::runtime_error(
++            "terminal-aware memory qualification requires fp32");
++    }
++}
++
++std::vector<float> qualification_binary_terminals(
++        py::sequence values, int expected) {
++    if (py::len(values) != expected) {
++        throw std::runtime_error(
++            "qualification terminal vector must match total_agents");
++    }
++    std::vector<float> result(expected);
++    for (int i = 0; i < expected; i++) {
++        float value = py::cast<float>(values[i]);
++        if (value != 0.0f && value != 1.0f) {
++            throw std::runtime_error(
++                "qualification terminal values must be exactly zero or one");
++        }
++        result[i] = value;
++    }
++    return result;
++}
++
++void qualification_set_terminals(
++        py::object pufferl_obj, py::sequence terminals) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    qualification_require_fp32_memory(pufferl);
++    std::vector<float> host = qualification_binary_terminals(
++        terminals, pufferl.hypers.total_agents);
++    require_cuda_success(cudaMemcpy(pufferl.env.terminals.data, host.data(),
++        host.size() * sizeof(float), cudaMemcpyHostToDevice),
++        "qualification terminal injection failed");
++}
++
++void qualification_set_memory_fixture(
++        py::object pufferl_obj,
++        py::array_t<float, py::array::c_style> state_values,
++        py::array_t<float, py::array::c_style> observation_terminals) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    qualification_require_fp32_memory(pufferl);
++    int rows = pufferl.hypers.total_agents;
++    auto state = state_values.request();
++    auto terminals = observation_terminals.request();
++    if (state.ndim != 3 || state.shape[0] != pufferl.hypers.num_layers ||
++            state.shape[1] != rows ||
++            state.shape[2] != pufferl.hypers.hidden_size) {
++        throw std::runtime_error(
++            "qualification state fixture must have shape "
++            "[num_layers,total_agents,hidden_size]");
++    }
++    if (terminals.ndim != 2 ||
++            terminals.shape[0] != pufferl.hypers.horizon ||
++            terminals.shape[1] != rows) {
++        throw std::runtime_error(
++            "qualification terminal fixture must have shape "
++            "[horizon,total_agents]");
++    }
++    const float* values = static_cast<const float*>(state.ptr);
++    const float* terminal_values = static_cast<const float*>(terminals.ptr);
++    int64_t state_elements = static_cast<int64_t>(pufferl.hypers.num_layers)
++        * rows * pufferl.hypers.hidden_size;
++    for (int64_t i = 0; i < state_elements; i++) {
++        if (!std::isfinite(values[i])) {
++            throw std::runtime_error(
++                "qualification state fixture values must be finite");
++        }
++    }
++    int64_t terminal_elements = static_cast<int64_t>(pufferl.hypers.horizon)
++        * rows;
++    for (int64_t i = 0; i < terminal_elements; i++) {
++        if (terminal_values[i] != 0.0f && terminal_values[i] != 1.0f) {
++            throw std::runtime_error(
++                "qualification terminal fixture values must be exactly zero or one");
++        }
++    }
++    std::vector<int> initial_valid(pufferl.hypers.num_buffers);
++    std::vector<int> tail_valid(pufferl.hypers.num_buffers);
++    require_cuda_success(cudaMemcpy(initial_valid.data(),
++        pufferl.segment_initial_valid.data,
++        initial_valid.size() * sizeof(int), cudaMemcpyDeviceToHost),
++        "qualification initial-valid read failed");
++    require_cuda_success(cudaMemcpy(tail_valid.data(), pufferl.tail_valid.data,
++        tail_valid.size() * sizeof(int), cudaMemcpyDeviceToHost),
++        "qualification tail-valid read failed");
++    for (int buffer = 0; buffer < pufferl.hypers.num_buffers; buffer++) {
++        if (initial_valid[buffer] != 0 || tail_valid[buffer] != 0) {
++            throw std::runtime_error(
++                "qualification fixture requires fresh lifecycle state");
++        }
++    }
++    int per_buffer = rows / pufferl.hypers.num_buffers;
++    for (int bank = 0; bank < 1 + pufferl.num_frozen_banks; bank++) {
++        PrecisionTensor* states = bank == 0 ? pufferl.buffer_states
++            : pufferl.frozen_banks[bank - 1].buffer_states;
++        int local_start = pufferl.bank_layout == nullptr
++            ? 0 : pufferl.bank_layout[bank];
++        int local_end = pufferl.bank_layout == nullptr
++            ? per_buffer : pufferl.bank_layout[bank + 1];
++        int active = local_end - local_start;
++        for (int buffer = 0; buffer < pufferl.hypers.num_buffers; buffer++) {
++            int layers = states[buffer].shape[0];
++            int hidden = states[buffer].shape[2];
++            std::vector<precision_t> host(numel(states[buffer].shape),
++                from_float(0.0f));
++            for (int layer = 0; layer < layers; layer++) {
++                for (int row = 0; row < active; row++) {
++                    for (int column = 0; column < hidden; column++) {
++                        int physical = buffer * per_buffer + local_start + row;
++                        float value = values[(layer * rows + physical) * hidden
++                            + column];
++                        host[(layer * states[buffer].shape[1] + row) * hidden
++                            + column] = from_float(value);
++                    }
++                }
++            }
++            require_cuda_success(cudaMemcpy(states[buffer].data, host.data(),
++                host.size() * sizeof(precision_t), cudaMemcpyHostToDevice),
++                "qualification behavior-state injection failed");
++        }
++    }
++    require_cuda_success(cudaMemcpy(
++        pufferl.qualification_terminal_fixture.data, terminal_values,
++        terminal_elements * sizeof(float), cudaMemcpyHostToDevice),
++        "qualification terminal fixture injection failed");
++}
++
++void qualification_run_rollout_step(
++        py::object pufferl_obj, int buffer, int timestep) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    qualification_require_fp32_memory(pufferl);
++    if (buffer < 0 || buffer >= pufferl.hypers.num_buffers ||
++            timestep < 0 || timestep >= pufferl.hypers.horizon) {
++        throw std::runtime_error("qualification rollout step is out of bounds");
++    }
++    if (timestep == 0) {
++        int valid = -1;
++        require_cuda_success(cudaMemcpy(&valid,
++            pufferl.segment_initial_valid.data + buffer, sizeof(int),
++            cudaMemcpyDeviceToHost), "qualification initial-valid read failed");
++        if (valid != 0) throw std::runtime_error(
++            "qualification rollout would overwrite segment initial state");
++    }
++    require_cuda_success(cudaMemcpyAsync(pufferl.env.terminals.data,
++        pufferl.qualification_terminal_fixture.data
++            + static_cast<int64_t>(timestep) * pufferl.hypers.total_agents,
++        pufferl.hypers.total_agents * sizeof(float),
++        cudaMemcpyDeviceToDevice, pufferl.streams[buffer]),
++        "qualification rollout terminal injection failed");
++    tl_stream = pufferl.streams[buffer];
++    net_callback_wrapper(&pufferl, buffer, timestep);
++    require_cuda_success(cudaStreamSynchronize(tl_stream),
++        "qualification rollout-step synchronization failed");
++}
++
++void qualification_run_tail(py::object pufferl_obj, int buffer) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    qualification_require_fp32_memory(pufferl);
++    if (buffer < 0 || buffer >= pufferl.hypers.num_buffers) {
++        throw std::runtime_error("qualification tail buffer is out of bounds");
++    }
++    int valid = -1;
++    require_cuda_success(cudaMemcpy(&valid, pufferl.tail_valid.data + buffer,
++        sizeof(int), cudaMemcpyDeviceToHost),
++        "qualification tail-valid read failed");
++    if (valid != 0) throw std::runtime_error(
++        "qualification tail would overwrite unconsumed tail state");
++    tl_stream = pufferl.streams[buffer];
++    tail_callback_wrapper(&pufferl, buffer);
++    require_cuda_success(cudaStreamSynchronize(tl_stream),
++        "qualification tail synchronization failed");
++}
++
++void qualification_set_segment_initial_row(
++        py::object pufferl_obj, int row, float value) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    qualification_require_fp32_memory(pufferl);
++    if (row < 0 || row >= pufferl.hypers.total_agents || !std::isfinite(value)) {
++        throw std::runtime_error("qualification initial-state mutation is invalid");
++    }
++    int layers = pufferl.hypers.num_layers;
++    int hidden = pufferl.hypers.hidden_size;
++    std::vector<precision_t> host(hidden, from_float(value));
++    for (int layer = 0; layer < layers; layer++) {
++        precision_t* dst = pufferl.segment_initial_states.data
++            + (layer * pufferl.hypers.total_agents + row) * hidden;
++        require_cuda_success(cudaMemcpy(dst, host.data(),
++            hidden * sizeof(precision_t), cudaMemcpyHostToDevice),
++            "qualification initial-state mutation failed");
++    }
++}
++
++py::dict qualification_memory_snapshot(
++        py::object pufferl_obj,
++        size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++    PuffeRL& pufferl = pufferl_obj.cast<PuffeRL&>();
++    qualification_require_fp32_memory(pufferl);
++    if (max_bytes == 0 || max_bytes > QUALIFICATION_MAX_SNAPSHOT_BYTES) {
++        throw std::runtime_error("invalid memory snapshot byte limit");
++    }
++    require_cuda_success(cudaDeviceSynchronize(),
++        "qualification memory snapshot synchronization failed");
++    size_t used = 0;
++    py::dict tensors;
++    tensors["segment_initial_states"] = qualification_precision_tensor(
++        "segment_initial_states", pufferl.segment_initial_states, &used, max_bytes);
++    tensors["rollout_observation_terminals"] = qualification_precision_tensor(
++        "rollout_observation_terminals", pufferl.rollouts.terminals, &used, max_bytes);
++    tensors["controlled_observation_terminals"] = qualification_precision_tensor(
++        "controlled_observation_terminals",
++        pufferl.qualification_terminal_fixture, &used, max_bytes);
++    tensors["mb_initial_states"] = qualification_precision_tensor(
++        "mb_initial_states", pufferl.train_buf.mb_state, &used, max_bytes);
++    tensors["mb_observation_terminals"] = qualification_precision_tensor(
++        "mb_observation_terminals", pufferl.train_buf.mb_terminals, &used, max_bytes);
++    tensors["segment_initial_valid"] = qualification_int_tensor(
++        "segment_initial_valid", pufferl.segment_initial_valid, &used, max_bytes);
++    tensors["tail_valid"] = qualification_int_tensor(
++        "tail_valid", pufferl.tail_valid, &used, max_bytes);
++    tensors["tail_values"] = qualification_precision_tensor(
++        "tail_values", pufferl.tail_values, &used, max_bytes);
++    tensors["tail_terminals"] = qualification_precision_tensor(
++        "tail_terminals", pufferl.tail_terminals, &used, max_bytes);
++    py::list behavior_states;
++    py::list tail_input_states;
++    py::list tail_work_states;
++    int per_buffer = pufferl.hypers.total_agents / pufferl.hypers.num_buffers;
++    for (int bank = 0; bank < 1 + pufferl.num_frozen_banks; bank++) {
++        PrecisionTensor* behavior = bank == 0 ? pufferl.buffer_states
++            : pufferl.frozen_banks[bank - 1].buffer_states;
++        PrecisionTensor* tail_input = bank == 0 ? pufferl.tail_input_states
++            : pufferl.frozen_banks[bank - 1].tail_input_states;
++        PrecisionTensor* tail_work = bank == 0 ? pufferl.tail_states
++            : pufferl.frozen_banks[bank - 1].tail_states;
++        int start = pufferl.bank_layout == nullptr ? 0 : pufferl.bank_layout[bank];
++        int end = pufferl.bank_layout == nullptr ? per_buffer : pufferl.bank_layout[bank + 1];
++        for (int buffer = 0; buffer < pufferl.hypers.num_buffers; buffer++) {
++            py::dict b;
++            b["bank"] = bank;
++            b["buffer"] = buffer;
++            b["physical_row_start"] = buffer * per_buffer + start;
++            b["active_rows"] = end - start;
++            b["tensor"] = qualification_precision_tensor(
++                "behavior_state", behavior[buffer], &used, max_bytes);
++            behavior_states.append(b);
++            py::dict ti;
++            ti["bank"] = bank;
++            ti["buffer"] = buffer;
++            ti["physical_row_start"] = buffer * per_buffer + start;
++            ti["active_rows"] = end - start;
++            ti["tensor"] = qualification_precision_tensor(
++                "tail_input_state", tail_input[buffer], &used, max_bytes);
++            tail_input_states.append(ti);
++            py::dict tw;
++            tw["bank"] = bank;
++            tw["buffer"] = buffer;
++            tw["physical_row_start"] = buffer * per_buffer + start;
++            tw["active_rows"] = end - start;
++            tw["tensor"] = qualification_precision_tensor(
++                "tail_work_state", tail_work[buffer], &used, max_bytes);
++            tail_work_states.append(tw);
++        }
++    }
++    py::dict result;
++    result["contract"] = "terminal-aware-tbptt-v1";
++    result["used_bytes"] = used;
++    result["tensors"] = tensors;
++    result["behavior_states"] = behavior_states;
++    result["tail_input_states"] = tail_input_states;
++    result["tail_work_states"] = tail_work_states;
++    return result;
++}
++
++struct TerminalQualificationBuffer {
++    void* data = nullptr;
++    explicit TerminalQualificationBuffer(size_t bytes) {
++        require_cuda_success(cudaMalloc(&data, bytes),
++            "terminal derivative buffer allocation failed");
++    }
++    ~TerminalQualificationBuffer() {
++        if (data != nullptr) cudaFree(data);
++    }
++    TerminalQualificationBuffer(const TerminalQualificationBuffer&) = delete;
++    TerminalQualificationBuffer& operator=(const TerminalQualificationBuffer&) = delete;
++};
++
++py::dict qualification_terminal_mingru_derivatives(
++        py::array_t<float, py::array::c_style> terminal_mask,
++        size_t max_bytes = 16ULL << 20) {
++    constexpr int B = 2, H = 5;
++    if (USE_BF16 || max_bytes == 0 || max_bytes > (16ULL << 20)) {
++        throw std::runtime_error(
++            "terminal min-GRU derivative fixture requires bounded fp32");
++    }
++    auto terminal_info = terminal_mask.request();
++    if (terminal_info.ndim != 2 || terminal_info.shape[0] != B ||
++            terminal_info.shape[1] < 1 || terminal_info.shape[1] > 64) {
++        throw std::runtime_error(
++            "terminal derivative mask must have shape [2,T], 1 <= T <= 64");
++    }
++    int T = terminal_info.shape[1];
++    const float* terminal_host = static_cast<const float*>(terminal_info.ptr);
++    for (int i = 0; i < B * T; i++) {
++        if (terminal_host[i] != 0.0f && terminal_host[i] != 1.0f) {
++            throw std::runtime_error(
++                "terminal derivative mask values must be exactly zero or one");
++        }
++    }
++    size_t sequence = static_cast<size_t>(B) * T * H;
++    TerminalQualificationBuffer combined(3 * sequence * sizeof(precision_t));
++    TerminalQualificationBuffer inputs(sequence * sizeof(precision_t));
++    TerminalQualificationBuffer initial(B * H * sizeof(precision_t));
++    TerminalQualificationBuffer terminals(B * T * sizeof(precision_t));
++    TerminalQualificationBuffer outputs(sequence * sizeof(precision_t));
++    TerminalQualificationBuffer final_state(B * H * sizeof(precision_t));
++    TerminalQualificationBuffer history(
++        static_cast<size_t>(B) * (T + 1) * H * sizeof(float));
++    TerminalQualificationBuffer grad_combined(3 * sequence * sizeof(precision_t));
++    TerminalQualificationBuffer grad_inputs(sequence * sizeof(precision_t));
++    TerminalQualificationBuffer grad_initial(B * H * sizeof(precision_t));
++    TerminalQualificationBuffer grad_outputs(sequence * sizeof(precision_t));
++    TerminalQualificationBuffer grad_next(B * H * sizeof(precision_t));
++    std::vector<float> hc(3 * sequence), hi(sequence), hs(B * H), hgo(sequence);
++    for (size_t i = 0; i < hc.size(); i++)
++        hc[i] = 0.7f * sinf(0.17f * (i + 1)) + 0.13f;
++    for (size_t i = 0; i < hi.size(); i++)
++        hi[i] = 0.5f * cosf(0.11f * (i + 2));
++    for (size_t i = 0; i < hs.size(); i++)
++        hs[i] = 0.2f + 0.3f * fabsf(sinf(0.07f * (i + 3)));
++    for (size_t i = 0; i < hgo.size(); i++)
++        hgo[i] = 0.4f * sinf(0.19f * (i + 4));
++    cudaStream_t stream = 0;
++    require_cuda_success(cudaMemcpyAsync(combined.data, hc.data(),
++        hc.size() * sizeof(float), cudaMemcpyHostToDevice, stream),
++        "terminal derivative combined upload failed");
++    require_cuda_success(cudaMemcpyAsync(inputs.data, hi.data(),
++        hi.size() * sizeof(float), cudaMemcpyHostToDevice, stream),
++        "terminal derivative input upload failed");
++    require_cuda_success(cudaMemcpyAsync(initial.data, hs.data(),
++        hs.size() * sizeof(float), cudaMemcpyHostToDevice, stream),
++        "terminal derivative state upload failed");
++    require_cuda_success(cudaMemcpyAsync(terminals.data, terminal_host,
++        B * T * sizeof(float), cudaMemcpyHostToDevice, stream),
++        "terminal derivative mask upload failed");
++    require_cuda_success(cudaMemcpyAsync(grad_outputs.data, hgo.data(),
++        hgo.size() * sizeof(float), cudaMemcpyHostToDevice, stream),
++        "terminal derivative output-gradient upload failed");
++    require_cuda_success(cudaMemsetAsync(grad_next.data, 0,
++        B * H * sizeof(float), stream),
++        "terminal derivative final-state gradient reset failed");
++    PrefixScan scan = {
++        .combined_ptr = static_cast<precision_t*>(combined.data),
++        .state_ptr = static_cast<precision_t*>(initial.data),
++        .input_ptr = static_cast<precision_t*>(inputs.data),
++        .terminal_ptr = static_cast<precision_t*>(terminals.data),
++        .B = B, .T = T, .H = H,
++        .state_history = {.data = static_cast<float*>(history.data),
++            .shape = {B, T + 1, H}},
++        .out = {.data = static_cast<precision_t*>(outputs.data),
++            .shape = {B, T, H}},
++        .next_state = {.data = static_cast<precision_t*>(final_state.data),
++            .shape = {B, 1, H}},
++        .grad_combined = {.data = static_cast<precision_t*>(grad_combined.data),
++            .shape = {B, T, 3 * H}},
++        .grad_state = {.data = static_cast<precision_t*>(grad_initial.data),
++            .shape = {B, 1, H}},
++        .grad_input = {.data = static_cast<precision_t*>(grad_inputs.data),
++            .shape = {B, T, H}},
++    };
++    mingru_scan_forward<<<grid_size(B * H), BLOCK_SIZE, 0, stream>>>(scan);
++    mingru_scan_backward<<<grid_size(B * H), BLOCK_SIZE, 0, stream>>>(
++        scan, static_cast<precision_t*>(grad_outputs.data),
++        static_cast<precision_t*>(grad_next.data));
++    require_cuda_success(cudaStreamSynchronize(stream),
++        "terminal min-GRU derivative fixture execution failed");
++    size_t used = 0;
++    auto tensor = [&](const char* name, void* data,
++            std::initializer_list<int64_t> shape) {
++        PrecisionTensor value = {.data = static_cast<precision_t*>(data)};
++        int dim = 0;
++        for (int64_t extent : shape) value.shape[dim++] = extent;
++        return qualification_precision_tensor(name, value, &used, max_bytes);
++    };
++    py::dict tensors_out;
++    tensors_out["combined"] = tensor("combined", combined.data, {B, T, 3 * H});
++    tensors_out["inputs"] = tensor("inputs", inputs.data, {B, T, H});
++    tensors_out["initial_state"] = tensor("initial_state", initial.data, {B, H});
++    tensors_out["terminals"] = tensor("terminals", terminals.data, {B, T});
++    tensors_out["outputs"] = tensor("outputs", outputs.data, {B, T, H});
++    tensors_out["final_state"] = tensor("final_state", final_state.data, {B, H});
++    tensors_out["grad_outputs"] = tensor("grad_outputs", grad_outputs.data, {B, T, H});
++    tensors_out["grad_combined"] = tensor(
++        "grad_combined", grad_combined.data, {B, T, 3 * H});
++    tensors_out["grad_inputs"] = tensor("grad_inputs", grad_inputs.data, {B, T, H});
++    tensors_out["grad_initial_state"] = tensor(
++        "grad_initial_state", grad_initial.data, {B, H});
++    py::dict result;
++    result["contract"] = "terminal-mingru-derivatives-fp32-v1";
++    result["B"] = B; result["T"] = T; result["H"] = H;
++    result["used_bytes"] = used;
++    result["tensors"] = tensors_out;
++    return result;
++}
++
+ py::dict qualification_entropy_gradient_state(
+         py::object pufferl_obj,
+         size_t max_bytes = QUALIFICATION_MAX_SNAPSHOT_BYTES) {
+@@ -908,8 +1364,8 @@
+         pybind11::gil_scoped_release no_gil;
+         entropy_transaction.begin_dispatch();
+         train_impl(pufferl);
+-        consume_training_tail(pufferl);
+         entropy_transaction.complete();
++        consume_training_memory(pufferl);
+     }
+     pybind11::dict losses;
+     return losses;
+@@ -1468,6 +1924,23 @@
+     m.def("qualification_snapshot", &qualification_snapshot,
+         py::arg("pufferl"), py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES,
+         py::arg("include_rollout") = true);
++    m.def("qualification_set_memory_fixture", &qualification_set_memory_fixture,
++        py::arg("pufferl"), py::arg("row_values"), py::arg("terminals"));
++    m.def("qualification_set_terminals", &qualification_set_terminals,
++        py::arg("pufferl"), py::arg("terminals"));
++    m.def("qualification_run_rollout_step", &qualification_run_rollout_step,
++        py::arg("pufferl"), py::arg("buffer"), py::arg("timestep"));
++    m.def("qualification_run_tail", &qualification_run_tail,
++        py::arg("pufferl"), py::arg("buffer"));
++    m.def("qualification_set_segment_initial_row",
++        &qualification_set_segment_initial_row,
++        py::arg("pufferl"), py::arg("row"), py::arg("value"));
++    m.def("qualification_memory_snapshot", &qualification_memory_snapshot,
++        py::arg("pufferl"),
++        py::arg("max_bytes") = QUALIFICATION_MAX_SNAPSHOT_BYTES);
++    m.def("qualification_terminal_mingru_derivatives",
++        &qualification_terminal_mingru_derivatives,
++        py::arg("terminal_mask"), py::arg("max_bytes") = 16ULL << 20);
+     m.def("qualification_entropy_gradient_state",
+         &qualification_entropy_gradient_state,
+         py::arg("pufferl"),
+@@ -1613,5 +2086,5 @@
+             require_idle_entropy_transaction(self);
+             return numel(self.master_weights.shape);
+         });
+-    m.attr("rollout_transition_contract") = "tail-bootstrap-v1";
++    m.attr("rollout_transition_contract") = "terminal-aware-tbptt-v1";
+ }
+
+--- a/src/bindings_cpu.cpp
++++ b/src/bindings_cpu.cpp
+@@ -220,5 +220,5 @@
+         .def("render", [](VecEnv& ve, int env_id) { static_vec_render(ve.vec, env_id); })
+         .def("log", &vec_log)
+         .def("close", &vec_close);
+-    m.attr("rollout_transition_contract") = "tail-bootstrap-v1";
++    m.attr("rollout_transition_contract") = "terminal-aware-tbptt-v1";
+ }

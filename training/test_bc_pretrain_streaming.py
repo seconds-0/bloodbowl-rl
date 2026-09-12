@@ -94,24 +94,37 @@ class StreamingShardTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write_shard(root, 42, 1, obs_size=2782, version=4)
+            self.write_shard(root, 42, 1, obs_size=2851, version=5)
             index = bc_pretrain.ShardIndex.from_directory(root)
-            self.assertEqual(index.shards[0].version, 4)
+            self.assertEqual(index.shards[0].version, 5)
             self.assertEqual(
-                bc_pretrain.require_exact_action_lineage(index), 4)
+                bc_pretrain.require_exact_action_lineage(index), 5)
             index.close()
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.write_shard(root, 42, 1, obs_size=2782, version=3)
             index = bc_pretrain.ShardIndex.from_directory(root)
-            with self.assertRaisesRegex(SystemExit, "requires exact-action BBP v4"):
+            with self.assertRaisesRegex(SystemExit, "requires BBP v5"):
                 bc_pretrain.require_exact_action_lineage(index)
             self.assertEqual(
                 bc_pretrain.require_exact_action_lineage(
                     index, allow_legacy=True),
                 3,
             )
+            index.close()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Exact-action v4 is still obs-v6 and must not silently zero-fill
+            # the three v7 features.
+            self.write_shard(root, 44, 1, obs_size=2782, version=4)
+            index = bc_pretrain.ShardIndex.from_directory(root)
+            with self.assertRaisesRegex(SystemExit, "requires BBP v5"):
+                bc_pretrain.require_exact_action_lineage(index)
+            self.assertEqual(
+                bc_pretrain.require_exact_action_lineage(
+                    index, allow_legacy=True), 4)
             index.close()
 
         with tempfile.TemporaryDirectory() as tmp:

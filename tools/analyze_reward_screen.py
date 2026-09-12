@@ -314,7 +314,7 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
     them wrong and you just rerun it.  What is not free: it must be a fresh
     build with no warm start and no opponent pool (a warm start from obs-v4
     ancestry already burned a 12B-step run), the module under test must really
-    be obs-v6 / exact-joint-v1 / fp32, and the compiled module must have come
+    be obs-v7 / exact-joint-v1 / fp32, and the compiled module must have come
     from the installed source rather than a stale snapshot.
     """
     if contract.get("qualification_only") is not True:
@@ -323,11 +323,26 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
     if contract.get("warm") is not None or contract.get("pool") is not None:
         raise AnalysisError("exact-action-canary contract must have null warm/pool")
 
+    settings = _need_mapping(
+        contract.get("settings"), "exact-action-canary settings")
+    checkpoint_bytes = _need_int(
+        settings.get("expected_checkpoint_bytes"),
+        "exact-action-canary settings.expected_checkpoint_bytes")
+    # Historical obs-v6 canary artifacts remain analyzable under their exact
+    # recorded shape. New plans can only be produced by the obs-v7 launcher.
+    observation_abi, observation_version = {
+        16_066_560: ("obs-v6", 6),
+        16_207_872: ("obs-v7", 7),
+    }.get(checkpoint_bytes, (None, None))
+    if observation_abi is None:
+        raise AnalysisError(
+            "exact-action-canary has an unsupported checkpoint architecture")
+
     bootstrap = _need_mapping(
         contract.get("bootstrap"), "exact-action-canary bootstrap")
     expected_bootstrap = {
-        "observation_abi": "obs-v6",
-        "observation_version": 6,
+        "observation_abi": observation_abi,
+        "observation_version": observation_version,
         "action_abi": "exact-joint-v1",
         "initialization": "fresh",
         "warm_lineage_sha256": "",
@@ -339,8 +354,6 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
                 f"exact-action-canary bootstrap {field} mismatch: "
                 f"{bootstrap.get(field)!r} != {expected!r}")
 
-    settings = _need_mapping(
-        contract.get("settings"), "exact-action-canary settings")
     if _need_int(
             settings.get("native_precision_bytes"),
             "exact-action-canary settings.native_precision_bytes") != 4:
@@ -365,8 +378,8 @@ def _validate_exact_action_canary_contract(contract: dict[str, Any]) -> None:
     expected_compiled = {
         "env_name": "bloodbowl",
         "precision_bytes": 4,
-        "observation_abi": "obs-v6",
-        "observation_version": 6,
+        "observation_abi": observation_abi,
+        "observation_version": observation_version,
         "action_abi": "exact-joint-v1",
     }
     for field, expected in expected_compiled.items():

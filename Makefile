@@ -30,7 +30,7 @@ PUFFER_OBSERVATION_TESTBIN := $(BUILD)/puffer_observation_tests
 BBP_V4_WRITER_TESTBIN := $(BUILD)/bbp_v4_writer_tests
 PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V4_WRITER_TESTBIN)
 
-.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan clean
+.PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan tactical-search clean
 
 all: test
 
@@ -80,6 +80,11 @@ test: $(TESTBIN) $(PUFFER_TESTBINS)
 blockev-mc: $(OBJ)
 	$(CC) $(CFLAGS) -Iengine/tests tools/blockev_mc.c $(OBJ) -o $(BUILD)/blockev_mc -lm
 	./$(BUILD)/blockev_mc
+
+tactical-search: tools/bb_tactical_search.c puffer/bloodbowl/bloodbowl.h engine/tests/bb_fixtures.h $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $(BUILD)/bb_tactical_search -lm $(LDFLAGS)
+	./$(BUILD)/bb_tactical_search
 
 asan:
 	$(MAKE) BUILD=build/asan CFLAGS="-std=c11 $(SAN_FLAGS) -Wall -Wextra -Werror -Iengine/include" test

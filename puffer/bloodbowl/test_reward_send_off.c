@@ -144,6 +144,820 @@ static void step_action(RewardFixture* f, bb_action a) {
     c_step(env);
 }
 
+enum {
+    PASS_INTERCEPTOR_NEAR = 0,
+    PASS_INTERCEPTOR_FAR = 1,
+    PASS_THROWER = BB_TEAM_SLOTS,
+    PASS_RECEIVER = BB_TEAM_SLOTS + 1,
+};
+
+static void build_pass_settlement_env_with_interceptors(
+        RewardFixture* f, const uint8_t* dice, int n_dice,
+        bool add_interceptors) {
+    setup_env_buffers(f);
+    Bloodbowl* env = &f->env;
+    bb_match* m = &env->match;
+    env->reward_ball_gain = 0.05f;
+    env->reward_ball_loss = -0.06f;
+    fx_match_midturn(m, BB_AWAY, 0);
+    BB_CHECK_EQ(fx_lineman(m, BB_AWAY, 0, 10, 7), PASS_THROWER);
+    BB_CHECK_EQ(fx_lineman(m, BB_AWAY, 1, 16, 7), PASS_RECEIVER);
+    if (add_interceptors) {
+        // Slot 0 is encountered first along the thrower-to-target ruler.
+        BB_CHECK_EQ(fx_lineman(m, BB_HOME, 0, 12, 7),
+                    PASS_INTERCEPTOR_NEAR);
+        BB_CHECK_EQ(fx_lineman(m, BB_HOME, 1, 13, 7),
+                    PASS_INTERCEPTOR_FAR);
+    }
+    fx_ball_held(m, PASS_THROWER);
+
+    bb_rng_script(&env->rng, dice, n_dice);
+    BB_CHECK_EQ(bb_advance(m, &env->rng), BB_STATUS_DECISION);
+    bbe_refresh_legal(env);
+    env->prev_active_team = m->active_team;
+    env->pending_pickup_slot = -1;
+    env->pending_gfi_slot = -1;
+    env->pending_dodge_slot = -1;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
+    env->score_prev[0] = env->score_start[0] = m->score[0];
+    env->score_prev[1] = env->score_start[1] = m->score[1];
+    bbe_start_ball_possession(env, BB_AWAY, 10, 7);
+    bbe_emit_all(env);
+}
+
+static void build_pass_settlement_env(RewardFixture* f,
+                                      const uint8_t* dice, int n_dice) {
+    build_pass_settlement_env_with_interceptors(f, dice, n_dice, true);
+}
+
+static void drive_pass_to_interception_choice(RewardFixture* f) {
+    step_action(f, (bb_action){BB_A_ACTIVATE, PASS_THROWER, 0, 0});
+    step_action(f, (bb_action){BB_A_DECLARE, BB_ACT_PASS, 0, 0});
+    step_action(f, (bb_action){BB_A_PASS_TARGET, 0, 16, 7});
+}
+
+static void check_no_ball_transfer_components(const RewardFixture* f) {
+    for (int team = 0; team < BBE_AGENTS; team++) {
+        check_float(
+            f->env.step_reward_component[team][BBE_REWARD_BALL_GAIN], 0.0f);
+        check_float(
+            f->env.step_reward_component[team][BBE_REWARD_BALL_LOSS], 0.0f);
+    }
+}
+
+BB_TEST(puffer_pass_completed_same_team_is_one_continuous_possession) {
+    RewardFixture f;
+    static const uint8_t dice[] = {6, 3}; // accurate pass; receiver catches
+    build_pass_settlement_env(&f, dice, 2);
+
+    drive_pass_to_interception_choice(&f);
+    BB_CHECK_EQ(f.env.match.decision_team, BB_HOME);
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(f.env.match.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(f.env.match.ball.x, 10); // release square until choice settles
+    BB_CHECK_EQ(f.env.match.ball.y, 7);
+    BB_CHECK_EQ(f.env.match.players[PASS_THROWER].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(f.env.match.players[PASS_RECEIVER].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    check_float(f.env.poss_path, 0.0f);
+    BB_CHECK_EQ(f.env.poss_last_x, 10);
+    BB_CHECK_EQ(f.env.poss_last_y, 7);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(bbe_dist_fetch(&f.env.match, BB_HOME), -1);
+    BB_CHECK_EQ(bbe_dist_fetch(&f.env.match, BB_AWAY), -1);
+
+    // Both egocentric observations expose the same semantic state. The ball
+    // position mirrors, while the pending target remains separately encoded.
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_CTX_OFF], BB_BALL_IN_AIR);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_CTX_OFF + 1], 11);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_CTX_OFF + 2], 8);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_CTX_OFF + 9], 17);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_CTX_OFF + 12], 8);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_AWAY][BBE_CTX_OFF], BB_BALL_IN_AIR);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_AWAY][BBE_CTX_OFF + 1], 16);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_AWAY][BBE_CTX_OFF + 2], 8);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_AWAY][BBE_CTX_OFF + 9], 10);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_AWAY][BBE_CTX_OFF + 12], 8);
+
+    step_action(&f, (bb_action){BB_A_CHOOSE_OPTION, 0xFE, 0, 0});
+    BB_CHECK(!bb_rng_error(&f.env.rng));
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(f.env.match.ball.carrier, PASS_RECEIVER);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    check_float(f.env.poss_path, 6.0f);
+    BB_CHECK_EQ(f.env.poss_last_x, 16);
+    BB_CHECK_EQ(f.env.poss_last_y, 7);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(f.env.rng.script_pos, 2);
+}
+
+BB_TEST(puffer_pass_no_interceptor_catch_retry_stays_one_possession) {
+    RewardFixture f;
+    static const uint8_t dice[] = {
+        6, // accurate pass
+        1, // receiver Catch fails and opens the skill re-roll window
+        3, // Catch skill re-roll succeeds
+    };
+    build_pass_settlement_env_with_interceptors(&f, dice, 3, false);
+    fx_give_skill(&f.env.match, PASS_RECEIVER, BB_SK_CATCH);
+    bbe_emit_all(&f.env);
+
+    drive_pass_to_interception_choice(&f);
+    BB_CHECK_EQ(f.env.match.status, BB_STATUS_DECISION);
+    BB_CHECK_EQ(f.env.match.decision_team, BB_AWAY);
+    BB_CHECK(fx_find(
+        &f.env.match,
+        (bb_action){BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0}) >= 0);
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(f.env.match.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(f.env.match.ball.x, 16);
+    BB_CHECK_EQ(f.env.match.ball.y, 7);
+    BB_CHECK_EQ(f.env.match.players[PASS_THROWER].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(f.env.match.players[PASS_RECEIVER].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    check_float(f.env.poss_path, 6.0f);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(bbe_dist_fetch(&f.env.match, BB_HOME), -1);
+    BB_CHECK_EQ(bbe_dist_fetch(&f.env.match, BB_AWAY), -1);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_CTX_OFF], BB_BALL_IN_AIR);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_CTX_OFF + 1], 17);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_HOME][BBE_CTX_OFF + 2], 8);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_AWAY][BBE_CTX_OFF], BB_BALL_IN_AIR);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_AWAY][BBE_CTX_OFF + 1], 10);
+    BB_CHECK_EQ(f.env.obs_ptr[BB_AWAY][BBE_CTX_OFF + 2], 8);
+
+    step_action(&f, (bb_action){
+        BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0});
+    BB_CHECK(!bb_rng_error(&f.env.rng));
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(f.env.match.ball.carrier, PASS_RECEIVER);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    check_float(f.env.poss_path, 6.0f);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(f.env.rng.script_pos, 3);
+
+    // An unrelated legal step must not replay the catch as a second transfer.
+    BB_CHECK(fx_find(
+        &f.env.match, (bb_action){BB_A_END_TURN, 0, 0, 0}) >= 0);
+    step_action(&f, (bb_action){BB_A_END_TURN, 0, 0, 0});
+    BB_CHECK(!bb_rng_error(&f.env.rng));
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(f.env.match.ball.carrier, PASS_RECEIVER);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    check_float(f.env.poss_path, 6.0f);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(f.env.rng.script_pos, 3);
+}
+
+BB_TEST(puffer_pass_interception_rewards_only_when_possession_settles) {
+    RewardFixture f;
+    static const uint8_t dice[] = {6, 6}; // accurate; chosen interception succeeds
+    build_pass_settlement_env(&f, dice, 2);
+
+    drive_pass_to_interception_choice(&f);
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_float(f.env.poss_path, 0.0f);
+    check_no_ball_transfer_components(&f);
+
+    step_action(&f, (bb_action){BB_A_CHOOSE_OPTION, 0, 0, 0});
+    BB_CHECK(!bb_rng_error(&f.env.rng));
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(f.env.match.ball.carrier, PASS_INTERCEPTOR_NEAR);
+    BB_CHECK_EQ(f.env.possessor, BB_HOME);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 1);
+    check_float(f.env.ep_ball_path_sum, 2.0f);
+    check_float(f.env.poss_path, 0.0f);
+    check_float(
+        f.env.step_reward_component[BB_AWAY][BBE_REWARD_BALL_LOSS], -0.06f);
+    check_float(
+        f.env.step_reward_component[BB_HOME][BBE_REWARD_BALL_GAIN], 0.05f);
+    check_float(
+        f.env.step_reward_component[BB_HOME][BBE_REWARD_BALL_LOSS], 0.0f);
+    check_float(
+        f.env.step_reward_component[BB_AWAY][BBE_REWARD_BALL_GAIN], 0.0f);
+    check_float(f.rewards[BB_AWAY], -0.06f);
+    check_float(f.rewards[BB_HOME], 0.05f);
+
+    // A later unrelated policy step must not book the same transfer twice.
+    step_action(&f,
+                (bb_action){BB_A_ACTIVATE, PASS_INTERCEPTOR_NEAR, 0, 0});
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 1);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    BB_CHECK_EQ(f.env.rng.script_pos, 2);
+}
+
+BB_TEST(puffer_pass_loose_ball_rewards_one_loss_at_final_settlement) {
+    RewardFixture f;
+    static const uint8_t dice[] = {
+        6, // accurate pass
+        1, // receiver Catch fails
+        5, // Bounce (+1,0) comes to rest at (17,7)
+    };
+    build_pass_settlement_env(&f, dice, 3);
+
+    drive_pass_to_interception_choice(&f);
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+
+    step_action(&f, (bb_action){BB_A_CHOOSE_OPTION, 0xFE, 0, 0});
+    BB_CHECK(!bb_rng_error(&f.env.rng));
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(f.env.match.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(f.env.match.ball.x, 17);
+    BB_CHECK_EQ(f.env.match.ball.y, 7);
+    BB_CHECK_EQ(f.env.possessor, -1);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 1);
+    check_float(f.env.ep_ball_path_sum, 7.0f);
+    check_float(
+        f.env.step_reward_component[BB_AWAY][BBE_REWARD_BALL_LOSS], -0.06f);
+    check_float(
+        f.env.step_reward_component[BB_HOME][BBE_REWARD_BALL_GAIN], 0.0f);
+    check_float(
+        f.env.step_reward_component[BB_AWAY][BBE_REWARD_BALL_GAIN], 0.0f);
+    check_float(f.rewards[BB_AWAY], -0.06f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+
+    step_action(&f,
+                (bb_action){BB_A_ACTIVATE, PASS_INTERCEPTOR_NEAR, 0, 0});
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 1);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    BB_CHECK_EQ(f.env.rng.script_pos, 3);
+}
+
+BB_TEST(puffer_pass_airborne_exact_pbrs_does_not_activate_fetch_regime) {
+    RewardFixture f;
+    static const uint8_t dice[] = {6, 3};
+    build_pass_settlement_env(&f, dice, 2);
+    Bloodbowl* env = &f.env;
+    env->reward_dist_ball = 0.01f;
+    env->reward_dist_endzone = 0.01f;
+    env->reward_dist_pbrs_gamma = 0.99f;
+    for (int team = 0; team < BBE_AGENTS; team++) {
+        env->pot_fetch_prev[team] =
+            bbe_potential(env->reward_dist_ball,
+                          bbe_dist_fetch(&env->match, team));
+        env->pot_carry_prev[team] =
+            bbe_potential(env->reward_dist_endzone,
+                          bbe_dist_carry(&env->match, team));
+    }
+    float carry_before = env->pot_carry_prev[BB_AWAY];
+
+    drive_pass_to_interception_choice(&f);
+    BB_CHECK_EQ(env->match.ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(bbe_dist_fetch(&env->match, BB_HOME), -1);
+    BB_CHECK_EQ(bbe_dist_fetch(&env->match, BB_AWAY), -1);
+    check_float(
+        env->step_reward_component[BB_HOME][BBE_REWARD_DISTANCE_BALL], 0.0f);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_BALL], 0.0f);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_ENDZONE],
+        -carry_before);
+    check_no_ball_transfer_components(&f);
+
+    step_action(&f, (bb_action){BB_A_CHOOSE_OPTION, 0xFE, 0, 0});
+    float carry_after =
+        bbe_potential(env->reward_dist_endzone,
+                      bbe_dist_carry(&env->match, BB_AWAY));
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_BALL], 0.0f);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_ENDZONE],
+        env->reward_dist_pbrs_gamma * carry_after);
+    check_no_ball_transfer_components(&f);
+}
+
+enum {
+    HANDOFF_HOME_REBOUND = 0,
+    HANDOFF_CARRIER = BB_TEAM_SLOTS,
+    HANDOFF_RECEIVER = BB_TEAM_SLOTS + 1,
+    HANDOFF_AWAY_REBOUND = BB_TEAM_SLOTS + 2,
+};
+
+static void build_handoff_settlement_env(
+        RewardFixture* f, const uint8_t* dice, int n_dice,
+        int rebound_team) {
+    setup_env_buffers(f);
+    Bloodbowl* env = &f->env;
+    bb_match* m = &env->match;
+    env->reward_ball_gain = 0.05f;
+    env->reward_ball_loss = -0.06f;
+    fx_match_midturn(m, BB_AWAY, 0);
+    BB_CHECK_EQ(fx_lineman(m, BB_AWAY, 0, 10, 7), HANDOFF_CARRIER);
+    BB_CHECK_EQ(fx_lineman(m, BB_AWAY, 1, 11, 7), HANDOFF_RECEIVER);
+    fx_give_skill(m, HANDOFF_RECEIVER, BB_SK_CATCH);
+    if (rebound_team == BB_AWAY) {
+        BB_CHECK_EQ(
+            fx_lineman(m, BB_AWAY, 2, 12, 7), HANDOFF_AWAY_REBOUND);
+        fx_give_skill(m, HANDOFF_AWAY_REBOUND, BB_SK_CATCH);
+        BB_CHECK_EQ(
+            fx_lineman(m, BB_HOME, 0, 20, 2), HANDOFF_HOME_REBOUND);
+    } else if (rebound_team == BB_HOME) {
+        BB_CHECK_EQ(
+            fx_player(m, BB_HOME, 0, 12, 7, 6, 3, 2, 3, 9),
+            HANDOFF_HOME_REBOUND);
+        fx_give_skill(m, HANDOFF_HOME_REBOUND, BB_SK_CATCH);
+    } else {
+        BB_CHECK_EQ(
+            fx_lineman(m, BB_HOME, 0, 20, 2), HANDOFF_HOME_REBOUND);
+    }
+    fx_ball_held(m, HANDOFF_CARRIER);
+
+    bb_rng_script(&env->rng, dice, n_dice);
+    BB_CHECK_EQ(bb_advance(m, &env->rng), BB_STATUS_DECISION);
+    bbe_refresh_legal(env);
+    env->prev_active_team = m->active_team;
+    env->pending_pickup_slot = -1;
+    env->pending_gfi_slot = -1;
+    env->pending_dodge_slot = -1;
+    env->pot_fetch_prev[0] = env->pot_fetch_prev[1] = NAN;
+    env->pot_carry_prev[0] = env->pot_carry_prev[1] = NAN;
+    env->score_prev[0] = env->score_start[0] = m->score[0];
+    env->score_prev[1] = env->score_start[1] = m->score[1];
+    bbe_start_ball_possession(env, BB_AWAY, 10, 7);
+    bbe_emit_all(env);
+}
+
+static void drive_handoff_to_receiver_retry(RewardFixture* f) {
+    step_action(f, (bb_action){BB_A_ACTIVATE, HANDOFF_CARRIER, 0, 0});
+    step_action(f, (bb_action){BB_A_DECLARE, BB_ACT_HANDOFF, 0, 0});
+    step_action(f, (bb_action){BB_A_HANDOFF_TARGET, 0, 11, 7});
+}
+
+static int count_mask_bits(const unsigned char* mask, int n) {
+    int count = 0;
+    for (int i = 0; i < n; i++) count += mask[i] != 0;
+    return count;
+}
+
+static void check_handoff_retry_observation(
+        const RewardFixture* f, int tested_slot, int x, int y,
+        int target, int decision_team) {
+    const Bloodbowl* env = &f->env;
+    const bb_match* m = &env->match;
+    BB_CHECK_EQ(m->ball.state, BB_BALL_IN_AIR);
+    BB_CHECK_EQ(m->ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(m->ball.x, x);
+    BB_CHECK_EQ(m->ball.y, y);
+    BB_CHECK_EQ(m->players[HANDOFF_CARRIER].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m->players[HANDOFF_RECEIVER].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m->players[tested_slot].flags & BB_PF_HAS_BALL, 0);
+    BB_CHECK_EQ(m->active_team, BB_AWAY);
+    BB_CHECK_EQ(m->decision_team, decision_team);
+    BB_CHECK_EQ(m->turnover, 0);
+
+    for (int agent = 0; agent < BBE_AGENTS; agent++) {
+        const unsigned char* obs = env->obs_ptr[agent];
+        int ego_x = agent == BB_HOME ? x : BB_PITCH_LEN - 1 - x;
+        BB_CHECK_EQ(obs[BBE_CTX_OFF], BB_BALL_IN_AIR);
+        BB_CHECK_EQ(obs[BBE_CTX_OFF + 1], ego_x + 1);
+        BB_CHECK_EQ(obs[BBE_CTX_OFF + 2], y + 1);
+        BB_CHECK_EQ(obs[BBE_CTX_OFF + 3], 0);
+        BB_CHECK_EQ(obs[BBE_CTX_OFF + 4], BB_PROC_TEST);
+        BB_CHECK_EQ(obs[BBE_CTX_OFF + 5], 1);
+        BB_CHECK_EQ(
+            obs[BBE_CTX_OFF + 6], 1 + bbe_ego_slot(agent, tested_slot));
+        BB_CHECK_EQ(obs[BBE_CTX_OFF + 7], 0);
+        BB_CHECK_EQ(obs[BBE_CTX_OFF + 8], target);
+        BB_CHECK_EQ(obs[BBE_CTX_OFF + 10], decision_team == agent);
+        BB_CHECK_EQ(obs[BBE_CTX_OFF + 11], BB_AWAY == agent);
+        BB_CHECK_EQ(
+            obs[BBE_SCALAR_OFF + BBE_S_ACT_KIND], BB_ACT_HANDOFF + 1);
+        BB_CHECK_EQ(obs[BBE_SCALAR_OFF + 21], BB_TEST_CATCH + 1);
+    }
+
+    const unsigned char* decision_mask = env->action_mask_ptr[decision_team];
+    BB_CHECK_EQ(
+        count_mask_bits(decision_mask, BBE_HEAD_TYPE), 2);
+    BB_CHECK(decision_mask[BB_A_USE_REROLL]);
+    BB_CHECK(decision_mask[BB_A_DECLINE_REROLL]);
+    BB_CHECK_EQ(
+        count_mask_bits(decision_mask + BBE_HEAD_TYPE, BBE_HEAD_ARG), 2);
+    BB_CHECK(decision_mask[BBE_HEAD_TYPE + BB_RR_SKILL]);
+    BB_CHECK(decision_mask[BBE_HEAD_TYPE + 32]);
+    BB_CHECK_EQ(
+        count_mask_bits(
+            decision_mask + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ),
+        1);
+    BB_CHECK(
+        decision_mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + 390]);
+
+    unsigned char effective[BBE_MASK_SIZE];
+    bbe_fill_effective_action_mask(
+        env, decision_team, BB_A_USE_REROLL, BB_RR_SKILL, effective);
+    BB_CHECK_EQ(count_mask_bits(effective, BBE_HEAD_TYPE), 2);
+    BB_CHECK(effective[BB_A_USE_REROLL]);
+    BB_CHECK(effective[BB_A_DECLINE_REROLL]);
+    BB_CHECK_EQ(
+        count_mask_bits(effective + BBE_HEAD_TYPE, BBE_HEAD_ARG), 1);
+    BB_CHECK(effective[BBE_HEAD_TYPE + BB_RR_SKILL]);
+    BB_CHECK_EQ(
+        count_mask_bits(
+            effective + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ),
+        1);
+    BB_CHECK(effective[BBE_HEAD_TYPE + BBE_HEAD_ARG + 390]);
+
+    const unsigned char* waiting_mask =
+        env->action_mask_ptr[1 - decision_team];
+    BB_CHECK_EQ(count_mask_bits(waiting_mask, BBE_HEAD_TYPE), 1);
+    BB_CHECK(waiting_mask[BB_A_NONE]);
+    BB_CHECK_EQ(
+        count_mask_bits(waiting_mask + BBE_HEAD_TYPE, BBE_HEAD_ARG), 1);
+    BB_CHECK(waiting_mask[BBE_HEAD_TYPE + 32]);
+    BB_CHECK_EQ(
+        count_mask_bits(
+            waiting_mask + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ),
+        1);
+    BB_CHECK(waiting_mask[BBE_HEAD_TYPE + BBE_HEAD_ARG + 390]);
+}
+
+static void enable_handoff_exact_pbrs(RewardFixture* f) {
+    Bloodbowl* env = &f->env;
+    env->reward_dist_ball = 0.01f;
+    env->reward_dist_endzone = 0.01f;
+    env->reward_dist_pbrs_gamma = 0.99f;
+    for (int team = 0; team < BBE_AGENTS; team++) {
+        env->pot_fetch_prev[team] =
+            bbe_potential(env->reward_dist_ball,
+                          bbe_dist_fetch(&env->match, team));
+        env->pot_carry_prev[team] =
+            bbe_potential(env->reward_dist_endzone,
+                          bbe_dist_carry(&env->match, team));
+    }
+}
+
+BB_TEST(puffer_handoff_receiver_retry_is_one_continuous_possession) {
+    RewardFixture f;
+    static const uint8_t dice[] = {2, 3};
+    build_handoff_settlement_env(&f, dice, 2, -1);
+
+    drive_handoff_to_receiver_retry(&f);
+    check_handoff_retry_observation(
+        &f, HANDOFF_RECEIVER, 11, 7, 3, BB_AWAY);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    check_float(f.env.poss_path, 1.0f);
+    BB_CHECK_EQ(f.env.poss_last_x, 11);
+    BB_CHECK_EQ(f.env.poss_last_y, 7);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(bbe_dist_fetch(&f.env.match, BB_HOME), -1);
+    BB_CHECK_EQ(bbe_dist_fetch(&f.env.match, BB_AWAY), -1);
+
+    step_action(
+        &f,
+        (bb_action){
+            BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0});
+    BB_CHECK(!bb_rng_error(&f.env.rng));
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(f.env.match.ball.carrier, HANDOFF_RECEIVER);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    check_float(f.env.poss_path, 1.0f);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+
+    step_action(
+        &f, (bb_action){BB_A_ACTIVATE, HANDOFF_RECEIVER, 0, 0});
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_float(f.env.poss_path, 1.0f);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(f.env.rng.script_pos, 2);
+}
+
+BB_TEST(puffer_handoff_same_team_rebound_remains_continuous) {
+    RewardFixture f;
+    static const uint8_t dice[] = {
+        2, // receiver Catch fails
+        5, // Bounce (+1,0) onto the Away rebound player
+        2, // bounced Catch fails (needs 4+)
+        4, // Catch-skill retry succeeds
+    };
+    build_handoff_settlement_env(&f, dice, 4, BB_AWAY);
+
+    drive_handoff_to_receiver_retry(&f);
+    check_handoff_retry_observation(
+        &f, HANDOFF_RECEIVER, 11, 7, 3, BB_AWAY);
+    check_float(f.env.poss_path, 1.0f);
+
+    step_action(&f, (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0});
+    check_handoff_retry_observation(
+        &f, HANDOFF_AWAY_REBOUND, 12, 7, 4, BB_AWAY);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    check_float(f.env.poss_path, 2.0f);
+    BB_CHECK_EQ(f.env.poss_last_x, 12);
+    BB_CHECK_EQ(f.env.poss_last_y, 7);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+
+    step_action(
+        &f,
+        (bb_action){
+            BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0});
+    BB_CHECK(!bb_rng_error(&f.env.rng));
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(f.env.match.ball.carrier, HANDOFF_AWAY_REBOUND);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    check_float(f.env.poss_path, 2.0f);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+    BB_CHECK_EQ(f.env.match.turnovers_completed[BB_AWAY], 0);
+    BB_CHECK_EQ(f.env.rng.script_pos, 4);
+
+    step_action(
+        &f, (bb_action){BB_A_ACTIVATE, HANDOFF_AWAY_REBOUND, 0, 0});
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_float(f.env.poss_path, 2.0f);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(f.env.rng.script_pos, 4);
+}
+
+BB_TEST(puffer_handoff_opponent_rebound_settles_one_transfer) {
+    RewardFixture f;
+    static const uint8_t dice[] = {
+        2, // receiver Catch fails
+        5, // Bounce (+1,0) onto the Home rebound player
+        2, // bounced Catch fails
+        4, // Home Catch-skill retry succeeds
+    };
+    build_handoff_settlement_env(&f, dice, 4, BB_HOME);
+
+    drive_handoff_to_receiver_retry(&f);
+    step_action(&f, (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0});
+    check_handoff_retry_observation(
+        &f, HANDOFF_HOME_REBOUND, 12, 7, 4, BB_HOME);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    check_float(f.env.poss_path, 2.0f);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+
+    step_action(
+        &f,
+        (bb_action){
+            BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0});
+    BB_CHECK(!bb_rng_error(&f.env.rng));
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(f.env.match.ball.carrier, HANDOFF_HOME_REBOUND);
+    BB_CHECK_EQ(f.env.possessor, BB_HOME);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 1);
+    check_float(f.env.ep_ball_path_sum, 2.0f);
+    check_float(f.env.poss_path, 0.0f);
+    check_float(
+        f.env.step_reward_component[BB_AWAY][BBE_REWARD_BALL_LOSS], -0.06f);
+    check_float(
+        f.env.step_reward_component[BB_HOME][BBE_REWARD_BALL_GAIN], 0.05f);
+    check_float(f.rewards[BB_AWAY], -0.06f);
+    check_float(f.rewards[BB_HOME], 0.05f);
+    BB_CHECK_EQ(f.env.match.turnovers_completed[BB_AWAY], 1);
+
+    step_action(
+        &f, (bb_action){BB_A_ACTIVATE, HANDOFF_HOME_REBOUND, 0, 0});
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 1);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    BB_CHECK_EQ(f.env.rng.script_pos, 4);
+}
+
+BB_TEST(puffer_handoff_loose_ball_settles_once_at_final_bounce) {
+    RewardFixture f;
+    static const uint8_t dice[] = {
+        2, // receiver Catch fails
+        5, // Bounce (+1,0) comes to rest at (12,7)
+    };
+    build_handoff_settlement_env(&f, dice, 2, -1);
+
+    drive_handoff_to_receiver_retry(&f);
+    check_handoff_retry_observation(
+        &f, HANDOFF_RECEIVER, 11, 7, 3, BB_AWAY);
+    step_action(&f, (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0});
+    BB_CHECK(!bb_rng_error(&f.env.rng));
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_ON_GROUND);
+    BB_CHECK_EQ(f.env.match.ball.carrier, BB_NO_PLAYER);
+    BB_CHECK_EQ(f.env.match.ball.x, 12);
+    BB_CHECK_EQ(f.env.match.ball.y, 7);
+    BB_CHECK_EQ(f.env.possessor, -1);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 1);
+    check_float(f.env.ep_ball_path_sum, 2.0f);
+    check_float(
+        f.env.step_reward_component[BB_AWAY][BBE_REWARD_BALL_LOSS], -0.06f);
+    check_float(
+        f.env.step_reward_component[BB_HOME][BBE_REWARD_BALL_GAIN], 0.0f);
+    check_float(
+        f.env.step_reward_component[BB_AWAY][BBE_REWARD_BALL_GAIN], 0.0f);
+    check_float(f.rewards[BB_AWAY], -0.06f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    BB_CHECK_EQ(f.env.match.turnovers_completed[BB_AWAY], 1);
+
+    step_action(
+        &f, (bb_action){BB_A_ACTIVATE, HANDOFF_HOME_REBOUND, 0, 0});
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 1);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    BB_CHECK_EQ(f.env.rng.script_pos, 2);
+}
+
+BB_TEST(puffer_handoff_atomic_success_is_a_continuous_negative_control) {
+    RewardFixture f;
+    static const uint8_t dice[] = {3};
+    build_handoff_settlement_env(&f, dice, 1, -1);
+    f.env.match.players[HANDOFF_RECEIVER].skills = (bb_skillset){0};
+    bbe_emit_all(&f.env); // keep the cached observation skill row coherent
+
+    step_action(
+        &f, (bb_action){BB_A_ACTIVATE, HANDOFF_CARRIER, 0, 0});
+    step_action(
+        &f, (bb_action){BB_A_DECLARE, BB_ACT_HANDOFF, 0, 0});
+    step_action(
+        &f, (bb_action){BB_A_HANDOFF_TARGET, 0, 11, 7});
+    BB_CHECK(!bb_rng_error(&f.env.rng));
+    BB_CHECK_EQ(f.env.match.ball.state, BB_BALL_HELD);
+    BB_CHECK_EQ(f.env.match.ball.carrier, HANDOFF_RECEIVER);
+    BB_CHECK_EQ(f.env.possessor, BB_AWAY);
+    check_float(f.env.poss_path, 1.0f);
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(f.env.rng.script_pos, 1);
+
+    step_action(
+        &f, (bb_action){BB_A_ACTIVATE, HANDOFF_RECEIVER, 0, 0});
+    BB_CHECK_EQ(f.env.ep_ball_possessions, 0);
+    check_float(f.env.poss_path, 1.0f);
+    check_no_ball_transfer_components(&f);
+    check_float(f.rewards[BB_HOME], 0.0f);
+    check_float(f.rewards[BB_AWAY], 0.0f);
+    BB_CHECK_EQ(f.env.rng.script_pos, 1);
+}
+
+BB_TEST(puffer_handoff_same_team_rebound_exact_pbrs_uses_actual_catcher) {
+    RewardFixture f;
+    static const uint8_t dice[] = {2, 5, 2, 4};
+    build_handoff_settlement_env(&f, dice, 4, BB_AWAY);
+    enable_handoff_exact_pbrs(&f);
+    Bloodbowl* env = &f.env;
+    float carry_before = env->pot_carry_prev[BB_AWAY];
+    check_float(carry_before, 0.15f);
+
+    drive_handoff_to_receiver_retry(&f);
+    check_handoff_retry_observation(
+        &f, HANDOFF_RECEIVER, 11, 7, 3, BB_AWAY);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_ENDZONE],
+        -0.15f);
+    check_float(env->pot_fetch_prev[BB_HOME], 0.0f);
+    check_float(env->pot_fetch_prev[BB_AWAY], 0.0f);
+    check_float(env->pot_carry_prev[BB_HOME], 0.0f);
+    check_float(env->pot_carry_prev[BB_AWAY], 0.0f);
+    check_no_ball_transfer_components(&f);
+
+    step_action(&f, (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0});
+    check_handoff_retry_observation(
+        &f, HANDOFF_AWAY_REBOUND, 12, 7, 4, BB_AWAY);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_ENDZONE],
+        0.0f);
+    check_float(env->pot_fetch_prev[BB_HOME], 0.0f);
+    check_float(env->pot_fetch_prev[BB_AWAY], 0.0f);
+    check_float(env->pot_carry_prev[BB_HOME], 0.0f);
+    check_float(env->pot_carry_prev[BB_AWAY], 0.0f);
+    check_no_ball_transfer_components(&f);
+
+    step_action(
+        &f,
+        (bb_action){
+            BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0});
+    float carry_after =
+        bbe_potential(
+            env->reward_dist_endzone,
+            bbe_dist_carry(&env->match, BB_AWAY));
+    check_float(carry_after, 0.13f);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_ENDZONE],
+        0.1287f);
+    check_float(env->pot_carry_prev[BB_AWAY], carry_after);
+    check_float(env->pot_fetch_prev[BB_HOME], 0.0f);
+    check_float(env->pot_fetch_prev[BB_AWAY], 0.0f);
+    check_no_ball_transfer_components(&f);
+}
+
+BB_TEST(puffer_handoff_final_ground_exact_pbrs_activates_fetch_at_settlement) {
+    RewardFixture f;
+    static const uint8_t dice[] = {2, 5};
+    build_handoff_settlement_env(&f, dice, 2, -1);
+    enable_handoff_exact_pbrs(&f);
+    Bloodbowl* env = &f.env;
+    float carry_before = env->pot_carry_prev[BB_AWAY];
+
+    drive_handoff_to_receiver_retry(&f);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_ENDZONE],
+        -carry_before);
+    check_float(env->pot_fetch_prev[BB_HOME], 0.0f);
+    check_float(env->pot_fetch_prev[BB_AWAY], 0.0f);
+
+    step_action(&f, (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0});
+    float home_fetch =
+        bbe_potential(
+            env->reward_dist_ball,
+            bbe_dist_fetch(&env->match, BB_HOME));
+    float away_fetch =
+        bbe_potential(
+            env->reward_dist_ball,
+            bbe_dist_fetch(&env->match, BB_AWAY));
+    check_float(
+        env->step_reward_component[BB_HOME][BBE_REWARD_DISTANCE_BALL],
+        env->reward_dist_pbrs_gamma * home_fetch);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_BALL],
+        env->reward_dist_pbrs_gamma * away_fetch);
+    check_float(env->pot_fetch_prev[BB_HOME], home_fetch);
+    check_float(env->pot_fetch_prev[BB_AWAY], away_fetch);
+    check_float(env->pot_carry_prev[BB_HOME], 0.0f);
+    check_float(env->pot_carry_prev[BB_AWAY], 0.0f);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_BALL_LOSS], -0.06f);
+    check_float(
+        env->step_reward_component[BB_HOME][BBE_REWARD_BALL_GAIN], 0.0f);
+}
+
+BB_TEST(puffer_handoff_opponent_rebound_exact_pbrs_settles_once) {
+    RewardFixture f;
+    static const uint8_t dice[] = {2, 5, 2, 4};
+    build_handoff_settlement_env(&f, dice, 4, BB_HOME);
+    enable_handoff_exact_pbrs(&f);
+    Bloodbowl* env = &f.env;
+    float carry_before = env->pot_carry_prev[BB_AWAY];
+
+    drive_handoff_to_receiver_retry(&f);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_ENDZONE],
+        -carry_before);
+    step_action(&f, (bb_action){BB_A_DECLINE_REROLL, 0, 0, 0});
+    check_handoff_retry_observation(
+        &f, HANDOFF_HOME_REBOUND, 12, 7, 4, BB_HOME);
+    check_float(env->pot_fetch_prev[BB_HOME], 0.0f);
+    check_float(env->pot_fetch_prev[BB_AWAY], 0.0f);
+    check_float(env->pot_carry_prev[BB_HOME], 0.0f);
+    check_float(env->pot_carry_prev[BB_AWAY], 0.0f);
+
+    step_action(
+        &f,
+        (bb_action){
+            BB_A_USE_REROLL, BB_RR_SKILL, BB_SK_CATCH, 0});
+    float home_carry =
+        bbe_potential(
+            env->reward_dist_endzone,
+            bbe_dist_carry(&env->match, BB_HOME));
+    check_float(
+        env->step_reward_component[BB_HOME][BBE_REWARD_DISTANCE_ENDZONE],
+        env->reward_dist_pbrs_gamma * home_carry);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_DISTANCE_ENDZONE],
+        0.0f);
+    check_float(env->pot_carry_prev[BB_HOME], home_carry);
+    check_float(env->pot_carry_prev[BB_AWAY], 0.0f);
+    check_float(
+        env->step_reward_component[BB_AWAY][BBE_REWARD_BALL_LOSS], -0.06f);
+    check_float(
+        env->step_reward_component[BB_HOME][BBE_REWARD_BALL_GAIN], 0.05f);
+    BB_CHECK_EQ(env->ep_ball_possessions, 1);
+}
+
 static void step_random_masked(RewardFixture* f, bb_rng* rng) {
     for (int a = 0; a < BBE_AGENTS; a++) {
         bbe_sample_joint_uniform(&f->env, a, f->env.action_ptr[a], rng);

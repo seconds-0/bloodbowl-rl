@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "status": "prospective_no_results",
+  "purpose": "initial_large_failure_and_asymmetry_diagnostic",
+  "frozen_pool_plan": {
+    "path": "/home/rache/bloodbowl-rl-improve-20260904/experiments/opponent-composition-100m-v1/OPPONENT_COMPOSITION_PLAN.json",
+    "sha256": "99a60ca75a66b771587e020e3d886cc1ade56c69f4db2bbef08dcc0b1de27977"
+  },
+  "implementation_identity": {
+    "source_sha256": "PENDING_FREEZE_AFTER_READONLY_INSTRUMENTATION_INTEGRATION",
+    "config_tree_sha256": "PENDING_FREEZE_AFTER_READONLY_INSTRUMENTATION_INTEGRATION",
+    "default_config_sha256": "PENDING_FREEZE_AFTER_READONLY_INSTRUMENTATION_INTEGRATION",
+    "puffer_patch_bundle_sha256": "PENDING_FREEZE_AFTER_READONLY_INSTRUMENTATION_INTEGRATION",
+    "compiled_module_sha256": "PENDING_FREEZE_AFTER_FINAL_NATIVE_BUILD",
+    "compiled_module_path": "PENDING_FREEZE_AFTER_FINAL_NATIVE_BUILD",
+    "native_precision_bytes": "PENDING_FREEZE_AFTER_FINAL_NATIVE_BUILD"
+  },
+  "training": {
+    "steps_per_model": 100000000,
+    "arms": ["control", "candidate"],
+    "seeds": [42, 44],
+    "run_order": [
+      "seed42-control",
+      "seed42-candidate",
+      "seed44-candidate",
+      "seed44-control"
+    ],
+    "models": 4,
+    "required_final_checkpoint_steps": 100000000,
+    "retain_runner_checkpoint_steps": [50000000, 100000000],
+    "evaluate_checkpoint_steps": [100000000]
+  },
+  "evaluation": {
+    "start_distribution": "kickoff",
+    "demo_reset_pct": 0,
+    "script_types": [
+      {"name": "contact", "scripted_opponent_type": 0},
+      {"name": "cage_offense", "scripted_opponent_type": 1}
+    ],
+    "learner_sides": ["HOME", "AWAY"],
+    "evaluation_seeds": [6001, 6002],
+    "completed_games_per_cell": 32,
+    "cells_per_model": 8,
+    "games_per_model": 256,
+    "trained_model_games_total": 1024,
+    "estimated_seconds_per_game": 2,
+    "estimated_serial_minutes_trained_models": 34.13333333333333,
+    "required_metrics": [
+      "completed_games",
+      "wins",
+      "draws",
+      "losses",
+      "match_score",
+      "td_for",
+      "td_against"
+    ],
+    "require_final_cumulative_reprint": true,
+    "integrity_counters_must_equal_zero": [
+      "reward_clip",
+      "non_finite",
+      "engine_error",
+      "demo_episode",
+      "demo_fallback",
+      "exact_action_error",
+      "recurrent_integrity_error"
+    ]
+  },
+  "optional_chain9_reference": {
+    "enabled_only_if_same_build_calibration_needed": true,
+    "checkpoint_sha256": "4344e588c124f7df2c887a824e1847008a02be57e63bd423c3c0b02964258dcc",
+    "uses_identical_eight_cells": true,
+    "games": 256,
+    "included_in_trained_model_games_total": false
+  },
+  "existing_functional_bridge": {
+    "games": 64,
+    "role": "execution_and_compatibility_only",
+    "strength_baseline": false,
+    "pool_with_initial_exam": false
+  },
+  "interpretation_limits": {
+    "supports": [
+      "large_failure_detection",
+      "large_side_or_script_asymmetry_detection",
+      "descriptive_composition_differences"
+    ],
+    "does_not_support": [
+      "rejecting_long_horizon_benefit_from_a_null",
+      "candidate_selection_or_promotion_from_a_positive",
+      "production_promotion",
+      "learned_opponent_generalization",
+      "roster_generalization"
+    ],
+    "later_plan_required_for": [
+      "128_games_per_cell_confirmation",
+      "learned_opponent_grid",
+      "roster_stratified_exam",
+      "training_beyond_100m"
+    ]
+  }
+}

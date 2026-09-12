@@ -28,7 +28,7 @@
 #
 # Required:
 #   RUNG=<maxdist>              6, 9, 12 ... (0 = uniform, any banked start)
-#   WARM=<checkpoint>           eligible obs-v6 lineage sidecar required
+#   WARM=<checkpoint>           eligible obs-v7 lineage sidecar required
 #   POOL=<pool dir>             4 banks, each with an eligible sidecar
 #   EXPECTED_POOL_HASH=<sha256> printed by tools/build_league.py
 # Optional:
@@ -84,6 +84,7 @@ PREFIX="${PREFIX:-ladder-d${RUNG}-s${SEED}-${STAMP}}"
 OUT="${OUT:-$C/runs/ladder-d${RUNG}-${STAMP}}"
 DEADLINE_HOURS="${DEADLINE_HOURS:-36}"
 SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
+SCRIPTED_BANK_MASK="${SCRIPTED_BANK_MASK:-0}"
 SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
 LADDER_PROFILE="${LADDER_PROFILE:-ladder-rung}"
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
@@ -195,7 +196,7 @@ echo "  steps  $STEPS (CAP -- read the plateau, chain if still climbing)"
 echo "  seed   $SEED"
 echo "  warm   $WARM"
 echo "  pool   $POOL ($EXPECTED_POOL_HASH)"
-echo "  bot    scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_BOT_TYPE"
+echo "  bot    scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bank_mask=$SCRIPTED_BANK_MASK scripted_bot_type=$SCRIPTED_BOT_TYPE"
 echo "  profile $LADDER_PROFILE"
 [ "$LADDER_PROFILE" != "graft" ] || \
   echo "  graft  from source=$GRAFT_FROM_SOURCE_SHA256 patch=$GRAFT_FROM_PATCH_BUNDLE_SHA256 reason=$GRAFT_REASON"
@@ -220,6 +221,7 @@ timeout --signal=TERM --kill-after=120 "$((DEADLINE_HOURS * 3600))" \
       LADDER_CHAIN_ENT_SCALE="${LADDER_CHAIN_ENT_SCALE:-1}" \
       LADDER_ARM="$LADDER_ARM" \
       SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
+      SCRIPTED_BANK_MASK="$SCRIPTED_BANK_MASK" \
       SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
       bash "$C/tools/run_reward_screen.sh"
 rc=$?
@@ -250,7 +252,7 @@ LADDER_REGRESSION_FLOOR="${LADDER_REGRESSION_FLOOR:-0.5}"
 python3 - "$RESULT" "$OUT/LADDER_RUNG_COMPLETE.json" "$RUNG" "$RESET_PCT" \
     "$STEPS" "$SEED" "$WARM" "$EXPECTED_POOL_HASH" "$PREFIX" \
     "$WARM_MARKER" "$LADDER_REGRESSION_FLOOR" \
-    "$SCRIPTED_BANK_TAG" "$SCRIPTED_BOT_TYPE" "$LADDER_PROFILE" \
+    "$SCRIPTED_BANK_TAG" "$SCRIPTED_BANK_MASK" "$SCRIPTED_BOT_TYPE" "$LADDER_PROFILE" \
     "$GRAFT_FROM_SOURCE_SHA256" "$GRAFT_FROM_PATCH_BUNDLE_SHA256" \
     "$GRAFT_REASON" \
     "$BRIDGE_WARM_SHA256" "$BRIDGE_WARM_OBS_VERSION" "$BRIDGE_PROVENANCE" \
@@ -258,7 +260,7 @@ python3 - "$RESULT" "$OUT/LADDER_RUNG_COMPLETE.json" "$RUNG" "$RESET_PCT" \
 import json, os, sys
 (result_path, out_path, rung, reset_pct, steps, seed, warm, pool_hash, prefix,
  warm_marker, floor,
- scripted_bank_tag, scripted_bot_type, profile, graft_source, graft_patch,
+ scripted_bank_tag, scripted_bank_mask, scripted_bot_type, profile, graft_source, graft_patch,
  graft_reason, bridge_warm_sha256, bridge_warm_obs_version, bridge_provenance,
  bridge_reason) = sys.argv[1:]
 result = json.load(open(result_path, encoding="utf-8"))
@@ -285,6 +287,7 @@ payload = {
     "rung": int(rung),
     "reset_pct": float(reset_pct),
     "scripted_bank_tag": int(scripted_bank_tag),
+    "scripted_bank_mask": int(scripted_bank_mask),
     "scripted_bot_type": int(scripted_bot_type),
     "chain_lr_scale": float(os.environ.get("LADDER_CHAIN_LR_SCALE", "1")),
     "chain_ent_scale": float(os.environ.get("LADDER_CHAIN_ENT_SCALE", "1")),

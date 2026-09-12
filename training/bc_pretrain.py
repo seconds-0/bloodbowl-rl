@@ -79,7 +79,7 @@ sys.path.insert(0, os.path.join(ROOT, "vendor", "PufferLib"))
 # header's mask_size below — the shards only pin the sum).
 ACT_SIZES = (30, 33, 391)
 MAGIC = b"BBP1"
-KNOWN_VERSIONS = (1, 2, 3, 4)  # v4: exact sequential action-mask semantics.
+KNOWN_VERSIONS = (1, 2, 3, 4, 5)  # v5: obs-v7 + exact action semantics.
                                # v3: obs-v5 with historical marginal masks.
 HEADER_LEN = 16
 REPLAY_ID_SCAN_BATCH = 65_536
@@ -312,10 +312,11 @@ class ShardIndex:
 def require_exact_action_lineage(index, allow_legacy=False):
     """Reject historical marginal-mask corpora for current BC runs."""
     version = index.shards[0].version
-    if version != 4 and not allow_legacy:
+    obs_size = index.shards[0].obs_size
+    if (version, obs_size) != (5, 2851) and not allow_legacy:
         raise SystemExit(
             f"BBP v{version} uses historical observation/action semantics; "
-            "current BC requires exact-action BBP v4. Pass "
+            "obs-v7 BC requires BBP v5 with 2851-byte observations. Pass "
             "--allow-legacy-bbp only for an explicitly historical reproduction.")
     return version
 

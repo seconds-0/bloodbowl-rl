@@ -68,6 +68,44 @@ void bb_knockdown2(bb_match* m, int slot, int cause, int armour_mod, int causer)
 // Latch a turnover for the active team (takes effect as procs unwind).
 void bb_turnover(bb_match* m);
 
+// BB_PROC_PASS data flag: the pass follows the ordinary pass/interception/
+// catch machinery, but none of its outcomes may cause a Turnover.  Dump-off
+// sets this context because it is resolved during the opposition turn.
+#define BB_PASS_NO_TURNOVER 0x400u
+
+typedef enum {
+    BB_TA_BLOCK = 0,
+    BB_TA_STAB = 1,
+    BB_TA_GAZE = 2,
+    BB_TA_CHAINSAW = 4,
+    BB_TA_BREATHE_FIRE = 5,
+    BB_TA_VOMIT = 6,
+} bb_targeted_action_kind;
+
+enum {
+    BB_TA_FROM_BALL_CHAIN = 1 << 0,
+    BB_TA_FROM_BLITZ = 1 << 1,
+    BB_TA_FRENZY_SECOND = 1 << 2,
+    BB_TA_DUMP_PASS = 1 << 2, // frame.data; context flags live in frame.y
+};
+enum {
+    BB_TA_STATE_DUMP_DECLINED = 1 << 0,
+    BB_TA_STATE_DUMP_USED = 1 << 1,
+    BB_TA_STATE_DUMP_PASS_IN_FLIGHT = 1 << 2,
+    BB_TA_STATE_TRICKSTER_DECLINED = 1 << 3,
+    BB_TA_STATE_TRICKSTER_USED = 1 << 4,
+    BB_TA_STATE_PICKUP_DECLINED = 1 << 5,
+    BB_TA_STATE_PICKUP_TEST_IN_FLIGHT = 1 << 6,
+    BB_TA_STATE_ACTION_PENDING = 1 << 7,
+};
+
+// Push the common optional-skill interruption point for a directly targeted
+// opposition Block/Special Action. The target is a player slot, deliberately
+// independent of its current coordinates.
+void bb_push_targeted_action(bb_match* m, int actor, int target, int kind,
+                             int context);
+uint8_t bb_targeted_action_public_state(const bb_frame* f);
+
 // If the ball carrier is standing in their scoring end zone, push TOUCHDOWN
 // and return true.
 bool bb_check_td(bb_match* m);

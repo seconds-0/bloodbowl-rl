@@ -1,8 +1,8 @@
 --- a/pufferlib/pufferl.py
 +++ b/pufferlib/pufferl.py
-@@ -204,6 +204,46 @@
-     assert minibatch_size <= horizon * total_agents, \
-         f'minibatch_size {minibatch_size} > total_agents {total_agents} * horizon {horizon}'
+@@ -365,6 +365,67 @@
+ def validate_config(args):
+     return validate_entropy_schedule_config(args)
  
 +def guard_scripted_training(args):
 +    env = args.get('env', {})
@@ -21,41 +21,62 @@
 +    # sampler never selects (puffer_frozen_prio_mask). That is the same
 +    # exclusion frozen-bank rows get, so the learner batch stays clean.
 +    if not args.get('slowly'):
-+        bank_tag = int(env.get('scripted_bank_tag', 0) or 0)
-+        if bank_tag <= 0:
++        import math
++        def semantic_int(value, name, lower, upper):
++            try:
++                number = float(value or 0)
++            except (TypeError, ValueError) as exc:
++                raise RuntimeError(f'{name} must be an integer in {lower}..{upper}') from exc
++            if not math.isfinite(number) or not number.is_integer() or not lower <= number <= upper:
++                raise RuntimeError(f'{name} must be an integer in {lower}..{upper}')
++            return int(number)
++        bank_tag = semantic_int(env.get('scripted_bank_tag', 0),
++                                'env.scripted_bank_tag', 0, 8)
++        bank_mask = semantic_int(env.get('scripted_bank_mask', 0),
++                                 'env.scripted_bank_mask', 0, 255)
++        if bank_tag and bank_mask:
++            raise RuntimeError(
++                'env.scripted_bank_tag and env.scripted_bank_mask must be '
++                'mutually exclusive.')
++        if bank_tag <= 0 and bank_mask <= 0:
 +            raise RuntimeError(
 +                'scripted_opponent with learning_rate > 1e-9 is unsafe on the '
 +                'native/CUDA backend: bot-side sampled actions are replaced by '
 +                'c_step and the native PPO path does not implement scripted row '
 +                'exclusion. Use --slowly for the torch row-filter, keep '
 +                'learning_rate <= 1e-9 for frozen eval, or confine the bot to a '
-+                'frozen bank with env.scripted_bank_tag.')
++                'frozen bank with env.scripted_bank_tag or scripted_bank_mask.')
 +        sp = args.get('selfplay', {})
 +        vec = args.get('vec', {})
-+        num_banks = int(vec.get('num_frozen_banks', 0) or 0)
-+        if not int(sp.get('enabled', 0) or 0) or bank_tag > num_banks:
++        num_banks = semantic_int(vec.get('num_frozen_banks', 0),
++                                 'vec.num_frozen_banks', 0, 8)
++        valid_mask = (1 << num_banks) - 1 if num_banks > 0 else 0
++        selection_invalid = (bank_tag > num_banks or
++                             bank_mask & ~valid_mask)
++        if not int(sp.get('enabled', 0) or 0) or selection_invalid:
 +            raise RuntimeError(
-+                f'env.scripted_bank_tag={bank_tag} requires selfplay.enabled=1 '
-+                f'and 1 <= tag <= vec.num_frozen_banks ({num_banks}); the bot '
++                f'env scripted bank selector tag={bank_tag} mask={bank_mask} '
++                f'requires selfplay.enabled=1 and selected banks within '
++                f'1 <= tag <= vec.num_frozen_banks ({num_banks}); the bot '
 +                'seat is only excluded from PPO inside a frozen-bank row slice.')
 +        team = int(env.get('scripted_opponent_team', 1) or 0)
 +        if team != 1:
 +            raise RuntimeError(
-+                'env.scripted_bank_tag requires scripted_opponent_team=1: tagged '
++                'env scripted bank selection requires scripted_opponent_team=1: tagged '
 +                'envs place the frozen bank (and so the bot) on slot 1 / AWAY.')
 +
  def require_training_state_reset(args):
      if not args['reset_state']:
          raise ValueError('training requires reset_state=True')
-@@ -219,6 +259,7 @@
+@@ -380,6 +441,7 @@
  
  def _train_worker(args):
      require_training_state_reset(args)
 +    guard_scripted_training(args)
      backend = _resolve_backend(args)
+     entropy_config = validate_entropy_schedule_config(args)
      pufferl = backend.create_pufferl(args)
-     args.pop('nccl_id', None)
-@@ -231,6 +272,7 @@
+@@ -393,6 +455,7 @@
  def _train(env_name, args, sweep_obj=None, result_queue=None, verbose=False):
      '''Single-GPU training worker. Process target for both DDP ranks and sweep trials.'''
      require_training_state_reset(args)
@@ -63,7 +84,7 @@
      backend = _resolve_backend(args)
      rank = args['rank']
      run_id = str(int(1000*time.time()))
-@@ -453,6 +495,7 @@
+@@ -615,6 +678,7 @@
  def train(env_name, args=None, gpus=None, **kwargs):
      args = args or load_config(env_name)
      require_training_state_reset(args)
