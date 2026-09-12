@@ -183,6 +183,14 @@ enum {
 #define BBE_AGENTS 2
 #define BBE_MAX_DECISIONS 4096 // episode safety bound
 #define BBE_MAX_BANKS 8        // frozen selfplay-pool banks (matches selfplay.py)
+
+// Step-phase attribution hooks. bbe_profile.c defines them before including
+// this header; every other build compiles them to nothing.
+#ifndef BBE_PROF_SWITCH
+#define BBE_PROF_SWITCH(phase) ((void)0)
+#define BBE_PROF_ENTER(saved, phase) ((void)0)
+#define BBE_PROF_LEAVE(saved) ((void)0)
+#endif
 #define BBE_DEFAULT_REWARD_TD 0.4f
 #define BBE_DEFAULT_REWARD_WIN 0.6f
 #define BBE_DEFAULT_REWARD_DRAW 0.0f
@@ -1105,9 +1113,11 @@ static void bbe_macro_reach(Bloodbowl* env, const bb_match* m, int mover,
 static bb_action bbe_macro_plan(Bloodbowl* env, int mover, int dst);
 
 static void bbe_refresh_legal(Bloodbowl* env) {
+    BBE_PROF_ENTER(prof_saved, LEGAL);
     env->n_legal = env->match.status == BB_STATUS_DECISION
                        ? bb_legal_actions(&env->match, env->legal)
                        : 0;
+    BBE_PROF_LEAVE(prof_saved);
 }
 
 // --- Observation encoding ------------------------------------------------------
@@ -2278,11 +2288,15 @@ static void bbe_compute_tz(Bloodbowl* env) {
 }
 
 static void bbe_emit_all(Bloodbowl* env) {
+    BBE_PROF_ENTER(prof_saved, TZ);
     bbe_compute_tz(env);
     for (int a = 0; a < BBE_AGENTS; a++) {
+        BBE_PROF_SWITCH(OBS);
         bbe_encode_obs(env, a);
+        BBE_PROF_SWITCH(MASK);
         bbe_fill_mask(env, a);
     }
+    BBE_PROF_LEAVE(prof_saved);
 }
 
 static inline void bbe_ball_xy(const bb_match* m, int* x, int* y) {
@@ -3470,7 +3484,9 @@ static void c_step(Bloodbowl* env) {
                       ? bbe_offense_bot_pick(m, env->legal, env->n_legal)
                       : bbe_contact_bot_pick(m, env->legal, env->n_legal);
         } else {
+            BBE_PROF_SWITCH(DECODE);
             act = bbe_decode(env, agent, env->action_ptr[agent]);
+            BBE_PROF_SWITCH(REWARD);
             if (act.type == BB_A_NONE) {
                 if (env->illegal_projection_collision) {
                     // Distinct cause, distinct message. This is not the policy
@@ -3652,7 +3668,9 @@ static void c_step(Bloodbowl* env) {
         // enumerated on THIS state by bbe_refresh_legal. Membership holds by
         // construction, so skip bb_apply's internal re-enumeration + eq-scan
         // (~22% of step time). All other callers stay on checked bb_apply.
+        BBE_PROF_SWITCH(APPLY);
         bb_apply_trusted(m, act, &env->rng);
+        BBE_PROF_SWITCH(REWARD);
         env->ev_valid = 0; // state advanced: encode-time EVs are stale
         env->decisions++;
         // Rush and dodge success: the mover must still be standing post-apply.
@@ -3707,7 +3725,9 @@ static void c_step(Bloodbowl* env) {
                     m->ball.carrier < BB_NUM_PLAYERS) {
                     carrier_pre_down_mask |= 1u << m->ball.carrier;
                 }
+                BBE_PROF_SWITCH(APPLY);
                 bb_apply_trusted(m, mact, &env->rng);
+                BBE_PROF_SWITCH(REWARD);
                 bbe_macro_dbg_steps++;
                 if ((bbe_macro_dbg_steps % 200000) == 1)
                     fprintf(stderr, "[MACRO] plans=%ld cont_steps=%ld\n",
@@ -4043,6 +4063,7 @@ static void c_step(Bloodbowl* env) {
             }
         }
     }
+    BBE_PROF_SWITCH(EPISODE);
     bool episode_finished = false;
     if (m->status == BB_STATUS_ERROR ||
         (m->status == BB_STATUS_DECISION && env->n_legal <= 0)) {
@@ -4060,6 +4081,7 @@ static void c_step(Bloodbowl* env) {
         bbe_finish_episode(env);
         episode_finished = true;
     }
+    BBE_PROF_SWITCH(REWARD);
     if (!episode_finished) bbe_record_reward_emission(env);
     bbe_refresh_legal(env);
     bbe_emit_all(env);
