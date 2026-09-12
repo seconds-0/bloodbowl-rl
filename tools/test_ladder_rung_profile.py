@@ -36,6 +36,13 @@ HISTORICAL_LADDER_KEYS = [
 ]
 
 
+def marker_block() -> str:
+    source = RUNG.read_text(encoding="utf-8")
+    match = re.search(
+        r'"\$BRIDGE_REASON" <<\'PY\'\n(.*?)\nPY\n', source, re.S)
+    assert match, "rung marker heredoc not found"
+    return match.group(1)
+
 
 def stand_in_checkout(base, tools_source=None):
     """A checkout on a stand-in build, so tools/run_reward_screen.sh runs whole.
@@ -703,6 +710,55 @@ class LadderHorizonTests(unittest.TestCase):
             self.assertNotIn("only valid with", result.stderr, good)
             self.assertIn("missing warm checkpoint", result.stderr, good)
 
+    def test_rung_marker_records_the_trained_horizon_only_when_declared(self):
+        source = RUNG.read_text(encoding="utf-8")
+        self.assertIn('LADDER_ARM="$LADDER_ARM" \\\n'
+                      '      LADDER_GAMMA="${LADDER_GAMMA:-}" '
+                      'LADDER_GAE_LAMBDA="${LADDER_GAE_LAMBDA:-}" \\\n', source)
+        code = marker_block()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            log = tmp / "arm.log"
+            run_manifest = Path(str(log) + ".manifest.json")
+            run_manifest.write_text(json.dumps({"gamma": "0.999", "gae_lambda": "0.95"}))
+            result_path = tmp / "r.json"
+            result_path.write_text(json.dumps({
+                "acceptance_pass": True, "tag": "t", "log": str(log),
+                "checkpoint": "c", "checkpoint_sha256": "s",
+                "checkpoint_lineage": "cl", "checkpoint_lineage_sha256": "cls",
+                "eval_metrics": {"tds": 1.6, "perf": 0.57}}))
+            out = tmp / "m.json"
+
+            def mark(**knobs):
+                env = {k: v for k, v in os.environ.items()
+                       if not k.startswith("LADDER_")}
+                env.update(knobs)
+                return subprocess.run(
+                    ["python3", "-", str(result_path), str(out), "0", "0",
+                     "3000000000", "42", "w", "p", "pfx", "", "0.5", "4", "0",
+                     "ladder-rung", "", "", "", "", "", "", ""],
+                    input=code, env=env, text=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, check=False, timeout=60)
+
+            r = mark()
+            self.assertEqual(r.returncode, 0, r.stderr)
+            plain = json.loads(out.read_text())
+            self.assertNotIn("gamma", plain)
+            self.assertNotIn("gae_lambda", plain)
+            r = mark(LADDER_GAMMA="0.999", LADDER_GAE_LAMBDA="0.95")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            marker = json.loads(out.read_text())
+            self.assertEqual(marker.pop("gamma"), 0.999)
+            self.assertEqual(marker.pop("gae_lambda"), 0.95)
+            self.assertEqual(marker, plain)
+            # The values come from the run manifest the lineage sidecar hashes,
+            # and a declaration the trained run contradicts publishes nothing.
+            run_manifest.write_text(json.dumps({"gamma": "0.995", "gae_lambda": "0.85"}))
+            out.unlink()
+            r = mark(LADDER_GAMMA="0.999")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("LADDER_GAMMA=0.999 but the run trained gamma=0.995", r.stderr)
+            self.assertFalse(out.exists())
 
 
 class HorizonScreenStandInTests(unittest.TestCase):
