@@ -11,6 +11,9 @@ OnUnitActiveSec=5min
 AccuracySec=30s
 Persistent=true
 Unit=campaign-supervisor@%i.service
+# Once a campaign halts or completes, its ticks go quiet (no state write) but
+# this timer keeps firing. Every terminal tick logs the exact command to stop it:
+#   systemctl --user disable --now campaign-supervisor@<campaign>.timer
 
 [Install]
 WantedBy=timers.target
