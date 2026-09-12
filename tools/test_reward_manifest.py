@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 
+import hashlib
 import json
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -195,6 +198,146 @@ class RewardManifestTests(unittest.TestCase):
         manifest["reward"]["reward_dist_ball"] = 0.05
         with self.assertRaisesRegex(ValueError, "full-pitch fetch potential"):
             reward_manifest.validate_manifest(manifest)
+
+    def legacy_distance_manifest(self, schema_version=1):
+        manifest = {"schema_version": schema_version, "name": "omitted-gamma",
+                    "reward": self.complete_reward()}
+        manifest["reward"].update(reward_dist_ball=0.02,
+                                  reward_dist_endzone=0.04)
+        if schema_version == 1:
+            manifest["reward"].pop("reward_dist_pbrs_gamma")
+        return manifest
+
+    def resolve(self, manifest, train_gamma=0.995):
+        validated = reward_manifest.validate_manifest(manifest)
+        digest = hashlib.sha256(
+            reward_manifest.canonical_bytes(validated)).hexdigest()
+        return reward_manifest.distance_form(validated, digest, train_gamma)
+
+    def test_legacy_distance_by_omission_is_refused(self):
+        # B5: a manifest with distance coefficients and no gamma key silently
+        # trained the farmable raw-delta ratchet (D226) instead of exact PBRS.
+        with self.assertRaisesRegex(ValueError, "legacy raw-delta"):
+            self.resolve(self.legacy_distance_manifest(schema_version=1))
+        # An explicit zero under schema 2 is the same ratchet, still undeclared.
+        with self.assertRaisesRegex(ValueError, "legacy raw-delta"):
+            self.resolve(self.legacy_distance_manifest(schema_version=2))
+        # One distance channel is enough to reach the ratchet.
+        manifest = self.legacy_distance_manifest()
+        manifest["reward"].update(reward_dist_ball=0.0)
+        with self.assertRaisesRegex(ValueError, "legacy raw-delta"):
+            self.resolve(manifest)
+
+    def test_declared_legacy_distance_passes(self):
+        for version in (1, 2):
+            manifest = self.legacy_distance_manifest(schema_version=version)
+            manifest["reward_dist_mode"] = "legacy_raw_delta"
+            self.assertEqual(self.resolve(manifest), "legacy_raw_delta")
+            # The declaration is about distance only; it never renders a token.
+            self.assertNotIn("--env.reward-dist-mode",
+                             reward_manifest.cli_args(manifest))
+
+    def test_exact_pbrs_gamma_must_equal_train_gamma(self):
+        manifest = self.legacy_distance_manifest(schema_version=2)
+        manifest["reward"]["reward_dist_pbrs_gamma"] = 0.995
+        self.assertEqual(self.resolve(manifest, 0.995), "exact_pbrs")
+        for train_gamma in (0.999, 0.99, float("nan")):
+            with self.assertRaisesRegex(ValueError, "!= train gamma"):
+                self.resolve(manifest, train_gamma)
+        # The equality binds whenever the key is nonzero, distance on or off.
+        manifest["reward"].update(reward_dist_ball=0.0, reward_dist_endzone=0.0)
+        self.assertEqual(self.resolve(manifest, 0.995), "exact_pbrs")
+        with self.assertRaisesRegex(ValueError, "!= train gamma"):
+            self.resolve(manifest, 0.999)
+        # A negative gamma is never exact PBRS, and must not read as legacy.
+        manifest["reward"]["reward_dist_pbrs_gamma"] = -0.995
+        with self.assertRaisesRegex(ValueError, "!= train gamma"):
+            self.resolve(manifest, 0.995)
+
+    def test_zero_distance_without_gamma_needs_no_declaration(self):
+        manifest = self.legacy_distance_manifest()
+        manifest["reward"].update(reward_dist_ball=0.0, reward_dist_endzone=0.0)
+        self.assertEqual(self.resolve(manifest), "none")
+
+    def test_distance_mode_declaration_is_validated(self):
+        manifest = self.legacy_distance_manifest(schema_version=2)
+        manifest["reward_dist_mode"] = "exact"
+        with self.assertRaisesRegex(ValueError, "reward_dist_mode"):
+            reward_manifest.validate_manifest(manifest)
+        # Declaring the ratchet on an exact-PBRS manifest contradicts itself.
+        manifest = self.legacy_distance_manifest(schema_version=2)
+        manifest["reward_dist_mode"] = "legacy_raw_delta"
+        manifest["reward"]["reward_dist_pbrs_gamma"] = 0.995
+        with self.assertRaisesRegex(ValueError, "reward_dist_mode"):
+            reward_manifest.validate_manifest(manifest)
+
+    def test_historical_legacy_manifests_pass_by_pinned_digest(self):
+        # The shipped schema-1 manifests cannot carry the declaration: their
+        # digests are quoted as provenance (chain 9 and chain 14 both record
+        # r0_poss_half as 433c7920...), so they are pinned by digest instead.
+        root = Path(__file__).resolve().parents[1]
+        undeclared_legacy = {}
+        for path in sorted((root / "puffer/config/rewards").glob("*.json")):
+            manifest, digest = reward_manifest.load_manifest(path)
+            form = reward_manifest.distance_form(manifest, digest, 0.995)
+            if (form == "legacy_raw_delta" and
+                    "reward_dist_mode" not in manifest):
+                undeclared_legacy[digest] = path.stem
+        self.assertEqual(undeclared_legacy,
+                         reward_manifest.LEGACY_RAW_DELTA_SHA256)
+
+        poss_half, digest = reward_manifest.load_manifest(
+            root / "puffer/config/rewards/r0_poss_half.json")
+        self.assertEqual(
+            digest,
+            "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c")
+        self.assertEqual(
+            reward_manifest.distance_form(poss_half, digest, 0.995),
+            "legacy_raw_delta")
+
+        # Any edit to a pinned manifest moves its digest and loses the pass.
+        poss_half["reward"]["reward_possession"] += 0.001
+        with self.assertRaisesRegex(ValueError, "legacy raw-delta"):
+            self.resolve(poss_half)
+
+    def test_cli_refuses_before_rendering_arguments(self):
+        root = Path(__file__).resolve().parents[1]
+        tool = root / "tools/reward_manifest.py"
+
+        def cli(path, *extra):
+            return subprocess.run(
+                [sys.executable, str(tool), str(path), *extra],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                check=False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            omitted = Path(tmp) / "omitted.json"
+            omitted.write_text(json.dumps(self.legacy_distance_manifest()),
+                               encoding="utf-8")
+            refused = cli(omitted, "--train-gamma", "0.995", "--distance-form")
+            self.assertEqual(refused.returncode, 1)
+            self.assertIn("legacy raw-delta", refused.stderr)
+            self.assertEqual(refused.stdout, "")
+            refused = cli(omitted, "--train-gamma", "0.995", "--lines")
+            self.assertEqual(refused.returncode, 1)
+            self.assertEqual(refused.stdout, "")
+
+        rewards = root / "puffer/config/rewards"
+        legacy = cli(rewards / "r0_poss_half.json",
+                     "--train-gamma", "0.995", "--distance-form")
+        self.assertEqual(legacy.returncode, 0, legacy.stderr)
+        self.assertEqual(legacy.stdout.strip(), "legacy_raw_delta")
+        exact = cli(rewards / "s0_both.json",
+                    "--train-gamma", "0.995", "--distance-form")
+        self.assertEqual(exact.returncode, 0, exact.stderr)
+        self.assertEqual(exact.stdout.strip(), "exact_pbrs")
+        mismatch = cli(rewards / "s0_both.json",
+                       "--train-gamma", "0.999", "--distance-form")
+        self.assertEqual(mismatch.returncode, 1)
+        self.assertIn("!= train gamma", mismatch.stderr)
+        # The form cannot be resolved without the trainer's gamma.
+        self.assertEqual(
+            cli(rewards / "s0_both.json", "--distance-form").returncode, 2)
 
     def test_load_hash_is_canonical_not_whitespace_sensitive(self):
         manifest = {"schema_version": 2, "name": "test",

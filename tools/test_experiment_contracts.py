@@ -752,9 +752,11 @@ class ExperimentContractTests(unittest.TestCase):
         # discounts with, and a mismatch fails silently rather than loudly: it
         # just reintroduces the bias class the discounted form removes. The env
         # cannot see train.gamma, so the launcher owns this check.
+        # The arm delegates to reward_manifest.distance_form through the CLI,
+        # whose refusals tools/test_reward_manifest.py exercises directly.
         arm = (ROOT / "tools/run_reward_ablation.sh").read_text(encoding="utf-8")
-        self.assertIn("reward_dist_pbrs_gamma", arm)
-        self.assertIn("!= train gamma", arm)
+        self.assertIn('--train-gamma "$GAMMA" --distance-form)"; then', arm)
+        self.assertNotIn("REWARD_PBRS_GAMMA", arm)
         # The legacy path must stay reachable and silent: a schema-1 manifest
         # omits the key, so the launcher must not demand it.
         from reward_manifest import load_manifest, cli_args
@@ -776,6 +778,64 @@ class ExperimentContractTests(unittest.TestCase):
             if legacy["reward"].get(k, "<absent>") != exact["reward"][k]
         }
         self.assertEqual(differing, {"reward_dist_pbrs_gamma"})
+
+    def test_reward_screen_refuses_legacy_distance_by_omission(self):
+        # B5: the up-front screen guard only compared a NONZERO manifest gamma
+        # to train gamma, so a manifest with distance coefficients and no gamma
+        # key passed and silently trained the farmable raw-delta ratchet.
+        # Exercise the real script against a copy of the tree whose rewards
+        # directory holds the manifest under test.
+        import json
+        import shutil
+        omitted = json.loads(
+            (ROOT / "puffer/config/rewards/r0_full.json").read_text(
+                encoding="utf-8"))
+        omitted["name"] = "omitted-gamma"
+
+        def screen_with(extra):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "tools").mkdir()
+                for name in ("run_reward_screen.sh", "reward_manifest.py"):
+                    shutil.copy(ROOT / "tools" / name, root / "tools" / name)
+                shutil.copytree(ROOT / "puffer/config/rewards",
+                                root / "puffer/config/rewards")
+                for name, manifest in extra.items():
+                    (root / "puffer/config/rewards" / name).write_text(
+                        json.dumps(manifest), encoding="utf-8")
+                merged = os.environ.copy()
+                merged.update({"STEPS": "50000000",
+                               "SCREEN_PROFILE": "exact-action-canary",
+                               "PREFIX": "b5-contract",
+                               "OUT_DIR": str(root / "out")})
+                return subprocess.run(
+                    ["bash", str(root / "tools/run_reward_screen.sh")],
+                    cwd=root, env=merged, text=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, check=False, timeout=120)
+
+        refusal = "would not train the distance form it claims"
+        refused = screen_with({"omitted.json": omitted})
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(refusal, refused.stderr)
+        self.assertIn("omitted.json", refused.stderr)
+        self.assertIn("legacy raw-delta", refused.stderr)
+
+        declared = dict(omitted, reward_dist_mode="legacy_raw_delta")
+        passed = screen_with({"omitted.json": declared})
+        self.assertNotIn(refusal, passed.stderr)
+
+        exact = json.loads(
+            (ROOT / "puffer/config/rewards/s0_both.json").read_text(
+                encoding="utf-8"))
+        mismatch = dict(exact, name="gamma-mismatch")
+        mismatch["reward"] = dict(exact["reward"], reward_dist_pbrs_gamma=0.999)
+        refused = screen_with({"mismatch.json": mismatch})
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(refusal, refused.stderr)
+        self.assertIn("!= train gamma", refused.stderr)
+
+        # The shipped tree, chain 23's r0_poss_half included, still passes.
+        self.assertNotIn(refusal, screen_with({}).stderr)
 
     def test_exact_decomposition_2x2_varies_only_its_declared_factors(self):
         # The whole point of the exact-PBRS work is lost if the arms that
