@@ -38,6 +38,9 @@
 #   LADDER_PROFILE=graft + GRAFT_FROM_SOURCE_SHA256 / GRAFT_FROM_PATCH_BUNDLE_SHA256
 #     / GRAFT_REASON  make this stage the reviewed lineage bridge across a
 #     build change (forwarded like SCRIPTED_*; unset = ordinary rung)
+#     + GRAFT_ACCEPT_MIGRATED=1 / GRAFT_MIGRATED_REASON  also admit
+#     zero-extended obs-v6 -> obs-v7 migration sidecars as WARM or pool banks
+#     (build_league runs with --accept-migrated)
 #   LADDER_PROFILE=bridge + BRIDGE_WARM_SHA256 / BRIDGE_WARM_OBS_VERSION /
 #     BRIDGE_PROVENANCE / BRIDGE_REASON  make this stage the reviewed warm
 #     start from an OUT-OF-LINEAGE raw blob (docs/audit-2026-08-20.md F2).
@@ -206,7 +209,10 @@ if len(out) != want_banks:
 print("\n".join(out))
 PY
   ) || exit 1
+  LEAGUE_ARGS=()
+  [ "${GRAFT_ACCEPT_MIGRATED:-0}" != "1" ] || LEAGUE_ARGS=(--accept-migrated)
   python tools/build_league.py --out "$POOL_OUT" --seeds "${SEEDS[@]}" \
+    ${LEAGUE_ARGS[@]+"${LEAGUE_ARGS[@]}"} \
     | tee "$POOL_OUT/build_league.out" || { echo "BUILD_LEAGUE FAILED" >&2; exit 1; }
   grep -oE "EXPECTED_POOL_HASH=[a-f0-9]{64}" "$POOL_OUT/build_league.out" \
     | tail -1 > "$POOL_OUT/POOL_IDENTITY.env" \
@@ -246,6 +252,8 @@ fi
 [ -z "${GRAFT_FROM_SOURCE_SHA256:-}" ] || export GRAFT_FROM_SOURCE_SHA256
 [ -z "${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}" ] || export GRAFT_FROM_PATCH_BUNDLE_SHA256
 [ -z "${GRAFT_REASON:-}" ] || export GRAFT_REASON
+[ -z "${GRAFT_ACCEPT_MIGRATED:-}" ] || export GRAFT_ACCEPT_MIGRATED
+[ -z "${GRAFT_MIGRATED_REASON:-}" ] || export GRAFT_MIGRATED_REASON
 [ -z "${BRIDGE_WARM_SHA256:-}" ] || export BRIDGE_WARM_SHA256
 [ -z "${BRIDGE_WARM_OBS_VERSION:-}" ] || export BRIDGE_WARM_OBS_VERSION
 [ -z "${BRIDGE_PROVENANCE:-}" ] || export BRIDGE_PROVENANCE

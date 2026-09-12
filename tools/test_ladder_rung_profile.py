@@ -419,6 +419,23 @@ class LadderRungProfileTests(unittest.TestCase):
         self.assertIn('export LADDER_CHAIN_LR_SCALE=1.0', stage)
         self.assertNotIn('export LADDER_CHAIN_LR_SCALE=0.1', stage)
 
+    def test_migrated_graft_declaration_is_graft_only_and_forwarded(self):
+        for knob, value in (("GRAFT_ACCEPT_MIGRATED", "1"),
+                            ("GRAFT_MIGRATED_REASON", "B1")):
+            result = self._run_rung(**{knob: value})
+            self.assertNotEqual(result.returncode, 0, knob)
+            self.assertIn("require LADDER_PROFILE=graft", result.stdout, knob)
+        source = RUNG.read_text(encoding="utf-8")
+        self.assertIn('GRAFT_ACCEPT_MIGRATED="$GRAFT_ACCEPT_MIGRATED" \\\n'
+                      '             GRAFT_MIGRATED_REASON="$GRAFT_MIGRATED_REASON" \\\n'
+                      '             GRAFT_REASON="$GRAFT_REASON")', source)
+        stage = (ROOT / "tools/ladder_stage.sh").read_text(encoding="utf-8")
+        for knob in ("GRAFT_ACCEPT_MIGRATED", "GRAFT_MIGRATED_REASON"):
+            self.assertIn(f'[ -z "${{{knob}:-}}" ] || export {knob}', stage)
+        self.assertIn('[ "${GRAFT_ACCEPT_MIGRATED:-0}" != "1" ] || '
+                      'LEAGUE_ARGS=(--accept-migrated)', stage)
+        self.assertIn('${LEAGUE_ARGS[@]+"${LEAGUE_ARGS[@]}"}', stage)
+
     def test_rung_launcher_refuses_missing_inputs_before_launch(self):
         env = os.environ.copy()
         for key in ("RUNG", "WARM", "POOL", "EXPECTED_POOL_HASH"):
