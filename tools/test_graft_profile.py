@@ -228,7 +228,8 @@ class GraftLauncherValidationTests(unittest.TestCase):
     def setUpClass(cls):
         source = LAUNCHER.read_text(encoding="utf-8")
         match = re.search(
-            r'"\$GRAFT_FROM_SOURCE_SHA256" "\$GRAFT_FROM_PATCH_BUNDLE_SHA256" <<\'PY\'\n'
+            r'"\$GRAFT_FROM_SOURCE_SHA256" "\$GRAFT_FROM_PATCH_BUNDLE_SHA256" '
+            r'"\$GRAFT_ACCEPT_MIGRATED" <<\'PY\'\n'
             r"(.*?)\nPY\n  \)\n", source, re.S)
         assert match, "launcher lineage-validation heredoc not found"
         cls.block = match.group(1)
@@ -261,11 +262,11 @@ class GraftLauncherValidationTests(unittest.TestCase):
         return warm, pool, warm_lineage
 
     def validate(self, warm, pool, mode, graft_source="", graft_patch="",
-                 new=None):
+                 new=None, accept="0"):
         new = new or self.NEW
         return subprocess.run(
             ["python3", "-", str(ROOT), str(warm), str(pool), *new,
-             mode, graft_source, graft_patch],
+             mode, graft_source, graft_patch, accept],
             input=self.block, text=True, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, check=False, timeout=120)
 
@@ -279,10 +280,11 @@ class GraftLauncherValidationTests(unittest.TestCase):
         warm, pool, warm_lineage = self.build(self.OLD, [self.OLD] * 4)
         out = self.validate(warm, pool, "graft-v7", self.OLD[0], self.OLD[2])
         self.assertEqual(out.returncode, 0, out.stderr)
-        warm_sha, bundle, module = out.stdout.split()
+        warm_sha, bundle, module, migrated = out.stdout.split()
         self.assertEqual(warm_sha, warm_lineage)
         self.assertEqual(module, self.OLD[1])
         self.assertEqual(len(bundle), 64)
+        self.assertEqual(migrated, "-")
 
     def test_mixed_pool_after_a_graft_is_refused_by_lineage_v6_and_accepted_by_graft(self):
         # Rung N+1: warm is the accepted (new-build) graft checkpoint, the pool
@@ -297,7 +299,7 @@ class GraftLauncherValidationTests(unittest.TestCase):
         self.assertIn("lineage mismatch", out.stderr)
         out = self.validate(warm, pool, "graft-v7", self.OLD[0], self.OLD[2])
         self.assertEqual(out.returncode, 0, out.stderr)
-        warm_sha, _, module = out.stdout.split()
+        warm_sha, _, module, _ = out.stdout.split()
         self.assertEqual(warm_sha, warm_lineage)
         self.assertEqual(module, self.OLD[1])
 
@@ -363,6 +365,228 @@ class GraftLauncherValidationTests(unittest.TestCase):
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("observation_abi/observation_version lineage mismatch",
                       out.stderr)
+
+
+# Real rig digests (audit critic G2): migrated chain 9 binds the migration build
+# (source 6fbd67f7, patch 425c5d5b); terminal-aware-v2 is patch 4b5bdc20,
+# module 651ffc40 on the same source.
+MIGRATION_SOURCE = "6fbd67f7201ce9830b3f282f19d3a98768ea197b8f3e5b9357991460884526f1"
+MIGRATION_PATCH = "425c5d5b117c3d21e944a2380d33ee6eaaec7e4274358c15a222b3f4116c46ec"
+TERMINAL_AWARE_V2 = (
+    MIGRATION_SOURCE,
+    "651ffc40e43e669912803e2f5bb3d3e641c34c0d8b431ab0f38f8393bbc700a3",
+    "4b5bdc20de6de488ab3f2ce055861b91ab2cfa16bbe869f01fe206193f11c803",
+)
+MIGRATED_DECLARATION = {
+    "GRAFT_FROM_SOURCE_SHA256": MIGRATION_SOURCE,
+    "GRAFT_FROM_PATCH_BUNDLE_SHA256": MIGRATION_PATCH,
+    "GRAFT_REASON": "D370",
+    "GRAFT_ACCEPT_MIGRATED": "1",
+    "GRAFT_MIGRATED_REASON": "B1 warm-start migrated chain 9",
+}
+
+
+def mint_migrated_lineage(root, checkpoint, *, fill):
+    """Publish a migrate-v6 sidecar on the migration build."""
+    import hashlib
+    import sys
+    sys.path.insert(0, str(ROOT / "tools"))
+    import checkpoint_lineage as cl
+    module = root / "migration_module.so"
+    if not module.exists():
+        module.write_bytes(b"migration-build module")
+    checkpoint.write_bytes(fill + b"\0" * (cl.EXPECTED_CHECKPOINT_BYTES - len(fill)))
+    v6_sha = hashlib.sha256(b"v6:" + fill).hexdigest()
+    source_lineage = root / (checkpoint.name + ".v6.lineage.json")
+    source_lineage.write_bytes(cl.canonical_bytes({
+        "checkpoint": {"bytes": 1, "sha256": v6_sha},
+        "compatibility": {"observation_abi": "obs-v6", "observation_version": 6,
+                          "action_abi": "exact-joint-v1"}}))
+    migration_manifest = root / (checkpoint.name + ".migration.json")
+    migration_manifest.write_text(json.dumps({
+        "schema": "bloodbowl-checkpoint-observation-migration-v1",
+        "source": {"observation_abi": "obs-v6", "observation_version": 6,
+                   "observation_size": 2782, "sha256": v6_sha,
+                   "lineage_sha256": cl.sha256_file(source_lineage)},
+        "destination": {"observation_abi": "obs-v7", "observation_version": 7,
+                        "observation_size": 2851,
+                        "sha256": cl.sha256_file(checkpoint)},
+        "zero_effect_inputs": {"repurposed_v6_zero_columns": [814, 815],
+                               "appended_columns": [2782, 2850]},
+    }), encoding="utf-8")
+    payload = cl.migration_lineage(
+        checkpoint, migration_manifest, source_lineage, target_module=module,
+        target_source_sha256=MIGRATION_SOURCE,
+        target_patch_bundle_sha256=MIGRATION_PATCH)
+    sidecar = cl.sidecar_path(checkpoint)
+    cl.write_lineage(sidecar, payload, replace=True)
+    return sidecar, cl.lineage_digest(payload), payload
+
+
+class MigratedGraftLauncherValidationTests(unittest.TestCase):
+    """B1/G2: migrated chain 9 plus a migrated pool, on the migration build,
+    through the launcher's graft-v7 validation block onto terminal-aware-v2."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.temp.name)
+        GraftLauncherValidationTests.setUpClass()
+        self.block = GraftLauncherValidationTests.block
+        self.warm = self.root / "chain9-v7.bin"
+        _, self.warm_lineage, self.warm_payload = mint_migrated_lineage(
+            self.root, self.warm, fill=b"chain9")
+        self.pool = self.root / "pool"
+        self.pool.mkdir()
+        seeds = []
+        for bank in range(4):
+            checkpoint = self.pool / f"{bank:016d}.bin"
+            sidecar, digest, _ = mint_migrated_lineage(
+                self.pool, checkpoint, fill=f"bank{bank}".encode())
+            seeds.append({"bank": bank, "name": f"mig{bank}",
+                          "file": checkpoint.name, "lineage_file": sidecar.name,
+                          "lineage_sha256": digest})
+        (self.pool / "league_seeds.json").write_text(
+            json.dumps({"seeds": seeds}), encoding="utf-8")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def validate(self, mode="graft-v7", accept="1"):
+        return subprocess.run(
+            ["python3", "-", str(ROOT), str(self.warm), str(self.pool),
+             *TERMINAL_AWARE_V2, mode, MIGRATION_SOURCE, MIGRATION_PATCH, accept],
+            input=self.block, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False, timeout=120)
+
+    def test_correct_column_audit_is_accepted_and_the_first_rung_publishes_eligible(self):
+        import sys
+        sys.path.insert(0, str(ROOT / "tools"))
+        import checkpoint_lineage as cl
+        out = self.validate()
+        self.assertEqual(out.returncode, 0, out.stderr)
+        warm_sha, bundle, module, migrated = out.stdout.rstrip("\n").split(" ", 3)
+        self.assertEqual(warm_sha, self.warm_lineage)
+        self.assertEqual(module,
+                         self.warm_payload["implementation"]["compiled_module_sha256"])
+        records = json.loads(migrated)
+        self.assertEqual([r["label"] for r in records],
+                         ["warm"] + [f"pool bank {i}" for i in range(4)])
+        # What the launcher then writes into the run manifest, and what the
+        # screen's materialization publishes for the trained checkpoint.
+        trained = self.root / "rung1.bin"
+        trained.write_bytes(b"trained" + b"\0" * (
+            cl.EXPECTED_CHECKPOINT_BYTES - len(b"trained")))
+        manifest = self.root / "RUN_MANIFEST.json"
+
+        def publish(checkpoint):
+            manifest.write_text(json.dumps({
+                "schema_version": 1, "mode": "native_static_pool_reward_ablation",
+                "seed": "42", "observation_abi": "obs-v7",
+                "observation_version": "7", "action_abi": "exact-joint-v1",
+                "compiled_rollout_transition_contract": "terminal-aware-tbptt-v1",
+                "initialization": "lineage-v7", "qualification_only": "0",
+                "policy_hidden_size": "512", "policy_num_layers": "3",
+                "policy_expansion_factor": "1",
+                "expected_checkpoint_bytes": str(cl.EXPECTED_CHECKPOINT_BYTES),
+                "source_sha256": TERMINAL_AWARE_V2[0],
+                "compiled_module_sha256": TERMINAL_AWARE_V2[1],
+                "puffer_patch_bundle_sha256": TERMINAL_AWARE_V2[2],
+                "screen_manifest_sha256": "4" * 64,
+                "warm_lineage_sha256": warm_sha,
+                "pool_lineage_bundle_sha256": bundle,
+                "graft_from_source_sha256": MIGRATION_SOURCE,
+                "graft_from_module_sha256": module,
+                "graft_from_patch_bundle_sha256": MIGRATION_PATCH,
+                "graft_from_warm_lineage_sha256": warm_sha,
+                "graft_reason": "D370",
+                "graft_migrated_reason": MIGRATED_DECLARATION["GRAFT_MIGRATED_REASON"],
+                "graft_migrated_from": migrated,
+            }, sort_keys=True) + "\n", encoding="utf-8")
+            return cl.lineage_from_run_manifest(
+                checkpoint, manifest, allow_eligible_publication=True)
+
+        payload = publish(trained)
+        self.assertTrue(payload["ancestry"]["eligible"])
+        self.assertEqual(payload["ancestry"]["migrated_from"]["sidecars"], records)
+        sidecar = cl.sidecar_path(trained)
+        cl.write_lineage(sidecar, payload)
+        cl.validate_lineage(trained, sidecar, expected={
+            "source_sha256": TERMINAL_AWARE_V2[0],
+            "compiled_module_sha256": TERMINAL_AWARE_V2[1],
+            "puffer_patch_bundle_sha256": TERMINAL_AWARE_V2[2]},
+            require_eligible=True)
+        # An untrained migrated blob cannot be promoted as the rung's output.
+        with self.assertRaisesRegex(cl.LineageError, "migrated warm blob itself"):
+            publish(self.warm)
+
+    def test_undeclared_migrated_sidecars_are_still_refused(self):
+        for mode, accept in (("graft-v7", "0"), ("lineage-v7", "1")):
+            out = self.validate(mode=mode, accept=accept)
+            self.assertNotEqual(out.returncode, 0, (mode, accept))
+            self.assertIn("only a graft declaring GRAFT_ACCEPT_MIGRATED",
+                          out.stderr, (mode, accept))
+
+    def test_wrong_column_audit_is_rejected(self):
+        import sys
+        sys.path.insert(0, str(ROOT / "tools"))
+        import checkpoint_lineage as cl
+        sidecar = self.pool / f"{2:016d}.bin.lineage.json"
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        payload["ancestry"]["migrated_from"]["zeroed_columns"] = [814]
+        cl.write_lineage(sidecar, payload, replace=True)
+        out = self.validate()
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("migration lineage column audit mismatch", out.stderr)
+
+    def test_blob_hash_mismatch_is_rejected(self):
+        bank = self.pool / f"{1:016d}.bin"
+        original = bank.read_bytes()
+        bank.write_bytes(b"tampered" + original[len(b"tampered"):])
+        out = self.validate()
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("SHA-256 differs from lineage", out.stderr)
+
+
+class MigratedGraftLauncherGateTests(unittest.TestCase):
+    def test_accept_migrated_requires_a_reason_and_a_boolean(self):
+        base = {**LAUNCHER_BASE, "BOOTSTRAP_MODE": "graft-v7", **MIGRATED_DECLARATION}
+        for over, message in (
+            ({"GRAFT_MIGRATED_REASON": ""},
+             "GRAFT_ACCEPT_MIGRATED=1 requires GRAFT_MIGRATED_REASON"),
+            ({"GRAFT_MIGRATED_REASON": "m" * 201},
+             "GRAFT_ACCEPT_MIGRATED=1 requires GRAFT_MIGRATED_REASON"),
+            ({"GRAFT_ACCEPT_MIGRATED": "0"},
+             "GRAFT_MIGRATED_REASON requires GRAFT_ACCEPT_MIGRATED=1"),
+            ({"GRAFT_ACCEPT_MIGRATED": "yes"},
+             "GRAFT_ACCEPT_MIGRATED must be 0 or 1"),
+        ):
+            result = run(LAUNCHER, {**base, **over})
+            self.assertNotEqual(result.returncode, 0, over)
+            self.assertIn(message, result.stderr, over)
+        result = run(LAUNCHER, base)
+        self.assertNotIn("GRAFT_", result.stderr)
+        self.assertTrue(failed_later(result), result.stderr)
+
+    def test_accept_migrated_is_refused_outside_graft_v7(self):
+        for knob in ("GRAFT_ACCEPT_MIGRATED", "GRAFT_MIGRATED_REASON"):
+            result = run(LAUNCHER, {**LAUNCHER_BASE, "BOOTSTRAP_MODE": "lineage-v7",
+                                    knob: MIGRATED_DECLARATION[knob]})
+            self.assertNotEqual(result.returncode, 0, knob)
+            self.assertIn("only valid with BOOTSTRAP_MODE=graft-v7",
+                          result.stderr, knob)
+
+    def test_migration_v6_bootstrap_points_at_the_declared_graft(self):
+        result = run(LAUNCHER, {**LAUNCHER_BASE, "BOOTSTRAP_MODE": "migration-v6"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("qualification/evaluation only", result.stderr)
+        self.assertIn("graft-v7 with GRAFT_ACCEPT_MIGRATED=1", result.stderr)
+
+    def test_launcher_records_the_migrated_declaration_in_the_run_manifest(self):
+        source = LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("accept_migrated=accept_migrated)", source)
+        self.assertIn("migrated_graft_records(graft_sidecars)", source)
+        self.assertIn('graft_migrated_reason "$GRAFT_MIGRATED_REASON"', source)
+        self.assertIn('graft_migrated_from "$GRAFT_MIGRATED_FROM"', source)
 
 
 SCREEN_BASE = {

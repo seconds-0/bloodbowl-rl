@@ -18,6 +18,12 @@
 # .graft_bridge -- the same rule the screen plan writer applies). GRAFT_REASON
 # (e.g. "D242") is required. The run manifest carries graft_from_* and
 # graft_reason so the published sidecar records ancestry.grafted_from.
+# GRAFT_ACCEPT_MIGRATED=1 (graft-v7 only) additionally admits zero-extended
+# obs-v6 -> obs-v7 migration sidecars as warm/pool inputs; GRAFT_MIGRATED_REASON
+# (<=200 chars) is then required. Their column audit and hash binding are still
+# validated, the run manifest carries graft_migrated_reason and one record per
+# migrated input, and the published sidecar records ancestry.migrated_from. A
+# migrated blob is never published as the rung's output.
 # bridge-v4 is the reviewed warm start from an OUT-OF-LINEAGE raw blob (an
 # obs-v4/obs-v5-era checkpoint with NO sidecar; docs/audit-2026-08-20.md F2).
 # WARM is the raw blob and is never lineage-validated; instead the operator
@@ -182,7 +188,7 @@ case "$BOOTSTRAP_MODE" in
     QUALIFICATION_ONLY=0
     ;;
   migration-v6)
-    echo "migration-v6 checkpoints are qualification/evaluation only; training cannot publish eligible ancestry from algebraic zero extension" >&2
+    echo "migration-v6 checkpoints are qualification/evaluation only; training cannot publish eligible ancestry from algebraic zero extension without a training rung: warm-start or pool one through BOOTSTRAP_MODE=graft-v7 with GRAFT_ACCEPT_MIGRATED=1 and GRAFT_MIGRATED_REASON" >&2
     exit 1
     ;;
   *)
@@ -202,6 +208,8 @@ esac
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
 GRAFT_REASON="${GRAFT_REASON:-}"
+GRAFT_ACCEPT_MIGRATED="${GRAFT_ACCEPT_MIGRATED:-0}"
+GRAFT_MIGRATED_REASON="${GRAFT_MIGRATED_REASON:-}"
 if [ "$BOOTSTRAP_MODE" = "graft-v7" ]; then
   for digest_name in GRAFT_FROM_SOURCE_SHA256 GRAFT_FROM_PATCH_BUNDLE_SHA256; do
     digest="${!digest_name}"
@@ -214,8 +222,22 @@ if [ "$BOOTSTRAP_MODE" = "graft-v7" ]; then
     echo "GRAFT_REASON must be a non-empty string of at most 200 characters" >&2
     exit 1
   fi
-elif [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON" ]; then
-  echo "GRAFT_FROM_SOURCE_SHA256/GRAFT_FROM_PATCH_BUNDLE_SHA256/GRAFT_REASON are only valid with BOOTSTRAP_MODE=graft-v7" >&2
+  case "$GRAFT_ACCEPT_MIGRATED" in
+    0)
+      [ -z "$GRAFT_MIGRATED_REASON" ] || {
+        echo "GRAFT_MIGRATED_REASON requires GRAFT_ACCEPT_MIGRATED=1" >&2; exit 1; }
+      ;;
+    1)
+      if [ -z "${GRAFT_MIGRATED_REASON// /}" ] || [ "${#GRAFT_MIGRATED_REASON}" -gt 200 ]; then
+        echo "GRAFT_ACCEPT_MIGRATED=1 requires GRAFT_MIGRATED_REASON as a non-empty string of at most 200 characters" >&2
+        exit 1
+      fi
+      ;;
+    *) echo "GRAFT_ACCEPT_MIGRATED must be 0 or 1" >&2; exit 1 ;;
+  esac
+elif [ -n "$GRAFT_FROM_SOURCE_SHA256$GRAFT_FROM_PATCH_BUNDLE_SHA256$GRAFT_REASON$GRAFT_MIGRATED_REASON" ] || \
+     [ "$GRAFT_ACCEPT_MIGRATED" != "0" ]; then
+  echo "GRAFT_FROM_SOURCE_SHA256/GRAFT_FROM_PATCH_BUNDLE_SHA256/GRAFT_REASON/GRAFT_ACCEPT_MIGRATED/GRAFT_MIGRATED_REASON are only valid with BOOTSTRAP_MODE=graft-v7" >&2
   exit 1
 fi
 BRIDGE_WARM_SHA256="${BRIDGE_WARM_SHA256:-}"
@@ -853,19 +875,21 @@ if [ "$POOL_MODE" = "1" ]; then
   # declared BRIDGE_WARM_SHA256, asserted above) and WARM_LINEAGE_HASH stays
   # empty; the four pool banks were validated exactly as lineage-v6 validated
   # them, against this build's digests.
-  read -r WARM_LINEAGE_HASH POOL_LINEAGE_BUNDLE_HASH GRAFT_FROM_MODULE_SHA256 < <(
+  read -r WARM_LINEAGE_HASH POOL_LINEAGE_BUNDLE_HASH GRAFT_FROM_MODULE_SHA256 \
+    GRAFT_MIGRATED_FROM < <(
     "$PYBIN" - "$ROOT" "$WARM" "$POOL" "$SOURCE_HASH" \
       "$MODULE_HASH" "$PATCH_HASH" "$BOOTSTRAP_MODE" \
-      "$GRAFT_FROM_SOURCE_SHA256" "$GRAFT_FROM_PATCH_BUNDLE_SHA256" <<'PY'
+      "$GRAFT_FROM_SOURCE_SHA256" "$GRAFT_FROM_PATCH_BUNDLE_SHA256" "$GRAFT_ACCEPT_MIGRATED" <<'PY'
 import hashlib, json, pathlib, sys
 (root, warm_path, pool_path, source_sha, module_sha, patch_sha, mode,
- graft_source, graft_patch) = sys.argv[1:]
+ graft_source, graft_patch, accept_migrated) = sys.argv[1:]
 sys.path.insert(0, str(pathlib.Path(root) / "tools"))
 from checkpoint_lineage import lineage_digest, sidecar_path, validate_lineage
 
-from checkpoint_lineage import LineageError, graft_bridge
+from checkpoint_lineage import LineageError, graft_bridge, migrated_graft_records
 
 graft = mode == "graft-v7"
+accept_migrated = graft and accept_migrated == "1"
 bridge = mode == "bridge-v4"
 current = {
     "source_sha256": source_sha,
@@ -885,7 +909,8 @@ if bridge:
     warm_lineage = ""
 else:
     warm_payload = validate_lineage(
-        warm, sidecar_path(warm), expected=expected, require_eligible=True)
+        warm, sidecar_path(warm), expected=expected, require_eligible=True,
+        accept_migrated=accept_migrated)
     warm_lineage = lineage_digest(warm_payload)
 graft_module = ""
 graft_sidecars = [] if warm_payload is None else [("warm", warm_payload)]
@@ -896,7 +921,8 @@ for index, seed in enumerate(manifest["seeds"]):
     checkpoint = pool / seed["file"]
     lineage = pool / seed["lineage_file"]
     payload = validate_lineage(
-        checkpoint, lineage, expected=expected, require_eligible=True)
+        checkpoint, lineage, expected=expected, require_eligible=True,
+        accept_migrated=accept_migrated)
     payload_sha = lineage_digest(payload)
     if payload_sha != seed["lineage_sha256"]:
         raise SystemExit(f"pool bank {index} lineage digest differs from manifest")
@@ -912,13 +938,23 @@ if graft:
     try:
         graft_module = graft_bridge(
             graft_sidecars, current=current, old_source_sha256=graft_source,
-            old_patch_bundle_sha256=graft_patch)
+            old_patch_bundle_sha256=graft_patch,
+            accept_migrated=accept_migrated)
     except LineageError as exc:
         raise SystemExit(str(exc)) from exc
-print(warm_lineage or "-", bundle, graft_module or "-")
+migrated = migrated_graft_records(graft_sidecars) if accept_migrated else []
+# The records are the LAST field: `read` assigns the rest of the line to it.
+print(warm_lineage or "-", bundle, graft_module or "-",
+      json.dumps(migrated, sort_keys=True, separators=(",", ":"))
+      if migrated else "-")
 PY
   )
   [ "$GRAFT_FROM_MODULE_SHA256" != "-" ] || GRAFT_FROM_MODULE_SHA256=""
+  [ "$GRAFT_MIGRATED_FROM" != "-" ] || GRAFT_MIGRATED_FROM=""
+  if [ "$GRAFT_ACCEPT_MIGRATED" = "1" ] && [ -z "$GRAFT_MIGRATED_FROM" ]; then
+    echo "internal error: GRAFT_ACCEPT_MIGRATED=1 produced no migrated records" >&2
+    exit 1
+  fi
   [ "$WARM_LINEAGE_HASH" != "-" ] || WARM_LINEAGE_HASH=""
   if [ "$BOOTSTRAP_MODE" = "bridge-v4" ] && [ -n "$WARM_LINEAGE_HASH" ]; then
     echo "internal error: bridge-v4 produced a warm lineage digest" >&2
@@ -938,6 +974,8 @@ echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio
 echo "scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bank_mask=$SCRIPTED_BANK_MASK scripted_bot_type=$SCRIPTED_BOT_TYPE"
 [ "$BOOTSTRAP_MODE" != "graft-v7" ] || \
   echo "graft_from source_sha256=$GRAFT_FROM_SOURCE_SHA256 patch_bundle_sha256=$GRAFT_FROM_PATCH_BUNDLE_SHA256 module_sha256=$GRAFT_FROM_MODULE_SHA256 warm_lineage_sha256=$WARM_LINEAGE_HASH reason=$GRAFT_REASON"
+[ "$GRAFT_ACCEPT_MIGRATED" != "1" ] || \
+  echo "graft_migrated reason=$GRAFT_MIGRATED_REASON from=$GRAFT_MIGRATED_FROM"
 [ "$BOOTSTRAP_MODE" != "bridge-v4" ] || \
   echo "bridged_from warm_sha256=$BRIDGE_WARM_SHA256 warm_observation_version=$BRIDGE_WARM_OBS_VERSION provenance=$BRIDGE_PROVENANCE reason=$BRIDGE_REASON"
 
@@ -1085,6 +1123,14 @@ if [ "$BOOTSTRAP_MODE" = "graft-v7" ]; then
     graft_from_warm_lineage_sha256 "$WARM_LINEAGE_HASH"
     graft_reason "$GRAFT_REASON"
   )
+  if [ "$GRAFT_ACCEPT_MIGRATED" = "1" ]; then
+    # Both or none: checkpoint_lineage publishes them as ancestry.migrated_from
+    # and refuses a checkpoint equal to any migrated input.
+    META_ARGS+=(
+      graft_migrated_reason "$GRAFT_MIGRATED_REASON"
+      graft_migrated_from "$GRAFT_MIGRATED_FROM"
+    )
+  fi
 fi
 if [ "$BOOTSTRAP_MODE" = "bridge-v4" ]; then
   # All four or none: checkpoint_lineage treats their presence as the bridge
