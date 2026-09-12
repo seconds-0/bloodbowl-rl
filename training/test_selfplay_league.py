@@ -304,6 +304,72 @@ class BuildLeagueTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(
                 out, 'pool', seed['lineage_file'])))
 
+    def test_migrated_banks_require_the_explicit_accept_migrated_flag(self):
+        import hashlib
+        from checkpoint_lineage import canonical_bytes, migration_lineage
+        module = os.path.join(self.tmp, 'migration_module.so')
+        with open(module, 'wb') as handle:
+            handle.write(b'migration build')
+        migrated = []
+        for name, _ in self.seeds:
+            checkpoint = os.path.join(self.tmp, f'migrated-{name}.bin')
+            make_seed(checkpoint, DEFAULT_EXPECT_BYTES)
+            with open(checkpoint, 'rb') as handle:
+                v7_sha = hashlib.sha256(handle.read()).hexdigest()
+            v6_sha = hashlib.sha256(name.encode()).hexdigest()
+            source_lineage = checkpoint + '.v6.lineage.json'
+            with open(source_lineage, 'wb') as handle:
+                handle.write(canonical_bytes({
+                    'checkpoint': {'bytes': 1, 'sha256': v6_sha},
+                    'compatibility': {'observation_abi': 'obs-v6',
+                                      'observation_version': 6,
+                                      'action_abi': 'exact-joint-v1'}}))
+            with open(source_lineage, 'rb') as handle:
+                source_lineage_sha = hashlib.sha256(handle.read()).hexdigest()
+            migration_manifest = checkpoint + '.migration.json'
+            with open(migration_manifest, 'w') as handle:
+                json.dump({
+                    'schema': 'bloodbowl-checkpoint-observation-migration-v1',
+                    'source': {'observation_abi': 'obs-v6',
+                               'observation_version': 6,
+                               'observation_size': 2782, 'sha256': v6_sha,
+                               'lineage_sha256': source_lineage_sha},
+                    'destination': {'observation_abi': 'obs-v7',
+                                    'observation_version': 7,
+                                    'observation_size': 2851,
+                                    'sha256': v7_sha},
+                    'zero_effect_inputs': {
+                        'repurposed_v6_zero_columns': [814, 815],
+                        'appended_columns': [2782, 2850]},
+                }, handle)
+            write_lineage(sidecar_path(checkpoint), migration_lineage(
+                checkpoint, migration_manifest, source_lineage,
+                target_module=module, target_source_sha256='a' * 64,
+                target_patch_bundle_sha256='c' * 64))
+            migrated.append((name, checkpoint))
+
+        with self.assertRaisesRegex(LeagueError,
+                                    'GRAFT_ACCEPT_MIGRATED'):
+            build_league(os.path.join(self.tmp, 'undeclared'), migrated,
+                         DEFAULT_EXPECT_BYTES)
+        self.assertFalse(os.path.exists(
+            os.path.join(self.tmp, 'undeclared', 'pool')))
+        with self.assertRaisesRegex(LeagueError, 'legacy-unlabeled'):
+            build_league(os.path.join(self.tmp, 'both'), migrated,
+                         DEFAULT_EXPECT_BYTES, allow_legacy_unlabeled=True,
+                         accept_migrated=True)
+        out = os.path.join(self.tmp, 'declared')
+        manifest = build_league(out, migrated, DEFAULT_EXPECT_BYTES,
+                                accept_migrated=True)
+        self.assertEqual(manifest['version'], 2)
+        self.assertEqual(len(manifest['seeds']), 3)
+        # A tampered bank is still refused under the declaration.
+        with open(migrated[1][1], 'r+b') as handle:
+            handle.write(b'tampered')
+        with self.assertRaisesRegex(LeagueError, 'SHA-256 differs'):
+            build_league(os.path.join(self.tmp, 'tampered'), migrated,
+                         DEFAULT_EXPECT_BYTES, accept_migrated=True)
+
 
 class PatchedSetupTest(unittest.TestCase):
     EXPECT = 4096

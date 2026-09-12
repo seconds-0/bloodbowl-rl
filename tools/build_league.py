@@ -94,14 +94,20 @@ def parse_seed_args(seed_args):
 
 
 def build_league(out_dir, seeds, expect_bytes=DEFAULT_EXPECT_BYTES,
-                 allow_legacy_unlabeled=False):
+                 allow_legacy_unlabeled=False, accept_migrated=False):
     '''Create <out_dir>/pool with seed .bins + league_seeds.json.
 
     Returns the manifest dict. Raises LeagueError on any validation failure
-    (missing seed, wrong size, pre-existing pool entries).
+    (missing seed, wrong size, pre-existing pool entries). accept_migrated
+    admits zero-extended obs-v6 migration sidecars as banks; only a graft that
+    declares GRAFT_ACCEPT_MIGRATED=1 can then train against such a pool.
     '''
     if not seeds:
         raise LeagueError('at least one seed is required')
+    if accept_migrated and allow_legacy_unlabeled:
+        raise LeagueError(
+            '--accept-migrated validates lineage; it cannot be combined with '
+            '--legacy-unlabeled')
 
     # Validate sources before writing anything.
     sources = {}
@@ -124,7 +130,8 @@ def build_league(out_dir, seeds, expect_bytes=DEFAULT_EXPECT_BYTES,
             lineage = sidecar_path(path)
             try:
                 payload = validate_lineage(
-                    path, lineage, require_eligible=True)
+                    path, lineage, require_eligible=True,
+                    accept_migrated=accept_migrated)
             except LineageError as exc:
                 raise LeagueError(f'seed {name!r}: {exc}') from exc
             lineages[real] = (lineage, lineage_digest(payload))
@@ -205,13 +212,17 @@ def main(argv=None):
     ap.add_argument('--legacy-unlabeled', action='store_true',
         help='historical reconstruction only: permit checkpoints without '
              'obs-v7/exact-action lineage; repaired launchers still reject it')
+    ap.add_argument('--accept-migrated', action='store_true',
+        help='admit zero-extended obs-v6 migration sidecars as banks, for a '
+             'graft that declares GRAFT_ACCEPT_MIGRATED=1')
     args = ap.parse_args(argv)
 
     try:
         seeds = parse_seed_args(args.seeds)
         manifest = build_league(
             args.out, seeds, args.expect_bytes,
-            allow_legacy_unlabeled=args.legacy_unlabeled)
+            allow_legacy_unlabeled=args.legacy_unlabeled,
+            accept_migrated=args.accept_migrated)
     except LeagueError as e:
         print(f'build_league: {e}', file=sys.stderr)
         return 1
