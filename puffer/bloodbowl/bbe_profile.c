@@ -228,19 +228,24 @@ int main(int argc, char** argv) {
                (double)(mask_ns_by_proc[p] + decode_ns_by_proc[p]));
     }
     if (smoke) {
-        int top = -1;
-        for (int p = 0; p < BB_PROC_COUNT; p++) {
-            if (enum_calls[p] && (top < 0 || enum_ns[p] > enum_ns[top])) top = p;
-        }
-        if (ep_match_over != done || top != BB_PROC_ACTIVATION) {
+        // Gate on in-game play, not on which proc is most expensive: a faster
+        // enumerator (the early-exit blitz reachability query) legitimately
+        // moves the top enumeration proc from ACTIVATION to SETUP, while a
+        // sampler that stops producing games never reaches ACTIVATION at all.
+        uint64_t activation_decisions = dec_by_proc[BB_PROC_ACTIVATION];
+        if (ep_match_over != done || activation_decisions < (uint64_t)done ||
+            enum_calls[BB_PROC_ACTIVATION] == 0) {
             fprintf(stderr,
                     "bbe_profile smoke FAIL: match_over=%d of %d episodes, "
-                    "top enumeration proc %s (expected ACTIVATION)\n",
-                    ep_match_over, done, top >= 0 ? proc_name(top) : "none");
+                    "%llu ACTIVATION decisions (expected at least one per "
+                    "episode)\n",
+                    ep_match_over, done,
+                    (unsigned long long)activation_decisions);
             return 1;
         }
-        printf("bbe_profile smoke OK: %d/%d MATCH_OVER, ACTIVATION dominates "
-               "enumeration\n", ep_match_over, done);
+        printf("bbe_profile smoke OK: %d/%d MATCH_OVER, %llu ACTIVATION "
+               "decisions\n", ep_match_over, done,
+               (unsigned long long)activation_decisions);
     }
     return 0;
 }

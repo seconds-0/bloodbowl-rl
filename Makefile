@@ -68,8 +68,8 @@ $(PUFFER_OBSERVATION_TESTBIN): puffer/bloodbowl/test_observation.c puffer/bloodb
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
 # Env-step profiler. The smoke run requires every episode to end MATCH_OVER
-# and ACTIVATION to dominate enumeration, so a sampler that stops producing
-# games fails the build instead of profiling error episodes.
+# and to reach ACTIVATION decisions, so a sampler that stops producing games
+# fails the build instead of profiling error episodes.
 $(PROFILE_BIN): puffer/bloodbowl/bbe_profile.c puffer/bloodbowl/bloodbowl.h $(SRC) $(ENGINE_HDR)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
