@@ -38,6 +38,16 @@ Run it from a systemd timer or a service loop:
 Exit status is 0 for every normal outcome including halt, because a halted
 campaign is a decision, not a crash, and systemd should not restart-loop on it.
 2 is reserved for a malformed plan or an unusable state file.
+
+Terminal campaigns (HALT/HALTED/COMPLETE): a tick that changes nothing leaves
+CAMPAIGN_STATE.json and its lock untouched and exits 0, so a stale timer stops
+churning the state file. The timer itself keeps firing until someone disables
+it; every terminal tick prints the exact command, e.g.
+
+    systemctl --user disable --now campaign-supervisor@<campaign>.timer
+
+The supervisor never calls systemctl itself. Disabling a timer is an operator
+decision, and the same plan can be extended with new stages and re-enabled.
 """
 
 from __future__ import annotations
@@ -61,6 +71,10 @@ SCHEMA_VERSION = 1
 # or ssh command line that carries the pattern itself. `[p]uffer` matches the
 # string "puffer" while the literal pattern text does not match itself.
 DEFAULT_TRAINER_PGREP = r"[p]uffer_cuda_runtime.py train|[p]uffer train"
+
+# Verdicts after which no later tick can act until a human edits the plan or
+# the state. HALT and the first COMPLETE still persist their transition.
+TERMINAL_VERDICTS = frozenset({"HALT", "HALTED", "COMPLETE"})
 
 
 class PlanError(Exception):
@@ -316,6 +330,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="decide and print, but do not launch or write state",
     )
+    parser.add_argument(
+        "--timer-unit",
+        help="timer named in the terminal-verdict disable hint (default: "
+        "campaign-supervisor@<state dir name>.timer, the shipped unit layout)",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -326,7 +345,8 @@ def main(argv: list[str] | None = None) -> int:
 
     lock_path = args.state.with_suffix(args.state.suffix + ".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("w") as lock:
+    # "a", not "w": truncating on open bumps the lock's mtime every tick.
+    with lock_path.open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -351,11 +371,25 @@ def main(argv: list[str] | None = None) -> int:
         else:
             state = _blank_state(plan)
 
+        before = json.dumps(state, sort_keys=True)
         verdict = tick(plan, state, dry_run=args.dry_run)
         print(verdict)
-        if not args.dry_run:
-            state["updated_utc"] = _utc()
-            _write_json_atomic(args.state, state)
+        terminal = verdict.split(" ", 1)[0] in TERMINAL_VERDICTS
+        if terminal:
+            unit = (
+                args.timer_unit
+                or f"campaign-supervisor@{args.state.parent.name}.timer"
+            )
+            print(
+                "campaign is terminal; stop ticking it with: "
+                f"systemctl --user disable --now {shlex.quote(unit)}"
+            )
+        if args.dry_run:
+            return 0
+        if terminal and json.dumps(state, sort_keys=True) == before:
+            return 0
+        state["updated_utc"] = _utc()
+        _write_json_atomic(args.state, state)
     return 0
 
 
