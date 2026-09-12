@@ -146,6 +146,16 @@ at 4 banks or fewer. The launch verification step above (manifest shows
 window telemetry sane) is the first real execution and should be treated as
 such.
 
+**Correction, 2026-09-11.** "Validated up to launch" was wrong. Two embedded
+pool validators still required exactly four banks: the screen plan writer
+(`run_reward_screen.sh`, "screen pool must contain exactly four banks") and the
+per-arm launcher's pool-body check (`run_reward_ablation.sh`, "static reward
+pool must contain exactly four seeds"). The staged chain 23 would have built
+its 8-bank pool and then stopped at the screen plan step, before any training.
+Branch `fix/chain23-preflight-20260911` sizes both checks to
+`NUM_FROZEN_BANKS` (`tools/test_frozen_bank_pool_width.py`). Nothing here has
+run on hardware yet.
+
 The 8-bank composition test earned its place immediately: the first draft of
 the resolver change shadowed the existing `banks` seed-list variable and the
 test caught it as a TypeError.
