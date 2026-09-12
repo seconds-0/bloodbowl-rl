@@ -723,6 +723,13 @@ PATCH_HASH="$({
   # torch_pufferl.py does not change compiled_module_sha256, and
   # vendor_source_sha256 is recorded below but never validated.
   sha256sum "$ROOT/training/puffer_reward_clamp_range.patch"
+  # Opt-in: joins the digest only when the vendored tree carries it, in the
+  # same position run_reward_screen.sh appends it.
+  optional_patch="$ROOT/training/puffer_skip_scripted_bank_forward.patch"
+  if git -C "$ROOT/vendor/PufferLib" apply --reverse --check --no-index \
+      "$optional_patch" 2>/dev/null; then
+    sha256sum "$optional_patch"
+  fi
 } | sha256sum | awk '{print $1}')"
 if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
    [ "$PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ]; then
