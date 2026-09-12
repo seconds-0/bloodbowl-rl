@@ -644,3 +644,84 @@ BB_TEST(reach_any_target_keeps_dodge_first_budget_semantics) {
     BB_CHECK(bb_reach_any_target(&m, mover, pocket));
     BB_CHECK_EQ(reach_any_target_square_mismatches(&m, mover), 0);
 }
+
+static bool blitz_target_reference(const bb_match* m, int slot) {
+    const bb_player* p = &m->players[slot];
+    if (p->location != BB_LOC_ON_PITCH) return false;
+    bb_match adjusted = *m;
+    bb_player* ap = &adjusted.players[slot];
+    if (p->stance == BB_STANCE_PRONE) {
+        ap->stance = BB_STANCE_STANDING;
+        if (!bb_has_skill(&ap->skills, BB_SK_JUMP_UP)) {
+            if (ap->ma < 3) {
+                ap->moved = (uint8_t)ap->ma;
+                ap->rushes = (uint8_t)bb_max_rushes(&adjusted, slot);
+            } else {
+                ap->moved = 3;
+            }
+        }
+    } else if (p->stance != BB_STANCE_STANDING) {
+        return false;
+    }
+    uint8_t target[BB_PITCH_LEN][BB_PITCH_WID];
+    memset(target, 0, sizeof target);
+    int opp = 1 - BB_TEAM_OF(slot);
+    for (int s = opp * BB_TEAM_SLOTS; s < (opp + 1) * BB_TEAM_SLOTS; s++) {
+        const bb_player* q = &adjusted.players[s];
+        if (q->location != BB_LOC_ON_PITCH) continue;
+        if (q->stance != BB_STANCE_STANDING) continue;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (!dx && !dy) continue;
+                if (bb_on_pitch_xy(q->x + dx, q->y + dy)) {
+                    target[q->x + dx][q->y + dy] = 1;
+                }
+            }
+        }
+    }
+    return reach_any_reference(&adjusted, slot, target);
+}
+
+// Every ACTIVATION declaration window in seeded random matches offers
+// DECLARE BLITZ exactly when the full-field reference predicate says a
+// standing opponent is reachable (and the team/Charge budget allows it).
+BB_TEST(reach_blitz_declaration_matches_field_reference_in_random_matches) {
+    long windows = 0, with_blitz = 0, budget_open_without = 0, mismatches = 0;
+    for (int g = 0; g < 12; g++) {
+        bb_match m;
+        int home = g % BB_TEAM_COUNT;
+        int away = (g * 5 + 3) % BB_TEAM_COUNT;
+        bb_match_init(&m, home, away);
+        bb_rng rng, pick;
+        bb_rng_seed(&rng, 0xB117E000ull + (uint64_t)g, 1);
+        bb_rng_seed(&pick, 0xB117F000ull + (uint64_t)g, 2);
+        bb_status st = bb_advance(&m, &rng);
+        for (int steps = 0; st == BB_STATUS_DECISION && steps < 200000; steps++) {
+            bb_action legal[BB_LEGAL_MAX];
+            int n = bb_legal_actions(&m, legal);
+            if (n <= 0) break;
+            const bb_frame* f = &m.stack[m.stack_top - 1];
+            if (f->proc == BB_PROC_ACTIVATION && f->phase == 0) {
+                bool budget_open = f->x == 1
+                    ? !(m.stack[m.stack_top - 2].y & 1)
+                    : !m.blitz_used;
+                bool want = budget_open && blitz_target_reference(&m, f->a);
+                bool got = false;
+                for (int i = 0; i < n; i++) {
+                    if (legal[i].type == BB_A_DECLARE && legal[i].arg == BB_ACT_BLITZ) {
+                        got = true;
+                    }
+                }
+                if (got != want) mismatches++;
+                windows++;
+                if (got) with_blitz++;
+                else if (budget_open) budget_open_without++;
+            }
+            st = bb_apply(&m, legal[fx_pick_smart(&m, legal, n, &pick)], &rng);
+        }
+    }
+    BB_CHECK_EQ(mismatches, 0);
+    BB_CHECK(windows > 500);
+    BB_CHECK(with_blitz > 100);
+    BB_CHECK(budget_open_without > 20);
+}
