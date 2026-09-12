@@ -522,10 +522,11 @@ if [ "$POOL_MODE" = "1" ]; then
   # Validate the pool body, bank order, hashes, lineage paths, and architecture
   # before any trainer allocates GPU state.
   read -r POOL_HASH POOL_BANKS POOL_MANIFEST_HASH < <(
-    "$PYBIN" - "$POOL" "$EXPECT_BYTES" <<'PY'
+    "$PYBIN" - "$POOL" "$EXPECT_BYTES" "$NUM_FROZEN_BANKS" <<'PY'
 import hashlib, json, pathlib, sys
 pool = pathlib.Path(sys.argv[1])
 expect = int(sys.argv[2])
+num_banks = int(sys.argv[3])
 manifest_path = pool / "league_seeds.json"
 manifest_raw = manifest_path.read_bytes()
 manifest = json.loads(manifest_raw)
@@ -533,8 +534,11 @@ if manifest.get("expected_bytes") != expect:
     raise SystemExit(
         f"pool expected_bytes={manifest.get('expected_bytes')}, expected {expect}")
 seeds = manifest.get("seeds")
-if not isinstance(seeds, list) or len(seeds) != 4:
-    raise SystemExit("static reward pool must contain exactly four seeds")
+if not isinstance(seeds, list) or len(seeds) != num_banks:
+    got = len(seeds) if isinstance(seeds, list) else "no seed list"
+    raise SystemExit(
+        f"static reward pool must contain exactly NUM_FROZEN_BANKS={num_banks} "
+        f"seeds, got {got}")
 identity = []
 seen_names = set()
 seen_hashes = set()
