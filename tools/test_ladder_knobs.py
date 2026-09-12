@@ -24,7 +24,8 @@ def run(**knobs) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(("LADDER_", "SCRIPTED_", "GRAFT_"))
            and k not in ("WARM", "POOL", "BOOTSTRAP_MODE", "EXPECTED_POOL_HASH",
-                         "TAG", "REWARD_MANIFEST", "STEPS", "SEED")}
+                         "TAG", "REWARD_MANIFEST", "STEPS", "SEED",
+                         "NUM_FROZEN_BANKS", "FROZEN_BANK_PCT")}
     # Enough to get past the required-variable checks and reach the knobs.
     env.setdefault("TAG", "ladder-knob-test")
     env.setdefault("REWARD_MANIFEST", str(ROOT / "puffer/config/rewards/s0_both.json"))
@@ -41,6 +42,15 @@ def run(**knobs) -> subprocess.CompletedProcess:
         timeout=120,
         cwd=str(ROOT),
     )
+
+
+def pool_run(**knobs) -> subprocess.CompletedProcess:
+    # lineage-v6 with every required input named, so the run reaches the knob
+    # gates instead of stopping at "WARM is required".
+    base = dict(BOOTSTRAP_MODE="lineage-v6", WARM="missing.bin",
+                POOL="missing-pool", EXPECTED_POOL_HASH="0" * 64)
+    base.update(knobs)
+    return run(**base)
 
 
 class LadderKnobTests(unittest.TestCase):
@@ -103,9 +113,49 @@ class ScriptedBankKnobTests(unittest.TestCase):
         self.assertNotIn("SCRIPTED_BOT_TYPE", out)
 
     def test_tag_out_of_range_is_refused(self):
-        for value in ("5", "-1", "x", "1.0", "01"):
+        # Default NUM_FROZEN_BANKS=4. One digit only, so '01' never aliases 1.
+        for value in ("5", "9", "-1", "x", "1.0", "01"):
             out = run(SCRIPTED_BANK_TAG=value).stdout
             self.assertIn("SCRIPTED_BANK_TAG must be an integer in 0..4", out, value)
+
+    def test_tag_domain_follows_the_bank_count(self):
+        # The screen accepts 0..NUM_FROZEN_BANKS; a launcher still pinned to
+        # 0..4 refused the staged chain 23 (tag 8 at 8 banks) before training,
+        # after the PLAN_ONLY preflight had already verified the screen plan.
+        for banks, value in (("4", "5"), ("1", "2"), ("7", "8"), ("8", "9"),
+                             ("8", "08"), ("8", "10")):
+            out = pool_run(SCRIPTED_BANK_TAG=value, NUM_FROZEN_BANKS=banks).stdout
+            self.assertIn(f"SCRIPTED_BANK_TAG must be an integer in 0..{banks}",
+                          out, (banks, value))
+
+    def test_every_tag_up_to_the_bank_count_passes_the_gate(self):
+        vendored = (ROOT / "vendor/PufferLib/.venv/bin/python").exists()
+        for banks in ("1", "4", "8"):
+            for tag in range(int(banks) + 1):
+                out = pool_run(SCRIPTED_BANK_TAG=tag, NUM_FROZEN_BANKS=banks).stdout
+                self.assertNotIn("SCRIPTED_BANK_TAG", out, (banks, tag))
+                self.assertNotIn("NUM_FROZEN_BANKS must", out, (banks, tag))
+                if not vendored:
+                    self.assertIn("vendored Python missing", out, (banks, tag))
+
+    def test_chain23_knobs_pass_the_launcher_gates(self):
+        # The knob set /home/rache/r0chain23.sh exports, as the screen hands it
+        # to this launcher. Off-box the run must reach the vendored-Python
+        # preflight, i.e. clear every env gate above it.
+        out = pool_run(NUM_FROZEN_BANKS=8, SCRIPTED_BANK_TAG=8, SCRIPTED_BOT_TYPE=0,
+                       FROZEN_BANK_PCT="0.06", STEPS="3000000000", SEED=42).stdout
+        self.assertNotIn("SCRIPTED_BANK_TAG", out)
+        self.assertNotIn("SCRIPTED_BOT_TYPE", out)
+        self.assertNotIn("NUM_FROZEN_BANKS must", out)
+        self.assertNotIn("requires BOOTSTRAP_MODE", out)
+        if (ROOT / "vendor/PufferLib/.venv/bin/python").exists():
+            self.skipTest("vendored Python present; the later preflight differs")
+        self.assertIn("vendored Python missing", out)
+
+    def test_invalid_bank_count_is_refused_before_the_tag(self):
+        out = pool_run(NUM_FROZEN_BANKS=9, SCRIPTED_BANK_TAG=1).stdout
+        self.assertIn("NUM_FROZEN_BANKS must be an integer in 1..8", out)
+        self.assertNotIn("SCRIPTED_BANK_TAG must", out)
 
     def test_bot_type_out_of_range_is_refused(self):
         for value in ("2", "-1", "contact", "0 "):

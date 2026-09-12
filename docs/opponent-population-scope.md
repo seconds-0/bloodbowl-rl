@@ -146,6 +146,23 @@ at 4 banks or fewer. The launch verification step above (manifest shows
 window telemetry sane) is the first real execution and should be treated as
 such.
 
+**Correction, 2026-09-11.** "Validated up to launch" was wrong. Three embedded
+gates still assumed four banks: the screen plan writer's pool check
+(`run_reward_screen.sh`, "screen pool must contain exactly four banks"), and in
+the per-arm launcher (`run_reward_ablation.sh`) both the `SCRIPTED_BANK_TAG`
+range ("must be an integer in 0..4") and the pool-body check ("static reward
+pool must contain exactly four seeds"). The staged chain 23 would have built
+its 8-bank pool and then stopped at the screen plan step, before any training.
+With that fixed, the launcher's tag range would still have refused its contact
+bot at tag 8 before any training. The screen's own tag check already accepts
+0..`NUM_FROZEN_BANKS`, and `PLAN_ONLY` never invokes the launcher, so a plan-only
+preflight would still print SCREEN PLAN VERIFIED. Branch
+`fix/chain23-preflight-20260911` sizes all three gates to `NUM_FROZEN_BANKS`
+(`tools/test_frozen_bank_pool_width.py`, `tools/test_ladder_knobs.py`). The
+screen plan writer and the launcher pool check have run read-only against the
+rig's real build and 8-bank pool, with scratch output only. No 8-bank rung has
+trained yet.
+
 The 8-bank composition test earned its place immediately: the first draft of
 the resolver change shadowed the existing `banks` seed-list variable and the
 test caught it as a TypeError.

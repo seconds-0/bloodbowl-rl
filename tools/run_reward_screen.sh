@@ -848,8 +848,9 @@ else:
         raise SystemExit(
             f"warm checkpoint is {warm.stat().st_size} bytes; expected {expect_size}")
     # The lineage sidecar is the only thing that keeps an obs-v4 checkpoint out
-    # of an obs-v6 run. The per-arm launcher validates the four pool banks the
-    # same way, against the same expectations, before it allocates GPU state.
+    # of an obs-v6 run. The per-arm launcher validates the NUM_FROZEN_BANKS pool
+    # banks the same way, against the same expectations, before it allocates
+    # GPU state.
     #
     # graft: some sidecars were published on an OLD build, so the expected
     # implementation overrides are dropped -- each sidecar must still be
@@ -915,8 +916,12 @@ else:
     graft_sidecars = [] if warm_payload is None else [("warm", warm_payload)]
     pool_manifest_raw = (pool / "league_seeds.json").read_bytes()
     banks = json.loads(pool_manifest_raw).get("seeds")
-    if not isinstance(banks, list) or len(banks) != 4:
-        raise SystemExit("screen pool must contain exactly four banks")
+    num_banks = int(os.environ["NUM_FROZEN_BANKS"])
+    if not isinstance(banks, list) or len(banks) != num_banks:
+        got = len(banks) if isinstance(banks, list) else "no seed list"
+        raise SystemExit(
+            f"screen pool must contain exactly NUM_FROZEN_BANKS={num_banks} "
+            f"banks, got {got}")
     if bridge:
         # lineage-v6 leaves the pool to the per-arm launcher; a bridge checks
         # it here too, because the pool is the ONLY lineage a bridge has and
@@ -1551,6 +1556,7 @@ PY
         EXPECTED_PUFFER_PATCH_BUNDLE_SHA256="$SCREEN_PATCH_BUNDLE_SHA" \
         TOTAL_AGENTS="$TOTAL_AGENTS" NUM_BUFFERS="$NUM_BUFFERS" \
         NUM_THREADS="$NUM_THREADS" FROZEN_BANK_PCT="$FROZEN_BANK_PCT" \
+        NUM_FROZEN_BANKS="$NUM_FROZEN_BANKS" \
         EXPECT_BYTES="$EXPECT_BYTES" LR="$LR" ENT_COEF="$ENT_COEF" \
         GAMMA="$GAMMA" GAE_LAMBDA="$GAE_LAMBDA" HORIZON="$HORIZON" \
         MINIBATCH_SIZE="$MINIBATCH_SIZE" CHECKPOINT_STEPS="$CHECKPOINT_STEPS" \

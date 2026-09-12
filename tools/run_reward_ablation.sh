@@ -251,6 +251,15 @@ elif [ -n "$BRIDGE_WARM_SHA256$BRIDGE_WARM_OBS_VERSION$BRIDGE_PROVENANCE$BRIDGE_
   exit 1
 fi
 
+# Banks reserved for the frozen selfplay pool. Capped at BBE_MAX_BANKS
+# (puffer/bloodbowl/bloodbowl.h); selfplay.py raises above the same 8 (D97-A).
+# Parsed before the scripted bank, whose tag domain is 0..NUM_FROZEN_BANKS.
+NUM_FROZEN_BANKS_REQ="${NUM_FROZEN_BANKS:-4}"
+case "$NUM_FROZEN_BANKS_REQ" in
+  [1-8]) ;;
+  *) echo "NUM_FROZEN_BANKS must be an integer in 1..8 (BBE_MAX_BANKS), got '$NUM_FROZEN_BANKS_REQ'" >&2; exit 1 ;;
+esac
+
 # Scripted BANK: train the learner against a scripted bot at native SPS. The
 # env applies the bot only in envs whose selfplay tag equals SCRIPTED_BANK_TAG,
 # i.e. the historical envs of frozen bank (tag-1). Those envs' opponent seats
@@ -266,10 +275,14 @@ fi
 SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
 SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
 case "$SCRIPTED_BANK_TAG" in
-  0|1|2|3|4) ;;
-  *) echo "SCRIPTED_BANK_TAG must be an integer in 0..4, got '$SCRIPTED_BANK_TAG'" >&2
+  [0-9]) ;;
+  *) echo "SCRIPTED_BANK_TAG must be an integer in 0..$NUM_FROZEN_BANKS_REQ (NUM_FROZEN_BANKS), got '$SCRIPTED_BANK_TAG'" >&2
      exit 1 ;;
 esac
+if [ "$SCRIPTED_BANK_TAG" -gt "$NUM_FROZEN_BANKS_REQ" ]; then
+  echo "SCRIPTED_BANK_TAG must be an integer in 0..$NUM_FROZEN_BANKS_REQ (NUM_FROZEN_BANKS), got '$SCRIPTED_BANK_TAG'" >&2
+  exit 1
+fi
 case "$SCRIPTED_BOT_TYPE" in
   0|1) ;;
   *) echo "SCRIPTED_BOT_TYPE must be 0 (contact) or 1 (offense), got '$SCRIPTED_BOT_TYPE'" >&2
@@ -278,7 +291,7 @@ esac
 if [ "$SCRIPTED_BANK_TAG" != "0" ] && [ "$POOL_MODE" != "1" ]; then
   echo "SCRIPTED_BANK_TAG=$SCRIPTED_BANK_TAG requires BOOTSTRAP_MODE=lineage-v6 (or graft-v6 / bridge-v4):" >&2
   echo "the bot seat is only excluded from PPO inside a frozen-bank row slice," >&2
-  echo "and only the pool-backed modes allocate the four-bank pool" >&2
+  echo "and only the pool-backed modes allocate the frozen-bank pool" >&2
   exit 1
 fi
 
@@ -288,13 +301,6 @@ LOG="${LOG:-/tmp/${TAG}.log}"
 TOTAL_AGENTS="${TOTAL_AGENTS:-2048}"
 NUM_BUFFERS="${NUM_BUFFERS:-2}"
 FROZEN_BANK_PCT="${FROZEN_BANK_PCT:-0.06}"
-# Banks reserved for the frozen selfplay pool. Capped at BBE_MAX_BANKS
-# (puffer/bloodbowl/bloodbowl.h); selfplay.py raises above the same 8 (D97-A).
-NUM_FROZEN_BANKS_REQ="${NUM_FROZEN_BANKS:-4}"
-case "$NUM_FROZEN_BANKS_REQ" in
-  [1-8]) ;;
-  *) echo "NUM_FROZEN_BANKS must be an integer in 1..8 (BBE_MAX_BANKS), got '$NUM_FROZEN_BANKS_REQ'" >&2; exit 1 ;;
-esac
 EXPECT_BYTES="${EXPECT_BYTES:-16066560}"
 LR="${LR:-0.00028}"
 ENT_COEF="${ENT_COEF:-0.009}"
@@ -522,10 +528,11 @@ if [ "$POOL_MODE" = "1" ]; then
   # Validate the pool body, bank order, hashes, lineage paths, and architecture
   # before any trainer allocates GPU state.
   read -r POOL_HASH POOL_BANKS POOL_MANIFEST_HASH < <(
-    "$PYBIN" - "$POOL" "$EXPECT_BYTES" <<'PY'
+    "$PYBIN" - "$POOL" "$EXPECT_BYTES" "$NUM_FROZEN_BANKS" <<'PY'
 import hashlib, json, pathlib, sys
 pool = pathlib.Path(sys.argv[1])
 expect = int(sys.argv[2])
+num_banks = int(sys.argv[3])
 manifest_path = pool / "league_seeds.json"
 manifest_raw = manifest_path.read_bytes()
 manifest = json.loads(manifest_raw)
@@ -533,8 +540,11 @@ if manifest.get("expected_bytes") != expect:
     raise SystemExit(
         f"pool expected_bytes={manifest.get('expected_bytes')}, expected {expect}")
 seeds = manifest.get("seeds")
-if not isinstance(seeds, list) or len(seeds) != 4:
-    raise SystemExit("static reward pool must contain exactly four seeds")
+if not isinstance(seeds, list) or len(seeds) != num_banks:
+    got = len(seeds) if isinstance(seeds, list) else "no seed list"
+    raise SystemExit(
+        f"static reward pool must contain exactly NUM_FROZEN_BANKS={num_banks} "
+        f"seeds, got {got}")
 identity = []
 seen_names = set()
 seen_hashes = set()
