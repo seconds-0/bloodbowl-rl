@@ -29,6 +29,14 @@ PUFFER="$(cd "$PUFFER" && pwd)"
 
 DST="$PUFFER/ocean/bloodbowl"
 SELFPLAY_LEAGUE_PATCH="$ROOT/training/selfplay_league.patch"
+TELEMETRY_PATCH="$ROOT/training/puffer_deciding_row_telemetry.patch"
+case "${BBE_DECIDING_ROW_TELEMETRY:-0}" in
+    0|1) ;;
+    *)
+        echo "error: BBE_DECIDING_ROW_TELEMETRY must be 0 or 1, got '${BBE_DECIDING_ROW_TELEMETRY}'" >&2
+        exit 1
+        ;;
+esac
 
 # The observation revision is DERIVED from the header, never typed twice. The
 # generated build header and the --check gate both used to carry their own
@@ -192,6 +200,19 @@ if [ "$MODE" = "check" ]; then
         "$PUFFER/src/pufferlib.cu"; then
         echo "drift check: CUDA backend still clamps rewards to +-1" >&2
         echo "  fix: tools/install_puffer_env.sh $PUFFER" >&2
+        exit 1
+    fi
+    # The opt-in telemetry build is a different compiled module, so the tree
+    # must match the operator's flag in both directions.
+    if [ "${BBE_DECIDING_ROW_TELEMETRY:-0}" = "1" ]; then
+        if ! git -C "$PUFFER" apply --reverse --check --no-index "$TELEMETRY_PATCH" 2>/dev/null; then
+            echo "drift check: opt-in deciding-row telemetry patch is missing or stale" >&2
+            echo "  fix: BBE_DECIDING_ROW_TELEMETRY=1 tools/install_puffer_env.sh $PUFFER" >&2
+            exit 1
+        fi
+    elif grep -Fq 'LOSS_DECIDING_FRAC' "$PUFFER/src/pufferlib.cu" 2>/dev/null; then
+        echo "drift check: tree carries the opt-in deciding-row telemetry patch but BBE_DECIDING_ROW_TELEMETRY is not 1" >&2
+        echo "  fix: tools/install_puffer_env.sh $PUFFER (reverses it), or export BBE_DECIDING_ROW_TELEMETRY=1" >&2
         exit 1
     fi
     PYBIN="$PUFFER/.venv/bin/python"
@@ -632,6 +653,39 @@ if grep -Fq 'require_training_state_reset' "$PUFFER/pufferlib/pufferl.py" 2>/dev
             exit 1
         fi
     done
+fi
+
+# Opt-in PPO telemetry (audit B6): deciding-row entropy/kl/clipfrac, full-
+# precision loss records, grad norm and explained variance. Log-only -- the
+# loss and gradients are unchanged -- but it edits pufferlib.cu, so the
+# exact-action digest and compiled module differ from a default build and
+# warm/pool sidecars need `checkpoint_lineage.py rehost`. It is deliberately
+# absent from the launchers' patch bundle, so recorded
+# puffer_patch_bundle_sha256 values stay valid. A default install on a tree that
+# carries it reverses it: the default build is always the default tree.
+if [ "${BBE_DECIDING_ROW_TELEMETRY:-0}" = "1" ]; then
+    if [ ! -f "$TELEMETRY_PATCH" ]; then
+        echo "error: missing $TELEMETRY_PATCH" >&2
+        exit 1
+    fi
+    if git -C "$PUFFER" apply --reverse --check --no-index "$TELEMETRY_PATCH" 2>/dev/null; then
+        : # Already installed.
+    elif git -C "$PUFFER" apply --check --no-index "$TELEMETRY_PATCH" 2>/dev/null; then
+        git -C "$PUFFER" apply --no-index "$TELEMETRY_PATCH"
+        echo "applied:   deciding-row PPO telemetry (opt-in) -> Puffer native backend + dashboard"
+    else
+        echo "error: deciding-row telemetry patch is neither applicable nor already applied" >&2
+        exit 1
+    fi
+elif grep -Fq 'LOSS_DECIDING_FRAC' "$PUFFER/src/pufferlib.cu" 2>/dev/null; then
+    if git -C "$PUFFER" apply --reverse --check --no-index "$TELEMETRY_PATCH" 2>/dev/null; then
+        git -C "$PUFFER" apply --reverse --no-index "$TELEMETRY_PATCH"
+        echo "reversed:  deciding-row PPO telemetry <- default install"
+    else
+        echo "error: tree carries a stale deciding-row telemetry patch" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
 fi
 
 EXACT_BACKEND_HASH="$(exact_backend_hash)" || {
