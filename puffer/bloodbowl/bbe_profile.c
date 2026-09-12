@@ -16,17 +16,6 @@ static inline uint64_t now_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
-static int sample_masked(const unsigned char* mask, int len, bb_rng* rng) {
-    int n = 0;
-    for (int i = 0; i < len; i++) n += mask[i];
-    if (n == 0) return -1;
-    int k = (int)(bb_rng_next(rng) % (uint32_t)n);
-    for (int i = 0; i < len; i++) {
-        if (mask[i] && k-- == 0) return i;
-    }
-    return -1;
-}
-
 // Per-phase accumulators (ns).
 static uint64_t t_sample, t_decode, t_enum_pre, t_eqscan, t_apply_inner,
     t_refresh, t_tz, t_encode, t_mask;
@@ -55,7 +44,12 @@ static const char* proc_name(int p) {
 }
 
 int main(int argc, char** argv) {
-    int episodes = argc > 1 ? atoi(argv[1]) : 200;
+    int episodes = 200;
+    int smoke = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--smoke") == 0) smoke = 1;
+        else episodes = atoi(argv[i]);
+    }
     uint64_t seed = 42;
 
     static Bloodbowl env;
@@ -80,20 +74,18 @@ int main(int argc, char** argv) {
 
     static bb_action scratch[BB_LEGAL_MAX];
     long steps = 0, n_legal_sum = 0;
-    int done = 0;
+    int done = 0, ep_match_over = 0, ep_truncated = 0, ep_error = 0;
     uint64_t t_total0 = now_ns();
     while (done < episodes) {
         bb_match* m = &env.match;
         uint64_t t0, t1;
 
-        // --- driver-side mask sampling (not env cost; tracked separately)
+        // --- driver-side mask sampling (not env cost; tracked separately).
+        // Exact joint support: independent per-head picks are rejected by
+        // bbe_decode, so every episode would end in ERROR at its first SETUP.
         t0 = now_ns();
         for (int a = 0; a < BBE_AGENTS; a++) {
-            const unsigned char* mk = env.action_mask_ptr[a];
-            env.action_ptr[a][0] = (float)sample_masked(mk, BBE_HEAD_TYPE, &pol);
-            env.action_ptr[a][1] = (float)sample_masked(mk + BBE_HEAD_TYPE, BBE_HEAD_ARG, &pol);
-            env.action_ptr[a][2] = (float)sample_masked(
-                mk + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ, &pol);
+            bbe_sample_joint_uniform(&env, a, env.action_ptr[a], &pol);
         }
         t_sample += now_ns() - t0;
 
@@ -144,8 +136,11 @@ int main(int argc, char** argv) {
             (m->status == BB_STATUS_DECISION && env.n_legal <= 0)) {
             bbe_finish_episode(&env);
             done++; // mirror terminal bookkeeping
+            ep_error++;
         } else if (m->status == BB_STATUS_MATCH_OVER ||
                    env.decisions >= env.max_decisions) {
+            if (m->status == BB_STATUS_MATCH_OVER) ep_match_over++;
+            else ep_truncated++;
             bbe_finish_episode(&env);
             done++;
         }
@@ -184,6 +179,16 @@ int main(int argc, char** argv) {
         steps++;
     }
     uint64_t t_total = now_ns() - t_total0;
+    printf("outcomes: match_over=%d truncated=%d error=%d\n", ep_match_over,
+           ep_truncated, ep_error);
+    if (ep_error > 0) {
+        // An error episode is a rejected decode or an empty legal set; its
+        // step mix is not a game, so no number below would mean anything.
+        fprintf(stderr,
+                "bbe_profile: %d of %d episodes ended in ERROR; profile is "
+                "invalid\n", ep_error, done);
+        return 1;
+    }
 
     uint64_t t_env = t_decode + t_apply_inner + t_refresh + t_tz + t_encode + t_mask;
     double per_step = (double)t_env / (double)steps;
@@ -221,6 +226,21 @@ int main(int argc, char** argv) {
                (double)enum_actions[p] / (double)enum_calls[p],
                100.0 * (double)enum_ns[p] / (double)enum_total,
                (double)(mask_ns_by_proc[p] + decode_ns_by_proc[p]));
+    }
+    if (smoke) {
+        int top = -1;
+        for (int p = 0; p < BB_PROC_COUNT; p++) {
+            if (enum_calls[p] && (top < 0 || enum_ns[p] > enum_ns[top])) top = p;
+        }
+        if (ep_match_over != done || top != BB_PROC_ACTIVATION) {
+            fprintf(stderr,
+                    "bbe_profile smoke FAIL: match_over=%d of %d episodes, "
+                    "top enumeration proc %s (expected ACTIVATION)\n",
+                    ep_match_over, done, top >= 0 ? proc_name(top) : "none");
+            return 1;
+        }
+        printf("bbe_profile smoke OK: %d/%d MATCH_OVER, ACTIVATION dominates "
+               "enumeration\n", ep_match_over, done);
     }
     return 0;
 }

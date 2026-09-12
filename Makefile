@@ -28,6 +28,7 @@ PUFFER_CONTACT_TESTBIN := $(BUILD)/puffer_contact_bot_tests
 PUFFER_STATE_BANK_TESTBIN := $(BUILD)/puffer_state_bank_tests
 PUFFER_OBSERVATION_TESTBIN := $(BUILD)/puffer_observation_tests
 BBP_V4_WRITER_TESTBIN := $(BUILD)/bbp_v4_writer_tests
+PROFILE_BIN := $(BUILD)/bbe_profile
 PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V4_WRITER_TESTBIN)
 
 .PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan tactical-search clean
@@ -66,16 +67,24 @@ $(PUFFER_STATE_BANK_TESTBIN): puffer/bloodbowl/test_state_bank.c puffer/bloodbow
 $(PUFFER_OBSERVATION_TESTBIN): puffer/bloodbowl/test_observation.c puffer/bloodbowl/bloodbowl.h engine/tests/bb_test.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Iengine/tests -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
+# Env-step profiler. The smoke run requires every episode to end MATCH_OVER
+# and ACTIVATION to dominate enumeration, so a sampler that stops producing
+# games fails the build instead of profiling error episodes.
+$(PROFILE_BIN): puffer/bloodbowl/bbe_profile.c puffer/bloodbowl/bloodbowl.h $(SRC) $(ENGINE_HDR)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+
 $(BBP_V4_WRITER_TESTBIN): tools/test_bbp_v4_writer.c tools/bb_lockstep.c puffer/bloodbowl/bloodbowl.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Itools -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
-test: $(TESTBIN) $(PUFFER_TESTBINS)
+test: $(TESTBIN) $(PUFFER_TESTBINS) $(PROFILE_BIN)
 	./$(TESTBIN) $(TEST)
 	./$(PUFFER_REWARD_TESTBIN) $(TEST)
 	./$(PUFFER_CONTACT_TESTBIN) $(TEST)
 	./$(PUFFER_STATE_BANK_TESTBIN) $(TEST)
 	./$(PUFFER_OBSERVATION_TESTBIN) $(TEST)
 	./$(BBP_V4_WRITER_TESTBIN)
+	./$(PROFILE_BIN) 50 --smoke
 
 blockev-mc: $(OBJ)
 	$(CC) $(CFLAGS) -Iengine/tests tools/blockev_mc.c $(OBJ) -o $(BUILD)/blockev_mc -lm
