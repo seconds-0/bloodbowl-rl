@@ -268,6 +268,28 @@ class LadderStageTests(unittest.TestCase):
                 self.assertIn("NUM_FROZEN_BANKS must be an integer in 1..8",
                               result.stdout, bad)
 
+    def test_horizon_knobs_are_validated_before_a_pool_is_built_and_exported(self):
+        source = STAGE.read_text(encoding="utf-8")
+        for knob in ("LADDER_GAMMA", "LADDER_GAE_LAMBDA"):
+            self.assertIn(f'[ -z "${{{knob}:-}}" ] || export {knob}', source)
+        base = {"RUNG": "0", "RESET_PCT": "0", "SEED": "42", "STAMP": "t"}
+        with tempfile.TemporaryDirectory() as tmp:
+            for knob in ("LADDER_GAMMA", "LADDER_GAE_LAMBDA"):
+                for bad in ("1", "0", "0.000", ".99", "0.99x", "nan", "0.9999999"):
+                    result = run({"C": tmp, **base, knob: bad})
+                    self.assertNotEqual(result.returncode, 0, (knob, bad))
+                    self.assertIn(
+                        f"{knob} must be a decimal in (0,1) with at most six decimals",
+                        result.stdout, (knob, bad))
+                    self.assertNotIn("drift check failed", result.stdout, (knob, bad))
+            # A declared horizon clears the gate and stops later, at the drift
+            # check this synthetic checkout cannot pass.
+            result = run({"C": tmp, **base, "LADDER_GAMMA": "0.999",
+                          "LADDER_GAE_LAMBDA": "0.95"})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("must be a decimal in (0,1)", result.stdout)
+            self.assertIn("drift check failed", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

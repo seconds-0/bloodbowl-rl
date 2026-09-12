@@ -33,6 +33,8 @@
 #     bank 0; D244)
 #   LADDER_CHAIN_LR_SCALE  forwarded to launch_ladder_rung.sh when set (D244)
 #   LADDER_CHAIN_ENT_SCALE forwarded when set (entropy-only scale, default 1)
+#   LADDER_GAMMA / LADDER_GAE_LAMBDA  trainer discount / GAE lambda for a
+#     horizon arm, forwarded when set (unset = the screen's fixed contract)
 #   SCRIPTED_BANK_TAG / SCRIPTED_BOT_TYPE  scripted bank for this rung
 #     (forwarded to launch_ladder_rung.sh only when set; unset = ordinary rung)
 #   LADDER_PROFILE=graft + GRAFT_FROM_SOURCE_SHA256 / GRAFT_FROM_PATCH_BUNDLE_SHA256
@@ -70,6 +72,15 @@ case "$NUM_FROZEN_BANKS" in
   *) echo "NUM_FROZEN_BANKS must be an integer in 1..8 (BBE_MAX_BANKS), got '$NUM_FROZEN_BANKS'" >&2; exit 1 ;;
 esac
 export NUM_FROZEN_BANKS
+# The screen validates these too; checking here fails a typo before a pool is
+# built.
+for knob in LADDER_GAMMA LADDER_GAE_LAMBDA; do
+  value="${!knob:-}"
+  if [ -n "$value" ] && { [[ ! "$value" =~ ^0\.[0-9]{1,6}$ ]] || [[ ! "$value" =~ [1-9] ]]; }; then
+    echo "$knob must be a decimal in (0,1) with at most six decimals, got '$value'" >&2
+    exit 1
+  fi
+done
 POOL_KEEP="${POOL_KEEP:-$((NUM_FROZEN_BANKS - 1))}"
 POOL_ANCHOR="${POOL_ANCHOR:-}"
 PREV_COMPLETE="${PREV_COMPLETE:-}"
@@ -239,6 +250,8 @@ if [ -n "$PREV_COMPLETE" ] && [ -z "${LADDER_CHAIN_LR_SCALE:-}" ]; then
 fi
 [ -z "${LADDER_CHAIN_LR_SCALE:-}" ] || export LADDER_CHAIN_LR_SCALE
 [ -z "${LADDER_CHAIN_ENT_SCALE:-}" ] || export LADDER_CHAIN_ENT_SCALE
+[ -z "${LADDER_GAMMA:-}" ] || export LADDER_GAMMA
+[ -z "${LADDER_GAE_LAMBDA:-}" ] || export LADDER_GAE_LAMBDA
 [ -z "${SCRIPTED_BANK_TAG:-}" ] || export SCRIPTED_BANK_TAG
 [ -z "${SCRIPTED_BOT_TYPE:-}" ] || export SCRIPTED_BOT_TYPE
 [ -z "${LADDER_PROFILE:-}" ] || export LADDER_PROFILE
@@ -259,6 +272,8 @@ case "$LADDER_PROFILE" in
 esac
 [ -z "${SCRIPTED_BANK_TAG:-}${SCRIPTED_BOT_TYPE:-}" ] || \
   echo "  bot  scripted_bank_tag=${SCRIPTED_BANK_TAG:-0} scripted_bot_type=${SCRIPTED_BOT_TYPE:-0}"
+[ -z "${LADDER_GAMMA:-}${LADDER_GAE_LAMBDA:-}" ] || \
+  echo "  horizon gamma=${LADDER_GAMMA:-contract} gae_lambda=${LADDER_GAE_LAMBDA:-contract}"
 export POOL="$POOL_OUT/pool"
 export DEADLINE_HOURS="${DEADLINE_HOURS:-40}"
 exec bash tools/launch_ladder_rung.sh
