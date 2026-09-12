@@ -16,17 +16,6 @@ static inline uint64_t now_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
-static int sample_masked(const unsigned char* mask, int len, bb_rng* rng) {
-    int n = 0;
-    for (int i = 0; i < len; i++) n += mask[i];
-    if (n == 0) return -1;
-    int k = (int)(bb_rng_next(rng) % (uint32_t)n);
-    for (int i = 0; i < len; i++) {
-        if (mask[i] && k-- == 0) return i;
-    }
-    return -1;
-}
-
 // Per-phase accumulators (ns).
 static uint64_t t_sample, t_decode, t_enum_pre, t_eqscan, t_apply_inner,
     t_refresh, t_tz, t_encode, t_mask;
@@ -80,7 +69,7 @@ int main(int argc, char** argv) {
 
     static bb_action scratch[BB_LEGAL_MAX];
     long steps = 0, n_legal_sum = 0;
-    int done = 0;
+    int done = 0, error_episodes = 0;
     uint64_t t_total0 = now_ns();
     while (done < episodes) {
         bb_match* m = &env.match;
@@ -88,12 +77,10 @@ int main(int argc, char** argv) {
 
         // --- driver-side mask sampling (not env cost; tracked separately)
         t0 = now_ns();
+        // Exact-joint decode rejects independently sampled heads, so sample
+        // sequentially from the joint support exactly like the driver does.
         for (int a = 0; a < BBE_AGENTS; a++) {
-            const unsigned char* mk = env.action_mask_ptr[a];
-            env.action_ptr[a][0] = (float)sample_masked(mk, BBE_HEAD_TYPE, &pol);
-            env.action_ptr[a][1] = (float)sample_masked(mk + BBE_HEAD_TYPE, BBE_HEAD_ARG, &pol);
-            env.action_ptr[a][2] = (float)sample_masked(
-                mk + BBE_HEAD_TYPE + BBE_HEAD_ARG, BBE_HEAD_SQ, &pol);
+            bbe_sample_joint_uniform(&env, a, env.action_ptr[a], &pol);
         }
         t_sample += now_ns() - t0;
 
@@ -142,6 +129,7 @@ int main(int argc, char** argv) {
         }
         if (m->status == BB_STATUS_ERROR ||
             (m->status == BB_STATUS_DECISION && env.n_legal <= 0)) {
+            error_episodes++;
             bbe_finish_episode(&env);
             done++; // mirror terminal bookkeeping
         } else if (m->status == BB_STATUS_MATCH_OVER ||
@@ -187,8 +175,9 @@ int main(int argc, char** argv) {
 
     uint64_t t_env = t_decode + t_apply_inner + t_refresh + t_tz + t_encode + t_mask;
     double per_step = (double)t_env / (double)steps;
-    printf("steps %ld  episodes %d  wall %.2fs  (timer overhead included)\n",
-           steps, done, (double)t_total / 1e9);
+    printf("steps %ld  episodes %d  error episodes %d  wall %.2fs  "
+           "(timer overhead included)\n",
+           steps, done, error_episodes, (double)t_total / 1e9);
     printf("avg n_legal at decisions: %.1f\n",
            (double)n_legal_sum / (double)steps);
     printf("\n-- per-step env cost (ns, driver sampling excluded) --\n");
@@ -221,6 +210,11 @@ int main(int argc, char** argv) {
                (double)enum_actions[p] / (double)enum_calls[p],
                100.0 * (double)enum_ns[p] / (double)enum_total,
                (double)(mask_ns_by_proc[p] + decode_ns_by_proc[p]));
+    }
+    if (error_episodes) {
+        fprintf(stderr, "bbe_profile: %d episode(s) ended in ERROR; profile "
+                        "is not in-game play\n", error_episodes);
+        return 1;
     }
     return 0;
 }
