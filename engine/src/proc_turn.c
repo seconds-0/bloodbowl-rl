@@ -3,6 +3,7 @@
 #include "bb/bb_hooks.h"
 #include "bb/bb_reachability.h"
 #include "bb/bb_stall.h"
+#include <string.h>
 
 // Stalling telemetry sink (bb_stall.h). Defined here because this file owns
 // the rule; thread-local and NULL by default, so an unattached caller sees no
@@ -260,6 +261,29 @@ static bool has_reachable_blitz_target(const bb_match* m, int slot) {
     if (p->stance == BB_STANCE_STUNNED || p->stance == BB_STANCE_STUNNED_USED) {
         return false;
     }
+    if (p->stance != BB_STANCE_STANDING && p->stance != BB_STANCE_PRONE) {
+        return false;
+    }
+
+    uint8_t target[BB_PITCH_LEN][BB_PITCH_WID];
+    memset(target, 0, sizeof target);
+    bool any_target = false;
+    int opp = 1 - BB_TEAM_OF(slot);
+    for (int s = opp * BB_TEAM_SLOTS; s < (opp + 1) * BB_TEAM_SLOTS; s++) {
+        const bb_player* q = &m->players[s];
+        if (q->location != BB_LOC_ON_PITCH) continue;
+        if (q->stance != BB_STANCE_STANDING) continue;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (!dx && !dy) continue;
+                int ax = q->x + dx, ay = q->y + dy;
+                if (!bb_on_pitch_xy(ax, ay)) continue;
+                target[ax][ay] = 1;
+                any_target = true;
+            }
+        }
+    }
+    if (!any_target) return false;
 
     bb_match adjusted;
     const bb_match* rm = m;
@@ -276,27 +300,8 @@ static bool has_reachable_blitz_target(const bb_match* m, int slot) {
             }
         }
         rm = &adjusted;
-    } else if (p->stance != BB_STANCE_STANDING) {
-        return false;
     }
-
-    bb_reach_field field;
-    bb_reach_field_compute(rm, slot, &field);
-    int opp = 1 - BB_TEAM_OF(slot);
-    for (int s = opp * BB_TEAM_SLOTS; s < (opp + 1) * BB_TEAM_SLOTS; s++) {
-        const bb_player* q = &rm->players[s];
-        if (q->location != BB_LOC_ON_PITCH) continue;
-        if (q->stance != BB_STANCE_STANDING) continue;
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dy = -1; dy <= 1; dy++) {
-                if (!dx && !dy) continue;
-                int ax = q->x + dx, ay = q->y + dy;
-                if (!bb_on_pitch_xy(ax, ay)) continue;
-                if (field.cost[ax][ay].dodges != BB_REACH_UNREACHABLE) return true;
-            }
-        }
-    }
-    return false;
+    return bb_reach_any_target(rm, slot, target);
 }
 
 static void activation_advance(bb_match* m, bb_rng* rng) {
