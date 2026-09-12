@@ -102,6 +102,26 @@ MIGRATED_FROM_KEYS = (
     "source_checkpoint_sha256", "source_lineage_sha256",
     "migration_manifest_sha256", "zeroed_columns", "appended_columns",
 )
+# A MIGRATED GRAFT admits a zero-extended obs-v6 -> obs-v7 migration sidecar
+# (native_obs_v6_to_v7_zero_extended: qualification-only by construction) as a
+# graft's warm start or pool bank. It is never implicit: validate_lineage and
+# graft_bridge refuse such a sidecar as ancestry unless the caller passes
+# accept_migrated, which the launchers set only from GRAFT_ACCEPT_MIGRATED=1
+# plus GRAFT_MIGRATED_REASON. The migration's column audit, hash binding and
+# obs-v7 compatibility are still checked; only eligibility and the (absent)
+# rollout contract are waived. The run manifest carries the reason and one
+# record per migrated sidecar under these keys (both or none), and the trained
+# rung publishes them as ancestry.migrated_from. A checkpoint whose bytes equal
+# a migrated input can be neither published nor validated as that rung's
+# output, so a migrated blob becomes eligible ancestry only by training.
+MIGRATED_GRAFT_MANIFEST_KEYS = ("graft_migrated_reason", "graft_migrated_from")
+MIGRATED_GRAFT_RECORD_KEYS = (
+    "label", "checkpoint_sha256", "lineage_sha256",
+    "source_checkpoint_sha256", "source_lineage_sha256",
+    "migration_manifest_sha256",
+)
+GRAFT_MIGRATED_FROM_KEYS = ("reason", "sidecars")
+MIGRATED_LABEL_MAX_CHARS = 64
 
 
 class LineageError(RuntimeError):
@@ -173,6 +193,45 @@ def _need_bridge_observation_version(value, label):
             f"{label} must be one of {list(BRIDGE_OBSERVATION_VERSIONS)}, "
             f"got {parsed}")
     return parsed
+
+
+def _need_migrated_records(value, label):
+    if not isinstance(value, list) or not value:
+        raise LineageError(f"{label} must be a non-empty list")
+    labels = set()
+    for index, record in enumerate(value):
+        where = f"{label}[{index}]"
+        if not isinstance(record, dict) or \
+                sorted(record) != sorted(MIGRATED_GRAFT_RECORD_KEYS):
+            raise LineageError(
+                f"{where} must contain exactly "
+                f"{sorted(MIGRATED_GRAFT_RECORD_KEYS)}")
+        name = record["label"]
+        if not isinstance(name, str) or not name.strip() or \
+                len(name) > MIGRATED_LABEL_MAX_CHARS:
+            raise LineageError(
+                f"{where}.label must be a non-empty string of at most "
+                f"{MIGRATED_LABEL_MAX_CHARS} characters")
+        if name in labels:
+            raise LineageError(f"{where}.label duplicates {name!r}")
+        labels.add(name)
+        for key in MIGRATED_GRAFT_RECORD_KEYS:
+            if key != "label":
+                _need_sha(record[key], f"{where}.{key}")
+    return value
+
+
+def _refuse_untrained_migrated(checkpoint_sha, records, warm_lineage):
+    for record in records:
+        if record["checkpoint_sha256"] == checkpoint_sha:
+            raise LineageError(
+                f"checkpoint is the migrated {record['label']} blob itself: a "
+                "zero-extended migration becomes eligible ancestry only through "
+                "a training rung, never by publishing or promoting its bytes")
+        if record["label"] == "warm" and \
+                record["lineage_sha256"] != warm_lineage:
+            raise LineageError(
+                "migrated warm record differs from warm_lineage_sha256")
 
 
 def _need_bool_string(value, label):
@@ -415,6 +474,35 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
                 "difference is a `rehost`, otherwise run an ordinary lineage-v7 "
                 "arm")
 
+    checkpoint_sha = sha256_file(checkpoint)
+    migrated_graft = None
+    migrated_present = [
+        key for key in MIGRATED_GRAFT_MANIFEST_KEYS if key in manifest]
+    if migrated_present:
+        if len(migrated_present) != len(MIGRATED_GRAFT_MANIFEST_KEYS):
+            missing = sorted(
+                set(MIGRATED_GRAFT_MANIFEST_KEYS) - set(migrated_present))
+            raise LineageError(
+                "graft_migrated_* keys are all-or-none; run manifest lacks "
+                f"{missing}")
+        if grafted_from is None:
+            raise LineageError(
+                "graft_migrated_* keys require the graft_from_* declaration: a "
+                "migrated checkpoint enters a lineage only through a graft")
+        raw_records = manifest.get("graft_migrated_from")
+        try:
+            records = json.loads(raw_records) if isinstance(raw_records, str) \
+                else None
+        except json.JSONDecodeError:
+            records = None
+        migrated_graft = {
+            "reason": _need_reason(
+                manifest.get("graft_migrated_reason"), "graft_migrated_reason"),
+            "sidecars": _need_migrated_records(records, "graft_migrated_from"),
+        }
+        _refuse_untrained_migrated(
+            checkpoint_sha, migrated_graft["sidecars"], warm_lineage)
+
     ancestry = {
         "initialization": initialization,
         # The producer's mode is bound here, not merely checked at create
@@ -430,13 +518,15 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     }
     if grafted_from is not None:
         ancestry["grafted_from"] = grafted_from
+    if migrated_graft is not None:
+        ancestry["migrated_from"] = migrated_graft
     if bridged_from is not None:
         ancestry["bridged_from"] = bridged_from
     return {
         "schema_version": SCHEMA_VERSION,
         "checkpoint": {
             "bytes": checkpoint_bytes,
-            "sha256": sha256_file(checkpoint),
+            "sha256": checkpoint_sha,
         },
         "compatibility": {
             "observation_abi": observation_abi,
@@ -587,8 +677,34 @@ def rehost_lineage(checkpoint, *, target_module, target_source_sha256,
     return rehosted
 
 
+def migrated_graft_records(sidecars):
+    """Return the ancestry.migrated_from records for a graft's migrated inputs.
+
+    ``sidecars`` is the same ``(label, payload)`` sequence graft_bridge takes.
+    One record per zero-extended migration sidecar, in input order, naming the
+    migrated blob, its sidecar digest and the obs-v6 origin it was migrated
+    from; the launcher and screen plan writer both derive the run manifest's
+    graft_migrated_from from this function."""
+    records = []
+    for label, payload in sidecars:
+        ancestry = payload.get("ancestry")
+        if not isinstance(ancestry, dict) or \
+                ancestry.get("initialization") != MIGRATION_INITIALIZATION:
+            continue
+        migrated = ancestry["migrated_from"]
+        records.append({
+            "label": label,
+            "checkpoint_sha256": payload["checkpoint"]["sha256"],
+            "lineage_sha256": lineage_digest(payload),
+            "source_checkpoint_sha256": migrated["source_checkpoint_sha256"],
+            "source_lineage_sha256": migrated["source_lineage_sha256"],
+            "migration_manifest_sha256": migrated["migration_manifest_sha256"],
+        })
+    return records
+
+
 def graft_bridge(sidecars, *, current, old_source_sha256,
-                 old_patch_bundle_sha256):
+                 old_patch_bundle_sha256, accept_migrated=False):
     """Classify validated warm/pool sidecars for a graft; return the old module.
 
     ``sidecars`` is a sequence of ``(label, payload)`` where each payload has
@@ -600,6 +716,13 @@ def graft_bridge(sidecars, *, current, old_source_sha256,
     At least one sidecar must be old-build (else there is nothing to graft), and
     every old-build sidecar must record the same module, which is returned so
     the run manifest can carry it as graft_from_module_sha256.
+
+    A zero-extended migration sidecar is admitted only with
+    ``accept_migrated`` (the payload passed ``validate_lineage`` with the same
+    flag), and a declaration that admits no migrated sidecar is refused. The
+    build rule is unchanged for it: a migration published on the migration
+    build (e.g. patch 425c5d5b) bridges to the target runtime (patch 4b5bdc20)
+    exactly like any other old-build sidecar.
 
     This is the single definition both the per-arm launcher and the screen plan
     writer use, so a graft the screen plans is a graft the launcher accepts. It
@@ -618,7 +741,17 @@ def graft_bridge(sidecars, *, current, old_source_sha256,
             "build's, so there is nothing to graft; a module-only difference "
             "is a `rehost`, otherwise use lineage-v7")
     old_modules = {}
+    migrated_labels = []
     for label, payload in sidecars:
+        ancestry = payload.get("ancestry")
+        if isinstance(ancestry, dict) and \
+                ancestry.get("initialization") == MIGRATION_INITIALIZATION:
+            if not accept_migrated:
+                raise LineageError(
+                    f"graft refused: {label} is a zero-extended migration; "
+                    "declare GRAFT_ACCEPT_MIGRATED=1 with GRAFT_MIGRATED_REASON "
+                    "to warm-start from or pool it")
+            migrated_labels.append(label)
         implementation = payload["implementation"]
         if all(implementation.get(key) == current[key] for key in SHA256_KEYS):
             continue
@@ -634,6 +767,10 @@ def graft_bridge(sidecars, *, current, old_source_sha256,
             f"{implementation.get('puffer_patch_bundle_sha256', '?')[:12]}, "
             f"module {implementation.get('compiled_module_sha256', '?')[:12]}); "
             "a same-source/same-patch module difference is a `rehost`")
+    if accept_migrated and not migrated_labels:
+        raise LineageError(
+            "graft refused: GRAFT_ACCEPT_MIGRATED is declared but no warm/pool "
+            "sidecar is a zero-extended migration")
     if not old_modules:
         raise LineageError(
             "graft refused as a no-op: every sidecar already binds this build, "
@@ -652,7 +789,8 @@ def graft_bridge(sidecars, *, current, old_source_sha256,
 def validate_lineage(checkpoint, sidecar=None, *, expected=None,
                      require_eligible=True,
                      recurrent_contract_mode="historical-readable",
-                     expected_rollout_transition_contract=None):
+                     expected_rollout_transition_contract=None,
+                     accept_migrated=False):
     checkpoint = Path(checkpoint)
     if not checkpoint.is_file():
         raise LineageError(f"missing checkpoint: {checkpoint}")
@@ -710,6 +848,15 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
             "revision has the same blob size, so this cannot be detected by "
             "checkpoint bytes -- there is no warm start, replay mix or curve "
             "comparison across the boundary without a reviewed bridge")
+    migration = ancestry.get("initialization") == MIGRATION_INITIALIZATION
+    if migration and require_eligible and not accept_migrated:
+        raise LineageError(
+            "zero-extended migration checkpoint is not eligible ancestry: only "
+            "a graft declaring GRAFT_ACCEPT_MIGRATED=1 with "
+            "GRAFT_MIGRATED_REASON may warm-start from or pool it")
+    # A migration sidecar records no rollout contract: its weights came from
+    # historical training, and the grafted rung publishes under the current one.
+    accepted_migration = migration and accept_migrated
     sidecar_rollout_contract = compatibility.get(
         "rollout_transition_contract")
     if sidecar_rollout_contract is not None and \
@@ -721,7 +868,8 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
     required_rollout_contract = expected_rollout_transition_contract
     if require_eligible and required_rollout_contract is None:
         required_rollout_contract = ROLLOUT_TRANSITION_CONTRACT
-    if required_rollout_contract is not None:
+    if required_rollout_contract is not None and not (
+            accepted_migration and sidecar_rollout_contract is None):
         if sidecar_rollout_contract is None:
             raise LineageError(
                 "training eligibility requires an explicit "
@@ -892,7 +1040,24 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
             raise LineageError(
                 "ancestry.grafted_from.warm_lineage_sha256 differs from "
                 "ancestry.warm_lineage_sha256")
-    if require_eligible and not eligible:
+    if "migrated_from" in ancestry and not migration:
+        # The graft-published shape (reason + one record per migrated input),
+        # distinct from a migration sidecar's own column audit checked above.
+        migrated_graft = ancestry.get("migrated_from")
+        if not isinstance(migrated_graft, dict) or \
+                sorted(migrated_graft) != sorted(GRAFT_MIGRATED_FROM_KEYS):
+            raise LineageError(
+                "ancestry.migrated_from on trained lineage must contain exactly "
+                f"{sorted(GRAFT_MIGRATED_FROM_KEYS)}")
+        _need_reason(migrated_graft.get("reason"),
+                     "ancestry.migrated_from.reason")
+        records = _need_migrated_records(
+            migrated_graft.get("sidecars"), "ancestry.migrated_from.sidecars")
+        if initialization != "lineage-v7" or "grafted_from" not in ancestry:
+            raise LineageError(
+                "only grafted lineage-v7 lineage may record migrated_from")
+        _refuse_untrained_migrated(actual_sha, records, warm_lineage)
+    if require_eligible and not eligible and not accepted_migration:
         raise LineageError("qualification-only checkpoint is not eligible ancestry")
     return payload
 
@@ -931,6 +1096,9 @@ def main(argv=None):
     validate.add_argument("--lineage")
     validate.add_argument("--expect", action="append", default=[])
     validate.add_argument("--allow-qualification", action="store_true")
+    validate.add_argument(
+        "--accept-migrated", action="store_true",
+        help="admit a zero-extended migration sidecar as graft ancestry")
     validate.add_argument(
         "--recurrent-contract-mode", choices=sorted(RECURRENT_CONTRACT_MODES),
         default="historical-readable")
@@ -989,7 +1157,8 @@ def main(argv=None):
                 require_eligible=not args.allow_qualification,
                 recurrent_contract_mode=args.recurrent_contract_mode,
                 expected_rollout_transition_contract=
-                args.expected_rollout_transition_contract)
+                args.expected_rollout_transition_contract,
+                accept_migrated=args.accept_migrated)
             print(lineage_digest(payload),
                   Path(args.lineage) if args.lineage else sidecar_path(args.checkpoint))
     except LineageError as exc:

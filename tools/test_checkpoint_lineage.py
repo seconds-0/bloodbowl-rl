@@ -1196,5 +1196,346 @@ class BridgeLineageTests(unittest.TestCase):
             "--expect", "puffer_patch_bundle_sha256=" + "3" * 64]), 0)
 
 
+# Real rig digests (audit critic G2): migrated chain 9 was published on the
+# migration build (source 6fbd67f7, patch 425c5d5b); the terminal-aware-v2
+# runtime is source 6fbd67f7, patch 4b5bdc20, module 651ffc40. The migration
+# module digest is whatever the temp module file hashes to.
+MIGRATION_SOURCE = "6fbd67f7201ce9830b3f282f19d3a98768ea197b8f3e5b9357991460884526f1"
+MIGRATION_PATCH = "425c5d5b117c3d21e944a2380d33ee6eaaec7e4274358c15a222b3f4116c46ec"
+TERMINAL_AWARE_V2 = {
+    "source_sha256": MIGRATION_SOURCE,
+    "compiled_module_sha256":
+        "651ffc40e43e669912803e2f5bb3d3e641c34c0d8b431ab0f38f8393bbc700a3",
+    "puffer_patch_bundle_sha256":
+        "4b5bdc20de6de488ab3f2ce055861b91ab2cfa16bbe869f01fe206193f11c803",
+}
+CONTROL_BANK_SOURCE = "9581e3c53ad487cd2d3e45fc653818c735ede9e8147e3e0f649e6391d0808fd6"
+
+
+def mint_migrated(root, checkpoint, *, fill, source=MIGRATION_SOURCE,
+                  patch=MIGRATION_PATCH, module=None, columns=None):
+    """Publish a migrate-v6 sidecar through checkpoint_lineage.migration_lineage."""
+    module = module or root / "migration_module.so"
+    if not module.exists():
+        module.write_bytes(b"migration-build module")
+    checkpoint.write_bytes(fill + b"\0" * (
+        checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES - len(fill)))
+    v6_sha = digest(b"v6:" + fill)
+    source_lineage = root / (checkpoint.name + ".v6.lineage.json")
+    source_lineage.write_bytes(checkpoint_lineage.canonical_bytes({
+        "checkpoint": {"bytes": 16_000_000, "sha256": v6_sha},
+        "compatibility": {"observation_abi": "obs-v6",
+                          "observation_version": 6,
+                          "action_abi": "exact-joint-v1"}}))
+    migration_manifest = root / (checkpoint.name + ".migration.json")
+    migration_manifest.write_text(json.dumps({
+        "schema": "bloodbowl-checkpoint-observation-migration-v1",
+        "source": {"observation_abi": "obs-v6", "observation_version": 6,
+                   "observation_size": 2782, "sha256": v6_sha,
+                   "lineage_sha256": digest(source_lineage.read_bytes())},
+        "destination": {"observation_abi": "obs-v7", "observation_version": 7,
+                        "observation_size": 2851,
+                        "sha256": digest(checkpoint.read_bytes())},
+        "zero_effect_inputs": columns or {
+            "repurposed_v6_zero_columns": [814, 815],
+            "appended_columns": [2782, 2850]},
+    }), encoding="utf-8")
+    payload = checkpoint_lineage.migration_lineage(
+        checkpoint, migration_manifest, source_lineage, target_module=module,
+        target_source_sha256=source, target_patch_bundle_sha256=patch)
+    sidecar = checkpoint_lineage.sidecar_path(checkpoint)
+    checkpoint_lineage.write_lineage(sidecar, payload, replace=True)
+    return payload, sidecar
+
+
+class MigratedGraftTests(unittest.TestCase):
+    """B1/G2: migrated chain 9 enters the obs-v7 lineage only through a declared
+    graft, and becomes eligible ancestry only by training a rung."""
+
+    REASON = "B1 warm-start migrated chain 9 on terminal-aware-v2"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.warm = self.root / "chain9-v7.bin"
+        self.warm_payload, self.warm_sidecar = mint_migrated(
+            self.root, self.warm, fill=b"chain9")
+        self.banks = []
+        for index in range(4):
+            bank = self.root / f"bank{index}.bin"
+            payload, _ = mint_migrated(self.root, bank,
+                                       fill=f"bank{index}".encode())
+            self.banks.append((bank, payload))
+        self.trained = self.root / "rung1.bin"
+        self.trained.write_bytes(b"trained" + b"\0" * (
+            checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES - len(b"trained")))
+        self.run_manifest = self.root / "RUN_MANIFEST.json"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def sidecars(self):
+        return [("warm", self.warm_payload)] + [
+            (f"pool bank {index}", payload)
+            for index, (_, payload) in enumerate(self.banks)]
+
+    def graft_module(self, accept_migrated=True):
+        return checkpoint_lineage.graft_bridge(
+            self.sidecars(), current=TERMINAL_AWARE_V2,
+            old_source_sha256=MIGRATION_SOURCE,
+            old_patch_bundle_sha256=MIGRATION_PATCH,
+            accept_migrated=accept_migrated)
+
+    def write_manifest(self, *, migrated=True, **over):
+        warm_lineage = checkpoint_lineage.lineage_digest(self.warm_payload)
+        manifest = {
+            "schema_version": 1,
+            "mode": "native_static_pool_reward_ablation",
+            "seed": "42",
+            "observation_abi": "obs-v7",
+            "observation_version": "7",
+            "action_abi": "exact-joint-v1",
+            "compiled_rollout_transition_contract": "terminal-aware-tbptt-v1",
+            "initialization": "lineage-v7",
+            "qualification_only": "0",
+            "policy_hidden_size": "512",
+            "policy_num_layers": "3",
+            "policy_expansion_factor": "1",
+            "expected_checkpoint_bytes": str(
+                checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES),
+            **TERMINAL_AWARE_V2,
+            "screen_manifest_sha256": "4" * 64,
+            "warm_lineage_sha256": warm_lineage,
+            "pool_lineage_bundle_sha256": "6" * 64,
+            "graft_from_source_sha256": MIGRATION_SOURCE,
+            "graft_from_module_sha256": self.graft_module(),
+            "graft_from_patch_bundle_sha256": MIGRATION_PATCH,
+            "graft_from_warm_lineage_sha256": warm_lineage,
+            "graft_reason": "D370",
+        }
+        if migrated:
+            manifest["graft_migrated_reason"] = self.REASON
+            manifest["graft_migrated_from"] = json.dumps(
+                checkpoint_lineage.migrated_graft_records(self.sidecars()),
+                sort_keys=True, separators=(",", ":"))
+        manifest.update(over)
+        manifest = {k: v for k, v in manifest.items() if v is not None}
+        self.run_manifest.write_text(
+            json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+
+    def publish(self, checkpoint=None):
+        return checkpoint_lineage.lineage_from_run_manifest(
+            checkpoint or self.trained, self.run_manifest,
+            allow_eligible_publication=True)
+
+    def test_undeclared_migrated_sidecar_is_still_not_eligible_ancestry(self):
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "only a graft declaring GRAFT_ACCEPT_MIGRATED"):
+            checkpoint_lineage.validate_lineage(
+                self.warm, self.warm_sidecar, require_eligible=True)
+        # Readable for qualification exactly as before.
+        observed = checkpoint_lineage.validate_lineage(
+            self.warm, self.warm_sidecar, require_eligible=False)
+        self.assertFalse(observed["ancestry"]["eligible"])
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "zero-extended migration; declare"):
+            self.graft_module(accept_migrated=False)
+
+    def test_declared_migrated_sidecar_with_a_correct_column_audit_is_accepted(self):
+        observed = checkpoint_lineage.validate_lineage(
+            self.warm, self.warm_sidecar, require_eligible=True,
+            accept_migrated=True)
+        self.assertEqual(observed, self.warm_payload)
+        self.assertEqual(observed["ancestry"]["migrated_from"]["zeroed_columns"],
+                         [814, 815])
+        self.assertEqual(checkpoint_lineage.main([
+            "validate", "--checkpoint", str(self.warm), "--accept-migrated"]), 0)
+        with self.assertRaises(SystemExit) as caught:
+            checkpoint_lineage.main(["validate", "--checkpoint", str(self.warm)])
+        self.assertEqual(caught.exception.code, 1)
+
+    def test_migration_build_bridges_to_the_terminal_aware_runtime(self):
+        # lineage-v7 on the target runtime refuses the migration build...
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "lineage mismatch"):
+            checkpoint_lineage.validate_lineage(
+                self.warm, self.warm_sidecar, expected=TERMINAL_AWARE_V2,
+                require_eligible=True, accept_migrated=True)
+        # ...and the declared graft bridges it, returning the migration module.
+        self.assertEqual(self.graft_module(),
+                         self.warm_payload["implementation"]["compiled_module_sha256"])
+        # A bank migrated on another source is not the declared old build.
+        other = self.root / "control.bin"
+        other_payload, _ = mint_migrated(
+            self.root, other, fill=b"control", source=CONTROL_BANK_SOURCE)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "pool bank 3 binds neither"):
+            checkpoint_lineage.graft_bridge(
+                self.sidecars()[:4] + [("pool bank 3", other_payload)],
+                current=TERMINAL_AWARE_V2, old_source_sha256=MIGRATION_SOURCE,
+                old_patch_bundle_sha256=MIGRATION_PATCH, accept_migrated=True)
+
+    def test_declaration_without_a_migrated_sidecar_is_refused(self):
+        eligible_old = {"implementation": {
+            "source_sha256": MIGRATION_SOURCE, "compiled_module_sha256": "b" * 64,
+            "puffer_patch_bundle_sha256": MIGRATION_PATCH},
+            "ancestry": {"initialization": "lineage-v7"}}
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "no warm/pool sidecar is a zero-extended"):
+            checkpoint_lineage.graft_bridge(
+                [("warm", eligible_old)], current=TERMINAL_AWARE_V2,
+                old_source_sha256=MIGRATION_SOURCE,
+                old_patch_bundle_sha256=MIGRATION_PATCH, accept_migrated=True)
+
+    def test_wrong_column_audit_is_rejected_even_when_declared(self):
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "column audit mismatch"):
+            mint_migrated(self.root, self.root / "bad.bin", fill=b"bad",
+                          columns={"repurposed_v6_zero_columns": [814],
+                                   "appended_columns": [2782, 2850]})
+        for key, bad in (("zeroed_columns", [814]),
+                         ("appended_columns", [2782, 2849])):
+            broken = json.loads(json.dumps(self.warm_payload))
+            broken["ancestry"]["migrated_from"][key] = bad
+            checkpoint_lineage.write_lineage(self.warm_sidecar, broken,
+                                             replace=True)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "migration lineage column audit mismatch"):
+                checkpoint_lineage.validate_lineage(
+                    self.warm, self.warm_sidecar, require_eligible=True,
+                    accept_migrated=True)
+
+    def test_blob_hash_mismatch_is_rejected_even_when_declared(self):
+        original = self.warm.read_bytes()
+        self.warm.write_bytes(b"tampered" + original[len(b"tampered"):])
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "SHA-256 differs from lineage"):
+            checkpoint_lineage.validate_lineage(
+                self.warm, self.warm_sidecar, require_eligible=True,
+                accept_migrated=True)
+
+    def test_declaration_cannot_relabel_a_migration_as_eligible(self):
+        broken = json.loads(json.dumps(self.warm_payload))
+        broken["ancestry"].update({"eligible": True, "qualification_only": False})
+        checkpoint_lineage.write_lineage(self.warm_sidecar, broken, replace=True)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "qualification-only, and ineligible"):
+            checkpoint_lineage.validate_lineage(
+                self.warm, self.warm_sidecar, require_eligible=True,
+                accept_migrated=True)
+
+    def test_first_trained_rung_publishes_eligible_lineage_recording_migrated_from(self):
+        self.write_manifest()
+        payload = self.publish()
+        ancestry = payload["ancestry"]
+        self.assertTrue(ancestry["eligible"])
+        self.assertEqual(ancestry["initialization"], "lineage-v7")
+        self.assertEqual(payload["implementation"], TERMINAL_AWARE_V2)
+        self.assertEqual(ancestry["grafted_from"]["puffer_patch_bundle_sha256"],
+                         MIGRATION_PATCH)
+        records = ancestry["migrated_from"]["sidecars"]
+        self.assertEqual(ancestry["migrated_from"]["reason"], self.REASON)
+        self.assertEqual([r["label"] for r in records],
+                         ["warm"] + [f"pool bank {i}" for i in range(4)])
+        self.assertEqual(records[0]["checkpoint_sha256"],
+                         self.warm_payload["checkpoint"]["sha256"])
+        self.assertEqual(records[0]["source_checkpoint_sha256"],
+                         self.warm_payload["ancestry"]["migrated_from"][
+                             "source_checkpoint_sha256"])
+        sidecar = checkpoint_lineage.sidecar_path(self.trained)
+        checkpoint_lineage.write_lineage(sidecar, payload)
+        # Materialization validates on the target build with no declaration.
+        observed = checkpoint_lineage.validate_lineage(
+            self.trained, sidecar, expected=TERMINAL_AWARE_V2,
+            require_eligible=True)
+        self.assertEqual(observed, payload)
+        # The declared reason is hashed into the sidecar.
+        self.write_manifest(graft_migrated_reason="a different review")
+        self.assertNotEqual(checkpoint_lineage.lineage_digest(self.publish()),
+                            checkpoint_lineage.lineage_digest(payload))
+
+    def test_untrained_migrated_blob_cannot_be_published_or_promoted(self):
+        self.write_manifest()
+        for blob, label in ((self.warm, "warm"), (self.banks[2][0], "pool bank 2")):
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        f"migrated {label} blob itself"):
+                self.publish(blob)
+        # A forged sidecar that points trained ancestry at the migrated bytes.
+        payload = self.publish()
+        forged = json.loads(json.dumps(payload))
+        forged["checkpoint"]["sha256"] = self.warm_payload["checkpoint"]["sha256"]
+        forged_sidecar = self.root / "forged.lineage.json"
+        checkpoint_lineage.write_lineage(forged_sidecar, forged)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "migrated warm blob itself"):
+            checkpoint_lineage.validate_lineage(
+                self.warm, forged_sidecar, expected=TERMINAL_AWARE_V2,
+                require_eligible=True)
+        # rehost is not a path around training.
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "not eligible ancestry"):
+            checkpoint_lineage.rehost_lineage(
+                self.warm, target_module=self.root / "migration_module.so",
+                target_source_sha256=TERMINAL_AWARE_V2["source_sha256"],
+                target_patch_bundle_sha256=TERMINAL_AWARE_V2[
+                    "puffer_patch_bundle_sha256"])
+
+    def test_migrated_manifest_keys_are_all_or_none_and_need_a_graft(self):
+        self.write_manifest(graft_migrated_reason=None)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError, "all-or-none"):
+            self.publish()
+        self.write_manifest(**{key: None for key in (
+            "graft_from_source_sha256", "graft_from_module_sha256",
+            "graft_from_patch_bundle_sha256", "graft_from_warm_lineage_sha256",
+            "graft_reason")})
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "require the graft_from_"):
+            self.publish()
+        for bad in ("", "{}", "[]", "not json", json.dumps([{"label": "warm"}])):
+            self.write_manifest(graft_migrated_from=bad)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "graft_migrated_from"):
+                self.publish()
+        for bad in ("", " ", "r" * 201):
+            self.write_manifest(graft_migrated_reason=bad)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "graft_migrated_reason"):
+                self.publish()
+        records = checkpoint_lineage.migrated_graft_records(self.sidecars())
+        records[0]["lineage_sha256"] = "7" * 64
+        self.write_manifest(graft_migrated_from=json.dumps(records))
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "migrated warm record differs"):
+            self.publish()
+        records = checkpoint_lineage.migrated_graft_records(self.sidecars())
+        records[1]["label"] = "warm"
+        self.write_manifest(graft_migrated_from=json.dumps(records))
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError, "duplicates"):
+            self.publish()
+
+    def test_validate_refuses_malformed_or_ungrafted_migrated_from(self):
+        self.write_manifest()
+        payload = self.publish()
+        sidecar = self.root / "m.lineage.json"
+
+        def check(mutate, message):
+            broken = json.loads(json.dumps(payload))
+            mutate(broken)
+            checkpoint_lineage.write_lineage(sidecar, broken, replace=True)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError, message):
+                checkpoint_lineage.validate_lineage(
+                    self.trained, sidecar, expected=TERMINAL_AWARE_V2)
+
+        check(lambda b: b["ancestry"].pop("grafted_from"),
+              "only grafted lineage-v7")
+        check(lambda b: b["ancestry"]["migrated_from"].pop("reason"), "exactly")
+        check(lambda b: b["ancestry"]["migrated_from"].__setitem__("sidecars", []),
+              "non-empty list")
+        check(lambda b: b["ancestry"]["migrated_from"]["sidecars"][0].__setitem__(
+            "checkpoint_sha256", "Z" * 64), "checkpoint_sha256")
+        check(lambda b: b["ancestry"]["migrated_from"].__setitem__("reason", ""),
+              "migrated_from.reason")
+
+
 if __name__ == "__main__":
     unittest.main()
