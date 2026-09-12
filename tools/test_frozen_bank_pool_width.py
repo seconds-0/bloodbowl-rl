@@ -7,9 +7,10 @@ validators still hardcoded four: the screen plan writer ("screen pool must
 contain exactly four banks") and the per-arm launcher's pool-body check
 ("static reward pool must contain exactly four seeds"). An 8-bank rung built
 by ladder_stage.sh therefore failed at the screen plan step, before any
-training, and the staged chain 23 (8 banks x 0.06) could never launch. These
-tests run the real embedded Python blocks against 8-bank and 4-bank pools and
-assert on specific messages, never on exit status alone.
+training. These tests run the real embedded Python blocks against 8-bank and
+4-bank pools and assert on specific messages, never on exit status alone. The
+launcher's third 4-bank gate, the SCRIPTED_BANK_TAG range that refused chain
+23's tag 8, is covered end to end in tools/test_ladder_knobs.py.
 """
 
 from __future__ import annotations
