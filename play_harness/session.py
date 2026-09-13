@@ -322,6 +322,10 @@ class GameSession:
         is_blitz = prompt.get("act_kind") == "BLITZ"
         if name in ("SETUP_PLACE", "SETUP_REMOVE", "ACTIVATE"):
             item["player"] = la.arg
+        if name == "ACTIVATE":
+            after = self.engine.peek_legal(*la.tuple)
+            item["declare"] = sorted({E.ACT_KINDS[a.arg] for a in (after or [])
+                                      if a.type_name == "DECLARE"})
         if name == "TOUCHBACK":
             if la.arg == 0xFF:
                 item["surface"] = "square"

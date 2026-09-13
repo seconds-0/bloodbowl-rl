@@ -69,3 +69,28 @@ def test_names_and_state_are_readable(lib):
     assert all(eng.position_display(m.team_id[i >> 4], m.players[i].position_id)
                for i in range(32) if m.players[i].location != 5)
     assert isinstance(eng.obs(0), np.ndarray)
+
+
+def test_peek_legal_matches_real_activation_and_leaves_state_untouched(lib):
+    eng = E.Engine(13)
+    rng = random.Random(3)
+    checked = 0
+    for _ in range(2000):
+        legal = eng.legal()
+        activates = [la for la in legal if la.type_name == "ACTIVATE"]
+        if activates:
+            before = eng.digest()
+            peeks = {la.index: {a.arg for a in eng.peek_legal(*la.tuple)
+                                if a.type_name == "DECLARE"} for la in activates}
+            assert eng.digest() == before
+            assert eng.counters()["rejected_submissions"] == 0
+            pick = rng.choice(activates)
+            assert eng.step(*pick.tuple) == E.STEP_OK
+            real = {a.arg for a in eng.legal() if a.type_name == "DECLARE"}
+            assert real == peeks[pick.index]
+            checked += 1
+            continue
+        if eng.step(*rng.choice(legal).tuple) == E.STEP_TERMINAL:
+            break
+    assert checked > 20
+    assert eng.peek_legal(E.A["END_TURN"], 32, 999) is None
