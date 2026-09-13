@@ -510,7 +510,7 @@
     const proc = s.procedure ? s.procedure.proc : "";
     const half = s.half === 2 ? "2nd half" : "1st half";
     let phase = "";
-    if (proc === "SETUP" || proc === "KICKOFF") phase = "kick-off";
+    if (proc === "SETUP" || proc === "KICKOFF" || s.in_kickoff) phase = "kick-off";
     else if (s.in_team_turn[botSeat()]) phase = "bot turn";
     else if (s.in_team_turn[human]) phase = "your turn";
     $("board").innerHTML = `${side(0)}<div class="mid"><div class="half">${half}${phase ? " · " + phase : ""} <span class="clock js-clock"></span></div>${track(0)}${track(1)}</div>${side(1)}`;
@@ -529,6 +529,7 @@
       tb.className = `banner ${sideCls(human)}`;
       if (k === "setup") title = p.kicking ? "Set up to kick" : "Set up to receive";
       else if (k === "kick_target") title = "Kick off";
+      else if (s.in_kickoff) title = { touchback: "Touchback", high_kick: "High kick", solid_defence: "Solid defence", quick_snap: "Quick snap" }[k] || "Charge";
       else if (s.in_team_turn[human]) title = "Your turn";
       else title = "Your decision";
       const weather = { sweltering: "Sweltering heat", sunny: "Very sunny", perfect: "Perfect conditions", rain: "Pouring rain", blizzard: "Blizzard" }[s.weather] || s.weather;
@@ -547,8 +548,9 @@
       pc.innerHTML = reservesCard();
     } else {
       const focus = focusPlayer();
-      pc.innerHTML = focus !== null ? playerCard(focus) : `<h3>Players</h3><p class="muted">Hover over a player to see the team sheet.</p>`;
+      pc.innerHTML = focus !== null ? playerCard(focus) : "";
     }
+    pc.hidden = pc.innerHTML === "";
 
     // Bot moves this turn (left rail) while the bot plays
     const mc = $("moves-card");
@@ -698,12 +700,16 @@
         const movable = new Set(rows.map((r) => r[1]));
         for (const a of acts("SETUP_REMOVE")) movable.add(a.player);
         if (App.ui.sel !== null) {
+          const hv = App.ui.hover;
           for (const r of rows) {
             if (r[1] !== App.ui.sel) continue;
-            scene.highlights.push({ x: r[2], y: r[3], kind: "drop" });
+            const over = hv && hv.x === r[2] && hv.y === r[3];
+            scene.highlights.push({ x: r[2], y: r[3], kind: over ? "drop" : "reach" });
             addHit(r[2], r[3], "place", { id: r[0], slot: r[1] });
           }
         }
+        // Removals are reached by selecting a placed player (token or drag to the reserves list).
+        for (const a of acts("SETUP_REMOVE")) App.renderedIds.add(a.id);
         for (const pl of s.players) {
           if (pl.team === human && pl.location === "on_pitch" && movable.has(pl.slot)) {
             legalPlayers.add(pl.slot);
@@ -938,6 +944,11 @@
         tags.push(`<span class="tag">Click an arrow square</span>`);
       } else if (dialogKinds.includes(k)) {
         what = dialogTitle(p);
+        if (p.dice) {
+          const picker = (p.defender_chooses ? p.defender >> 4 : p.attacker >> 4) === human ? "you pick" : "bot picks";
+          tags.push(`<span class="tag ${sideCls(human)}">${p.dice.length} ${p.dice.length === 1 ? "die" : "dice"}, ${picker}</span>`);
+          if (p.strength) tags.push(`<span class="tag">Strength ${p.strength[0]} against ${p.strength[1]}</span>`);
+        }
         if (App.ui.dialogHidden) buttons.push(btn(`Show the dialog <span class="k">H</span>`, { "data-kind": "show-dialog" }));
       }
     }
@@ -1130,12 +1141,20 @@
       { free: area.bottom - bb.bottom, x: cx - w / 2, y: bb.bottom + 10 },
       { free: bb.top - area.top, x: cx - w / 2, y: bb.top - 10 - h },
     ].sort((a, b) => b.free - a.free);
-    const overlaps = (x, y) => rects.some((r) => x < r.right && x + w > r.left && y < r.bottom && y + h > r.top);
-    let pick = null;
-    for (const c of cands) {
+    const hit = (list, x, y) => list.filter((r) => x < r.right && x + w > r.left && y < r.bottom && y + h > r.top).length;
+    const tokens = App.display.players.filter((pl) => pl.location === "on_pitch").map((pl) => {
+      const b = App.pitchApi.squareBox(pl.x, pl.y);
+      return { left: B + b.left, top: B + b.top, right: B + b.left + b.width, bottom: B + b.top + b.height };
+    });
+    // Never over the involved players or push squares; among the free spots,
+    // cover as few other tokens as possible, then prefer the roomier side.
+    let pick = null, best = Infinity;
+    cands.forEach((c, order) => {
       const x = clampX(c.x), y = clampY(c.y);
-      if (!overlaps(x, y)) { pick = { x, y }; break; }
-    }
+      if (hit(rects, x, y)) return;
+      const score = hit(tokens, x, y) * 10 + order;
+      if (score < best) { best = score; pick = { x, y }; }
+    });
     if (!pick) {
       // No free spot on the pitch: dock the dialog under the pitch instead.
       pick = { x: clampX(cx - w / 2), y: B + Hh + 16 };
@@ -1196,13 +1215,15 @@
     card.hidden = !(App.playing && (App.batchPolicy > 0));
     if (card.hidden) return;
     const fr = App.lastBotFrame;
-    card.innerHTML = `
+    card.innerHTML = `<h3 style="width:100%;margin:0">Bot playback</h3>
+      <div class="row">
       ${btn(`${App.paused ? "Resume" : "Pause"} <span class="k">Space</span>`, { "data-kind": "pause" })}
       ${btn(`Step <span class="k">.</span>`, { "data-kind": "step" })}
       ${btn("Slower", { "data-kind": "slower" }, "btn ghost")}
       ${btn("Faster", { "data-kind": "faster" }, "btn ghost")}
-      <span class="tag spacer">Move ${Math.min(App.batchIndex, App.batchPolicy)} of ${App.batchPolicy}${fr ? ` · decision ${fr.step}` : ""}</span>
-      ${fr ? btn(`Flag this move <span class="k">F</span>`, { "data-kind": "open-flag", "data-legal": "1" }, "btn primary") : ""}`;
+      </div><div class="row">
+      <span class="tag">Move ${Math.min(App.batchIndex, App.batchPolicy)} of ${App.batchPolicy}${fr ? ` · decision ${fr.step}` : ""}</span>
+      ${fr ? btn(`Flag this move <span class="k">F</span>`, { "data-kind": "open-flag", "data-legal": "1" }, "btn primary") : ""}</div>`;
     void botPlaying;
   }
 

@@ -163,8 +163,9 @@ input, select, textarea { font: inherit; }
 .movelist p.cur { background: #dfe3fa; font-weight: 700; }
 .movelist p:hover { background: #ece4cf; }
 
-.playback { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.playback .spacer { margin-left: auto; }
+.playback { display: flex; align-items: flex-start; align-content: flex-start; gap: 8px; flex-wrap: wrap; }
+.playback .spacer { margin-left: auto; align-self: center; }
+.playback .row { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; align-items: center; }
 
 /* ---------- dialogs anchored away from the involved players ---------- */
 .dialog-layer { position: absolute; inset: 0 0 auto 0; pointer-events: none; line-height: 1.3; z-index: 20; }
@@ -331,11 +332,11 @@ table.st thead td { font-family: var(--display); font-weight: 800; font-size: 18
   .layout { display: flex; flex-direction: column; gap: 10px; }
   .rail, .pitchwrap, .lower { display: contents; }
   .pitchframe { order: 1; }
-  .dialog-layer { order: 2; position: static; }
+  #turn-banner { order: 2; }
+  #player-card { order: 3; }
+  .dialog-layer { order: 4; position: static; }
   .dlg { position: static; width: 100%; }
   .dlg-show { position: static; }
-  #turn-banner { order: 3; }
-  #player-card { order: 4; }
   #prompt-card, #playback-card { order: 5; }
   #flag-panel { order: 6; }
   #moves-card { order: 7; }
