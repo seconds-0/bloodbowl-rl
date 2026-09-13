@@ -77,6 +77,13 @@ class PlayServer:
     def process_request(self, connection, request):
         path = request.path.split("?", 1)[0]
         if path == "/ws":
+            # A page on another site must not drive the local game: only this
+            # server's own loopback origins (or no Origin, as non-browser
+            # clients send) may open the websocket.
+            origin = request.headers.get("Origin")
+            allowed = {f"http://{h}:{self.port}" for h in ("127.0.0.1", "localhost", "[::1]")}
+            if origin is not None and origin not in allowed:
+                return self._respond(403, b"origin not allowed", "text/plain; charset=utf-8")
             return None
         if path == "/health":
             return self._respond(200, b'{"ok": true}', "application/json")
@@ -239,9 +246,8 @@ class PlayServer:
                 await self._publish_game()
 
     async def start(self):
-        origins = [None] + [f"http://{h}:{self.port}" for h in ("127.0.0.1", "localhost", "[::1]")]
         self.server = await serve(self.handler, self.host, self.port,
-                                  process_request=self.process_request, origins=origins,
+                                  process_request=self.process_request,
                                   max_size=2 ** 20, ping_interval=20, ping_timeout=60)
         if self.port == 0:
             self.port = self.server.sockets[0].getsockname()[1]
