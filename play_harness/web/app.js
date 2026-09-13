@@ -249,7 +249,7 @@
       if (App.botFrames.length > 800) App.botFrames.splice(0, App.botFrames.length - 800);
     }
     for (const e of fr.log) {
-      if (e.kind === "turn" && e.team === bot) App.botTurnSteps = [];
+      if ((e.kind === "turn" && e.team === bot) || e.kind === "half" || e.kind === "td") App.botTurnSteps = [];
       if (e.kind === "half" && e.parts[0].t === "Second half") {
         showOverlay({ title: "Half time", sub: scoreLine(), hold: true, button: "Start the second half" });
       }
@@ -1366,7 +1366,7 @@
     const flags = s.flags || [];
     const flagHtml = flags.length ? flags.map((f) => `
       <div class="flagrow"><div class="thumb" id="thumb-${f.index}"></div><div>
-        <div class="ft">${f.half === 2 ? "2nd half " : ""}T${f.turn} · ${esc(f.label)}</div>
+        <div class="ft">${f.half === 2 ? "2nd half " : ""}${f.turn ? `T${f.turn}` : "kick-off"} · ${esc(f.label)}</div>
         ${f.note ? `<div class="fn">${esc(f.note)}</div>` : ""}
         <div class="fr">${f.reasons.map((r) => `<span>${esc(r)}</span>`).join("")}${f.p !== null ? `<span>${pct(f.p)}</span>` : ""}
           ${btn("Replay", { "data-kind": "replay", "data-index": f.index, "data-legal": "1" }, "btn ghost")}</div>
