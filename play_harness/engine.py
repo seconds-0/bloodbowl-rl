@@ -201,6 +201,9 @@ def load_library(path=None, build_if_missing=True):
                                ctypes.c_int], ctypes.c_int),
         "bbp_tuple_index": ([c_p, ctypes.c_int, ctypes.c_int, ctypes.c_int], ctypes.c_int),
         "bbp_step": ([c_p, ctypes.c_int, ctypes.c_int, ctypes.c_int], ctypes.c_int),
+        "bbp_peek_legal": ([c_p, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                            ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint16),
+                            ctypes.c_int], ctypes.c_int),
         "bbp_counters": ([c_p, ctypes.POINTER(ctypes.c_int32), ctypes.c_int], ctypes.c_int),
         "bbp_last_action": ([c_p, ctypes.POINTER(ctypes.c_uint8)], ctypes.c_int),
         "bbp_last_rewards": ([c_p, ctypes.POINTER(ctypes.c_float)], None),
@@ -340,6 +343,19 @@ class Engine:
 
     def step(self, t, arg, sq):
         return self.lib.bbp_step(self._ptr, int(t), int(arg), int(sq))
+
+    def peek_legal(self, t, arg, sq):
+        """Legal actions after applying a tuple on a scratch copy (no side effects)."""
+        n = self.lib.bbp_peek_legal(self._ptr, int(t), int(arg), int(sq),
+                                    self._act_buf, self._proj_buf, self._cap)
+        if n < 0:
+            return None
+        acts = np.ctypeslib.as_array(self._act_buf, shape=(4 * self._cap,))
+        proj = np.ctypeslib.as_array(self._proj_buf, shape=(2 * self._cap,))
+        return [LegalAction(i, int(acts[4 * i]), int(acts[4 * i + 1]),
+                            int(acts[4 * i + 2]), int(acts[4 * i + 3]),
+                            int(proj[2 * i]), int(proj[2 * i + 1]))
+                for i in range(n)]
 
     def counters(self):
         buf = (ctypes.c_int32 * 16)()

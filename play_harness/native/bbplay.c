@@ -282,6 +282,25 @@ int bbp_step(bbp_session* s, int t, int arg, int sq) {
     return BBP_STEP_OK;
 }
 
+// Legal actions after applying a tuple on a scratch copy of the session.
+// Used for UI lookahead (the action menu shown before ACTIVATE is committed).
+// The real match, its dice stream and the policy are untouched. Returns the
+// number of actions, -1 if the tuple is refused, -2 if the copy reached a
+// terminal step.
+int bbp_peek_legal(bbp_session* s, int t, int arg, int sq, uint8_t* actions4,
+                   uint16_t* proj2, int cap) {
+    bbp_session* c = (bbp_session*)malloc(sizeof(bbp_session));
+    if (!c) return -1;
+    memcpy(c, s, sizeof(bbp_session));
+    bbp_wire(c);
+    int rc = bbp_step(c, t, arg, sq);
+    int n = rc == BBP_STEP_OK ? bbp_legal(c, actions4, proj2, cap)
+                              : (rc == BBP_STEP_TERMINAL ? -2 : -1);
+    free(c);
+    bb_stall_attach(&s->env.ep_stall);
+    return n;
+}
+
 // Integrity and bookkeeping counters.
 //   [0] env->illegal            [1] env->illegal_projection_collision
 //   [2] log.error_episodes      [3] rejected submissions
