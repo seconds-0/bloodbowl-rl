@@ -1,0 +1,159 @@
+<title>Play harness mockup 2: block dice</title>
+<link rel="stylesheet" href="assets/harness.css">
+<style>
+  .dicebox {
+    width: 290px;
+    background: var(--card);
+    border: 3px solid var(--rule);
+    box-shadow: 0 6px 0 rgba(0,0,0,.35);
+  }
+  .dicebox .head { background: var(--home); color: #fff; padding: 8px 12px; display: flex; justify-content: space-between; align-items: baseline; }
+  .dicebox .head .t { font-family: var(--display); font-weight: 800; font-size: 24px; line-height: 1; }
+  .dicebox .head .who { font-family: var(--cond); font-weight: 700; font-size: 14px; background: var(--you-pick); padding: 2px 8px; border: 2px solid #fff; }
+  .dicebox .body { padding: 10px 12px 12px; }
+  .dicerow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .face { border: 2px solid var(--rule); background: #fff8e6; padding: 8px 6px 6px; text-align: center; box-shadow: 0 2px 0 var(--rule); }
+  .face.sel { background: #fff1b8; outline: 3px solid var(--move); outline-offset: -6px; }
+  .face .n { font-family: var(--display); font-weight: 800; font-size: 20px; line-height: 1; margin-top: 4px; }
+  .face .o { font-family: var(--cond); font-weight: 600; font-size: 13px; color: var(--ink-soft); }
+  .face .k { font-family: var(--cond); font-size: 11px; font-weight: 700; border: 1px solid var(--ink-soft); padding: 0 4px; color: var(--ink-soft); }
+  .rr { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .sums { margin-top: 8px; font-family: var(--cond); font-weight: 600; font-size: 13px; color: var(--ink-soft); display: flex; justify-content: space-between; }
+  .pointer { position: absolute; width: 0; height: 0; border-top: 12px solid transparent; border-bottom: 12px solid transparent; border-right: 14px solid var(--rule); left: -15px; top: 38px; }
+  @media (max-width: 720px) {
+    .anchor.sheet { position: static; margin-top: 10px; }
+    .dicebox { width: 100%; }
+    .pointer { display: none; }
+  }
+</style>
+
+<header class="board">
+  <div class="side home">
+    <div class="score">1</div>
+    <div><div class="team">Orc</div><div class="coach">Alex</div></div>
+    <div class="res"><span class="chip">Re-rolls 2</span><span class="chip">Apo 1</span></div>
+  </div>
+  <div class="mid">
+    <div class="half">1st half · <span class="clock" style="font-size:16px">2:03</span></div>
+    <div class="track"><span class="lab">Orc</span><i class="pip h done"></i><i class="pip h done"></i><i class="pip h done"></i><i class="pip h done"></i><i class="pip h now"></i><i class="pip h"></i><i class="pip h"></i><i class="pip h"></i></div>
+    <div class="track"><span class="lab">Human</span><i class="pip a done"></i><i class="pip a done"></i><i class="pip a done"></i><i class="pip a done"></i><i class="pip a"></i><i class="pip a"></i><i class="pip a"></i><i class="pip a"></i></div>
+  </div>
+  <div class="side away">
+    <div class="score">0</div>
+    <div><div class="team">Human</div><div class="coach">Chain 25</div></div>
+    <div class="res"><span class="chip">Re-rolls 3</span><span class="chip">Apo 1</span></div>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="rail left">
+    <div class="banner home"><div class="edge"></div><div class="t">Your turn</div><div class="c">Turn 5 · 2:03</div></div>
+    <section class="card">
+      <div class="pname">#7 Big Un Blocker</div>
+      <div class="psub">Orc · Block declared</div>
+      <div class="stats"><div><b>MA</b><span>5</span></div><div><b>ST</b><span>4</span></div><div><b>AG</b><span>4+</span></div><div><b>PA</b><span>-</span></div><div><b>AV</b><span>10+</span></div></div>
+      <div class="skills"><span class="skill">Animosity</span></div>
+    </section>
+    <section class="card phone-hide">
+      <h3>Target</h3>
+      <div class="pname" style="font-size:20px">#3 Lineman</div>
+      <div class="psub">Human · ST 3 · AV 9+</div>
+      <div class="kv"><dt>Your strength</dt><dd>4 + 1 assist</dd><dt>Their strength</dt><dd>3</dd></div>
+    </section>
+  </aside>
+
+  <section class="pitchwrap">
+    <div class="pitchframe" id="pitch">
+    </div>
+    <div class="anchor sheet" id="dialog">
+      <div class="dicebox" style="position:relative">
+        <i class="pointer"></i>
+        <div class="head"><span class="t">Block #3 Lineman</span><span class="who">You pick</span></div>
+        <div class="body">
+          <div class="dicerow">
+            <div class="face sel"><div id="d1"></div><div class="n">Pow</div><div class="o">#3 Lineman down</div><span class="k">1</span></div>
+            <div class="face"><div id="d2"></div><div class="n">Both down</div><div class="o">Both fall · turnover</div><span class="k">2</span></div>
+          </div>
+          <div class="rr">
+            <button class="btn">Team re-roll <span class="k">R</span></button>
+            <button class="btn ghost">Hide <span class="k">H</span></button>
+          </div>
+          <div class="sums"><span>Re-rolls left 2</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="lower">
+      <section class="card prompt phone-hide">
+        <div class="what">Choose a block die</div>
+        <div class="detail"><span class="tag team">2 dice, you pick</span><span class="tag">Assist #11 Troll</span><span class="tag">No Block skill on either player</span></div>
+      </section>
+      <section class="card logcard">
+        <h3>Game log</h3>
+        <div class="log">
+          <p class="turn"><span class="h">Orc</span> turn 5</p>
+          <p><span class="h">#7 Big Un</span> Animosity 4: no effect.</p>
+          <p><span class="h">#7 Big Un</span> blocks <span class="a">#3 Lineman</span>, 2 dice: <span class="roll">Pow, Both down</span>.</p>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <aside class="rail right">
+    <div class="banner away"><div class="edge"></div><div class="t">Chain 25</div><div class="c">Human · away</div></div>
+    <section class="card">
+      <div class="status"><i class="dot"></i>Waiting for you</div>
+      <dl class="kv"><dt>Checkpoint</dt><dd>109c55d3</dd><dt>Play</dt><dd>Sampling</dd></dl>
+    </section>
+  </aside>
+</main>
+
+<script src="assets/pitch.js"></script>
+<script src="assets/dice.js"></script>
+<script>
+const scene = {
+  highlights: [],
+  blockTargets: [{ x: 13, y: 8, dice: 2, who: "you" }],
+  players: [
+    { team: "a", x: 13, y: 6, pos: "Li", num: 1 },
+    { team: "a", x: 13, y: 8, pos: "Li", num: 3 },
+    { team: "a", x: 14, y: 10, pos: "Li", num: 2 },
+    { team: "a", x: 18, y: 2, pos: "Ca", num: 7 },
+    { team: "a", x: 17, y: 7, pos: "Th", num: 10, ball: true },
+    { team: "a", x: 16, y: 9, pos: "Bl", num: 5 },
+    { team: "a", x: 19, y: 5, pos: "Bl", num: 6 },
+    { team: "a", x: 20, y: 11, pos: "Ca", num: 8 },
+    { team: "a", x: 22, y: 7, pos: "Li", num: 4 },
+    { team: "a", x: 14, y: 12, pos: "Li", num: 9, state: "stunned" },
+    { team: "a", x: 21, y: 9, pos: "Og", num: 11, big: true },
+    { team: "h", x: 12, y: 8, pos: "BU", num: 7, big: true, selected: true },
+    { team: "h", x: 12, y: 7, pos: "Tr", num: 11, big: true, used: true },
+    { team: "h", x: 13, y: 9, pos: "Li", num: 1 },
+    { team: "h", x: 12, y: 10, pos: "Li", num: 2, state: "prone", used: true },
+    { team: "h", x: 11, y: 3, pos: "Li", num: 3, used: true },
+    { team: "h", x: 10, y: 11, pos: "Bl", num: 5 },
+    { team: "h", x: 7, y: 7, pos: "Th", num: 6 },
+    { team: "h", x: 9, y: 4, pos: "Li", num: 8 },
+    { team: "h", x: 5, y: 6, pos: "Li", num: 9 },
+    { team: "h", x: 4, y: 10, pos: "Li", num: 10 },
+    { team: "h", x: 16, y: 6, pos: "Bl", num: 4, state: "prone", used: true },
+  ],
+};
+document.getElementById("d1").innerHTML = BBDice.die("pow", 52);
+document.getElementById("d2").innerHTML = BBDice.die("both", 52);
+function draw() {
+  const el = document.getElementById("pitch");
+  const g = BBPitch.render(el, scene);
+  const dlg = document.getElementById("dialog");
+  if (g.portrait) { dlg.style.left = ""; dlg.style.top = ""; return; }
+  const [px, py] = g.at(13, 8);
+  const scale = el.clientWidth / g.w;
+  const box = dlg.firstElementChild.getBoundingClientRect();
+  const maxTop = el.clientHeight + 12 - box.height - 16;
+  dlg.style.left = (6 + (px + g.S + 14) * scale) + "px";
+  dlg.style.top = Math.min(6 + (py - 60) * scale, maxTop) + "px";
+}
+const wrap = document.querySelector(".pitchwrap");
+wrap.style.position = "relative";
+draw();
+window.addEventListener("resize", draw);
+</script>

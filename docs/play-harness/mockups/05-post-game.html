@@ -1,0 +1,111 @@
+<title>Play harness mockup 5: post-game feedback</title>
+<link rel="stylesheet" href="assets/harness.css">
+<style>
+  .final { display: grid; grid-template-columns: 1fr auto 1fr; align-items: stretch; background: var(--board); border: 3px solid #0b0a07; color: #fff; }
+  .final .s { display: flex; align-items: center; gap: 16px; padding: 14px 20px; }
+  .final .s.h { background: linear-gradient(90deg, var(--home-deep), var(--home) 75%); }
+  .final .s.a { background: linear-gradient(270deg, var(--away-deep), var(--away) 75%); flex-direction: row-reverse; text-align: right; }
+  .final .num { font-family: var(--display); font-weight: 900; font-size: 84px; line-height: .9; }
+  .final .nm { font-family: var(--display); font-weight: 800; font-size: 32px; line-height: 1; }
+  .final .cc { font-family: var(--cond); font-weight: 600; font-size: 15px; opacity: .9; }
+  .final .mid { display: grid; place-items: center; padding: 10px 26px; font-family: var(--display); font-weight: 800; font-size: 26px; background: repeating-linear-gradient(90deg, #1b1912 0 3px, #15130d 3px 6px); }
+  .final .mid small { display: block; font-family: var(--cond); font-weight: 600; font-size: 14px; color: #d9d2bf; text-align: center; }
+  .grid5 { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; }
+  table.st { width: 100%; border-collapse: collapse; font-family: var(--cond); font-size: 15px; }
+  table.st th, table.st td { padding: 4px 6px; border-bottom: 1px dotted #cbbf9f; }
+  table.st th { text-align: left; font-weight: 600; color: var(--ink-soft); }
+  table.st td { text-align: center; font-weight: 700; width: 64px; }
+  table.st thead td { font-family: var(--display); font-weight: 800; font-size: 18px; border-bottom: 2px solid var(--rule); }
+  .q { margin-bottom: 12px; }
+  .q .lab2 { font-family: var(--cond); font-weight: 700; font-size: 15px; margin-bottom: 5px; }
+  .scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+  .scale span { text-align: center; font-family: var(--display); font-weight: 800; font-size: 18px; border: 2px solid var(--rule); background: #fff8e6; padding: 3px 0; }
+  .scale span.on { background: var(--rule); color: var(--card); }
+  .ends { display: flex; justify-content: space-between; font-family: var(--cond); font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
+  .yn { display: flex; gap: 6px; flex-wrap: wrap; }
+  .yn span { font-family: var(--cond); font-weight: 700; font-size: 14px; padding: 3px 12px; border: 2px solid var(--rule); background: #fff8e6; }
+  .yn span.on { background: var(--rule); color: var(--card); }
+  textarea { width: 100%; min-height: 64px; font-family: var(--body); font-size: 14px; border: 2px solid var(--rule); background: #fffdf5; padding: 6px 8px; }
+  .flag { display: grid; grid-template-columns: 150px 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px dotted #cbbf9f; }
+  .flag .thumb { line-height: 0; border: 3px solid #182611; }
+  .flag .thumb svg { width: 100%; height: auto; }
+  .flag .ft { font-family: var(--cond); font-weight: 700; font-size: 15px; line-height: 1.2; }
+  .flag .fn { font-family: var(--body); font-size: 13px; color: var(--ink-soft); margin-top: 3px; line-height: 1.3; }
+  .flag .fr { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
+  .flag .fr span { font-family: var(--cond); font-weight: 700; font-size: 12px; padding: 0 6px; border: 1.5px solid var(--rule); }
+  .saved { font-family: var(--cond); font-size: 14px; line-height: 1.45; }
+  .saved code { font-family: var(--cond); font-weight: 700; background: #e8dfc7; padding: 0 4px; }
+  @media (max-width: 720px) {
+    .final .s { padding: 8px 10px; gap: 8px; }
+    .final .num { font-size: 48px; }
+    .final .nm { font-size: 20px; }
+    .final .cc { display: none; }
+    .final .mid { padding: 6px 8px; font-size: 16px; }
+    .grid5 { grid-template-columns: 1fr; }
+    .flag { grid-template-columns: 110px 1fr; }
+  }
+</style>
+
+<header class="final">
+  <div class="s h"><div class="num">1</div><div><div class="nm">Orc</div><div class="cc">Alex</div></div></div>
+  <div class="mid">Full time<small>2nd half · turn 8</small></div>
+  <div class="s a"><div class="num">2</div><div><div class="nm">Human</div><div class="cc">Chain 25 · 109c55d3 · sampling</div></div></div>
+</header>
+
+<main class="grid5">
+  <section class="card">
+    <h3>Match</h3>
+    <table class="st">
+      <thead><tr><th></th><td style="color:var(--home-deep)">Orc</td><td style="color:var(--away-deep)">Human</td></tr></thead>
+      <tbody>
+        <tr><th>Touchdowns</th><td>1</td><td>2</td></tr>
+        <tr><th>Blocks thrown</th><td>31</td><td>22</td></tr>
+        <tr><th>Casualties caused</th><td>2</td><td>0</td></tr>
+        <tr><th>Turnovers</th><td>3</td><td>4</td></tr>
+        <tr><th>Dodges made</th><td>6 of 8</td><td>11 of 13</td></tr>
+        <tr><th>Rushes made</th><td>4 of 4</td><td>7 of 9</td></tr>
+        <tr><th>Stalling rolls</th><td>0</td><td>2</td></tr>
+        <tr><th>Decisions</th><td>512</td><td>431</td></tr>
+      </tbody>
+    </table>
+    <div class="saved" style="margin-top:10px">Game record saved to <code>.play-artifacts/games/20260913-1512-orc-human/</code></div>
+  </section>
+
+  <section class="card">
+    <h3>Quick survey</h3>
+    <div class="q"><div class="lab2">How strong did the bot play?</div>
+      <div class="scale"><span>1</span><span>2</span><span class="on">3</span><span>4</span><span>5</span></div>
+      <div class="ends"><span>Clueless</span><span>Tough</span></div></div>
+    <div class="q"><div class="lab2">Did it protect the ball well?</div>
+      <div class="yn"><span>Yes</span><span class="on">Sometimes</span><span>No</span></div></div>
+    <div class="q"><div class="lab2">Did it stall or waste turns?</div>
+      <div class="yn"><span class="on">Yes</span><span>No</span></div></div>
+    <div class="q"><div class="lab2">Anything that looked like a rules bug?</div>
+      <textarea>Stand Firm never came up. Touchback went to the deepest player every time.</textarea></div>
+    <div class="actions"><button class="btn team">Save survey</button><button class="btn">Play again</button><button class="btn ghost">Change checkpoint</button></div>
+  </section>
+
+  <section class="card">
+    <h3>Flagged moves · 3</h3>
+    <div class="flag"><div class="thumb" id="t1"></div><div><div class="ft">T5 · #6 Blitzer blitzes #4 Blitzer</div><div class="fn">Blitzed off the ball carrier's cage with only one die.</div><div class="fr"><span>Too risky</span><span>41%</span></div></div></div>
+    <div class="flag"><div class="thumb" id="t2"></div><div><div class="ft">T7 · End turn with 4 players unused</div><div class="fn">Could have scored in 3 squares.</div><div class="fr"><span>Better move existed</span><span>63%</span></div></div></div>
+    <div class="flag"><div class="thumb" id="t3"></div><div><div class="ft">2nd half T2 · #8 Catcher rushes twice</div><div class="fn">No reason to rush here.</div><div class="fr"><span>Wasted time</span><span>18%</span></div></div></div>
+    <div class="actions" style="margin-top:8px"><button class="btn">Replay flagged moves</button></div>
+  </section>
+</main>
+
+<script src="assets/pitch.js"></script>
+<script>
+const base = [
+  { team: "a", x: 13, y: 6, pos: "Li" }, { team: "a", x: 13, y: 8, pos: "Li" }, { team: "a", x: 17, y: 7, pos: "Th", ball: true },
+  { team: "a", x: 16, y: 9, pos: "Bl" }, { team: "a", x: 17, y: 5, pos: "Bl" }, { team: "a", x: 21, y: 9, pos: "Og", big: true },
+  { team: "h", x: 16, y: 6, pos: "Bl", state: "prone" }, { team: "h", x: 12, y: 8, pos: "BU", big: true },
+  { team: "h", x: 12, y: 9, pos: "Li" }, { team: "h", x: 11, y: 7, pos: "Tr", big: true },
+];
+const scenes = [
+  { orientation: "landscape", players: base, highlights: [{ x: 17, y: 5, kind: "flag" }] },
+  { orientation: "landscape", players: [...base.slice(0, 5), { team: "a", x: 22, y: 7, pos: "Ca", ball: true }], highlights: [{ x: 22, y: 7, kind: "flag" }] },
+  { orientation: "landscape", players: base.slice(2, 9), highlights: [{ x: 9, y: 12, kind: "flag" }, { x: 8, y: 13, kind: "flag" }] },
+];
+scenes.forEach((s, i) => BBPitch.render(document.getElementById("t" + (i + 1)), s));
+</script>

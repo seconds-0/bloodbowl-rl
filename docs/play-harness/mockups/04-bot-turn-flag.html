@@ -1,0 +1,141 @@
+<title>Play harness mockup 4: bot turn and flag</title>
+<link rel="stylesheet" href="assets/harness.css">
+<style>
+  .playback { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .flagpanel { border: 3px solid var(--rule); background: var(--card); box-shadow: 0 5px 0 rgba(0,0,0,.35); }
+  .flagpanel .head { background: var(--away); color: #fff; padding: 8px 12px; }
+  .flagpanel .head .t { font-family: var(--display); font-weight: 800; font-size: 22px; line-height: 1; }
+  .flagpanel .head .s { font-family: var(--cond); font-weight: 600; font-size: 14px; margin-top: 3px; }
+  .flagpanel .body { padding: 10px 12px 12px; display: grid; gap: 10px; }
+  .alts { display: grid; gap: 4px; }
+  .alt { display: grid; grid-template-columns: 1fr 44px; gap: 2px 8px; align-items: end; font-family: var(--cond); font-weight: 600; font-size: 14px; }
+  .alt .l { grid-column: 1; }
+  .alt .b { grid-column: 1; height: 7px; background: #e3d9bf; position: relative; }
+  .alt .b i { position: absolute; inset: 0 auto 0 0; background: var(--away); }
+  .alt .p { grid-column: 2; grid-row: 1 / span 2; }
+  .alt.taken .l { font-weight: 700; }
+  .alt.taken .l::after { content: "  taken"; font-size: 12px; color: var(--away); }
+  .alt .p { font-family: var(--display); font-weight: 800; font-size: 18px; text-align: right; }
+  .reasons { display: flex; flex-wrap: wrap; gap: 6px; }
+  .reason { font-family: var(--cond); font-weight: 700; font-size: 14px; padding: 3px 9px; border: 2px solid var(--rule); background: #fff8e6; }
+  .reason.on { background: var(--rule); color: var(--card); }
+  textarea { width: 100%; min-height: 58px; font-family: var(--body); font-size: 14px; border: 2px solid var(--rule); background: #fffdf5; padding: 6px 8px; resize: vertical; }
+  .lab2 { font-family: var(--cond); font-weight: 700; font-size: 13px; text-transform: uppercase; color: var(--ink-soft); }
+  .movelist p { cursor: default; }
+  .movelist p.cur { background: #dfe3fa; font-weight: 700; }
+</style>
+
+<header class="board">
+  <div class="side home">
+    <div class="score">1</div>
+    <div><div class="team">Orc</div><div class="coach">Alex</div></div>
+    <div class="res"><span class="chip">Re-rolls 1</span><span class="chip">Apo 1</span></div>
+  </div>
+  <div class="mid">
+    <div class="half">1st half · bot turn</div>
+    <div class="track"><span class="lab">Orc</span><i class="pip h done"></i><i class="pip h done"></i><i class="pip h done"></i><i class="pip h done"></i><i class="pip h done"></i><i class="pip h"></i><i class="pip h"></i><i class="pip h"></i></div>
+    <div class="track"><span class="lab">Human</span><i class="pip a done"></i><i class="pip a done"></i><i class="pip a done"></i><i class="pip a done"></i><i class="pip a now"></i><i class="pip a"></i><i class="pip a"></i><i class="pip a"></i></div>
+  </div>
+  <div class="side away">
+    <div class="score">0</div>
+    <div><div class="team">Human</div><div class="coach">Chain 25</div></div>
+    <div class="res"><span class="chip">Re-rolls 3</span><span class="chip">Apo 1</span></div>
+  </div>
+</header>
+
+<main class="layout flagrail">
+  <aside class="rail left">
+    <div class="banner away"><div class="edge"></div><div class="t">Bot turn</div><div class="c">Turn 5 · playing at 0.6 s a move</div></div>
+    <section class="card">
+      <h3>Bot moves this turn</h3>
+      <div class="log movelist" style="max-height:none">
+        <p><span class="a">#10 Thrower</span> stands still, holds the ball.</p>
+        <p><span class="a">#1 Lineman</span> blocks <span class="h">#11 Troll</span>: Push.</p>
+        <p class="cur"><span class="a">#6 Blitzer</span> blitzes <span class="h">#4 Blitzer</span>: Both down, Block.</p>
+        <p><span class="a">#8 Catcher</span> moves to the far wing.</p>
+      </div>
+    </section>
+  </aside>
+
+  <section class="pitchwrap">
+    <div class="pitchframe" id="pitch"></div>
+    <div class="lower" style="grid-template-columns: 1fr">
+      <section class="card">
+        <div class="playback">
+          <button class="btn">Pause <span class="k">Space</span></button>
+          <button class="btn">Step <span class="k">.</span></button>
+          <button class="btn ghost">Slower</button>
+          <button class="btn ghost">Faster</button>
+          <span class="tag" style="margin-left:auto">Move 3 of 4 · decision 212</span>
+          <button class="btn primary">Flag this move <span class="k">F</span></button>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <aside class="rail right">
+    <section class="flagpanel">
+      <div class="head"><div class="t">Flag this move</div><div class="s">#6 Blitzer blitzes #4 Blitzer</div></div>
+      <div class="body">
+        <div>
+          <div class="lab2">Bot's options at this decision</div>
+          <div class="alts" style="margin-top:6px">
+            <div class="alt taken"><span class="l">Blitz with #6 Blitzer</span><div class="b"><i style="width:41%"></i></div><span class="p">41%</span></div>
+            <div class="alt"><span class="l">Move #10 Thrower</span><div class="b"><i style="width:22%"></i></div><span class="p">22%</span></div>
+            <div class="alt"><span class="l">Block with #2 Lineman</span><div class="b"><i style="width:14%"></i></div><span class="p">14%</span></div>
+            <div class="alt"><span class="l">End turn</span><div class="b"><i style="width:9%"></i></div><span class="p">9%</span></div>
+          </div>
+          <dl class="kv"><dt>Bot value</dt><dd>+0.21</dd><dt>Sampled</dt><dd>Yes, 1st choice</dd></dl>
+        </div>
+        <div>
+          <div class="lab2">What is wrong with it</div>
+          <div class="reasons" style="margin-top:6px">
+            <span class="reason on">Too risky</span><span class="reason">Wrong player</span><span class="reason">Better move existed</span><span class="reason">Wasted time</span><span class="reason">Looks like a bug</span>
+          </div>
+        </div>
+        <textarea>Blitzed off the ball carrier's cage with only one die. #10 was left open.</textarea>
+        <div class="actions"><button class="btn team" style="background:var(--away); border-color:var(--away-deep); box-shadow:0 2px 0 var(--away-deep)">Save flag</button><button class="btn ghost">Cancel</button></div>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<script src="assets/pitch.js"></script>
+<script>
+const scene = {
+  highlights: [
+    { x: 19, y: 5, kind: "ghost" }, { x: 18, y: 4, kind: "ghost" }, { x: 17, y: 5, kind: "ghost" },
+  ],
+  pathFrom: { x: 19, y: 5 },
+  path: [{ x: 18, y: 4, step: 1 }, { x: 17, y: 5, step: 2 }],
+  blockTargets: [{ x: 16, y: 6, dice: 1, who: "them" }],
+  labels: [{ x: 17, y: 5, text: "Both down", fill: "#2a3fbf" }],
+  players: [
+    { team: "a", x: 13, y: 6, pos: "Li", num: 1, used: true },
+    { team: "a", x: 13, y: 8, pos: "Li", num: 2 },
+    { team: "a", x: 13, y: 10, pos: "Li", num: 3 },
+    { team: "a", x: 18, y: 2, pos: "Ca", num: 7 },
+    { team: "a", x: 17, y: 7, pos: "Th", num: 10, ball: true, used: true },
+    { team: "a", x: 16, y: 9, pos: "Bl", num: 5 },
+    { team: "a", x: 17, y: 5, pos: "Bl", num: 6, selected: true, used: true },
+    { team: "a", x: 23, y: 12, pos: "Ca", num: 8 },
+    { team: "a", x: 22, y: 7, pos: "Li", num: 4 },
+    { team: "a", x: 14, y: 12, pos: "Li", num: 9, state: "prone" },
+    { team: "a", x: 21, y: 9, pos: "Og", num: 11, big: true },
+    { team: "h", x: 16, y: 6, pos: "Bl", num: 4, state: "prone" },
+    { team: "h", x: 11, y: 7, pos: "Tr", num: 11, big: true },
+    { team: "h", x: 12, y: 8, pos: "BU", num: 7, big: true },
+    { team: "h", x: 12, y: 9, pos: "Li", num: 1 },
+    { team: "h", x: 12, y: 10, pos: "Li", num: 2, state: "prone" },
+    { team: "h", x: 11, y: 3, pos: "Li", num: 3 },
+    { team: "h", x: 10, y: 11, pos: "Bl", num: 5 },
+    { team: "h", x: 7, y: 7, pos: "Th", num: 6 },
+    { team: "h", x: 9, y: 4, pos: "Li", num: 8 },
+    { team: "h", x: 5, y: 6, pos: "Li", num: 9 },
+    { team: "h", x: 4, y: 10, pos: "Li", num: 10 },
+  ],
+};
+const draw = () => BBPitch.render(document.getElementById("pitch"), scene);
+draw();
+window.matchMedia("(max-width: 720px)").addEventListener("change", draw);
+</script>

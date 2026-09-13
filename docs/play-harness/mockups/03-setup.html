@@ -1,0 +1,131 @@
+<title>Play harness mockup 3: setup</title>
+<link rel="stylesheet" href="assets/harness.css">
+<style>
+  .roster { display: grid; gap: 4px; }
+  .rrow { display: grid; grid-template-columns: 26px 1fr auto; align-items: center; gap: 8px; padding: 4px 6px; border: 2px solid var(--rule); background: #fff8e6; font-family: var(--cond); font-weight: 600; font-size: 14px; }
+  .rrow .tok { width: 24px; height: 24px; border-radius: 50%; background: var(--home); border: 2.5px solid var(--home-deep); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+  .rrow.drag { background: #fff1b8; outline: 3px dashed var(--home); outline-offset: -2px; }
+  .rrow .ma { color: var(--ink-soft); font-size: 13px; }
+  .checks { display: grid; gap: 5px; font-family: var(--cond); font-weight: 600; font-size: 15px; }
+  .check { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: center; }
+  .mark { width: 20px; height: 20px; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 13px; border: 2px solid var(--rule); }
+  .mark.ok { background: var(--ok); }
+  .mark.no { background: var(--warn); }
+  .count { font-family: var(--display); font-weight: 800; font-size: 20px; }
+  .budget { display: flex; align-items: baseline; gap: 8px; }
+  .budget .big { font-family: var(--display); font-weight: 900; font-size: 42px; line-height: 1; }
+  .budget small { font-family: var(--cond); font-weight: 600; color: var(--ink-soft); font-size: 14px; }
+  .formations { display: flex; flex-wrap: wrap; gap: 6px; }
+</style>
+
+<header class="board">
+  <div class="side home">
+    <div class="score">0</div>
+    <div><div class="team">Orc</div><div class="coach">Alex</div></div>
+    <div class="res"><span class="chip">Re-rolls 3</span><span class="chip">Apo 1</span></div>
+  </div>
+  <div class="mid">
+    <div class="half">1st half · kick-off</div>
+    <div class="track"><span class="lab">Orc</span><i class="pip h"></i><i class="pip h"></i><i class="pip h"></i><i class="pip h"></i><i class="pip h"></i><i class="pip h"></i><i class="pip h"></i><i class="pip h"></i></div>
+    <div class="track"><span class="lab">Human</span><i class="pip a"></i><i class="pip a"></i><i class="pip a"></i><i class="pip a"></i><i class="pip a"></i><i class="pip a"></i><i class="pip a"></i><i class="pip a"></i></div>
+  </div>
+  <div class="side away">
+    <div class="score">0</div>
+    <div><div class="team">Human</div><div class="coach">Chain 25</div></div>
+    <div class="res"><span class="chip">Re-rolls 3</span><span class="chip">Apo 1</span></div>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="rail left">
+    <div class="banner home"><div class="edge"></div><div class="t">Set up to receive</div><div class="c">Bot kicks · weather Nice</div></div>
+    <section class="card">
+      <h3>Reserves</h3>
+      <div class="roster">
+        <div class="rrow drag"><span class="tok">Bl</span><span>#5 Blitzer</span><span class="ma">MA 6</span></div>
+        <div class="rrow"><span class="tok">Li</span><span>#9 Lineman</span><span class="ma">MA 5</span></div>
+        <div class="rrow"><span class="tok">Li</span><span>#10 Lineman</span><span class="ma">MA 5</span></div>
+        <div class="rrow"><span class="tok">Li</span><span>#12 Lineman</span><span class="ma">MA 5</span></div>
+      </div>
+    </section>
+    <section class="card phone-hide">
+      <h3>Formations</h3>
+      <div class="formations"><button class="btn">Load</button><button class="btn">Save</button><button class="btn ghost">Clear</button></div>
+    </section>
+  </aside>
+
+  <section class="pitchwrap">
+    <div class="pitchframe" id="pitch"></div>
+    <div class="lower">
+      <section class="card prompt">
+        <div class="what">Drag players into your half</div>
+        <div class="detail">
+          <span class="tag">Drop on any lit square</span>
+          <span class="tag risk">Right wide zone has 3 of 2</span>
+        </div>
+        <div class="actions">
+          <button class="btn team" disabled style="opacity:.45">End setup</button>
+          <button class="btn">Undo last move</button>
+        </div>
+      </section>
+      <section class="card">
+        <h3>Formation</h3>
+        <div class="checks">
+          <div class="check"><span class="mark no">!</span><span>Players on the pitch</span><span class="count">8 of 11</span></div>
+          <div class="check"><span class="mark ok">✓</span><span>On the line of scrimmage</span><span class="count">3 of 3</span></div>
+          <div class="check"><span class="mark ok">✓</span><span>Left wide zone</span><span class="count">1 of 2</span></div>
+          <div class="check"><span class="mark no">!</span><span>Right wide zone</span><span class="count">3 of 2</span></div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <aside class="rail right">
+    <div class="banner away"><div class="edge"></div><div class="t">Chain 25</div><div class="c">Kicking · setup done</div></div>
+    <section class="card">
+      <div class="budget"><span class="big">16</span><small>setup moves left of 24</small></div>
+      <div class="bar" style="margin-top:8px"><i style="width:33%"></i></div>
+    </section>
+    <section class="card phone-hide">
+      <h3>Dugout</h3>
+      <div class="dug"><div class="box"><b>Reserves</b><span>4</span></div><div class="box"><b>KO</b><span>0</span></div><div class="box"><b>Out</b><span>0</span></div></div>
+    </section>
+  </aside>
+</main>
+
+<script src="assets/pitch.js"></script>
+<script>
+const half = [];
+for (let x = 0; x <= 12; x++) for (let y = 0; y < 15; y++) half.push({ x, y, kind: "half" });
+const scene = {
+  highlights: [
+    ...half,
+    { x: 12, y: 4, kind: "los" }, { x: 12, y: 5, kind: "los" }, { x: 12, y: 6, kind: "los" },
+    { x: 12, y: 7, kind: "los" }, { x: 12, y: 8, kind: "los" }, { x: 12, y: 9, kind: "los" },
+    { x: 12, y: 10, kind: "los" },
+    ...Array.from({ length: 13 * 4 }, (_, i) => ({ x: i % 13, y: 11 + Math.floor(i / 13), kind: "bad" })),
+    { x: 9, y: 7, kind: "drop" },
+  ],
+  players: [
+    { team: "a", x: 13, y: 5, pos: "Li" }, { team: "a", x: 13, y: 7, pos: "Li" },
+    { team: "a", x: 13, y: 9, pos: "Li" }, { team: "a", x: 15, y: 3, pos: "Bl" },
+    { team: "a", x: 15, y: 11, pos: "Bl" }, { team: "a", x: 16, y: 7, pos: "Og", big: true },
+    { team: "a", x: 18, y: 5, pos: "Ca" }, { team: "a", x: 18, y: 9, pos: "Ca" },
+    { team: "a", x: 20, y: 7, pos: "Th" }, { team: "a", x: 14, y: 1, pos: "Li" },
+    { team: "a", x: 22, y: 7, pos: "Li" },
+    { team: "h", x: 12, y: 6, pos: "BU", num: 7, big: true },
+    { team: "h", x: 12, y: 7, pos: "Tr", num: 11, big: true },
+    { team: "h", x: 12, y: 8, pos: "BU", num: 8, big: true },
+    { team: "h", x: 10, y: 2, pos: "Li", num: 3 },
+    { team: "h", x: 11, y: 11, pos: "Li", num: 1 },
+    { team: "h", x: 10, y: 12, pos: "Li", num: 2 },
+    { team: "h", x: 9, y: 13, pos: "Bl", num: 4 },
+    { team: "h", x: 5, y: 7, pos: "Th", num: 6 },
+    { team: "h", x: 9, y: 7, pos: "Bl", num: 5, used: true },
+  ],
+  labels: [{ x: 9, y: 7, text: "#5 Blitzer", fill: "#c3142f" }],
+};
+const draw = () => BBPitch.render(document.getElementById("pitch"), scene);
+draw();
+window.matchMedia("(max-width: 720px)").addEventListener("change", draw);
+</script>

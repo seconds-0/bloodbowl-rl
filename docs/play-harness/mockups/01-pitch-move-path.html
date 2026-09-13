@@ -1,0 +1,144 @@
+<title>Play harness mockup 1: move path</title>
+<link rel="stylesheet" href="assets/harness.css">
+
+<header class="board">
+  <div class="side home">
+    <div class="score">1</div>
+    <div>
+      <div class="team">Orc</div>
+      <div class="coach">Alex</div>
+    </div>
+    <div class="res"><span class="chip">Re-rolls 2</span><span class="chip">Apo 1</span></div>
+  </div>
+  <div class="mid">
+    <div class="half">1st half · <span class="clock" style="font-size:16px">2:41</span></div>
+    <div class="track"><span class="lab">Orc</span><i class="pip h done"></i><i class="pip h done"></i><i class="pip h done"></i><i class="pip h done"></i><i class="pip h now"></i><i class="pip h"></i><i class="pip h"></i><i class="pip h"></i></div>
+    <div class="track"><span class="lab">Human</span><i class="pip a done"></i><i class="pip a done"></i><i class="pip a done"></i><i class="pip a done"></i><i class="pip a"></i><i class="pip a"></i><i class="pip a"></i><i class="pip a"></i></div>
+  </div>
+  <div class="side away">
+    <div class="score">0</div>
+    <div>
+      <div class="team">Human</div>
+      <div class="coach">Chain 25</div>
+    </div>
+    <div class="res"><span class="chip">Re-rolls 3</span><span class="chip">Apo 1</span></div>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="rail left">
+    <div class="banner home"><div class="edge"></div><div class="t">Your turn</div><div class="c">Turn 5 · <span class="clock" style="font-size:18px">2:41</span></div></div>
+    <section class="card">
+      <div class="pname">#4 Blitzer</div>
+      <div class="psub">Orc · Blitz declared</div>
+      <div class="stats"><div><b>MA</b><span>6</span></div><div><b>ST</b><span>3</span></div><div><b>AG</b><span>3+</span></div><div><b>PA</b><span>4+</span></div><div><b>AV</b><span>10+</span></div></div>
+      <div class="skills"><span class="skill">Block</span><span class="skill">Tackle</span></div>
+      <div class="meter"><span>Moved</span><span>2 of 6 · 2 rushes left</span></div>
+      <div class="bar"><i style="width:33%"></i></div>
+    </section>
+    <section class="card phone-hide">
+      <h3>Dugout</h3>
+      <div class="dug"><div class="box"><b>Reserves</b><span>1</span></div><div class="box"><b>KO</b><span>0</span></div><div class="box"><b>Out</b><span>0</span></div></div>
+    </section>
+    <section class="card phone-hide">
+      <h3>This turn</h3>
+      <div class="kv"><dt>Blitz</dt><dd>Using</dd><dt>Pass</dt><dd>Open</dd><dt>Hand-off</dt><dd>Open</dd><dt>Foul</dt><dd>Open</dd></div>
+    </section>
+  </aside>
+
+  <section class="pitchwrap">
+    <div class="pitchframe" id="pitch"></div>
+    <div class="lower">
+      <section class="card prompt">
+        <div class="what">Plan the blitz path</div>
+        <div class="detail">
+          <span class="tag risk">Dodge 3+</span>
+          <span class="tag risk">Rush 2+</span>
+          <span class="tag risk">Rush 2+ to block</span>
+          <span class="tag">Block 1 die, you pick</span>
+          <span class="tag team">46% before re-rolls</span>
+        </div>
+        <div class="actions">
+          <button class="btn primary">Move along path <span class="k">Enter</span></button>
+          <button class="btn">Clear path <span class="k">Esc</span></button>
+          <button class="btn ghost">End activation</button>
+        </div>
+      </section>
+      <section class="card logcard">
+        <h3>Game log</h3>
+        <div class="log">
+          <p class="turn"><span class="h">Orc</span> turn 5</p>
+          <p><span class="h">#3 Lineman</span> blocks <span class="a">#9 Lineman</span>: <span class="roll">Pow</span>. Armour 9, holds.</p>
+          <p><span class="h">#1 Lineman</span> blocks <span class="a">#3 Lineman</span>: <span class="roll">Both down</span>. Orc #2 knocked down.</p>
+          <p><span class="h">#7 Big Un</span> Animosity 4: no effect. Moved 3.</p>
+          <p><span class="h">#4 Blitzer</span> declares Blitz on <span class="a">#10 Thrower</span>.</p>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <aside class="rail right">
+    <div class="banner away"><div class="edge"></div><div class="t">Chain 25</div><div class="c">Human · away</div></div>
+    <section class="card">
+      <div class="status"><i class="dot"></i>Waiting for you</div>
+      <dl class="kv"><dt>Checkpoint</dt><dd>109c55d3</dd><dt>Play</dt><dd>Sampling</dd><dt>Think time</dt><dd>0.6 s</dd></dl>
+    </section>
+    <section class="card">
+      <h3>Last bot turn</h3>
+      <div class="log" style="max-height:none">
+        <p><span class="a">#10 Thrower</span> picks up the ball: 3+, roll 4.</p>
+        <p><span class="a">#6 Blitzer</span> blitzes <span class="h">#9 Lineman</span>: Push.</p>
+        <p>Turn ended by the bot.</p>
+      </div>
+      <div class="actions" style="margin-top:8px"><button class="btn wide">Flag a bot move</button></div>
+    </section>
+    <section class="card phone-hide">
+      <h3>Dugout</h3>
+      <div class="dug"><div class="box"><b>Reserves</b><span>0</span></div><div class="box"><b>KO</b><span>1</span></div><div class="box"><b>Out</b><span>0</span></div></div>
+    </section>
+  </aside>
+</main>
+
+<script src="assets/pitch.js"></script>
+<script>
+const scene = {
+  tz: "a",
+  pathFrom: { x: 12, y: 5 },
+  path: [
+    { x: 12, y: 4, dodge: "3+" },
+    { x: 13, y: 3, step: 2 },
+    { x: 14, y: 4, step: 3 },
+    { x: 15, y: 5, step: 4 },
+    { x: 16, y: 6, rush: "2+" },
+  ],
+  blockTargets: [{ x: 17, y: 7, dice: 1, who: "you" }],
+  labels: [{ x: 16, y: 6, text: "46%" }],
+  players: [
+    { team: "a", x: 13, y: 6, pos: "Li", num: 1 },
+    { team: "a", x: 13, y: 8, pos: "Li", num: 2 },
+    { team: "a", x: 13, y: 10, pos: "Li", num: 3 },
+    { team: "a", x: 18, y: 2, pos: "Ca", num: 7 },
+    { team: "a", x: 17, y: 7, pos: "Th", num: 10, ball: true },
+    { team: "a", x: 16, y: 9, pos: "Bl", num: 5 },
+    { team: "a", x: 19, y: 5, pos: "Bl", num: 6 },
+    { team: "a", x: 20, y: 11, pos: "Ca", num: 8 },
+    { team: "a", x: 22, y: 7, pos: "Li", num: 4 },
+    { team: "a", x: 14, y: 12, pos: "Li", num: 9, state: "prone" },
+    { team: "a", x: 21, y: 9, pos: "Og", num: 11, big: true },
+    { team: "h", x: 12, y: 5, pos: "Bl", num: 4, selected: true },
+    { team: "h", x: 12, y: 7, pos: "Tr", num: 11, big: true },
+    { team: "h", x: 12, y: 8, pos: "BU", num: 7, big: true, used: true },
+    { team: "h", x: 12, y: 9, pos: "Li", num: 1, used: true },
+    { team: "h", x: 12, y: 10, pos: "Li", num: 2, state: "prone", used: true },
+    { team: "h", x: 11, y: 3, pos: "Li", num: 3, used: true },
+    { team: "h", x: 10, y: 11, pos: "Bl", num: 5 },
+    { team: "h", x: 7, y: 7, pos: "Th", num: 6 },
+    { team: "h", x: 9, y: 4, pos: "Li", num: 8 },
+    { team: "h", x: 5, y: 6, pos: "Li", num: 9 },
+    { team: "h", x: 4, y: 10, pos: "Li", num: 10 },
+  ],
+};
+const draw = () => BBPitch.render(document.getElementById("pitch"), scene);
+draw();
+window.matchMedia("(max-width: 720px)").addEventListener("change", draw);
+</script>
