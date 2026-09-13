@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blood Bowl play harness</title>
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<div id="lobby" class="screen lobby" hidden>
+  <header class="masthead">
+    <div class="stripe"></div>
+    <div class="txt"><h1>New game</h1><p>BB2025 against a trained policy on this machine</p></div>
+  </header>
+  <div class="lobby-grid">
+    <section class="card">
+      <h3>Opponent</h3>
+      <div id="lobby-checkpoints"></div>
+      <div class="field">
+        <div class="lab2">Bot play</div>
+        <div class="opts" id="lobby-mode"></div>
+        <div class="help-line" id="lobby-mode-help"></div>
+      </div>
+      <div class="field">
+        <label for="lobby-think">Bot move delay <span id="lobby-think-val"></span></label>
+        <input id="lobby-think" type="range" min="0" max="3000" step="50" value="600">
+      </div>
+    </section>
+    <section class="card">
+      <h3>Teams</h3>
+      <div class="field">
+        <div class="lab2">Rosters</div>
+        <div class="opts" id="lobby-rosters"></div>
+      </div>
+      <div class="field" id="lobby-team-pickers">
+        <div class="teams">
+          <div class="field"><label for="lobby-human-team">Your team</label><select id="lobby-human-team" class="sel"></select></div>
+          <div class="field" id="lobby-bot-team-field"><label for="lobby-bot-team">Bot team</label><select id="lobby-bot-team" class="sel"></select></div>
+        </div>
+      </div>
+      <div class="field">
+        <div class="lab2">Your side</div>
+        <div class="opts" id="lobby-side"></div>
+        <div class="help-line">Home plays from the left end, as on FUMBBL.</div>
+      </div>
+      <div class="field">
+        <div class="lab2">Turn clock</div>
+        <div class="opts" id="lobby-clock"></div>
+        <div class="row2" id="lobby-clock-seconds-row">
+          <input id="lobby-clock-seconds" class="num-in" type="number" min="15" max="1800" step="5" value="240" aria-label="Seconds per turn">
+          <span class="muted">seconds per turn</span>
+        </div>
+      </div>
+      <div class="field">
+        <label for="lobby-seed">Seed</label>
+        <div class="row2">
+          <input id="lobby-seed" class="num-in" type="number" min="1" max="2147483647" aria-label="Seed">
+          <button class="btn" id="lobby-new-seed" type="button">New seed</button>
+        </div>
+        <div class="help-line">The same seed, sides, teams and moves replay the same game.</div>
+      </div>
+    </section>
+  </div>
+  <div class="start">
+    <button class="btn" id="lobby-resume" type="button" hidden>Back to the current game</button>
+    <button class="btn primary big" id="lobby-start" type="button" data-legal="1" data-kind="start">Start game</button>
+  </div>
+</div>
+
+<div id="game" class="screen" hidden>
+  <header class="board" id="board"></header>
+  <main class="layout" id="layout">
+    <aside class="rail left">
+      <div class="banner home" id="turn-banner"></div>
+      <section class="card" id="player-card"></section>
+      <section class="card" id="moves-card" hidden></section>
+      <section class="card" id="dugout-left"></section>
+      <section class="card" id="this-turn"></section>
+    </aside>
+    <section class="pitchwrap" id="pitchwrap">
+      <div class="pitchframe" id="pitch"></div>
+      <div class="dialog-layer" id="dialog-layer"></div>
+      <div class="lower">
+        <section class="card prompt" id="prompt-card"></section>
+        <section class="card playback" id="playback-card" hidden></section>
+        <section class="card logcard" id="log-card"><h3>Game log</h3><div class="log" id="log"></div></section>
+      </div>
+    </section>
+    <aside class="rail right" id="right-rail">
+      <div class="banner away" id="bot-banner"></div>
+      <section class="card" id="bot-status"></section>
+      <section class="card" id="last-bot-turn"></section>
+      <section class="card" id="dugout-right"></section>
+      <section class="flagpanel" id="flag-panel" hidden></section>
+    </aside>
+  </main>
+</div>
+
+<div id="post" class="screen" hidden></div>
+<div id="menu-layer"></div>
+<div id="modal" class="modal" hidden></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="pitch.js"></script>
+<script src="dice.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
