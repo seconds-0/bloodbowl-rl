@@ -250,6 +250,7 @@
       App.ui.odds = {};
       closeMenu();
     }
+    if (App.screen === "lobby") return;  // the lobby stays put until a new game starts
     if (s.legal && s.legal.prompt) App.promptsSeen.add(s.legal.prompt.kind);
     if (s.state.awaiting === "human") send({ t: "ready", state_version: s.state.state_version });
     if (s.state.awaiting === "over") {
@@ -584,7 +585,8 @@
     else if (playingBot) status = `<i class="dot busy"></i>Bot is playing`;
     $("bot-status").innerHTML = `<div class="status">${status}</div>
       <dl class="kv"><dt>Checkpoint</dt><dd>${esc(H.checkpoint.sha8)}</dd><dt>Play</dt><dd>${H.options.mode === "sample" ? "Sampling" : "Argmax"}</dd>
-      <dt>Move delay</dt><dd>${(App.delay / 1000).toFixed(1)} s</dd><dt>Seed</dt><dd>${H.options.seed}</dd></dl>`;
+      <dt>Move delay</dt><dd>${(App.delay / 1000).toFixed(1)} s</dd><dt>Seed</dt><dd>${H.options.seed}</dd></dl>
+      <div class="actions" style="margin-top:8px">${btn("New game", { "data-kind": "to-lobby", "data-legal": "1" }, "btn ghost wide")}</div>`;
     const lastTurn = App.botTurnSteps.length ? App.botTurnSteps : [];
     $("last-bot-turn").innerHTML = `<h3>${playingBot ? "Bot moves" : "Last bot turn"}</h3>
       <div class="log movelist" style="max-height:220px">${lastTurn.length ? botMoveLines(lastTurn.slice(-40), false) : `<p class="muted">No bot moves yet.</p>`}</div>
@@ -1591,6 +1593,7 @@
           break;
         }
         case "change-checkpoint": App.lobbyOpts = null; showLobby(); break;
+        case "to-lobby": App.lobbyOpts = null; showLobby(); break;
         case "replay": openReplayModal(parseInt(b.dataset.index, 10), "pre"); break;
         case "replay-which": openReplayModal(parseInt(b.dataset.index, 10), b.dataset.which); break;
       }
