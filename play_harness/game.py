@@ -323,7 +323,9 @@ class GameController:
                 return {"ok": False, "error": "no_move"}
             clean = [(int(q[0]), int(q[1])) for q in squares[:32]
                      if isinstance(q, (list, tuple)) and len(q) == 2]
-            steps = s.engine.path_odds(player, clean, prompt.get("act_kind") == "BLITZ")
+            kind = prompt.get("act_kind")
+            kind_i = E.ACT_KINDS.index(kind) if kind in E.ACT_KINDS else -1
+            steps = s.engine.path_odds(player, clean, kind == "BLITZ", kind_i)
             total = 1.0
             out = []
             for sq, st in zip(clean, steps):

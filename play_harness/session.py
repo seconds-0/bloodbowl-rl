@@ -332,7 +332,7 @@ class GameSession:
         if top is None or E.PROCS[top.proc] != "MOVE" or top.a >= 32:
             return None
         blitz = top.b < len(E.ACT_KINDS) and E.ACT_KINDS[top.b] == "BLITZ"
-        tests, probs = self.engine.step_success(int(top.a), action.x, action.y, blitz)
+        tests, probs = self.engine.step_success(int(top.a), action.x, action.y, blitz, int(top.b))
         if not any(tests):
             return None
         return {"rush": bool(tests[0]), "dodge": bool(tests[1]), "pickup": bool(tests[2]),
@@ -449,7 +449,9 @@ class GameSession:
         if name == "DECLARE":
             item["kind"] = E.ACT_KINDS[la.arg] if la.arg < len(E.ACT_KINDS) else la.arg
         elif name == "STEP" and mover is not None:
-            tests, probs = self.engine.step_success(mover, la.x, la.y, is_blitz)
+            kind = prompt.get("act_kind")
+            kind_i = E.ACT_KINDS.index(kind) if kind in E.ACT_KINDS else -1
+            tests, probs = self.engine.step_success(mover, la.x, la.y, is_blitz, kind_i)
             item["rush"] = tests[0] or None
             item["dodge"] = tests[1] or None
             item["pickup"] = tests[2] or None

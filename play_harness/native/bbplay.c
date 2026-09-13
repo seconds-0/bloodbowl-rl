@@ -16,7 +16,7 @@
 //     state is rebuilt by re-applying the terminal action to a pre-step copy.
 #include "bloodbowl.h"
 
-#define BBP_ABI_VERSION 2
+#define BBP_ABI_VERSION 3
 
 // Return codes for bbp_step.
 #define BBP_STEP_OK 0
@@ -387,15 +387,25 @@ int bbp_contact_bot_index(bbp_session* s) {
 
 // ---- UI annotations (read-only probes over engine helpers) -----------------
 
+// Secure the Ball picks up on a flat 2+ (3+ in Pouring Rain) regardless of AG
+// (proc_move.c, May 2026 FAQ); the generic helper prices an ordinary pick-up.
+static void bbp_secure_ball_pickup(const bb_match* m, int act_kind, int pt, float* pp) {
+    if (pt && act_kind == BB_ACT_SECURE_BALL) {
+        int target = m->weather == BB_WEATHER_RAIN ? 3 : 2;
+        *pp = (float)(7 - target) / 6.0f;
+    }
+}
+
 // Per-step success components for a prospective STEP of `slot` to (x, y).
 // tests[3] = rush, dodge, pickup target numbers (0 = no test); p[3] = their
-// base success probabilities.
-void bbp_step_success(bbp_session* s, int slot, int x, int y, int is_blitz,
+// base success probabilities. act_kind is the declared bb_act_kind, or -1.
+void bbp_step_success(bbp_session* s, int slot, int x, int y, int is_blitz, int act_kind,
                       int32_t* tests, float* p) {
     int rt = 0, dt = 0, pt = 0;
     float rp = 1.0f, dp = 1.0f, pp = 1.0f;
     bb_step_success_components(&s->env.match, slot, x, y, is_blitz, &rt, &rp,
                                &dt, &dp, &pt, &pp);
+    bbp_secure_ball_pickup(&s->env.match, act_kind, pt, &pp);
     tests[0] = rt;
     tests[1] = dt;
     tests[2] = pt;
@@ -440,7 +450,7 @@ void bbp_block_ev(bbp_session* s, int att, int def, int is_blitz, float* out6) {
 // c_step and the real match is untouched. xy holds n (x, y) pairs; tests3 and
 // probs3 receive rush, dodge, pickup per step. Returns the steps evaluated.
 int bbp_path_odds(bbp_session* s, int slot, int n, const int8_t* xy, int is_blitz,
-                  int32_t* tests3, float* probs3) {
+                  int act_kind, int32_t* tests3, float* probs3) {
     if (slot < 0 || slot >= BB_NUM_PLAYERS || n <= 0) return 0;
     bb_match c = s->env.match;
     bb_player* p = &c.players[slot];
@@ -452,6 +462,7 @@ int bbp_path_odds(bbp_session* s, int slot, int n, const int8_t* xy, int is_blit
         int rt = 0, dt = 0, pt = 0;
         float rp = 1.0f, dp = 1.0f, pp = 1.0f;
         bb_step_success_components(&c, slot, x, y, is_blitz, &rt, &rp, &dt, &dp, &pt, &pp);
+        bbp_secure_ball_pickup(&c, act_kind, pt, &pp);
         tests3[3 * i] = rt;
         tests3[3 * i + 1] = dt;
         tests3[3 * i + 2] = pt;

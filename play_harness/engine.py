@@ -19,7 +19,7 @@ BUILD_SCRIPT = os.path.join(ROOT, "play_harness", "native", "build.sh")
 LIB_EXT = "dylib" if sys.platform == "darwin" else "so"
 DEFAULT_LIB = os.path.join(ROOT, "build", "play_harness", f"libbbplay.{LIB_EXT}")
 
-ABI_VERSION = 2
+ABI_VERSION = 3
 OBS_SIZE = 2782
 OBS_VERSION = 6
 MASK_SIZE = 454
@@ -219,7 +219,7 @@ def load_library(path=None, build_if_missing=True):
         "bbp_state_digest": ([c_p], ctypes.c_uint64),
         "bbp_contact_bot_index": ([c_p], ctypes.c_int),
         "bbp_step_success": ([c_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                              ctypes.POINTER(ctypes.c_int32),
+                              ctypes.c_int, ctypes.POINTER(ctypes.c_int32),
                               ctypes.POINTER(ctypes.c_float)], None),
         "bbp_reach": ([c_p, ctypes.c_int, ctypes.POINTER(ctypes.c_uint8),
                        ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8),
@@ -227,7 +227,7 @@ def load_library(path=None, build_if_missing=True):
         "bbp_block_ev": ([c_p, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                           ctypes.POINTER(ctypes.c_float)], None),
         "bbp_path_odds": ([c_p, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_int8),
-                           ctypes.c_int, ctypes.POINTER(ctypes.c_int32),
+                           ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_int32),
                            ctypes.POINTER(ctypes.c_float)], ctypes.c_int),
         "bbp_stall_counts": ([c_p, ctypes.POINTER(ctypes.c_int32)], ctypes.c_int),
         "bbp_can_score_without_dice": ([c_p, ctypes.c_int], ctypes.c_int),
@@ -404,11 +404,11 @@ class Engine:
         return self.lib.bbp_contact_bot_index(self._ptr)
 
     # ---- annotations -----------------------------------------------------
-    def step_success(self, slot, x, y, is_blitz):
+    def step_success(self, slot, x, y, is_blitz, act_kind=-1):
         tests = (ctypes.c_int32 * 3)()
         probs = (ctypes.c_float * 3)()
         self.lib.bbp_step_success(self._ptr, int(slot), int(x), int(y),
-                                  int(bool(is_blitz)), tests, probs)
+                                  int(bool(is_blitz)), int(act_kind), tests, probs)
         return list(tests), [float(p) for p in probs]
 
     def reach(self, mover):
@@ -428,8 +428,12 @@ class Engine:
                 "p_ball_out", "p_turnover"]
         return {k: round(float(v), 4) for k, v in zip(keys, out)}
 
-    def path_odds(self, slot, squares, is_blitz):
-        """Per-step (rush, dodge, pickup) tests and probabilities along a path."""
+    def path_odds(self, slot, squares, is_blitz, act_kind=-1):
+        """Per-step (rush, dodge, pickup) tests and probabilities along a path.
+
+        act_kind is the declared bb_act_kind index (Secure the Ball changes the
+        pick-up target), or -1 when unknown.
+        """
         squares = list(squares)[:32]
         n = len(squares)
         if n == 0:
@@ -438,7 +442,7 @@ class Engine:
         tests = (ctypes.c_int32 * (3 * n))()
         probs = (ctypes.c_float * (3 * n))()
         done = self.lib.bbp_path_odds(self._ptr, int(slot), n, xy, int(bool(is_blitz)),
-                                      tests, probs)
+                                      int(act_kind), tests, probs)
         return [{"tests": [int(tests[3 * i + k]) for k in range(3)],
                  "probs": [float(probs[3 * i + k]) for k in range(3)]} for i in range(done)]
 
