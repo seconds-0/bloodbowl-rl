@@ -33,6 +33,7 @@
     lobby: null, lobbyOpts: null, header: null,
     snapshot: null, display: null, legal: null,
     queue: [], playing: false, paused: false, stepOnce: false, delay: 600, wake: null,
+    gen: 0, gameId: null, snapVersion: -1,
     batchPolicy: 0, batchIndex: 0,
     log: [], botFrames: [], lastBotFrame: null, botTurnSteps: [],
     busy: false, clock: null, pitchApi: null,
@@ -62,9 +63,14 @@
     };
   }
 
+  // Commands about the current game carry its id so the server refuses them
+  // once another game has replaced it.
+  const GAME_MSGS = new Set(["submit", "submit_path", "path_odds", "ready", "view", "flag", "survey", "replay_flag"]);
+
   function send(msg) {
     if (!App.ws || App.ws.readyState !== 1) return null;
     msg.v = 1;
+    if (App.gameId && GAME_MSGS.has(msg.t)) msg.game_id = App.gameId;
     msg.rid = ++App.rid;
     App.ws.send(JSON.stringify(msg));
     return msg.rid;
@@ -97,18 +103,27 @@
         resetGame(m.header);
         break;
       case "game_closed":
+        stopPlayback();
+        App.gameId = null;
         App.snapshot = null;
         App.header = null;
         showLobby();
         break;
       case "frames":
         for (const fr of m.frames) {
+          if (App.gameId && fr.game_id && fr.game_id !== App.gameId) continue;
           App.queue.push(fr);
           if (fr.actor === "policy") App.batchPolicy++;
         }
         pump();
         break;
-      case "state":
+      case "state": {
+        // Ignore snapshots from a replaced game or older than the one on screen.
+        const gid = m.snapshot.header && m.snapshot.header.game_id;
+        if (App.gameId && gid && gid !== App.gameId) break;
+        if (gid && gid === App.gameId && m.snapshot.state.state_version < App.snapVersion) break;
+        if (gid) App.gameId = gid;
+        App.snapVersion = m.snapshot.state.state_version;
         App.snapshot = m.snapshot;
         App.header = m.snapshot.header;
         if (App.screen !== "game" && App.screen !== "post") {
@@ -116,6 +131,7 @@
         }
         if (!App.playing && App.queue.length === 0) applySnapshot();
         break;
+      }
       case "ack":
         break;
       case "error":
@@ -123,7 +139,8 @@
         toast(ERRORS[m.reason] || `Refused: ${m.reason}`, true);
         break;
       case "path_odds":
-        if (m.ok && m.steps && m.steps.length) {
+        App.ui.oddsPending = null;
+        if (m.ok && m.steps && m.steps.length && App.legal && m.state_version === App.legal.state_version) {
           const last = m.steps[m.steps.length - 1];
           App.ui.odds[`${last.x},${last.y}`] = m;
           renderPitch();
@@ -186,14 +203,28 @@
     }
   }
 
+  // Ends any playback loop: a sleeping pump wakes, sees the new generation and
+  // returns without touching the queue of the game that replaced it.
+  function stopPlayback() {
+    App.gen++;
+    App.queue = [];
+    App.playing = false;
+    App.paused = false;
+    App.batchPolicy = 0;
+    App.batchIndex = 0;
+    wake();
+  }
+
   async function pump() {
     if (App.playing) return;
     App.playing = true;
+    const gen = App.gen;
     App.legal = null;
     render();
     while (App.queue.length) {
       const fr = App.queue[0];
       await waitForFrame(fr);
+      if (gen !== App.gen) return;
       App.queue.shift();
       applyFrame(fr);
     }
@@ -248,6 +279,7 @@
       App.ui.dialogHidden = false;
       App.ui.confirm = null;
       App.ui.odds = {};
+      App.ui.oddsPending = null;
       closeMenu();
     }
     if (App.screen === "lobby") return;  // the lobby stays put until a new game starts
@@ -364,8 +396,13 @@
   }
 
   function resetGame(header) {
+    stopPlayback();
     App.header = header;
-    App.queue = [];
+    App.gameId = header.game_id;
+    App.snapVersion = -1;
+    App.snapshot = null;
+    App.legal = null;
+    App.display = null;
     App.log = [];
     App.botFrames = [];
     App.botTurnSteps = [];
@@ -855,8 +892,9 @@
   function requestOdds(squares) {
     if (!squares.length || !App.legal) return;
     const key = `${squares[squares.length - 1][0]},${squares[squares.length - 1][1]}`;
-    if (App.ui.odds[key] || App.ui.oddsPending === key) return;
-    App.ui.oddsPending = key;
+    const pending = `${App.legal.state_version}:${key}`;
+    if (App.ui.odds[key] || App.ui.oddsPending === pending) return;
+    App.ui.oddsPending = pending;
     send({ t: "path_odds", state_version: App.legal.state_version, squares });
   }
 
@@ -1253,13 +1291,15 @@
     const taken = v && v.alternatives.find((a) => a.taken);
     const alts = v ? v.alternatives.map((a) => `<div class="alt${a.taken ? " taken" : ""}"><span class="l">${esc(a.label)}</span><div class="b"><i style="width:${Math.max(1, Math.round(a.p * 100))}%"></i></div><span class="p">${pct(a.p)}</span></div>`).join("") : `<p class="muted">Loading the bot's options.</p>`;
     const rankWord = (r) => r === 1 ? "1st" : r === 2 ? "2nd" : r === 3 ? "3rd" : `${r}th`;
-    const sampled = v && v.taken_rank ? `${v.sampled_first ? "Yes" : "No"}, ${rankWord(v.taken_rank)} choice` : "-";
+    const argmaxMode = App.header.options.mode === "argmax";
+    const sampled = !v || !v.taken_rank ? "-"
+      : argmaxMode ? (v.argmax_taken ? "Yes" : "No") : `${v.sampled_first ? "Yes" : "No"}, ${rankWord(v.taken_rank)} choice`;
     const reasons = (App.header.flag_reasons || []).map((r) => `<button type="button" class="reason${f.reasons.has(r) ? " on" : ""}" data-kind="reason" data-reason="${esc(r)}">${esc(r)}</button>`).join("");
     const noteVal = $("flag-note") ? $("flag-note").value : f.note;
     panel.innerHTML = `<div class="head"><div class="t">Flag this move</div><div class="s">${esc(taken ? taken.label : "Bot decision")} · decision ${f.step}</div></div>
       <div class="body">
         <div><div class="lab2">Bot's options at this decision</div><div class="alts" style="margin-top:6px">${alts}</div>
-        <dl class="kv"><dt>Bot value</dt><dd>${v && v.value !== null && v.value !== undefined ? (v.value >= 0 ? "+" : "") + v.value.toFixed(2) : "-"}</dd><dt>${App.header.options.mode === "argmax" ? "Argmax" : "Sampled"}</dt><dd>${sampled}</dd><dt>Options</dt><dd>${v ? v.options : "-"}</dd></dl></div>
+        <dl class="kv"><dt>Bot value</dt><dd>${v && v.value !== null && v.value !== undefined ? (v.value >= 0 ? "+" : "") + v.value.toFixed(2) : "-"}</dd><dt>${argmaxMode ? "Took the argmax" : "Sampled"}</dt><dd>${sampled}</dd><dt>Options</dt><dd>${v ? v.options : "-"}</dd></dl></div>
         <div><div class="lab2">What is wrong with it</div><div class="reasons" style="margin-top:6px">${reasons}</div></div>
         <textarea id="flag-note" placeholder="What should it have done?" aria-label="Flag note">${esc(noteVal)}</textarea>
         <div class="actions">${btn("Save flag", { "data-kind": "save-flag", "data-legal": "1" }, `btn team ${sideCls(bot)}`)}${btn("Cancel", { "data-kind": "close-flag" }, "btn ghost")}</div>
