@@ -16,8 +16,8 @@ API (all payloads JSON-serializable):
 """
 from __future__ import annotations
 
-import ctypes
 import json
+from collections import Counter
 import os
 import time
 
@@ -205,6 +205,7 @@ class GameSession:
         self.survey_answers = None
         self.api_rejections = 0
         self.presented_types = set()
+        self.presented_counts = Counter()
         self.submitted_types = set()
         self.presented_prompts = set()
         self.policy_logits = {}
@@ -386,6 +387,8 @@ class GameSession:
         for item in actions:
             groups.setdefault(item["type"], []).append(item["id"])
             self.presented_types.add(item["type"])
+        for type_name in groups:
+            self.presented_counts[type_name] += 1
         self.presented_prompts.add(prompt["kind"])
         base.update({"prompt": prompt, "actions": actions, "groups": groups})
         return base
