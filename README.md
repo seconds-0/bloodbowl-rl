@@ -32,6 +32,29 @@ reward has been promoted. See `STATUS.md`, D177–D180 in `DECISIONS.md`, and
 `docs/reward-and-replay-audit-2026-07-09.md` for the current verdict and next
 experiment. Agent workflows start at `AGENTS.md`.
 
+## Play against a trained policy
+
+The play harness runs a local web game where you coach one team and a trained
+checkpoint coaches the other. It binds 127.0.0.1 only.
+
+```bash
+play_harness/run.sh            # builds the engine shim when needed, then serves
+# open http://127.0.0.1:8790/
+```
+
+In the lobby, pick the checkpoint (chain 25 is the default), how rosters are
+chosen, your side, sampling or argmax, the bot's move delay, the turn clock and
+the seed. The seed is shown so you can replay a game. Checkpoints are listed
+from `.play-artifacts/checkpoints/` when they carry a `.lineage.json` sidecar;
+add another directory with `--checkpoint-dir DIR`, or change the port with
+`--port`.
+
+Game records, flagged bot moves and survey answers land in
+`.play-artifacts/games/<stamp>-<teams>-<seed>/game.json` (gitignored).
+Design and interaction spec: `docs/play-harness/design-2026-09-13.md`.
+Backend tests: `.venv/bin/python -m pytest play_harness/tests`. Browser suite:
+`play_harness/web/e2e` (Playwright; run it on a throwaway box, not the Mac).
+
 ## Note on IP
 
 Blood Bowl is a Games Workshop game. This repo contains no rulebook text, GW artwork, or other GW assets — engine code and data tables are original work. Private research project.
