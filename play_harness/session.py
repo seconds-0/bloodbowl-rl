@@ -7,12 +7,20 @@ only submit an action id taken from the legal list of the current state
 version, so an illegal engine action can never reach c_step.
 
 API (all payloads JSON-serializable):
-  state()            match state in absolute pitch coordinates
-  legal()            prompt + legal actions annotated and grouped for a UI
-  submit(request)    {"action_id", "state_version"} or {"action": {...}, ...}
-  flag(note, step)   record state + the policy's action and logits for review
-  survey(answers)    post-game survey answers
-  save(out_dir)      game.json + policy_logits.npz
+  state()               match state in absolute pitch coordinates
+  legal()               prompt + legal actions annotated and grouped for a UI
+  submit(request)       {"action_id", "state_version"} or {"action": {...}, ...};
+                        optional "follow": {"type", "arg"} applies a second legal
+                        action when it is offered next (ACTIVATE then DECLARE,
+                        DECLINE_REROLL then CHOOSE_DIE)
+  submit_path(request)  {"state_version", "player", "squares": [[x, y], ...]}:
+                        one STEP per square while the move prompt continues
+  clock_end_turn()      the soft turn clock: ends the human's team turn through
+                        legal actions only
+  decision_view(step)   the policy's options at one of its decisions
+  flag(note, step, reasons)  record state + the policy's action and options
+  survey(answers)       post-game survey answers
+  save(out_dir, extra)  game.json + policy_logits.npz
 """
 from __future__ import annotations
 
@@ -24,9 +32,12 @@ import time
 import numpy as np
 
 from . import engine as E
+from . import narrate as N
+from .alternatives import conditional_argmax_row, legal_array, ranked
 from .policy import NONE_TUPLE, PolicySeat
 
 SCHEMA = "bbplay-game-v1"
+FLAG_SCHEMA = "bbplay-flag-v1"
 
 BLOCK_FACES = {1: "attacker_down", 2: "both_down", 3: "push", 4: "push",
                5: "stumble", 6: "pow"}
@@ -78,6 +89,14 @@ SURFACE = {
     "DECLINE_SKILL": "dialog", "APOTHECARY": "dialog", "CHOOSE_OPTION": "dialog",
     "SPECIAL_TARGET": "square",
 }
+
+# Soft turn clock: when time runs out the first offered action type in this
+# order is applied, repeatedly, until the human's team turn is over. Windows
+# with none of these (block dice, push squares, forced declarations) fall back
+# to the engine's contact-bot choice, which is always a member of the legal set.
+CLOCK_PRIORITY = ("END_TURN", "END_ACTIVATION", "DECLINE_REROLL", "DECLINE_SKILL")
+
+BOOKKEEPING = {"END_ACTIVATION", "DECLINE_REROLL", "DECLINE_SKILL"}
 
 
 class IntegrityError(RuntimeError):
@@ -164,8 +183,34 @@ def match_json(engine, match):
         "procedure": None if top is None else {
             "proc": E.PROCS[top.proc], "phase": int(top.phase), "a": int(top.a),
             "b": int(top.b), "x": int(top.x), "y": int(top.y), "data": int(top.data)},
+        "in_team_turn": [N.in_team_turn(match, 0), N.in_team_turn(match, 1)],
         "players": players,
     }
+
+
+def formation(match, team):
+    """Setup checklist numbers for one team, wide zones named from the coach's facing."""
+    los_x = 12 if team == 0 else 13
+    base = team * 16
+    on_pitch = los = low_y = high_y = available = 0
+    for s in range(base, base + 16):
+        p = match.players[s]
+        if p.location in (0, 1):
+            available += 1
+        if p.location != 0:
+            continue
+        on_pitch += 1
+        if p.x == los_x and 4 <= p.y <= 10:
+            los += 1
+        if p.y <= 3:
+            low_y += 1
+        if p.y >= 11:
+            high_y += 1
+    left, right = (low_y, high_y) if team == 0 else (high_y, low_y)
+    return {"on_pitch": on_pitch, "want_on_pitch": min(11, available), "los": los,
+            "want_los": min(3, on_pitch), "left_wide": left, "right_wide": right,
+            "max_wide": 2, "los_x": los_x, "half_x": [0, 12] if team == 0 else [13, 25],
+            "left_is_low_y": team == 0}
 
 
 def _option_table(obs, agent):
@@ -183,7 +228,7 @@ def _option_table(obs, agent):
 
 class GameSession:
     def __init__(self, policy_seat, human_seat=0, seed=1, episode=0, home_team=-1,
-                 away_team=-1, max_decisions=4096, meta=None):
+                 away_team=-1, max_decisions=4096, meta=None, observer=None):
         if human_seat not in (0, 1):
             raise ValueError("human_seat must be 0 (HOME) or 1 (AWAY)")
         if policy_seat.seat != 1 - human_seat:
@@ -197,6 +242,7 @@ class GameSession:
                                away_team=away_team, max_decisions=max_decisions)
         self.seat.reset_match()
         self.meta = dict(meta or {})
+        self.observer = observer
         self.version = 0
         self.over = False
         self.result = None
@@ -209,46 +255,55 @@ class GameSession:
         self.submitted_types = set()
         self.presented_prompts = set()
         self.policy_logits = {}
+        self.policy_windows = {}
         self._pre_states = []
+        self._legal_cache = None
         self.started_at = time.time()
         self._advance()
 
     # ---- core loop -------------------------------------------------------
-    def _tick(self, human_index=None):
+    def _tick(self, human_index=None, actor=None):
         eng = self.engine
         deciding_team = eng.decision_team
         policy_decides = deciding_team == self.seat.seat
         if policy_decides == (human_index is not None):
             raise IntegrityError("tick called for the wrong coach")
-        legal = eng.legal() if not policy_decides else None
-        pre_match = bytes(eng.match())
+        legal = eng.legal()
+        pre_bytes = bytes(eng.match())
+        pre = E.BbMatch.from_buffer_copy(pre_bytes)
         out = _seat_step(self.seat, eng, policy_decides)   # one forward per c_step
         if policy_decides:
             tup = tuple(out["tuple"])
             actor = "policy"
         else:
             tup = legal[human_index].tuple
-            actor = "human"
+            actor = actor or "human"
         idx = eng.tuple_index(*tup)
         if idx < 0:
             raise IntegrityError(f"{actor} tuple {tup} outside exact support ({idx})")
-        action = eng.legal()[idx] if legal is None else legal[idx]
+        action = legal[idx]
+        tests = self._step_tests(pre, action)
         rc = eng.step(*tup)
         if rc < 0:
             raise IntegrityError(f"engine refused {actor} tuple {tup}: rc={rc}")
-        self._pre_states.append(pre_match)
+        self._pre_states.append(pre_bytes)
+        self._legal_cache = None
         record = {
             "step": self.version, "decision_team": deciding_team, "actor": actor,
             "action": [action.type, action.arg, action.x, action.y],
             "action_type": action.type_name, "tuple": list(tup),
             "digest": f"{eng.digest():016x}", "policy_forward": self.seat.forwards,
         }
+        if tests:
+            record["tests"] = tests
         if out.get("value") is not None:
             record["policy_value"] = round(out["value"], 6)
         if policy_decides and out.get("logprob") is not None:
             record["policy_logprob"] = round(out["logprob"], 6)
-        if policy_decides and out.get("logits") is not None:
-            self.policy_logits[self.version] = out["logits"]
+        if policy_decides:
+            self.policy_windows[self.version] = legal_array(legal)
+            if out.get("logits") is not None:
+                self.policy_logits[self.version] = out["logits"]
         self.trace.append(record)
         self.version += 1
         if rc == E.STEP_TERMINAL:
@@ -262,7 +317,22 @@ class GameSession:
                 "turns": [int(final.turn[0]), int(final.turn[1])],
                 "decisions": counters["decisions_at_terminal"],
             }
+        if self.observer is not None:
+            self.observer(self, record, pre)
         return rc
+
+    def _step_tests(self, pre, action):
+        if action.type_name not in ("STEP", "JUMP"):
+            return None
+        top = N.top_frame(pre)
+        if top is None or E.PROCS[top.proc] != "MOVE" or top.a >= 32:
+            return None
+        blitz = top.b < len(E.ACT_KINDS) and E.ACT_KINDS[top.b] == "BLITZ"
+        tests, probs = self.engine.step_success(int(top.a), action.x, action.y, blitz)
+        if not any(tests):
+            return None
+        return {"rush": bool(tests[0]), "dodge": bool(tests[1]), "pickup": bool(tests[2]),
+                "p": [round(v, 4) for v in probs]}
 
     def _advance(self):
         n = 0
@@ -281,8 +351,11 @@ class GameSession:
             return "over"
         return "human" if self.engine.decision_team == self.human_seat else "policy"
 
+    def current_match(self):
+        return self.engine.final_match() if self.over else self.engine.match()
+
     def state(self):
-        match = self.engine.final_match() if self.over else self.engine.match()
+        match = self.current_match()
         out = match_json(self.engine, match)
         out.update({"state_version": self.version, "awaiting": self.awaiting(),
                     "human_seat": self.human_seat, "result": self.result})
@@ -292,6 +365,7 @@ class GameSession:
         top = match.stack[match.stack_top - 1] if match.stack_top > 0 else None
         if top is None:
             return {"kind": "unknown"}
+        eng = self.engine
         proc = E.PROCS[top.proc]
         kind = PROMPTS.get((proc, int(top.phase))) or PROMPTS.get((proc, None)) or "unknown"
         prompt = {"kind": kind, "proc": proc, "phase": int(top.phase)}
@@ -299,19 +373,49 @@ class GameSession:
             prompt["player"] = int(top.a)
             if proc == "MOVE":
                 prompt["act_kind"] = E.ACT_KINDS[top.b] if top.b < len(E.ACT_KINDS) else int(top.b)
+            if proc == "ACTIVATION" and int(top.phase) == 2:
+                prompt["target"] = int(obs[768 + 8])
         if proc == "BLOCK":
             nd = ((top.data >> 9) & 3) + 1
             faces = [(top.data >> (3 * i)) & 7 for i in range(nd)]
             prompt["dice"] = [BLOCK_FACES.get(f, f) for f in faces]
+            prompt["dice_keys"] = [N.FACE_KEYS.get(f, "push") for f in faces]
             prompt["defender_chooses"] = bool((top.data >> 11) & 1)
             prompt["attacker"], prompt["defender"] = int(top.a), int(top.b)
+            if top.a < 32 and top.b < 32:
+                pa, pd = match.players[top.a], match.players[top.b]
+                prompt["strength"] = [int(pa.st) + eng.count_assists(top.a, top.b),
+                                      int(pd.st) + eng.count_assists(top.b, top.a)]
         if proc == "TEST":
             prompt["test_kind"] = int(obs[784 + 21]) - 1
             prompt["target"] = int(obs[768 + 8])
-        if kind == "setup" or kind in ("solid_defence", "quick_snap"):
+            kind_i = int(top.b)
+            prompt["test_name"] = N.TEST_NAMES.get(N.TEST_KINDS[kind_i], "Roll") \
+                if kind_i < len(N.TEST_KINDS) else "Roll"
+            if top.a < 32:
+                prompt["player"] = int(top.a)
+        if proc == "PUSH":
+            prompt["pusher"], prompt["pushee"] = int(top.a), int(top.b)
+            prompt["origin"] = [int(top.x), int(top.y)]
+            if int(top.phase) == 3:
+                prompt["vacated"] = [int(top.x), int(top.y)]
+        if proc in ("CASUALTY", "KO_RECOVERY") and top.a < 32:
+            prompt["player"] = int(top.a)
+        if proc == "FOUL":
+            prompt["player"], prompt["victim"] = int(top.a), int(top.b)
+        if proc == "PASS":
+            prompt["player"] = int(top.a)
+            prompt["target_square"] = [int(top.x), int(top.y)]
+        if kind == "setup" or kind in ("solid_defence", "quick_snap", "charge"):
             prompt["placements_left"] = max(0, int(obs[784 + 27]) - 1)
+        if kind == "setup":
+            prompt["formation"] = formation(match, self.human_seat)
+            prompt["budget"] = 24
+            prompt["kicking"] = int(match.kicking_team) == self.human_seat
         if kind == "apothecary_result":
             prompt["rolls"] = [int(obs[784 + 24]), int(obs[784 + 25])]
+        if kind == "apothecary":
+            prompt["rolls"] = [int(obs[784 + 24])]
         return prompt
 
     def _annotate(self, la, match, prompt, option_table):
@@ -336,6 +440,8 @@ class GameSession:
                     "APOTHECARY", "CHOOSE_DIE", "USE_REROLL", "USE_SKILL",
                     "DECLINE_SKILL", "CHOOSE_OPTION"):
             item["x"] = item["y"] = None
+        if name != "SETUP_PLACE":
+            item["label"] = N.label_action(self.engine, match, la.type, la.arg, la.x, la.y)
         if name == "DECLARE":
             item["kind"] = E.ACT_KINDS[la.arg] if la.arg < len(E.ACT_KINDS) else la.arg
         elif name == "STEP" and mover is not None:
@@ -350,6 +456,12 @@ class GameSession:
             item["target_player"] = target if target >= 0 else None
             if name == "BLOCK_TARGET" and target >= 0 and mover is not None:
                 item["ev"] = self.engine.block_ev(mover, target, is_blitz)
+                p_att, p_def = match.players[mover], match.players[target]
+                att = int(p_att.st) + self.engine.count_assists(mover, target)
+                dfn = int(p_def.st) + self.engine.count_assists(target, mover)
+                dice = 1 if att == dfn else (2 if max(att, dfn) <= 2 * min(att, dfn) else 3)
+                item["dice"] = dice
+                item["who_picks"] = "you" if att >= dfn else "them"
             if name == "SPECIAL_TARGET":
                 item["variant"] = SPECIAL_VARIANTS.get(la.arg, la.arg)
         elif name == "CHOOSE_DIE":
@@ -373,9 +485,23 @@ class GameSession:
             item["decline"] = la.arg == 0xFE
             if prompt["kind"] in ("high_kick", "interception_choice") and la.arg < 16:
                 item["player"] = option_table[la.arg]
+                if item["player"] is not None:
+                    item["label"] = N.player_name(self.engine, match, item["player"])
         return item
 
+    def _reach(self, mover):
+        dodges, gfis, length, prev = self.engine.reach(mover)
+        squares = []
+        for i in np.nonzero(length)[0].tolist():
+            if dodges[i] == 0xFF:
+                continue
+            squares.append([i % E.PITCH_LEN, i // E.PITCH_LEN, int(length[i]), int(dodges[i]),
+                            int(gfis[i]), int(prev[i][0]), int(prev[i][1])])
+        return squares
+
     def legal(self):
+        if self._legal_cache is not None and self._legal_cache[0] == self.version:
+            return self._legal_cache[1]
         base = {"state_version": self.version, "awaiting": self.awaiting(),
                 "human_seat": self.human_seat}
         if self.over or self.awaiting() != "human":
@@ -394,30 +520,136 @@ class GameSession:
         for type_name in groups:
             self.presented_counts[type_name] += 1
         self.presented_prompts.add(prompt["kind"])
+        if prompt["kind"] == "move" and "player" in prompt and "STEP" in groups:
+            prompt["reach"] = self._reach(prompt["player"])
+        if prompt["kind"] in ("select_player", "charge"):
+            prompt["can_act"] = len(groups.get("ACTIVATE", []))
+            ball = match.ball
+            if ball.state == 2 and ball.carrier < 32 and (ball.carrier >> 4) == self.human_seat:
+                carrier = int(ball.carrier)
+                activatable = {a["player"] for a in actions if a["type"] == "ACTIVATE"}
+                if carrier in activatable and eng.can_score_without_dice(carrier):
+                    prompt["stalling_carrier"] = carrier
         base.update({"prompt": prompt, "actions": actions, "groups": groups})
+        self._legal_cache = (self.version, base)
         return base
 
-    def submit(self, request):
+    def _check_request(self, request):
         if self.over:
             return self._reject("match_over")
         if self.engine.decision_team != self.human_seat:
             return self._reject("not_your_decision")
         if request.get("state_version") != self.version:
             return self._reject("stale_state_version")
+        return None
+
+    def submit(self, request):
+        bad = self._check_request(request)
+        if bad:
+            return bad
         legal = self.engine.legal()
         idx = request.get("action_id")
         if idx is None and isinstance(request.get("action"), dict):
             a = request["action"]
             want = (a.get("type"), a.get("arg"), a.get("x"), a.get("y"))
             idx = next((la.index for la in legal if (la.type, la.arg, la.x, la.y) == want), None)
-        if not isinstance(idx, int) or not 0 <= idx < len(legal):
+        if isinstance(idx, bool) or not isinstance(idx, int) or not 0 <= idx < len(legal):
             return self._reject("unknown_action")
         self.submitted_types.add(legal[idx].type_name)
         before = self.version
         self._tick(idx)
         policy_steps = self._advance()
+        follow = request.get("follow")
+        followed = False
+        if isinstance(follow, dict) and not self.over and self.awaiting() == "human":
+            want_type, want_arg = follow.get("type"), follow.get("arg")
+            nxt = next((la for la in self.engine.legal()
+                        if la.type_name == want_type and la.arg == want_arg), None)
+            if nxt is not None:
+                self.submitted_types.add(nxt.type_name)
+                self._tick(nxt.index)
+                policy_steps += self._advance()
+                followed = True
         return {"ok": True, "state_version": self.version, "over": self.over,
-                "applied": self.trace[before:], "policy_steps": policy_steps}
+                "applied": self.trace[before:], "policy_steps": policy_steps,
+                "followed": followed}
+
+    def submit_path(self, request):
+        bad = self._check_request(request)
+        if bad:
+            return bad
+        player = request.get("player")
+        squares = request.get("squares")
+        if not isinstance(player, int) or not isinstance(squares, list) or not squares:
+            return self._reject("bad_path")
+        before = self.version
+        done = 0
+        policy_steps = 0
+        for sq in squares[:32]:
+            if self.over or self.awaiting() != "human":
+                break
+            if not (isinstance(sq, (list, tuple)) and len(sq) == 2):
+                break
+            match = self.engine.match()
+            top = N.top_frame(match)
+            if top is None or E.PROCS[top.proc] != "MOVE" or int(top.a) != player:
+                break
+            step = next((la for la in self.engine.legal()
+                         if la.type_name == "STEP" and (la.x, la.y) == (sq[0], sq[1])), None)
+            if step is None:
+                break
+            self.submitted_types.add("STEP")
+            self._tick(step.index)
+            policy_steps += self._advance()
+            done += 1
+            if not self.over:
+                p = self.engine.match().players[player]
+                if p.location != 0 or (p.x, p.y) != (sq[0], sq[1]) or p.stance != 0:
+                    break
+        if done == 0:
+            return self._reject("path_not_legal")
+        return {"ok": True, "state_version": self.version, "over": self.over,
+                "applied": self.trace[before:], "policy_steps": policy_steps,
+                "steps_applied": done, "steps_requested": len(squares)}
+
+    def turn_key(self):
+        """(half, turn) while the human's own team turn is in progress, else None."""
+        if self.over:
+            return None
+        match = self.engine.match()
+        if not N.in_team_turn(match, self.human_seat):
+            return None
+        return (int(match.half), int(match.turn[self.human_seat]))
+
+    def clock_end_turn(self, max_steps=600):
+        """End the human's team turn through legal actions (soft turn clock)."""
+        key = self.turn_key()
+        if key is None or self.awaiting() != "human":
+            return {"ok": False, "error": "not_your_turn", "state_version": self.version}
+        before = self.version
+        n = 0
+        while not self.over and self.awaiting() == "human" and self.turn_key() == key:
+            legal = self.engine.legal()
+            by_type = {}
+            for la in legal:
+                by_type.setdefault(la.type_name, la)
+            pick = next((by_type[t] for t in CLOCK_PRIORITY if t in by_type), None)
+            if pick is None:
+                if "DECLARE" in by_type:
+                    pick = next((la for la in legal if la.type_name == "DECLARE" and la.arg == 0),
+                                by_type["DECLARE"])
+                else:
+                    idx = self.engine.contact_bot_index()
+                    if idx < 0:
+                        raise IntegrityError("clock found no legal action")
+                    pick = legal[idx]
+            self._tick(pick.index, actor="clock")
+            self._advance()
+            n += 1
+            if n > max_steps:
+                raise IntegrityError("clock could not end the turn")
+        return {"ok": True, "state_version": self.version, "over": self.over,
+                "applied": self.trace[before:], "clock_steps": n}
 
     def _reject(self, reason):
         self.api_rejections += 1
@@ -429,20 +661,89 @@ class GameSession:
             return None
         return self.engine.contact_bot_index()
 
+    # ---- policy decision views ------------------------------------------
+    def pre_match(self, step):
+        return E.BbMatch.from_buffer_copy(self._pre_states[step])
+
+    def _ranked_lines(self, step):
+        logits = self.policy_logits.get(step)
+        rows = self.policy_windows.get(step)
+        if logits is None or rows is None:
+            return None
+        pre = self.pre_match(step)
+        rec = self.trace[step]
+        taken = tuple(rec["tuple"])
+        lines = []
+        argmax = conditional_argmax_row(logits, rows)
+        for i, p in ranked(logits, rows):
+            row = rows[i]
+            tup = (int(row[0]), int(row[4]), int(row[5]))
+            lines.append({"label": N.label_action(self.engine, pre, int(row[0]), int(row[1]),
+                                                  int(row[2]), int(row[3])),
+                          "p": p, "taken": tup == taken, "argmax": i == argmax,
+                          "action": [int(row[0]), int(row[1]), int(row[2]), int(row[3])]})
+        return lines
+
+    def decision_view(self, step, k=5):
+        """The policy's options at one of its decisions, exact over the joint support.
+
+        An ACTIVATE decision and the DECLARE that follows it are joined into one
+        list: "Blitz with #6 Blitzer" carries p(activate #6) * p(blitz | #6).
+        """
+        if not 0 <= step < len(self.trace) or self.trace[step]["actor"] != "policy":
+            return None
+        rec = self.trace[step]
+        if rec["action_type"] == "ACTIVATE" and step + 1 < len(self.trace) and \
+                self.trace[step + 1]["actor"] == "policy" and \
+                self.trace[step + 1]["action_type"] == "DECLARE":
+            step, rec = step + 1, self.trace[step + 1]
+        lines = self._ranked_lines(step)
+        joined = False
+        if lines is None:
+            return {"step": step, "record": rec, "alternatives": [], "value": rec.get("policy_value"),
+                    "taken_rank": None, "sampled_first": None, "mode": self.seat.mode,
+                    "joined": False}
+        if rec["action_type"] == "DECLARE" and step > 0 and \
+                self.trace[step - 1]["actor"] == "policy" and \
+                self.trace[step - 1]["action_type"] == "ACTIVATE":
+            act_lines = self._ranked_lines(step - 1)
+            if act_lines:
+                chosen = next((ln for ln in act_lines if ln["taken"]), None)
+                if chosen is not None:
+                    joined = True
+                    merged = [dict(ln, p=ln["p"] * chosen["p"]) for ln in lines]
+                    merged += [ln for ln in act_lines if not ln["taken"]]
+                    lines = sorted(merged, key=lambda ln: -ln["p"])
+        for rank, ln in enumerate(lines, 1):
+            ln["rank"] = rank
+        taken = next((ln for ln in lines if ln["taken"]), None)
+        top = [dict(ln, p=round(ln["p"], 5)) for ln in lines[:k]]
+        if taken is not None and taken["rank"] > k:
+            top.append(dict(taken, p=round(taken["p"], 5)))
+        return {"step": step, "record": rec, "alternatives": top,
+                "value": rec.get("policy_value"),
+                "taken_rank": taken["rank"] if taken else None,
+                "sampled_first": bool(taken and taken["rank"] == 1),
+                "argmax_taken": bool(taken and taken.get("argmax")),
+                "options": len(lines), "mode": self.seat.mode, "joined": joined}
+
     # ---- feedback --------------------------------------------------------
-    def flag(self, note="", step=None):
+    def flag(self, note="", step=None, reasons=None):
         policy_steps = [r["step"] for r in self.trace if r["actor"] == "policy"]
         if step is None:
             if not policy_steps:
                 return {"ok": False, "error": "no_policy_move"}
             step = policy_steps[-1]
-        if not 0 <= step < len(self.trace):
+        if not isinstance(step, int) or not 0 <= step < len(self.trace):
             return {"ok": False, "error": "unknown_step"}
         rec = self.trace[step]
         logits = self.policy_logits.get(step)
-        entry = {"step": step, "note": str(note), "flagged_at": time.time(),
-                 "record": rec, "pre_state_hex": self._pre_states[step].hex(),
-                 "has_logits": logits is not None}
+        entry = {"schema": FLAG_SCHEMA, "step": step, "note": str(note)[:4000],
+                 "reasons": [str(r)[:64] for r in (reasons or [])][:16],
+                 "flagged_at": time.time(), "record": rec,
+                 "pre_state_hex": self._pre_states[step].hex(),
+                 "has_logits": logits is not None,
+                 "view": self.decision_view(step)}
         self.flags.append(entry)
         return {"ok": True, "flag_index": len(self.flags) - 1, "step": step}
 
@@ -466,12 +767,17 @@ class GameSession:
                 "policy": self.seat.provenance, "obs_version": E.OBS_VERSION,
                 "started_at": self.started_at, "meta": self.meta}
 
-    def save(self, out_dir):
+    def save(self, out_dir, extra=None):
         os.makedirs(out_dir, exist_ok=True)
         doc = {"header": self.header(), "result": self.result, "integrity": self.integrity(),
                "trace": self.trace, "flags": self.flags, "survey": self.survey_answers}
-        with open(os.path.join(out_dir, "game.json"), "w") as f:
+        if extra:
+            for key, value in extra.items():
+                doc.setdefault(key, value)
+        tmp = os.path.join(out_dir, "game.json.tmp")
+        with open(tmp, "w") as f:
             json.dump(doc, f, indent=1)
+        os.replace(tmp, os.path.join(out_dir, "game.json"))
         if self.policy_logits:
             steps = np.array(sorted(self.policy_logits), dtype=np.int32)
             logits = np.stack([self.policy_logits[s] for s in steps])
