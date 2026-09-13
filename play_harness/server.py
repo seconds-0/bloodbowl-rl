@@ -71,6 +71,9 @@ class PlayServer:
         self.clients = set()
         self.server = None
         self._work = threading.Lock()
+        # Commands, game replacement and clock expiry run one at a time, and each
+        # publishes before the next starts, so clients see states in order.
+        self._dispatch_lock = asyncio.Lock()
         self._clock_task = None
 
     # ---- HTTP ------------------------------------------------------------
@@ -150,7 +153,8 @@ class PlayServer:
                     await self._send(ws, {"t": "error", "reason": "bad_json"})
                     continue
                 try:
-                    await self.dispatch(ws, msg)
+                    async with self._dispatch_lock:
+                        await self.dispatch(ws, msg)
                 except G.OptionError as exc:
                     await self._send(ws, {"t": "error", "reason": str(exc), "rid": msg.get("rid")})
                 except Exception as exc:  # noqa: BLE001
@@ -195,6 +199,11 @@ class PlayServer:
             await self._broadcast({"t": "game_closed", "rid": rid})
         elif game is None:
             await self._send(ws, {"t": "error", "reason": "no_game", "rid": rid})
+        elif msg.get("game_id") not in (None, game.game_id):
+            # A request built for an earlier game must not act on this one, even
+            # when its state version happens to match.
+            await self._send(ws, {"t": "error", "reason": "stale_game", "rid": rid,
+                                  "game_id": game.game_id})
         elif t == "resync":
             await self._send(ws, {"t": "state", "rid": rid, "snapshot": await self._run(game.snapshot)})
         elif t in ("submit", "submit_path"):
@@ -236,14 +245,17 @@ class PlayServer:
             game = self.game
             if game is None or game.options["clock_mode"] != "soft":
                 continue
-            try:
-                res = await self._run(game.tick_clock)
-            except Exception:  # noqa: BLE001
-                log.exception("clock tick failed")
-                continue
-            if res and res.get("ok"):
-                await self._broadcast({"t": "clock_expired", "clock_steps": res["clock_steps"]})
-                await self._publish_game()
+            async with self._dispatch_lock:
+                if self.game is not game:
+                    continue
+                try:
+                    res = await self._run(game.tick_clock)
+                except Exception:  # noqa: BLE001
+                    log.exception("clock tick failed")
+                    continue
+                if res and res.get("ok"):
+                    await self._broadcast({"t": "clock_expired", "clock_steps": res["clock_steps"]})
+                    await self._publish_game()
 
     async def start(self):
         self.server = await serve(self.handler, self.host, self.port,

@@ -78,7 +78,13 @@ def test_same_options_and_human_actions_reproduce_the_game(best_policy, tmp_path
     views_b = [fr.get("view") for batch in frames_b for fr in batch]
     assert sum(v is not None for v in views_a) > 100
     assert _dumps(views_a) == _dumps(views_b)
-    assert _dumps(frames_a) == _dumps(frames_b)
+    # Each controller gets a fresh random game id; everything else must match.
+    assert first.game_id != second.game_id
+    assert all(fr["game_id"] == first.game_id for batch in frames_a for fr in batch)
+    strip = lambda batches: [[{k: v for k, v in fr.items() if k != "game_id"} for fr in batch]  # noqa: E731
+                             for batch in batches]
+    same = _dumps(strip(frames_a)) == _dumps(strip(frames_b))
+    assert same, "frames differ between identical games"
     assert _dumps(first.over_payload()["stats"]) == _dumps(second.over_payload()["stats"])
     assert sorted(a.policy_logits) == sorted(b.policy_logits)
     for st in a.policy_logits:

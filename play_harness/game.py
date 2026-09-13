@@ -188,6 +188,7 @@ class GameController:
     def __init__(self, options, policy_loader=None, games_dir=GAMES_DIR, now=time.monotonic,
                  save_records=True):
         self.options = options
+        self.game_id = secrets.token_hex(8)
         self.now = now
         self.games_dir = games_dir
         self.save_records = save_records
@@ -247,6 +248,7 @@ class GameController:
         # Policy views are computed when the frame leaves, so an ACTIVATE that is
         # followed by its DECLARE in the same batch can show the joined options.
         for fr in frames:
+            fr["game_id"] = self.game_id
             if fr["actor"] == "policy":
                 fr["view"] = self.session.decision_view(fr["step"])
         return frames
@@ -256,7 +258,7 @@ class GameController:
         mp = self.match_params
         prov = {k: v for k, v in self.provenance.items() if k != "lineage"}
         lineage = self.provenance.get("lineage") or {}
-        return {"options": self.options, "match": mp,
+        return {"game_id": self.game_id, "options": self.options, "match": mp,
                 "checkpoint": {"path": self.options["checkpoint"],
                                "sha8": (prov.get("checkpoint_sha256") or "")[:8],
                                "name": os.path.basename(os.path.dirname(self.options["checkpoint"])),
