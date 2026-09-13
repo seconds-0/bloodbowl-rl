@@ -1,0 +1,11 @@
+{
+  "name": "bb-play-harness-e2e",
+  "private": true,
+  "description": "Browser end-to-end tests for the Blood Bowl play harness",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.0"
+  }
+}
