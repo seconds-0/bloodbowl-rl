@@ -102,8 +102,12 @@ class PlayServer:
 
     @staticmethod
     def _respond(status, body, ctype):
+        # No framing by other pages (clickjacking), no MIME sniffing, no referrer.
         headers = Headers([("Content-Type", ctype), ("Content-Length", str(len(body))),
-                           ("Cache-Control", "no-store"), ("Connection", "close")])
+                           ("Cache-Control", "no-store"), ("Connection", "close"),
+                           ("Content-Security-Policy", "frame-ancestors 'none'"),
+                           ("X-Frame-Options", "DENY"), ("X-Content-Type-Options", "nosniff"),
+                           ("Referrer-Policy", "no-referrer")])
         return Response(status, http.HTTPStatus(status).phrase, headers, body)
 
     # ---- websocket -------------------------------------------------------
