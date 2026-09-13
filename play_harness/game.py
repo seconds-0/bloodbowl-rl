@@ -354,7 +354,8 @@ class GameController:
             clean = {}
             for key, allowed in SURVEY_KEYS.items():
                 v = answers.get(key)
-                if v is not None and v not in allowed:
+                if v is not None and (isinstance(v, bool) or type(v) is not type(allowed[0])
+                                      or v not in allowed):
                     return {"ok": False, "error": f"bad_{key}"}
                 clean[key] = v
             clean["rules_bugs"] = str(answers.get("rules_bugs") or "")[:4000]
