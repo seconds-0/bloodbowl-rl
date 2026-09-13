@@ -16,7 +16,7 @@
 //     state is rebuilt by re-applying the terminal action to a pre-step copy.
 #include "bloodbowl.h"
 
-#define BBP_ABI_VERSION 1
+#define BBP_ABI_VERSION 2
 
 // Return codes for bbp_step.
 #define BBP_STEP_OK 0
@@ -43,6 +43,11 @@ typedef struct {
     bb_action last_action;
     int last_agent;
     float last_rewards[BBE_AGENTS];
+    // Stalling tally before the latest c_step, and the natural final tally
+    // (pre-step tally plus the terminal action's replay on a scratch sink),
+    // because c_step's auto-reset clears the env's own tally.
+    bb_stall_tally pre_stall;
+    bb_stall_tally final_stall;
 } bbp_session;
 
 int bbp_abi_version(void) { return BBP_ABI_VERSION; }
@@ -257,6 +262,7 @@ int bbp_step(bbp_session* s, int t, int arg, int sq) {
     env->action_ptr[agent][0] = (float)t;
     env->action_ptr[agent][1] = (float)arg;
     env->action_ptr[agent][2] = (float)sq;
+    s->pre_stall = env->ep_stall;
     c_step(env);
     s->steps++;
     s->last_action = act;
@@ -274,6 +280,15 @@ int bbp_step(bbp_session* s, int t, int arg, int sq) {
         s->final_match = pre;
         bb_apply_trusted(&s->final_match, act, &pre_rng);
         bb_stall_attach(prev);
+        s->final_stall = s->pre_stall;
+        for (int t2 = 0; t2 < 2; t2++) {
+            for (int k = 0; k < BB_STALL_TURNS; k++) {
+                s->final_stall.rolls[t2][k] += scratch.rolls[t2][k];
+                s->final_stall.acted[t2][k] += scratch.acted[t2][k];
+                s->final_stall.turnovers[t2][k] += scratch.turnovers[t2][k];
+                s->final_stall.turn_ends[t2][k] += scratch.turn_ends[t2][k];
+            }
+        }
         s->final_valid = 1;
         s->terminal = 1;
         s->decisions_at_terminal = pre_decisions + 1;
@@ -416,6 +431,73 @@ void bbp_block_ev(bbp_session* s, int att, int def, int is_blitz, float* out6) {
     out6[3] = ev.p_att_removed;
     out6[4] = ev.p_ball_out;
     out6[5] = ev.p_turnover;
+}
+
+// Success components along a planned multi-square path, for the path preview.
+// Evaluated on a scratch copy of the match where the mover is walked square by
+// square (grid, moved count, rushes, ball pickup), so later steps see the
+// mover's new origin and movement spent. Display only: the copy never reaches
+// c_step and the real match is untouched. xy holds n (x, y) pairs; tests3 and
+// probs3 receive rush, dodge, pickup per step. Returns the steps evaluated.
+int bbp_path_odds(bbp_session* s, int slot, int n, const int8_t* xy, int is_blitz,
+                  int32_t* tests3, float* probs3) {
+    if (slot < 0 || slot >= BB_NUM_PLAYERS || n <= 0) return 0;
+    bb_match c = s->env.match;
+    bb_player* p = &c.players[slot];
+    if (p->location != BB_LOC_ON_PITCH) return 0;
+    int done = 0;
+    for (int i = 0; i < n; i++) {
+        int x = xy[2 * i], y = xy[2 * i + 1];
+        if (!bb_on_pitch_xy(x, y)) break;
+        int rt = 0, dt = 0, pt = 0;
+        float rp = 1.0f, dp = 1.0f, pp = 1.0f;
+        bb_step_success_components(&c, slot, x, y, is_blitz, &rt, &rp, &dt, &dp, &pt, &pp);
+        tests3[3 * i] = rt;
+        tests3[3 * i + 1] = dt;
+        tests3[3 * i + 2] = pt;
+        probs3[3 * i] = rp;
+        probs3[3 * i + 1] = dp;
+        probs3[3 * i + 2] = pp;
+        done++;
+        c.grid[p->x][p->y] = 0;
+        p->x = (uint8_t)x;
+        p->y = (uint8_t)y;
+        c.grid[x][y] = (uint8_t)(slot + 1);
+        if (rt) p->rushes++;
+        p->moved++;
+        if (pt) {
+            c.ball.state = BB_BALL_HELD;
+            c.ball.carrier = (uint8_t)slot;
+        }
+    }
+    return done;
+}
+
+// Stalling crowd rolls per team: out8 = rolls[2], acted[2], turnovers[2],
+// turn_ends[2], summed over turns. Natural final tally after the terminal step.
+int bbp_stall_counts(bbp_session* s, int32_t* out8) {
+    const bb_stall_tally* t = s->terminal ? &s->final_stall : &s->env.ep_stall;
+    for (int team = 0; team < 2; team++) {
+        int32_t r = 0, a = 0, tv = 0, te = 0;
+        for (int k = 0; k < BB_STALL_TURNS; k++) {
+            r += (int32_t)t->rolls[team][k];
+            a += (int32_t)t->acted[team][k];
+            tv += (int32_t)t->turnovers[team][k];
+            te += (int32_t)t->turn_ends[team][k];
+        }
+        out8[team] = r;
+        out8[2 + team] = a;
+        out8[4 + team] = tv;
+        out8[6 + team] = te;
+    }
+    return 8;
+}
+
+// Stalling predicate at activation start (bb_can_score_without_dice), used to
+// name the crowd roll on the End Turn confirmation.
+int bbp_can_score_without_dice(bbp_session* s, int carrier) {
+    if (carrier < 0 || carrier >= BB_NUM_PLAYERS) return 0;
+    return bb_can_score_without_dice(&s->env.match, carrier) ? 1 : 0;
 }
 
 int bbp_count_assists(bbp_session* s, int for_slot, int against_slot) {

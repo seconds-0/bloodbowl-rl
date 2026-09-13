@@ -19,7 +19,7 @@ BUILD_SCRIPT = os.path.join(ROOT, "play_harness", "native", "build.sh")
 LIB_EXT = "dylib" if sys.platform == "darwin" else "so"
 DEFAULT_LIB = os.path.join(ROOT, "build", "play_harness", f"libbbplay.{LIB_EXT}")
 
-ABI_VERSION = 1
+ABI_VERSION = 2
 OBS_SIZE = 2782
 OBS_VERSION = 6
 MASK_SIZE = 454
@@ -165,12 +165,21 @@ def build_library(out_path=DEFAULT_LIB):
 _LIB = None
 
 
+def library_is_stale(path=DEFAULT_LIB):
+    """True when the shim library is missing or older than its sources."""
+    if not os.path.exists(path):
+        return True
+    built = os.path.getmtime(path)
+    sources = [os.path.join(ROOT, "play_harness", "native", "bbplay.c"), BUILD_SCRIPT]
+    return any(os.path.getmtime(src) > built for src in sources if os.path.exists(src))
+
+
 def load_library(path=None, build_if_missing=True):
     global _LIB
     if _LIB is not None and path is None:
         return _LIB
     path = path or os.environ.get("BBPLAY_LIB", DEFAULT_LIB)
-    if not os.path.exists(path):
+    if library_is_stale(path):
         if not build_if_missing:
             raise FileNotFoundError(path)
         build_library(path)
@@ -217,6 +226,11 @@ def load_library(path=None, build_if_missing=True):
                        ctypes.POINTER(ctypes.c_int8)], None),
         "bbp_block_ev": ([c_p, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                           ctypes.POINTER(ctypes.c_float)], None),
+        "bbp_path_odds": ([c_p, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_int8),
+                           ctypes.c_int, ctypes.POINTER(ctypes.c_int32),
+                           ctypes.POINTER(ctypes.c_float)], ctypes.c_int),
+        "bbp_stall_counts": ([c_p, ctypes.POINTER(ctypes.c_int32)], ctypes.c_int),
+        "bbp_can_score_without_dice": ([c_p, ctypes.c_int], ctypes.c_int),
         "bbp_count_assists": ([c_p, ctypes.c_int, ctypes.c_int], ctypes.c_int),
         "bbp_tackle_zones": ([c_p, ctypes.c_int, ctypes.c_int, ctypes.c_int], ctypes.c_int),
         "bbp_team_display": ([ctypes.c_int], ctypes.c_char_p),
@@ -413,6 +427,29 @@ class Engine:
         keys = ["p_def_down", "p_att_down", "p_def_removed", "p_att_removed",
                 "p_ball_out", "p_turnover"]
         return {k: round(float(v), 4) for k, v in zip(keys, out)}
+
+    def path_odds(self, slot, squares, is_blitz):
+        """Per-step (rush, dodge, pickup) tests and probabilities along a path."""
+        squares = list(squares)[:32]
+        n = len(squares)
+        if n == 0:
+            return []
+        xy = (ctypes.c_int8 * (2 * n))(*[int(v) for sq in squares for v in sq])
+        tests = (ctypes.c_int32 * (3 * n))()
+        probs = (ctypes.c_float * (3 * n))()
+        done = self.lib.bbp_path_odds(self._ptr, int(slot), n, xy, int(bool(is_blitz)),
+                                      tests, probs)
+        return [{"tests": [int(tests[3 * i + k]) for k in range(3)],
+                 "probs": [float(probs[3 * i + k]) for k in range(3)]} for i in range(done)]
+
+    def stall_counts(self):
+        buf = (ctypes.c_int32 * 8)()
+        self.lib.bbp_stall_counts(self._ptr, buf)
+        v = list(buf)
+        return {"rolls": v[0:2], "acted": v[2:4], "turnovers": v[4:6], "turn_ends": v[6:8]}
+
+    def can_score_without_dice(self, carrier):
+        return bool(self.lib.bbp_can_score_without_dice(self._ptr, int(carrier)))
 
     def count_assists(self, for_slot, against_slot):
         return self.lib.bbp_count_assists(self._ptr, int(for_slot), int(against_slot))
