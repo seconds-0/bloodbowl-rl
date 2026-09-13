@@ -530,7 +530,14 @@ class GameSession:
                 activatable = {a["player"] for a in actions if a["type"] == "ACTIVATE"}
                 if carrier in activatable and eng.can_score_without_dice(carrier):
                     prompt["stalling_carrier"] = carrier
-        base.update({"prompt": prompt, "actions": actions, "groups": groups})
+        # Setup offers every (reserve player x free square) pair, thousands of
+        # actions; they travel as compact [id, player, x, y] rows instead.
+        compact = {}
+        if "SETUP_PLACE" in groups:
+            compact["SETUP_PLACE"] = [[a["id"], a["arg"], a["x"], a["y"]] for a in actions
+                                      if a["type"] == "SETUP_PLACE"]
+            actions = [a for a in actions if a["type"] != "SETUP_PLACE"]
+        base.update({"prompt": prompt, "actions": actions, "groups": groups, "compact": compact})
         self._legal_cache = (self.version, base)
         return base
 

@@ -13,12 +13,21 @@ def _json_roundtrip(payload):
     return json.loads(json.dumps(payload))
 
 
+def all_actions(legal):
+    """Annotated actions plus the compact setup placements, as dicts with id and type."""
+    out = list(legal["actions"])
+    for kind, rows in (legal.get("compact") or {}).items():
+        out.extend({"id": row[0], "type": kind, "arg": row[1], "x": row[2], "y": row[3]}
+                   for row in rows)
+    return out
+
+
 class RandomDriver:
     def __init__(self, seed=0):
         self.rng = random.Random(seed)
 
     def choose(self, legal, session=None):
-        action = self.rng.choice(legal["actions"])
+        action = self.rng.choice(all_actions(legal))
         return {"action_id": action["id"], "state_version": legal["state_version"]}
 
 
@@ -39,8 +48,9 @@ class CoverageDriver:
         self.submitted = submitted if submitted is not None else set()
 
     def choose(self, legal, session=None):
-        fresh = [a for a in legal["actions"] if a["type"] not in self.submitted]
-        action = self.rng.choice(fresh or legal["actions"])
+        actions = all_actions(legal)
+        fresh = [a for a in actions if a["type"] not in self.submitted]
+        action = self.rng.choice(fresh or actions)
         self.submitted.add(action["type"])
         return {"action_id": action["id"], "state_version": legal["state_version"]}
 
