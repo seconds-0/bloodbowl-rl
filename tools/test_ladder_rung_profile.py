@@ -66,7 +66,8 @@ def stand_in_checkout(base, tools_source=None):
     (root / "tools/run_reward_ablation.sh").write_text(
         "#!/bin/bash\n"
         "printf 'GAMMA=%s\\nGAE_LAMBDA=%s\\n' \"$GAMMA\" \"$GAE_LAMBDA\" "
-        "> \"$HORIZON_DUMP\"\n")
+        "> \"$HORIZON_DUMP\"\n"
+        "printf '%s\\n' \"$REWARD_MANIFEST\" > \"$HORIZON_DUMP.reward\"\n")
     for name in ("puffer", "training"):
         (root / name).symlink_to(ROOT / name)
     vendor = root / "vendor/PufferLib"
@@ -156,7 +157,7 @@ class LadderRungProfileTests(unittest.TestCase):
     def test_arm_knob_defaults_to_s_both_and_maps_sparse_to_s4(self):
         source = SCREEN.read_text(encoding="utf-8")
         self.assertIn('LADDER_ARM="${LADDER_ARM:-s_both}"', source)
-        self.assertIn("s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_poss_zero|r0_gain_half|r0_poss_half_gain_half|r0_blockev_half|r0_poss_half_rush_zero) ;;", source)
+        self.assertIn("s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_poss_zero|r0_gain_half|r0_poss_half_gain_half|r0_blockev_half|r0_poss_half_rush_zero|r0_poss_half_pbrs999) ;;", source)
         self.assertRegex(
             source,
             r"sparse\) printf '%s\\n' \"\$ROOT/puffer/config/rewards/s4_sparse.json\"")
@@ -241,7 +242,7 @@ class LadderRungProfileTests(unittest.TestCase):
                               "LADDER_RESET_PCT": "0.5", "LADDER_SEED": "42",
                               "LADDER_ARM": "r9"})
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter, r0_poss_zero, r0_gain_half, r0_poss_half_gain_half, r0_blockev_half or r0_poss_half_rush_zero", result.stderr)
+        self.assertIn("LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter, r0_poss_zero, r0_gain_half, r0_poss_half_gain_half, r0_blockev_half, r0_poss_half_rush_zero or r0_poss_half_pbrs999", result.stderr)
 
     def test_rung_requires_explicit_maxdist(self):
         result = run(SCREEN, {**BASE, "LADDER_RESET_PCT": "0.5",
@@ -852,6 +853,62 @@ class HorizonScreenStandInTests(unittest.TestCase):
         r = self.screen("exact-0995", LADDER_ARM="s_both")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("SCREEN PLAN VERIFIED", r.stdout)
+
+    def test_pbrs999_arm_plans_at_gamma_0999_and_is_refused_elsewhere(self):
+        from reward_manifest import load_manifest
+        _, digest = load_manifest(
+            ROOT / "puffer/config/rewards/r0_poss_half_pbrs999.json")
+        horizon = {"LADDER_GAMMA": "0.999", "LADDER_GAE_LAMBDA": "0.95"}
+        # The chain 28 recipe: exact PBRS at the horizon arm's own gamma.
+        r = self.screen("pbrs999", LADDER_ARM="r0_poss_half_pbrs999", **horizon)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", r.stdout)
+        arm = self.contract("pbrs999")
+        self.assertEqual(arm["ladder"]["arm"], "r0_poss_half_pbrs999")
+        self.assertEqual((arm["ladder"]["gamma"], arm["ladder"]["gae_lambda"]),
+                         (0.999, 0.95))
+        self.assertEqual(sorted(arm["rewards"]), ["r0_poss_half_pbrs999"])
+        self.assertEqual(arm["rewards"]["r0_poss_half_pbrs999"]["name"],
+                         "r0_poss_half_pbrs999")
+        self.assertEqual(
+            arm["rewards"]["r0_poss_half_pbrs999"]["reward_sha256"], digest)
+        # Chain 25's plan (r0_poss_half at the same horizon) differs from it in
+        # the arm label and the reward only.
+        r = self.screen("legacy", **horizon)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        legacy = self.contract("legacy")
+        self.assertEqual(sorted(legacy["rewards"]), ["r0_poss_half"])
+        for contract in (arm, legacy):
+            for key in ("out_dir", "rewards", "schedule"):
+                contract.pop(key, None)
+            contract["ladder"].pop("arm")
+        self.assertEqual(arm, legacy)
+        # Shipping the 0.999 manifest must not block any contract-gamma plan.
+        r = self.screen("contract-poss-half")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", r.stdout)
+        # At gamma 0.995, declared or by default, the same arm is refused
+        # before any plan is published.
+        for out, knobs in (("pbrs999-0995", {"LADDER_GAMMA": "0.995"}),
+                           ("pbrs999-contract", {})):
+            r = self.screen(out, LADDER_ARM="r0_poss_half_pbrs999", **knobs)
+            self.assertNotEqual(r.returncode, 0, knobs)
+            self.assertIn("r0_poss_half_pbrs999.json", r.stderr, knobs)
+            self.assertIn("(0.999) != train gamma (0.995)", r.stderr, knobs)
+            self.assertIn("would not train the distance form it claims under "
+                          "train gamma 0.995", r.stderr, knobs)
+            self.assertFalse(
+                (self.root / out / "SCREEN_MANIFEST.json").exists(), knobs)
+        # And the arm reaches the per-arm launcher with its manifest and horizon.
+        r = self.screen("pbrs999-arm", PLAN_ONLY="0",
+                        LADDER_ARM="r0_poss_half_pbrs999", **horizon)
+        self.assertIn("missing process sidecar", r.stderr)
+        received = dict(line.split("=", 1)
+                        for line in self.dump.read_text().splitlines())
+        self.assertEqual(received, {"GAMMA": "0.999", "GAE_LAMBDA": "0.95"})
+        self.assertEqual(
+            Path(Path(str(self.dump) + ".reward").read_text().strip()).resolve(),
+            (ROOT / "puffer/config/rewards/r0_poss_half_pbrs999.json").resolve())
 
     def test_declared_horizon_reaches_the_arm_launcher_and_the_trainer_argv(self):
         from tools.test_ladder_knobs import render_trainer_argv
