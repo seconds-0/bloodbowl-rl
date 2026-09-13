@@ -21,6 +21,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-13 07:05 (D393): the horizon gain replicates.** Chain 26 beats chain 20 by +0.047 and +0.035 on the two contact champion cells, both up on both exam seeds. Gamma 0.999 / lambda 0.95 is now the ladder recipe, and chain 25 is the new frontier warm start. Chain 27 continues from chain 25 under the horizon recipe to test whether the continuation plateau was a horizon artifact.
 
+**Update 2026-09-13 13:55 (D394): chain 27 is not accepted.** Chain 27 raises both contact champion cells against chain 25 (+0.035, +0.0275) but drops offense on both exam seeds (-0.0385 on the mean). Chain 25 stays the frontier. Chain 28, the exact-PBRS distance arm at gamma 0.999 paired with chain 25, launched automatically through the rig queue.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

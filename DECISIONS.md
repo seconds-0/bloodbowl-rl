@@ -1182,3 +1182,18 @@ Champion deltas against chain 14 (0.5035, 0.4435, 0.5755) are **+0.0645, +0.062 
 - **Accept:** both contact champion cells beat chain 25's own exam (0.568, 0.5055) by more than 0.02 on the two-exam-seed mean, with offense AWAY not down more than 0.02.
 - **Plateau survives:** a flat read at 3B.
 - **Reject:** a contact champion cell down more than 0.02 on the mean and on both exam seeds.
+
+**D394 - CHAIN 27 IS NOT ACCEPTED: CONTINUING CHAIN 25 UNDER THE HORIZON RECIPE RAISES BOTH CONTACT CHAMPION CELLS BUT DROPS OFFENSE ON BOTH EXAM SEEDS, SO CHAIN 25 STAYS THE FRONTIER (2026-09-13 13:55 PDT).** Chain 27 (`runs/ladder-d0-r0chain27-horizon-cont-20260913`, unit `r0chain27-horizon-cont`) finished its 3B at 13:35 PDT with trainer_exit 0. It ran 122-133K SPS with VRAM 6.4/8 GB, integrity counters zero and value loss 0.011-0.015. Checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789308028008/0000002999975936.bin` (sha 67d62bee). In-run eval tds 1.596 and perf 0.700 are a both-sides mixture, not evidence. The exam waiter ran both seeds; all six cells exited rc=0 with 2022-2032 games each.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.614 / 0.394 | 0.538 / 0.366 | 0.560 / 0.322 |
+| 43 | 0.592 / 0.418 | 0.528 / 0.384 | 0.542 / 0.317 |
+| Two-exam-seed mean | **0.603 / 0.406** | **0.533 / 0.375** | **0.551 / 0.3195** |
+
+Against chain 25's own exam (0.568, 0.5055, 0.5895), champion deltas are **+0.035, +0.0275 and -0.0385**.
+- contact AWAY: +0.049 and +0.021 per exam seed
+- contact HOME: +0.049 and +0.006
+- offense AWAY: -0.023 and -0.054
+
+D393's acceptance needs both contact cells up more than 0.02 on the mean, which is met, and offense AWAY not down more than 0.02, which fails on the mean and on both seeds. **Not accepted. Chain 25 stays the frontier.** This is also not D393's flat plateau, nor its reject condition (no contact cell is down). The continuation moved, and it traded offense-bot scoring for contact-bot scoring. Contact HOME's per-seed gain (+0.006 at seed 43) does not clear the floor on its own. Conceded moves (-0.0075, -0.043, +0.0045) are not scored under D277. Chain 27's contact AWAY champion (0.603) is the highest ever recorded, but one training seed on a mixed read is not a result. The pre-registered horizon program continues: chain 28 (`r0_poss_half_pbrs999`, exact PBRS at 0.999, paired with chain 25) launched automatically at 13:52 PDT through `queue-c28`. The queue moved the rig checkout to 842969a (PR #100) and passed the drift check (3ed6899e), module check (d63498f6), SCREEN PLAN VERIFIED, pool identity d67d527b and the contract check (arm `r0_poss_half_pbrs999`, gamma 0.999, lambda 0.95).
