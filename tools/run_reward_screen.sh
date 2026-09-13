@@ -394,6 +394,11 @@ manifest_for() {
     # r0_poss_half with the rush fine removed (reward_rush_cost 0.015 -> 0),
     # the last nonzero shaping term in r0_poss_half no arm has ever varied.
     r0_poss_half_rush_zero) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_half_rush_zero.json" ;;
+    # r0_poss_half with the distance channels switched from the pinned legacy
+    # raw delta to exact discounted PBRS at gamma 0.999, every coefficient
+    # identical. A horizon arm only: it trains with LADDER_GAMMA=0.999 and
+    # separates the horizon change from the legacy distance bias (D391/D393).
+    r0_poss_half_pbrs999) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_half_pbrs999.json" ;;
     r1) printf '%s\n' "$ROOT/puffer/config/rewards/r1_no_distance.json" ;;
     r2) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
     r3) printf '%s\n' "$ROOT/puffer/config/rewards/r3_minimal_block.json" ;;
@@ -431,18 +436,39 @@ manifest_for() {
 # arm trains exactly LADDER_ARM, so only that manifest is held to LADDER_GAMMA:
 # the exact-PBRS manifests minted at 0.995 cannot train at 0.999 and must not
 # block a pinned legacy raw-delta arm that can.
+# A horizon arm's manifest is exact PBRS minted at a gamma other than the
+# contract one, and it trains only as LADDER_ARM with LADDER_GAMMA at that
+# gamma. The contract-gamma sweep holds each named horizon arm to the gamma it
+# declares (it must be exact PBRS there), and the selected rung arm is always
+# held to GAMMA, so selecting one without its horizon is still refused up front.
+HORIZON_ARM_MANIFESTS=("$(manifest_for r0_poss_half_pbrs999)")
 GUARD_MANIFESTS=()
 [ -z "$LADDER_GAMMA" ] || GUARD_MANIFESTS=("$(manifest_for "$LADDER_ARM")")
-if ! python3 - "$ROOT" "$GAMMA" ${GUARD_MANIFESTS[@]+"${GUARD_MANIFESTS[@]}"} <<'PY'
-import pathlib, sys
+GUARD_SELECTED=""
+[ "$RUNG_LIKE" != "1" ] || GUARD_SELECTED="$(manifest_for "$LADDER_ARM")"
+if ! GUARD_SELECTED="$GUARD_SELECTED" \
+     GUARD_HORIZON_ARMS="$(printf '%s\n' "${HORIZON_ARM_MANIFESTS[@]}")" \
+     python3 - "$ROOT" "$GAMMA" ${GUARD_MANIFESTS[@]+"${GUARD_MANIFESTS[@]}"} <<'PY'
+import os, pathlib, sys
 root, gamma = pathlib.Path(sys.argv[1]), float(sys.argv[2])
 sys.path.insert(0, str(root / "tools"))
 from reward_manifest import distance_form, load_manifest
+explicit = [pathlib.Path(path) for path in sys.argv[3:]]
+selected = os.environ.get("GUARD_SELECTED", "")
+selected = pathlib.Path(selected).resolve() if selected else None
+horizon = {pathlib.Path(path).resolve()
+           for path in os.environ.get("GUARD_HORIZON_ARMS", "").splitlines()
+           if path}
 bad = []
-for m in ([pathlib.Path(path) for path in sys.argv[3:]] or
-          sorted((root / "puffer/config/rewards").glob("*.json"))):
+for m in (explicit or sorted((root / "puffer/config/rewards").glob("*.json"))):
     try:
         manifest, digest = load_manifest(m)
+        if not explicit and m.resolve() in horizon and m.resolve() != selected:
+            own = manifest["reward"].get("reward_dist_pbrs_gamma", 0.0)
+            if not own > 0.0:
+                raise ValueError("listed as a horizon arm but not exact PBRS")
+            distance_form(manifest, digest, own)
+            continue
         distance_form(manifest, digest, gamma)
     except (OSError, ValueError) as exc:
         bad.append(f"  {m.name}: {exc}")

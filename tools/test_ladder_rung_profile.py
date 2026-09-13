@@ -179,6 +179,12 @@ class LadderRungProfileTests(unittest.TestCase):
             else:
                 self.assertEqual(arm[key], value, msg=key)
 
+    def test_pbrs999_arm_maps_to_its_manifest(self):
+        source = SCREEN.read_text(encoding="utf-8")
+        self.assertRegex(
+            source,
+            r"r0_poss_half_pbrs999\) printf '%s\\n' \"\$ROOT/puffer/config/rewards/r0_poss_half_pbrs999\.json\"")
+
     def test_frozen_bank_pct_is_overridable_and_validated(self):
         source = SCREEN.read_text(encoding="utf-8")
         self.assertIn('FROZEN_BANK_PCT="${FROZEN_BANK_PCT:-0.06}"', source)
