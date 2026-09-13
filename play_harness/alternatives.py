@@ -69,6 +69,9 @@ def conditional_argmax_row(logits, rows):
     cand = np.arange(len(rows))
     for h, col in ((0, 0), (1, 4), (2, 5)):
         vals = rows[cand, col].astype(int)
-        best = vals[np.argmax(heads[h][vals])]
+        # torch.argmax over the masked head keeps the lowest head index on ties,
+        # so rank the distinct head values in index order, not legal-row order.
+        uniq = np.unique(vals)
+        best = int(uniq[int(np.argmax(heads[h][uniq]))])
         cand = cand[vals == best]
     return int(cand[0])
