@@ -184,6 +184,7 @@ def match_json(engine, match):
             "proc": E.PROCS[top.proc], "phase": int(top.phase), "a": int(top.a),
             "b": int(top.b), "x": int(top.x), "y": int(top.y), "data": int(top.data)},
         "in_team_turn": [N.in_team_turn(match, 0), N.in_team_turn(match, 1)],
+        "in_kickoff": any(E.PROCS[match.stack[i].proc] == "KICKOFF" for i in range(match.stack_top)),
         "players": players,
     }
 
