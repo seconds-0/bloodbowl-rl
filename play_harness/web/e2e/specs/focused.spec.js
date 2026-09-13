@@ -174,7 +174,11 @@ test("phone layout puts the pitch, turn banner and player card above the action 
   const page = await ctx.newPage();
   const errors = H.watchConsole(page);
   await H.startGame(page, { human_side: "away", seed: 99, think_ms: 0 });
-  await H.waitIdle(page);
+  const r = H.rng(99);
+  const ok = await H.playUntil(page, r, async () => (await kind(page)) === "move",
+    { preferDeclare: "MOVE", targetRate: 0, moveRate: 0, maxActivations: 4 }, 3000);
+  H.expect(ok).toBe(true);
+  await H.shot(page, "phone-move");
   const y = async (sel) => (await page.locator(sel).boundingBox()).y;
   const pitch = await y("#pitch"), banner = await y("#turn-banner"), card = await y("#player-card"), prompt = await y("#prompt-card");
   H.expect(pitch).toBeLessThan(banner);
