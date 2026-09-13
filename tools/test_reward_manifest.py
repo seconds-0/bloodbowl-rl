@@ -279,7 +279,11 @@ class RewardManifestTests(unittest.TestCase):
         undeclared_legacy = {}
         for path in sorted((root / "puffer/config/rewards").glob("*.json")):
             manifest, digest = reward_manifest.load_manifest(path)
-            form = reward_manifest.distance_form(manifest, digest, 0.995)
+            # An exact-PBRS manifest is exact at the gamma it declares, and a
+            # horizon arm minted at another gamma (r0_poss_half_pbrs999, 0.999)
+            # is never legacy, so resolve each one at its own gamma.
+            gamma = manifest["reward"].get("reward_dist_pbrs_gamma") or 0.995
+            form = reward_manifest.distance_form(manifest, digest, gamma)
             if (form == "legacy_raw_delta" and
                     "reward_dist_mode" not in manifest):
                 undeclared_legacy[digest] = path.stem
@@ -338,6 +342,107 @@ class RewardManifestTests(unittest.TestCase):
         # The form cannot be resolved without the trainer's gamma.
         self.assertEqual(
             cli(rewards / "s0_both.json", "--distance-form").returncode, 2)
+
+    # The chain 28 arm (docs/pbrs999-arm-scope-2026-09-13.md). Chains 25/26 moved
+    # the credit horizon to 0.999 and, with it, shrank the legacy raw-delta
+    # distance bias (1-gamma)*Phi' 5x (D391/D393). This arm keeps every
+    # r0_poss_half coefficient and switches only the distance form.
+    POSS_HALF_SHA256 = (
+        "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c")
+    PBRS999_SHA256 = (
+        "65bd2cc7d1d7f2c44500e1652cba5d15b4129206129a5cf5df5ffe9ecfa9273f")
+
+    def rewards_dir(self):
+        return Path(__file__).resolve().parents[1] / "puffer/config/rewards"
+
+    def test_pbrs999_arm_differs_from_r0_poss_half_only_in_the_distance_gamma(self):
+        base, base_digest = reward_manifest.load_manifest(
+            self.rewards_dir() / "r0_poss_half.json")
+        arm, arm_digest = reward_manifest.load_manifest(
+            self.rewards_dir() / "r0_poss_half_pbrs999.json")
+        # r0_poss_half's provenance digest (chains 9, 14, 25, 26) must not move.
+        self.assertEqual(base_digest, self.POSS_HALF_SHA256)
+        self.assertEqual(arm_digest, self.PBRS999_SHA256)
+        self.assertEqual((base["schema_version"], arm["schema_version"]), (1, 2))
+        self.assertEqual(arm["name"], "r0_poss_half_pbrs999")
+        # The form is declared by the gamma alone, never by the legacy mode key.
+        self.assertNotIn("reward_dist_mode", arm)
+        # Schema 1 omits the key, which means the legacy raw delta (gamma 0).
+        self.assertNotIn("reward_dist_pbrs_gamma", base["reward"])
+        differing = sorted(
+            key for key in set(base["reward"]) | set(arm["reward"])
+            if base["reward"].get(key) != arm["reward"].get(key))
+        self.assertEqual(differing, ["reward_dist_pbrs_gamma"])
+        self.assertEqual(arm["reward"]["reward_dist_pbrs_gamma"], 0.999)
+        # Every rendered token of r0_poss_half is carried in order, and the arm
+        # adds exactly the one gamma token.
+        base_args = reward_manifest.cli_args(base)
+        arm_args = reward_manifest.cli_args(arm)
+        flag = arm_args.index("--env.reward-dist-pbrs-gamma")
+        self.assertEqual(arm_args[flag + 1], "0.999")
+        self.assertEqual(arm_args[:flag] + arm_args[flag + 2:], base_args)
+
+    def test_pbrs999_arm_is_exact_pbrs_only_at_train_gamma_0999(self):
+        arm, digest = reward_manifest.load_manifest(
+            self.rewards_dir() / "r0_poss_half_pbrs999.json")
+        self.assertEqual(
+            reward_manifest.distance_form(arm, digest, 0.999), "exact_pbrs")
+        # 0.995 is the contract gamma the chain 9 lineage trained at.
+        for train_gamma in (0.995, 0.998, 0.9995):
+            with self.assertRaisesRegex(
+                    ValueError, r"\(0\.999\) != train gamma"):
+                reward_manifest.distance_form(arm, digest, train_gamma)
+        # Not a pinned legacy manifest; r0_poss_half stays legacy at both.
+        self.assertNotIn(digest, reward_manifest.LEGACY_RAW_DELTA_SHA256)
+        base, base_digest = reward_manifest.load_manifest(
+            self.rewards_dir() / "r0_poss_half.json")
+        for train_gamma in (0.995, 0.999):
+            self.assertEqual(
+                reward_manifest.distance_form(base, base_digest, train_gamma),
+                "legacy_raw_delta")
+
+        # The CLI the per-arm launcher calls refuses before rendering anything.
+        tool = Path(__file__).resolve().parent / "reward_manifest.py"
+        path = self.rewards_dir() / "r0_poss_half_pbrs999.json"
+
+        def cli(*extra):
+            return subprocess.run(
+                [sys.executable, str(tool), str(path), *extra], text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+        ok = cli("--train-gamma", "0.999", "--distance-form")
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        self.assertEqual(ok.stdout.strip(), "exact_pbrs")
+        for extra in (("--distance-form",), ("--lines",)):
+            refused = cli("--train-gamma", "0.995", *extra)
+            self.assertEqual(refused.returncode, 1, extra)
+            self.assertEqual(refused.stdout, "", extra)
+            self.assertIn("!= train gamma", refused.stderr, extra)
+
+    def test_pbrs999_arm_envelope_cannot_reach_the_trainer_clamp(self):
+        arm, _ = reward_manifest.load_manifest(
+            self.rewards_dir() / "r0_poss_half_pbrs999.json")
+        reward = arm["reward"]
+        objective = abs(reward["reward_td"]) + max(
+            abs(reward["reward_win"]), abs(reward["reward_draw"]))
+        fetch = reward_manifest.MAX_PITCH_DELTA * reward["reward_dist_ball"]
+        carry = reward_manifest.MAX_PITCH_DELTA * reward["reward_dist_endzone"]
+        self.assertAlmostEqual(objective, 1.0, places=9)
+        self.assertAlmostEqual(fetch, 0.5, places=9)
+        self.assertAlmostEqual(carry, 1.0, places=9)
+        # Exact PBRS emits on every transition and its terminal payback
+        # -Phi(s_T-1) lands on the objective emission, so the envelope is the
+        # SUM (bbe_reward_clip_threshold's exact branch), not the legacy max.
+        envelope = objective + fetch + carry
+        self.assertAlmostEqual(envelope, 2.5, places=9)
+        self.assertLess(envelope, reward_manifest.TRAINER_REWARD_CLAMP)
+        self.assertGreaterEqual(
+            reward_manifest.TRAINER_REWARD_CLAMP - envelope, 5.5 - 1e-9)
+        # A non-terminal distance emission gamma*Phi' - Phi with Phi in
+        # [0, 25k] and gamma < 1 is at most 25k per channel, so the two
+        # distance channels alone can never put more than 1.5 on one step.
+        self.assertLessEqual(fetch + carry, 1.5 + 1e-9)
+        self.assertLessEqual(max(fetch, carry), 1.0 + 1e-9)
 
     def test_load_hash_is_canonical_not_whitespace_sensitive(self):
         manifest = {"schema_version": 2, "name": "test",
