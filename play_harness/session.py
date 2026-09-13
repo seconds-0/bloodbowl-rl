@@ -98,6 +98,9 @@ CLOCK_PRIORITY = ("END_TURN", "END_ACTIVATION", "DECLINE_REROLL", "DECLINE_SKILL
 
 BOOKKEEPING = {"END_ACTIVATION", "DECLINE_REROLL", "DECLINE_SKILL"}
 
+# submit(follow=...) pairs: the first action type and the one it may continue with.
+FOLLOW_PAIRS = {"ACTIVATE": "DECLARE", "DECLINE_REROLL": "CHOOSE_DIE"}
+
 
 class IntegrityError(RuntimeError):
     pass
@@ -563,13 +566,19 @@ class GameSession:
             idx = next((la.index for la in legal if (la.type, la.arg, la.x, la.y) == want), None)
         if isinstance(idx, bool) or not isinstance(idx, int) or not 0 <= idx < len(legal):
             return self._reject("unknown_action")
+        follow = request.get("follow")
+        if follow is not None and (not isinstance(follow, dict) or
+                                   FOLLOW_PAIRS.get(legal[idx].type_name) != follow.get("type")):
+            return self._reject("unsupported_follow")
         self.submitted_types.add(legal[idx].type_name)
         before = self.version
         self._tick(idx)
         policy_steps = self._advance()
-        follow = request.get("follow")
         followed = False
-        if isinstance(follow, dict) and not self.over and self.awaiting() == "human":
+        # The follow-up only continues the same decision chain: no bot step in
+        # between, still the human's decision, and the paired type on offer.
+        if follow is not None and policy_steps == 0 and not self.over and \
+                self.awaiting() == "human":
             want_type, want_arg = follow.get("type"), follow.get("arg")
             nxt = next((la for la in self.engine.legal()
                         if la.type_name == want_type and la.arg == want_arg), None)
