@@ -41,3 +41,5 @@ checkpoints-backup/
 
 # Play harness local artifacts (copied checkpoints, recorded games, feedback)
 .play-artifacts/
+play_harness/web/e2e/node_modules/
+play_harness/web/e2e/out/
