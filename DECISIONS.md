@@ -1158,3 +1158,27 @@ D389 pre-registered chain 14 as the paired comparator (mean 0.5035 / 0.415, 0.44
 | Two-exam-seed mean | **0.568 / 0.4135** | **0.5055 / 0.418** | **0.5895 / 0.315** |
 
 Champion deltas against chain 14 (0.5035, 0.4435, 0.5755) are **+0.0645, +0.062 and +0.014**. Per exam seed they are +0.054 and +0.075 on contact AWAY, +0.050 and +0.074 on contact HOME, and +0.004 and +0.024 on offense AWAY. Both contact champion cells are up by more than 0.02 on the mean and on both exam seeds, and offense AWAY is not down. **By D391's pre-registered rule this is the positive reading.** It is the first arm since D266 to clear the floor against its paired comparator on any contact champion cell. Against the chain 9 + chain 16 pooled frontier (0.537 / 0.416, 0.492 / 0.406, 0.571 / 0.350), chain 25's champion is **+0.031, +0.0135 and +0.0185, above it on all three cells for the first time**. Contact HOME clears it by less than 0.02. Conceded moves against chain 14 are -0.0015, +0.008 and -0.0295, not scored under D277. **Not promoted.** D281 retracted a one-training-seed pass, and D391 fixed the consequence of a positive read as a seed-44 replicate, so chain 26 now repeats chain 25 at training seed 44, paired with chain 20 (0.5045 / 0.4075, 0.4625 / 0.4040, 0.5570 / 0.3420). Caveat named in advance and still open: the arm changes the credit horizon and shrinks the legacy distance-delta bias 5x together, so a replicated gain is attributable to the horizon change and the distance form jointly, not to the horizon alone.
+
+**D393 - THE HORIZON GAIN REPLICATES: CHAIN 26 (TRAINING SEED 44) BEATS CHAIN 20 ON BOTH CONTACT CHAMPION CELLS, SO GAMMA 0.999 / LAMBDA 0.95 IS THE LADDER RECIPE AND CHAIN 25 IS THE NEW FRONTIER (2026-09-13 07:05 PDT).** Chain 26 (`runs/ladder-d0-r0chain26-horizon-s44-20260913`, unit `r0chain26-horizon-s44`) is chain 25 repeated at training seed 44: the same chain 9 warm marker, pool identity d67d527b, gamma 0.999 and lambda 0.95. It finished its 3B at 06:13 PDT with trainer_exit 0, running 126-131K SPS with VRAM 6.4/8 GB, integrity counters zero and value loss 0.011-0.013. Checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789281314386/0000002999975936.bin` (sha 0ff7bfb7). In-run eval tds 1.489 and perf 0.648 are not evidence. The waiter exam ran 06:14-06:22 PDT; all six cells exited rc=0 with 2002-2055 games each. The session's own monitors had died in a Mac session restart, and the queue ran unattended anyway.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.539 / 0.420 | 0.489 / 0.390 | 0.567 / 0.324 |
+| 43 | 0.564 / 0.418 | 0.506 / 0.413 | 0.564 / 0.324 |
+| Two-exam-seed mean | **0.5515 / 0.419** | **0.4975 / 0.4015** | **0.5655 / 0.324** |
+
+**The replicate.** The paired comparator is chain 20 (seed 44 at gamma 0.995; mean 0.5045 / 0.4075, 0.4625 / 0.4040, 0.5570 / 0.3420). Champion deltas are **+0.047, +0.035 and +0.0085**. Per exam seed: +0.026 and +0.068 on contact AWAY, +0.024 and +0.046 on contact HOME, +0.008 and +0.009 on offense AWAY. Both contact champion cells are up by more than 0.02 on the mean and on both exam seeds, and offense AWAY is not down. **D391's positive reading replicates on a second training seed.**
+
+**Pooled over both training seeds.**
+- Against the matched continuation pair (chains 14 and 20), the horizon pair (chains 25 and 26) is **+0.056, +0.0485 and +0.011** champion, with the net TD differential up +0.051, +0.046 and +0.035.
+- Against the chain 9 + chain 16 pooled frontier it is +0.023, +0.0095 and +0.0065 champion: above it on every cell, outside the 0.02 floor only on contact AWAY.
+
+**Rulings.**
+1. Gamma 0.999 with lambda 0.95 replaces 0.995 / 0.85 as the recipe for chained rungs. Every plain continuation since D273 at 0.995 landed flat or net-worse. Both horizon rungs land up, on separate training seeds.
+2. Chain 25 (sha 109c55d3) becomes the frontier warm start. Its exam is the best in the ledger on all three champion cells (0.568, 0.5055, 0.5895), and it is the first rung to clear the pooled frontier on every cell. This is a ladder acceptance, not a production promotion.
+3. The D391 confound stands. The arm moved the credit horizon and also shrank the legacy raw-delta distance bias 5x, so the gain belongs to the pair until an exact-PBRS arm at gamma 0.999 separates them.
+
+**Next, pre-registered before its exam.** Chain 27 (`runs/ladder-d0-r0chain27-horizon-cont-20260913`, unit `r0chain27-horizon-cont`, launched 07:00 PDT) continues from the chain 25 marker under the horizon recipe: seed 42, 3B steps, `r0_poss_half`, 4 banks x 0.12, contact bot at tag 4. The automatic rotation built pool identity 28846cd8: anchor-kickbot, rung0warm2 (the chain 2 checkpoint), chain 9, and chain 25 in the warm seat. The run tests whether the D273 continuation plateau was a horizon artifact.
+- **Accept:** both contact champion cells beat chain 25's own exam (0.568, 0.5055) by more than 0.02 on the two-exam-seed mean, with offense AWAY not down more than 0.02.
+- **Plateau survives:** a flat read at 3B.
+- **Reject:** a contact champion cell down more than 0.02 on the mean and on both exam seeds.
