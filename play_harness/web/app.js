@@ -858,6 +858,25 @@
       }
     }
 
+    // One hit per square. A reachable square that is also a target (a pass or
+    // throw onto an empty square) opens a small menu instead of hiding one option.
+    const bySquare = new Map();
+    for (const h of scene.hits) {
+      const key = `${h.x},${h.y}`;
+      if (!bySquare.has(key)) bySquare.set(key, []);
+      bySquare.get(key).push(h);
+    }
+    scene.hits = [];
+    for (const list of bySquare.values()) {
+      const plan = list.find((h) => h.data.kind === "plan");
+      const others = list.filter((h) => h.data.kind !== "plan");
+      if (plan && others.length) {
+        scene.hits.push({ x: plan.x, y: plan.y, legal: true, data: { kind: "choice", ids: others.map((h) => h.data.id).join(",") } });
+      } else {
+        scene.hits.push(list[0]);
+      }
+    }
+
     const selected = new Set();
     if (p && p.player !== undefined && p.player !== null) selected.add(p.player);
     if (p && p.attacker !== undefined) selected.add(p.attacker);
@@ -1211,11 +1230,16 @@
   }
 
   function openMenuAt(slot, items, title) {
-    closeMenu();
     const pl = player(slot);
-    if (!pl || !App.pitchApi) return;
+    if (!pl || pl.x === null) return;
+    openMenuAtSquare(pl.x, pl.y, items, title, slot);
+  }
+
+  function openMenuAtSquare(x, y, items, title, slot) {
+    closeMenu();
+    if (!App.pitchApi) return;
     const frame = $("pitch").getBoundingClientRect();
-    const b = App.pitchApi.squareBox(pl.x, pl.y);
+    const b = App.pitchApi.squareBox(x, y);
     const layer = $("menu-layer");
     layer.innerHTML = `<div class="menu" id="action-menu" role="menu"><div class="mh">${esc(title)}</div>${items.join("")}${btn("Cancel <span class=\"k\">Esc</span>", { "data-kind": "close-menu" })}</div>`;
     const m = layer.firstElementChild;
@@ -1533,6 +1557,14 @@
       case "kick": App.ui.kickSel = { id, x: +ds.x, y: +ds.y }; render(); break;
       case "action": case "target": submit(id); break;
       case "activate": openActivateMenu(id); break;
+      case "choice": {
+        const x = +ds.x, y = +ds.y;
+        const items = ds.ids.split(",").map((s) => App.legal.actions.find((a) => a.id === parseInt(s, 10)))
+          .filter(Boolean).map((a) => btn(esc(a.label || a.type), { "data-legal": "1", "data-kind": "action", "data-id": a.id }));
+        items.unshift(btn("Move here", { "data-legal": "1", "data-kind": "plan-here", "data-x": x, "data-y": y }));
+        openMenuAtSquare(x, y, items, `Square ${x},${y}`);
+        break;
+      }
       case "plan": {
         const x = +ds.x, y = +ds.y;
         if (App.ui.planDest && App.ui.planDest.x === x && App.ui.planDest.y === y) executePath();
@@ -1586,6 +1618,11 @@
           break;
         }
         case "go-path": executePath(); break;
+        case "plan-here":
+          closeMenu();
+          App.ui.planDest = { x: +b.dataset.x, y: +b.dataset.y };
+          render();
+          break;
         case "clear-path": App.ui.planDest = null; render(); break;
         case "hide-dialog": App.ui.dialogHidden = true; render(); break;
         case "show-dialog": App.ui.dialogHidden = false; render(); break;
