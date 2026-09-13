@@ -38,6 +38,7 @@ def main(argv=None):
     from .server import PlayServer
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.getLogger("websockets").setLevel(logging.WARNING)
     server = PlayServer(host=args.host, port=args.port, checkpoint_dirs=args.checkpoint_dir,
                         games_dir=args.games_dir or G.GAMES_DIR)
 
