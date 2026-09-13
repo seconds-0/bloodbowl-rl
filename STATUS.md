@@ -17,6 +17,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-12 16:43 (D391): chain 25 is training.** The horizon knob merged (PR #99), and chain 25 launched with chain 14's pool identity d67d527b and gamma 0.999 / lambda 0.95 confirmed in the arm banner. The exam waiter is staged. The pre-registered reading is in `docs/horizon-arm-scope-2026-09-12.md`.
 
+**Update 2026-09-12 23:35 (D392): chain 25 reads positive.** Its two-seed exam beats chain 14 by +0.0645 on contact AWAY, +0.062 on contact HOME and +0.014 on offense AWAY, with both contact cells up on both exam seeds. It sits above the chain 9 + chain 16 frontier on all three champion cells for the first time. It is not promoted. Chain 26 replicates it at training seed 44, paired with chain 20, before any verdict.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
