@@ -38,3 +38,6 @@ checkpoints-backup/
 # Agent run transcripts (process residue; design briefs are kept)
 .codex-impl/*-run-*.md
 .codex-reviews/
+
+# Play harness local artifacts (copied checkpoints, recorded games, feedback)
+.play-artifacts/
