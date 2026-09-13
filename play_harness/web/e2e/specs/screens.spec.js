@@ -29,16 +29,14 @@ test("capture the review screens from one match", async ({ page, browser }) => {
   const phone = await phoneCtx.newPage();
 
   // Lobby, both widths.
-  await page.goto("/");
-  await page.waitForSelector("#lobby:not([hidden])");
+  await H.toLobby(page);
   await page.click("[data-kind=opt][data-key=roster_mode][data-value=mine]");
   await page.selectOption("#lobby-human-team", "22");
   await page.click("[data-kind=opt][data-key=clock_mode][data-value=soft]");
   await page.fill("#lobby-clock-seconds", "240");
   await page.fill("#lobby-seed", "20260913");
   await capture(page, null, "01-lobby");
-  await phone.goto("/");
-  await phone.waitForSelector("#lobby:not([hidden])");
+  await H.toLobby(phone);
   await phone.waitForTimeout(300);
   await phone.screenshot({ path: path.join(DIR, "01-lobby-phone.png"), fullPage: true });
 

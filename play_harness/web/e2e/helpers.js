@@ -28,9 +28,19 @@ function watchConsole(page) {
   return errors;
 }
 
-async function startGame(page, opts = {}) {
+// Load the app and open the lobby. The server keeps one game across page
+// loads, so a running or finished game is left through its own lobby button.
+async function toLobby(page) {
   await page.goto("/");
+  await page.waitForSelector("#lobby:not([hidden]), #game:not([hidden]) [data-kind=to-lobby], #post:not([hidden]) [data-kind=change-checkpoint]");
+  if (await page.locator("#game:not([hidden]) [data-kind=to-lobby]").count()) await page.click("#game [data-kind=to-lobby]");
+  else if (await page.locator("#post:not([hidden]) [data-kind=change-checkpoint]").count()) await page.click("#post [data-kind=change-checkpoint]");
   await page.waitForSelector("#lobby:not([hidden])");
+  await page.waitForSelector("#lobby-checkpoints .ck");
+}
+
+async function startGame(page, opts = {}) {
+  await toLobby(page);
   const set = async (key, value) => page.click(`[data-kind=opt][data-key=${key}][data-value=${value}]`);
   await set("roster_mode", opts.roster_mode || "random");
   await set("human_side", opts.human_side || "home");
@@ -184,4 +194,4 @@ async function shot(page, name) {
   await page.screenshot({ path: path.join(OUT, "screens", `${name}.png`) });
 }
 
-module.exports = { rng, watchConsole, startGame, waitIdle, humanStep, playUntil, settle, has, clickRandom, writeJson, shot, expect, OUT };
+module.exports = { rng, watchConsole, toLobby, startGame, waitIdle, humanStep, playUntil, settle, has, clickRandom, writeJson, shot, expect, OUT };
