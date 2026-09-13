@@ -728,8 +728,12 @@ class GameSession:
                 chosen = next((ln for ln in act_lines if ln["taken"]), None)
                 if chosen is not None:
                     joined = True
-                    merged = [dict(ln, p=ln["p"] * chosen["p"]) for ln in lines]
-                    merged += [ln for ln in act_lines if not ln["taken"]]
+                    # A joined line is the conditional argmax only when both the
+                    # ACTIVATE and the DECLARE were argmax; other players' lines are
+                    # marginal activation probabilities, not complete tuples.
+                    merged = [dict(ln, p=ln["p"] * chosen["p"],
+                                   argmax=bool(ln["argmax"] and chosen["argmax"])) for ln in lines]
+                    merged += [dict(ln, argmax=False) for ln in act_lines if not ln["taken"]]
                     lines = sorted(merged, key=lambda ln: -ln["p"])
         for rank, ln in enumerate(lines, 1):
             ln["rank"] = rank
