@@ -741,9 +741,11 @@ class GameSession:
             if not policy_steps:
                 return {"ok": False, "error": "no_policy_move"}
             step = policy_steps[-1]
-        if not isinstance(step, int) or not 0 <= step < len(self.trace):
+        if isinstance(step, bool) or not isinstance(step, int) or not 0 <= step < len(self.trace):
             return {"ok": False, "error": "unknown_step"}
         rec = self.trace[step]
+        if rec["actor"] != "policy":
+            return {"ok": False, "error": "not_a_policy_step"}
         logits = self.policy_logits.get(step)
         entry = {"schema": FLAG_SCHEMA, "step": step, "note": str(note)[:4000],
                  "reasons": [str(r)[:64] for r in (reasons or [])][:16],
