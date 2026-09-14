@@ -1230,3 +1230,30 @@ The trajectory starts at the parent's level (tds 1.635 at 53M) and decays to abo
 - **Overshot:** a contact champion cell down more than 0.02 on the mean and on both exam seeds.
 
 Caveat named in advance: the legacy distance bias shrinks a further 2x at 0.9995, so the dose-response still moves horizon and bias together, and the larger critic re-fit costs part of the 3B budget.
+
+**D396 - CHAIN 29 OVERSHOOTS, MARGINALLY: GAMMA 0.9995 / LAMBDA 0.97 IS BELOW CHAIN 25 ON ALL THREE CHAMPION CELLS BUT STILL ABOVE THE 0.995 CONTINUATIONS, SO THE DOSE-RESPONSE PEAKS NEAR 0.999 AND THE RECIPE STAYS (2026-09-14 03:30 PDT).** Chain 29 (`runs/ladder-d0-r0chain29-horizon9995-20260913`, unit `r0chain29-horizon9995`) finished its 3B at about 03:10 PDT with integrity counters zero, running 120-131K SPS with value loss 0.018-0.025. The launch banner read `reward_distance_form=legacy_raw_delta train_gamma=0.9995`. The in-run panels tracked chain 25 throughout (pickups 4.2-5.2, no D395-style avoidance), and the early dip to tds 1.25 at 470M recovered.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.546 / 0.431 | 0.498 / 0.427 | 0.573 / 0.349 |
+| 43 | 0.544 / 0.422 | 0.486 / 0.442 | 0.539 / 0.346 |
+| Two-exam-seed mean | **0.545 / 0.4265** | **0.492 / 0.4345** | **0.556 / 0.3475** |
+
+**Scoring against chain 25 (0.568, 0.5055, 0.5895).** Champion deltas are **-0.023, -0.0135 and -0.0335**.
+- contact AWAY: -0.019 and -0.027 per exam seed
+- contact HOME: +0.009 and -0.036
+- offense AWAY: -0.010 and -0.057
+
+D395's "overshot" condition is met by the smallest margin: contact AWAY is down more than 0.02 on the mean (-0.023) and down on both exam seeds. **Not accepted. The recipe stays gamma 0.999 / lambda 0.95.**
+
+**The dose-response.** Against the 0.995 continuation chain 14 (0.5035, 0.4435, 0.5755), chain 29 is still +0.0415, +0.0485 and -0.0195 champion. The curve on contact AWAY is 0.5035 at 0.995, 0.568 at 0.999 and 0.545 at 0.9995, which peaks near 0.999. That curve comes from one training seed per point.
+
+**Next (pre-registered here; launches once the knob lands).** The update budget. The native trainer takes replay_ratio x (batch / minibatch) = 0.25 x (131072 / 16384) = 2 Muon gradient steps per 131K-step epoch (D252). No ladder rung has ever varied that, and the ladder path fixes REPLAY_RATIO. Chain 30 will be chain 25's exact recipe (warm chain 9 marker, seed 42, 3B, pool identity d67d527b, `r0_poss_half`, gamma 0.999 / lambda 0.95) with replay_ratio 1.0, which is 8 gradient steps per epoch. The paired comparator is chain 25.
+- **Positive:** both contact champion cells beat chain 25 by more than 0.02 on the mean, with offense AWAY not down more than 0.02. A seed-44 replicate follows before any recipe change.
+- **Flat:** 2 steps per epoch is not the binding constraint.
+- **Negative:** a contact champion cell down more than 0.02 on the mean and on both exam seeds.
+
+Caveats named in advance:
+- More gradient steps on the same rollouts raise policy drift per epoch. KL and clipfrac are the diagnostics, not kill signals.
+- The learner phase grows (about 160 ms to about 640 ms per epoch), so expect roughly 25-35% lower SPS. Wall time, not steps, is the cost.
+- LR x2 was rejected twice on warm chains (D259/D271). This changes how often the optimizer steps on the same data, not the step size.

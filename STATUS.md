@@ -25,6 +25,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-13 20:40 (D395): chain 28 collapsed.** Switching the distance channels to exact PBRS on the chain 9 warm start halved scoring and doubled conceded touchdowns: pickup attempts fell 43% while blocks held steady. This is the D253 pattern: never switch a reward form on a warm checkpoint. The recipe stays legacy `r0_poss_half` at gamma 0.999, and chain 25 stays the frontier. Chain 29 tests a longer horizon (gamma 0.9995, lambda 0.97) on chain 25's recipe.
 
+**Update 2026-09-14 03:30 (D396): chain 29 marginally overshoots.** Gamma 0.9995 lands below chain 25 on all three champion cells (-0.023, -0.0135, -0.0335) but still above the 0.995 continuations on contact. The dose-response peaks near 0.999, which stays the recipe. Next is the update budget: chain 25's recipe at replay_ratio 1.0 (8 gradient steps per epoch instead of 2), once the ladder gains that knob.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
