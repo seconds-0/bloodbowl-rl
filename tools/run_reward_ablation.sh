@@ -36,6 +36,9 @@
 #                       (GAMMA and GAE_LAMBDA: decimals in (0,1), at most six
 #                       decimals)
 #   HORIZON=64 MINIBATCH_SIZE=16384 CHECKPOINT_STEPS=50000000
+#   REPLAY_RATIO=0.25    a decimal in (0,4], at most three decimals, giving a
+#                       whole number of minibatches per epoch
+#                       (REPLAY_RATIO x TOTAL_AGENTS x HORIZON / MINIBATCH_SIZE)
 #   RIG_ALLOW_FLOAT=1   required for native fp32 on the RTX 2070/Turing rig
 #   SCRIPTED_BANK_TAG=0 pool-backed modes only: 1..4 replaces frozen bank (tag-1)'s
 #                       seat with the scripted bot in that bank's envs (native
@@ -407,6 +410,27 @@ fi
 FINAL_STEPS=$(( TRAIN_EPOCHS * ROLLOUT_QUANTUM ))
 CHECKPOINT_INTERVAL=$(( (CHECKPOINT_STEPS + ROLLOUT_QUANTUM / 2) / ROLLOUT_QUANTUM ))
 [ "$CHECKPOINT_INTERVAL" -gt 0 ] || CHECKPOINT_INTERVAL=1
+# REPLAY_RATIO reaches --train.replay-ratio verbatim, and the native trainer
+# runs int(replay_ratio * total_agents * horizon / minibatch_size) minibatches,
+# one Muon step each, per epoch (vendor/PufferLib/src/pufferlib.cu,
+# total_minibatches): a float32 product truncated toward zero. A ratio whose
+# count is not whole trains fewer steps than it declares (0.3 trains as 0.25 at
+# the fixed batch, 0.1 trains nothing), so refuse it along with anything that
+# is not a plain decimal in (0,4] with at most three decimals.
+if [[ ! "$REPLAY_RATIO" =~ ^([0-4])(\.([0-9]{1,3}))?$ ]]; then
+  echo "REPLAY_RATIO must be a decimal in (0,4] with at most three decimals, got '$REPLAY_RATIO'" >&2
+  exit 1
+fi
+REPLAY_FRACTION="${BASH_REMATCH[3]}000"
+REPLAY_MILLI=$(( 10#${BASH_REMATCH[1]} * 1000 + 10#${REPLAY_FRACTION:0:3} ))
+if [ "$REPLAY_MILLI" -le 0 ] || [ "$REPLAY_MILLI" -gt 4000 ]; then
+  echo "REPLAY_RATIO must be a decimal in (0,4] with at most three decimals, got '$REPLAY_RATIO'" >&2
+  exit 1
+fi
+if [ $(( REPLAY_MILLI * ROLLOUT_QUANTUM % (MINIBATCH_SIZE * 1000) )) -ne 0 ]; then
+  echo "REPLAY_RATIO=$REPLAY_RATIO does not give a whole number of minibatches per epoch ($REPLAY_RATIO x $ROLLOUT_QUANTUM / $MINIBATCH_SIZE); the native trainer truncates the count" >&2
+  exit 1
+fi
 OPP_TIMEOUT=$(( STEPS * 10 ))
 
 PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"

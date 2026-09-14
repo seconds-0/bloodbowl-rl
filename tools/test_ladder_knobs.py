@@ -46,6 +46,24 @@ def render_trainer_argv(**values) -> list[str]:
     return out.stdout.splitlines()
 
 
+def render_run_manifest_pairs(**values) -> dict[str, str]:
+    """Evaluate the launcher's real META_ARGS=(...) block and return the pairs
+    the run-manifest writer turns into <log>.manifest.json keys."""
+    source = LAUNCHER.read_text(encoding="utf-8")
+    match = re.search(r"\nMETA_ARGS=\(\n.*?\n\)\n", source, re.S)
+    assert match, "launcher run-manifest metadata block not found"
+    script = ("".join(f"{key}={shlex.quote(str(value))}\n"
+                      for key, value in values.items())
+              + match.group(0)
+              + "printf '%s\\n' \"${META_ARGS[@]}\"\n")
+    out = subprocess.run(["bash", "-c", script], text=True,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         check=True, timeout=60)
+    pairs = out.stdout.split("\n")[:-1]
+    assert len(pairs) % 2 == 0, "run-manifest metadata pairs misaligned"
+    return dict(zip(pairs[::2], pairs[1::2]))
+
+
 def run(**knobs) -> subprocess.CompletedProcess:
     # Scrub every launcher knob so an operator's shell cannot leak into a test.
     env = {k: v for k, v in os.environ.items()
@@ -53,7 +71,7 @@ def run(**knobs) -> subprocess.CompletedProcess:
            and k not in ("WARM", "POOL", "BOOTSTRAP_MODE", "EXPECTED_POOL_HASH",
                          "TAG", "REWARD_MANIFEST", "STEPS", "SEED",
                          "NUM_FROZEN_BANKS", "FROZEN_BANK_PCT",
-                         "GAMMA", "GAE_LAMBDA")}
+                         "GAMMA", "GAE_LAMBDA", "REPLAY_RATIO")}
     # Enough to get past the required-variable checks and reach the knobs.
     env.setdefault("TAG", "ladder-knob-test")
     env.setdefault("REWARD_MANIFEST", str(ROOT / "puffer/config/rewards/s0_both.json"))
@@ -250,6 +268,68 @@ class HorizonKnobTests(unittest.TestCase):
             self.assertNotIn("must be a decimal in (0,1)", out, (gamma, lam))
             if not vendored:
                 self.assertIn("vendored Python missing", out, (gamma, lam))
+
+
+# The update-budget knob's domain at every layer. The native trainer runs
+# int(replay_ratio * batch / minibatch) minibatches per epoch
+# (vendor/PufferLib/src/pufferlib.cu, total_minibatches), and the fixed contract
+# batch is 2048 agents x horizon 64 = 131072 with minibatch 16384, so a ratio
+# is exact only as a multiple of 0.125.
+BAD_REPLAY_RATIO_VALUES = ("0", "0.0", "0.000", "4.001", "4.5", "5", "10", ".5",
+                           "1.", "01", "1.0000", "0.0625", "1e0", "nan", "inf",
+                           "-1", "1 ", " 1", "1,0", "0.25x")
+TRUNCATING_REPLAY_RATIO_VALUES = ("0.1", "0.2", "0.3", "0.333", "0.9", "0.999",
+                                  "1.1", "3.99")
+# (value, whole minibatches per epoch under the fixed contract)
+GOOD_REPLAY_RATIO_VALUES = (("0.125", 1), ("0.25", 2), ("0.5", 4), ("1", 8),
+                            ("1.0", 8), ("2.375", 19), ("4", 32), ("4.000", 32))
+
+
+class ReplayRatioKnobTests(unittest.TestCase):
+    """REPLAY_RATIO reaches --train.replay-ratio verbatim, and the trainer
+    truncates its minibatch count toward zero: 0.3 would train as 0.25 and 0.1
+    would train nothing, under a label that says otherwise. This launcher is
+    the last gate before the trainer argv, so it refuses both a malformed ratio
+    and one whose count is not whole, before any preflight. That the rung
+    screen's LADDER_REPLAY_RATIO reaches the argv is covered end to end in
+    tools/test_ladder_rung_profile.py."""
+
+    def test_malformed_or_out_of_range_ratio_is_refused_before_preflight(self):
+        for value in BAD_REPLAY_RATIO_VALUES:
+            out = run(REPLAY_RATIO=value).stdout
+            self.assertIn(
+                "REPLAY_RATIO must be a decimal in (0,4] with at most three decimals",
+                out, value)
+            self.assertNotIn("vendored Python missing", out, value)
+
+    def test_truncating_ratio_is_refused_before_preflight(self):
+        for value in TRUNCATING_REPLAY_RATIO_VALUES:
+            out = run(REPLAY_RATIO=value).stdout
+            self.assertIn(
+                f"REPLAY_RATIO={value} does not give a whole number of minibatches "
+                f"per epoch ({value} x 131072 / 16384)", out, value)
+            self.assertNotIn("must be a decimal in (0,4]", out, value)
+            self.assertNotIn("vendored Python missing", out, value)
+
+    def test_exact_ratios_pass_the_gate(self):
+        vendored = (ROOT / "vendor/PufferLib/.venv/bin/python").exists()
+        for value, _ in GOOD_REPLAY_RATIO_VALUES:
+            out = run(REPLAY_RATIO=value).stdout
+            self.assertNotIn("REPLAY_RATIO", out, value)
+            if not vendored:
+                self.assertIn("vendored Python missing", out, value)
+
+    def test_the_count_follows_the_batch_and_minibatch_it_is_launched_with(self):
+        # Not a hardcoded 0.125 grid: at minibatch 32768 the batch holds four
+        # minibatches, so 0.25 gives one and 0.125 gives half of one.
+        vendored = (ROOT / "vendor/PufferLib/.venv/bin/python").exists()
+        out = run(REPLAY_RATIO="0.125", MINIBATCH_SIZE="32768").stdout
+        self.assertIn("REPLAY_RATIO=0.125 does not give a whole number of "
+                      "minibatches per epoch (0.125 x 131072 / 32768)", out)
+        out = run(REPLAY_RATIO="0.25", MINIBATCH_SIZE="32768").stdout
+        self.assertNotIn("REPLAY_RATIO", out)
+        if not vendored:
+            self.assertIn("vendored Python missing", out)
 
 
 if __name__ == "__main__":
