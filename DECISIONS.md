@@ -1197,3 +1197,36 @@ Against chain 25's own exam (0.568, 0.5055, 0.5895), champion deltas are **+0.03
 - offense AWAY: -0.023 and -0.054
 
 D393's acceptance needs both contact cells up more than 0.02 on the mean, which is met, and offense AWAY not down more than 0.02, which fails on the mean and on both seeds. **Not accepted. Chain 25 stays the frontier.** This is also not D393's flat plateau, nor its reject condition (no contact cell is down). The continuation moved, and it traded offense-bot scoring for contact-bot scoring. Contact HOME's per-seed gain (+0.006 at seed 43) does not clear the floor on its own. Conceded moves (-0.0075, -0.043, +0.0045) are not scored under D277. Chain 27's contact AWAY champion (0.603) is the highest ever recorded, but one training seed on a mixed read is not a result. The pre-registered horizon program continues: chain 28 (`r0_poss_half_pbrs999`, exact PBRS at 0.999, paired with chain 25) launched automatically at 13:52 PDT through `queue-c28`. The queue moved the rig checkout to 842969a (PR #100) and passed the drift check (3ed6899e), module check (d63498f6), SCREEN PLAN VERIFIED, pool identity d67d527b and the contract check (arm `r0_poss_half_pbrs999`, gamma 0.999, lambda 0.95).
+
+**D395 - CHAIN 28 COLLAPSES: SWITCHING THE DISTANCE CHANNELS TO EXACT PBRS ON THE CHAIN 9 WARM START HALVES SCORING AND DOUBLES CONCEDED, AS D253 PREDICTED, SO THE ATTRIBUTION QUESTION STAYS OPEN AND THE LEGACY RECIPE STAYS (2026-09-13 20:40 PDT).** Chain 28 (`runs/ladder-d0-r0chain28-pbrs999-20260913`, unit `r0chain28-pbrs999`, arm `r0_poss_half_pbrs999`) is chain 25's recipe with only the distance channels switched to exact discounted PBRS at gamma 0.999. It finished its 3B at 20:20 PDT with trainer_exit 0, running 122-132K SPS with integrity counters zero; the hardware run confirmed `reward_distance_form=exact_pbrs train_gamma=0.999`. Checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789332476463/0000002999975936.bin` (sha d9e9228c). In-run eval tds 1.145 and perf 0.404 against the warm marker's 1.534; the regression gate floor of 0.5 did not catch it. The exam ran all six cells with rc=0 and 2016-2051 games each.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.276 / 0.873 | 0.244 / 0.888 | 0.272 / 0.520 |
+| 43 | 0.271 / 0.875 | 0.257 / 0.896 | 0.278 / 0.538 |
+| Two-exam-seed mean | **0.2735 / 0.874** | **0.2505 / 0.892** | **0.275 / 0.529** |
+
+**Scoring.** Champion deltas against chain 25 are **-0.2945, -0.255 and -0.3145**, down on every cell and both exam seeds, and conceded roughly doubles. By D393's pre-registered rule this is the loss reading, but at ten to fifteen times the floor it is a regime collapse, not an attribution result. Chain 28 sits far below chain 9 and every continuation in the ledger.
+
+**Mechanism** (READ from the training panels). On the final panels against chain 25:
+- pickup_attempts 2.854 vs 4.971 (-43%)
+- pickup_success 1.546 vs 2.805
+- possession_rate 0.303 vs 0.374
+- blocks_thrown 14.58 vs 14.36 (unchanged)
+- tds 1.145 vs 1.574
+- entropy 0.120 vs 0.082
+
+The trajectory starts at the parent's level (tds 1.635 at 53M) and decays to about 1.0 by 210M, where it stays. Under exact PBRS a lost carry charges the potential drop (up to 1.0 on the carry channel), which the legacy raw delta never did. The warm critic was fitted to the legacy stream, so the switched reward made pickups look negative-EV, and the policy stopped going for the ball while keeping its contact game. This is the D253 pattern (`s0_both` collapsed the July warm in 500M).
+
+**Rulings.**
+1. Chain 28 is rejected and must never be a warm start or pool bank.
+2. D253 stands, restated: never switch a reward form on a warm checkpoint. A warm switch is not a neutral intervention, so chain 28 does not answer D391's question of horizon versus legacy distance bias. Only a lineage trained under exact PBRS from its root, or a gradual anneal between the forms, could, and neither is cheap.
+3. The recipe stays legacy `r0_poss_half` at gamma 0.999 / lambda 0.95. Chain 25 stays the frontier.
+4. The regression gate floor (eval tds 0.5) is too loose to catch a halving; tightening it is noted as tooling work.
+
+**Next, pre-registered before its exam: chain 29, a horizon dose-response** (`runs/ladder-d0-r0chain29-horizon9995-20260913`, unit `r0chain29-horizon9995`). It is chain 25's exact recipe (warm chain 9 marker, seed 42, 3B, pool identity d67d527b, `r0_poss_half`) with `LADDER_GAMMA=0.9995 LADDER_GAE_LAMBDA=0.97`. That doubles the discount half-life from about 693 to about 1386 steps, roughly one full match. The paired comparator is chain 25.
+- **Trend continues:** both contact champion cells beat chain 25 by more than 0.02 on the mean, with offense AWAY not down more than 0.02. A seed-44 replicate follows before any recipe change.
+- **Enough at 0.999:** a flat read.
+- **Overshot:** a contact champion cell down more than 0.02 on the mean and on both exam seeds.
+
+Caveat named in advance: the legacy distance bias shrinks a further 2x at 0.9995, so the dose-response still moves horizon and bias together, and the larger critic re-fit costs part of the 3B budget.

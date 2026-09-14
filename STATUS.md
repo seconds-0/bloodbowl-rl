@@ -23,6 +23,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-13 13:55 (D394): chain 27 is not accepted.** Chain 27 raises both contact champion cells against chain 25 (+0.035, +0.0275) but drops offense on both exam seeds (-0.0385 on the mean). Chain 25 stays the frontier. Chain 28, the exact-PBRS distance arm at gamma 0.999 paired with chain 25, launched automatically through the rig queue.
 
+**Update 2026-09-13 20:40 (D395): chain 28 collapsed.** Switching the distance channels to exact PBRS on the chain 9 warm start halved scoring and doubled conceded touchdowns: pickup attempts fell 43% while blocks held steady. This is the D253 pattern: never switch a reward form on a warm checkpoint. The recipe stays legacy `r0_poss_half` at gamma 0.999, and chain 25 stays the frontier. Chain 29 tests a longer horizon (gamma 0.9995, lambda 0.97) on chain 25's recipe.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
