@@ -49,8 +49,9 @@ def stand_in_checkout(base, tools_source=None):
 
     tools/ holds the real scripts except two stubs: the install drift check
     passes, and the per-arm launcher writes the GAMMA / GAE_LAMBDA it received
-    to $HORIZON_DUMP and exits without a process sidecar, which stops the
-    screen right after the hand-off. vendor/PufferLib exposes a fake `_C` with
+    to $HORIZON_DUMP (the reward manifest to $HORIZON_DUMP.reward, the update
+    budget to $HORIZON_DUMP.update) and exits without a process sidecar, which
+    stops the screen right after the hand-off. vendor/PufferLib exposes a fake `_C` with
     a consistent obs-v6 contract, and the warm carries a real eligible sidecar
     bound to that build, so the plan writer's module probe and lineage binding
     execute for real."""
@@ -67,7 +68,10 @@ def stand_in_checkout(base, tools_source=None):
         "#!/bin/bash\n"
         "printf 'GAMMA=%s\\nGAE_LAMBDA=%s\\n' \"$GAMMA\" \"$GAE_LAMBDA\" "
         "> \"$HORIZON_DUMP\"\n"
-        "printf '%s\\n' \"$REWARD_MANIFEST\" > \"$HORIZON_DUMP.reward\"\n")
+        "printf '%s\\n' \"$REWARD_MANIFEST\" > \"$HORIZON_DUMP.reward\"\n"
+        "printf 'REPLAY_RATIO=%s\\nMINIBATCH_SIZE=%s\\nTOTAL_AGENTS=%s\\nHORIZON=%s\\n' "
+        "\"$REPLAY_RATIO\" \"$MINIBATCH_SIZE\" \"$TOTAL_AGENTS\" \"$HORIZON\" "
+        "> \"$HORIZON_DUMP.update\"\n")
     for name in ("puffer", "training"):
         (root / name).symlink_to(ROOT / name)
     vendor = root / "vendor/PufferLib"
@@ -927,3 +931,117 @@ class HorizonScreenStandInTests(unittest.TestCase):
             flag = argv.index("--train.gamma")
             self.assertEqual(argv[flag:flag + 4],
                              ["--train.gamma", gamma, "--train.gae-lambda", lam])
+
+    def test_plan_records_the_replay_ratio_only_when_declared(self):
+        r = self.screen("plain")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", r.stdout)
+        plain = self.contract("plain")
+        self.assertEqual(sorted(plain["ladder"]), HISTORICAL_LADDER_KEYS)
+        self.assertNotIn("replay_ratio", json.dumps(plain))
+        # An explicitly empty knob is the unset knob.
+        r = self.screen("empty", LADDER_REPLAY_RATIO="")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", r.stdout)
+        empty = self.contract("empty")
+        r = self.screen("rr1", LADDER_REPLAY_RATIO="1.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", r.stdout)
+        rr1 = self.contract("rr1")
+        self.assertEqual(rr1["ladder"].pop("replay_ratio"), 1.0)
+        # The minibatch stays the fixed contract: only the count changes.
+        self.assertEqual(rr1["settings"]["minibatch_size"], "16384")
+        for contract in (plain, empty, rr1):
+            contract.pop("out_dir")
+        self.assertEqual(empty, plain)
+        self.assertEqual(rr1, plain)
+        # Chain 30's knobs: the horizon arm plus the update budget, all three
+        # recorded beside each other.
+        r = self.screen("chain30", LADDER_GAMMA="0.999", LADDER_GAE_LAMBDA="0.95",
+                        LADDER_REPLAY_RATIO="1.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", r.stdout)
+        ladder = self.contract("chain30")["ladder"]
+        self.assertEqual(
+            (ladder["gamma"], ladder["gae_lambda"], ladder["replay_ratio"]),
+            (0.999, 0.95, 1.0))
+        self.assertEqual(sorted(ladder), sorted(
+            HISTORICAL_LADDER_KEYS + ["gamma", "gae_lambda", "replay_ratio"]))
+
+    def test_declared_replay_ratio_reaches_the_arm_launcher_argv_and_run_manifest(self):
+        from tools.test_ladder_knobs import (render_run_manifest_pairs,
+                                             render_trainer_argv)
+        update = Path(str(self.dump) + ".update")
+        for knobs, ratio in (({}, "0.25"), ({"LADDER_REPLAY_RATIO": "1.0"}, "1.0")):
+            if update.exists():
+                update.unlink()
+            r = self.screen(f"arm-rr-{ratio}", PLAN_ONLY="0", **knobs)
+            self.assertIn("missing process sidecar", r.stderr, knobs)
+            received = dict(line.split("=", 1)
+                            for line in update.read_text().splitlines())
+            self.assertEqual(received, {"REPLAY_RATIO": ratio,
+                                        "MINIBATCH_SIZE": "16384",
+                                        "TOTAL_AGENTS": "2048", "HORIZON": "64"},
+                             knobs)
+            argv = render_trainer_argv(**received)
+            self.assertEqual(argv[argv.index("--train.replay-ratio") + 1], ratio)
+            self.assertEqual(argv[argv.index("--train.minibatch-size") + 1], "16384")
+            pairs = render_run_manifest_pairs(**received)
+            self.assertEqual(pairs["replay_ratio"], ratio, knobs)
+            self.assertEqual(pairs["minibatch_size"], "16384", knobs)
+
+
+class LadderReplayRatioTests(unittest.TestCase):
+    """LADDER_REPLAY_RATIO: the update budget for an update-budget arm,
+    rung-shaped profiles only. The native trainer runs
+    int(replay_ratio x 131072 / 16384) Muon steps per epoch, so a ratio is
+    accepted only when that count is whole. Unset keeps the fixed contract
+    (0.25, two steps per epoch) and every published artifact exactly as it
+    was."""
+
+    RUNG_OK = LadderHorizonTests.RUNG_OK
+
+    def test_replay_ratio_is_rung_only_and_validated(self):
+        from tools.test_ladder_knobs import (BAD_REPLAY_RATIO_VALUES,
+                                             GOOD_REPLAY_RATIO_VALUES,
+                                             TRUNCATING_REPLAY_RATIO_VALUES)
+        for profile in ("control-final", "genesis-pool", "possession-gain-exact"):
+            result = run(SCREEN, {
+                "WARM": "missing.bin", "POOL": "missing-pool",
+                "STEPS": "12000000000", "SCREEN_PROFILE": profile,
+                "LADDER_REPLAY_RATIO": "1.0",
+            })
+            self.assertNotEqual(result.returncode, 0, profile)
+            self.assertIn("LADDER_REPLAY_RATIO is only valid with "
+                          "SCREEN_PROFILE=ladder-rung, graft or bridge",
+                          result.stderr, profile)
+        for bad in BAD_REPLAY_RATIO_VALUES:
+            result = run(SCREEN, {**self.RUNG_OK, "LADDER_REPLAY_RATIO": bad})
+            self.assertNotEqual(result.returncode, 0, bad)
+            self.assertIn("LADDER_REPLAY_RATIO must be a decimal in (0,4] with at "
+                          "most three decimals", result.stderr, bad)
+        for bad in TRUNCATING_REPLAY_RATIO_VALUES:
+            result = run(SCREEN, {**self.RUNG_OK, "LADDER_REPLAY_RATIO": bad})
+            self.assertNotEqual(result.returncode, 0, bad)
+            self.assertIn(f"LADDER_REPLAY_RATIO={bad} does not give a whole number "
+                          f"of minibatches per epoch ({bad} x 131072 / 16384)",
+                          result.stderr, bad)
+        for good, _ in GOOD_REPLAY_RATIO_VALUES:
+            result = run(SCREEN, {**self.RUNG_OK, "LADDER_REPLAY_RATIO": good})
+            self.assertNotEqual(result.returncode, 0, good)
+            self.assertNotIn("LADDER_REPLAY_RATIO", result.stderr, good)
+            self.assertIn("missing warm checkpoint", result.stderr, good)
+        # graft and bridge take the rung's knobs, so neither refuses it as out
+        # of profile; each stops later on its own missing declaration.
+        for profile in ("graft", "bridge"):
+            result = run(SCREEN, {**self.RUNG_OK, "SCREEN_PROFILE": profile,
+                                  "LADDER_REPLAY_RATIO": "1.0"})
+            self.assertNotEqual(result.returncode, 0, profile)
+            self.assertNotIn("LADDER_REPLAY_RATIO", result.stderr, profile)
+            self.assertIn(f"{profile} requires", result.stderr, profile)
+        # An empty value is unset on every profile.
+        result = run(SCREEN, {"WARM": "missing.bin", "POOL": "missing-pool",
+                              "STEPS": "12000000000",
+                              "SCREEN_PROFILE": "control-final",
+                              "LADDER_REPLAY_RATIO": ""})
+        self.assertNotIn("LADDER_REPLAY_RATIO", result.stderr)

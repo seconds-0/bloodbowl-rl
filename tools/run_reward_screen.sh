@@ -101,6 +101,15 @@ LADDER_CHAIN_ENT_SCALE="${LADDER_CHAIN_ENT_SCALE:-1}"
 # when either is set, both effective values are recorded in contract.ladder.
 LADDER_GAMMA="${LADDER_GAMMA:-}"
 LADDER_GAE_LAMBDA="${LADDER_GAE_LAMBDA:-}"
+# ladder-rung / graft / bridge only: the trainer's replay ratio for an
+# update-budget arm (D396). The native trainer takes
+# int(replay_ratio x TOTAL_AGENTS x HORIZON / MINIBATCH_SIZE) Muon steps per
+# epoch (vendor/PufferLib/src/pufferlib.cu, total_minibatches), 2 at the fixed
+# 0.25 below; the batch and minibatch stay fixed, so only the step count moves.
+# Unset keeps the fixed contract and publishes the same SCREEN_MANIFEST as
+# before the knob existed; when set, the effective value is recorded in
+# contract.ladder.
+LADDER_REPLAY_RATIO="${LADDER_REPLAY_RATIO:-}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -247,6 +256,33 @@ for knob in LADDER_GAMMA LADDER_GAE_LAMBDA; do
 done
 [ -z "$LADDER_GAMMA" ] || GAMMA="$LADDER_GAMMA"
 [ -z "$LADDER_GAE_LAMBDA" ] || GAE_LAMBDA="$LADDER_GAE_LAMBDA"
+if [ "$RUNG_LIKE" != "1" ] && [ -n "$LADDER_REPLAY_RATIO" ]; then
+  echo "LADDER_REPLAY_RATIO is only valid with SCREEN_PROFILE=ladder-rung, graft or bridge" >&2
+  exit 1
+fi
+if [ -n "$LADDER_REPLAY_RATIO" ]; then
+  # The minibatch count is a float32 product truncated toward zero, so a ratio
+  # whose count is not whole trains fewer steps than it declares (0.3 trains as
+  # 0.25, 0.1 trains nothing). Under the fixed batch and minibatch above the
+  # exact ratios are the multiples of MINIBATCH_SIZE / (TOTAL_AGENTS x HORIZON)
+  # = 0.125, from 1 to 32 steps per epoch.
+  if [[ ! "$LADDER_REPLAY_RATIO" =~ ^([0-4])(\.([0-9]{1,3}))?$ ]]; then
+    echo "LADDER_REPLAY_RATIO must be a decimal in (0,4] with at most three decimals, got '$LADDER_REPLAY_RATIO'" >&2
+    exit 1
+  fi
+  replay_fraction="${BASH_REMATCH[3]}000"
+  replay_milli=$(( 10#${BASH_REMATCH[1]} * 1000 + 10#${replay_fraction:0:3} ))
+  if [ "$replay_milli" -le 0 ] || [ "$replay_milli" -gt 4000 ]; then
+    echo "LADDER_REPLAY_RATIO must be a decimal in (0,4] with at most three decimals, got '$LADDER_REPLAY_RATIO'" >&2
+    exit 1
+  fi
+  if [ $(( replay_milli * TOTAL_AGENTS * HORIZON % (MINIBATCH_SIZE * 1000) )) -ne 0 ]; then
+    replay_step_milli=$(( MINIBATCH_SIZE * 1000 / (TOTAL_AGENTS * HORIZON) ))
+    echo "LADDER_REPLAY_RATIO=$LADDER_REPLAY_RATIO does not give a whole number of minibatches per epoch ($LADDER_REPLAY_RATIO x $(( TOTAL_AGENTS * HORIZON )) / $MINIBATCH_SIZE); the native trainer truncates the count, so use a multiple of $(( replay_step_milli / 1000 )).$(printf '%03d' $(( replay_step_milli % 1000 )))" >&2
+    exit 1
+  fi
+  REPLAY_RATIO="$LADDER_REPLAY_RATIO"
+fi
 case "$SCREEN_PROFILE" in
   distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung|graft|bridge)
     [ -z "$CANDIDATE_ARM$TRANSFER_COMPLETE$EXPECTED_TRANSFER_SHA256" ] || {
@@ -738,6 +774,7 @@ SCREEN_PLAN="$(
       LADDER_ARM="$LADDER_ARM" LR="$LR" ENT_COEF="$ENT_COEF" \
       LADDER_GAMMA="$LADDER_GAMMA" LADDER_GAE_LAMBDA="$LADDER_GAE_LAMBDA" \
       GAMMA="$GAMMA" GAE_LAMBDA="$GAE_LAMBDA" \
+      LADDER_REPLAY_RATIO="$LADDER_REPLAY_RATIO" REPLAY_RATIO="$REPLAY_RATIO" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
 
@@ -1139,6 +1176,8 @@ if profile in ("ladder-rung", "graft", "bridge"):
     if os.environ.get("LADDER_GAMMA") or os.environ.get("LADDER_GAE_LAMBDA"):
         contract["ladder"]["gamma"] = float(os.environ["GAMMA"])
         contract["ladder"]["gae_lambda"] = float(os.environ["GAE_LAMBDA"])
+    if os.environ.get("LADDER_REPLAY_RATIO"):
+        contract["ladder"]["replay_ratio"] = float(os.environ["REPLAY_RATIO"])
 if profile in ("paired-confirmation", "paired-final"):
     from analyze_reward_candidate_transfer import (
         TransferError, validate_completion_evidence,
