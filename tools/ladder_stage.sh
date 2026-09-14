@@ -35,6 +35,10 @@
 #   LADDER_CHAIN_ENT_SCALE forwarded when set (entropy-only scale, default 1)
 #   LADDER_GAMMA / LADDER_GAE_LAMBDA  trainer discount / GAE lambda for a
 #     horizon arm, forwarded when set (unset = the screen's fixed contract)
+#   LADDER_REPLAY_RATIO  trainer replay ratio for an update-budget arm, a
+#     multiple of 0.125 in (0,4] (whole minibatches per epoch under the
+#     screen's fixed batch); forwarded when set, with the gradient steps per
+#     epoch in the stage banner (unset = the screen's fixed 0.25, 2 steps)
 #   SCRIPTED_BANK_TAG / SCRIPTED_BOT_TYPE  scripted bank for this rung
 #     (forwarded to launch_ladder_rung.sh only when set; unset = ordinary rung)
 #   LADDER_PROFILE=graft + GRAFT_FROM_SOURCE_SHA256 / GRAFT_FROM_PATCH_BUNDLE_SHA256
@@ -81,6 +85,31 @@ for knob in LADDER_GAMMA LADDER_GAE_LAMBDA; do
     exit 1
   fi
 done
+# The screen's fixed batch contract: TOTAL_AGENTS 2048 x HORIZON 64 rows per
+# epoch, MINIBATCH_SIZE 16384 per gradient step. The native trainer runs
+# int(replay_ratio x batch / minibatch) steps per epoch, so the screen refuses
+# a LADDER_REPLAY_RATIO whose count is not whole; checking here fails it before
+# a pool is built, and the count goes in the stage banner.
+SCREEN_BATCH=131072
+SCREEN_MINIBATCH=16384
+REPLAY_STEPS_PER_EPOCH=""
+if [ -n "${LADDER_REPLAY_RATIO:-}" ]; then
+  if [[ ! "$LADDER_REPLAY_RATIO" =~ ^([0-4])(\.([0-9]{1,3}))?$ ]]; then
+    echo "LADDER_REPLAY_RATIO must be a decimal in (0,4] with at most three decimals, got '$LADDER_REPLAY_RATIO'" >&2
+    exit 1
+  fi
+  replay_fraction="${BASH_REMATCH[3]}000"
+  replay_milli=$(( 10#${BASH_REMATCH[1]} * 1000 + 10#${replay_fraction:0:3} ))
+  if [ "$replay_milli" -le 0 ] || [ "$replay_milli" -gt 4000 ]; then
+    echo "LADDER_REPLAY_RATIO must be a decimal in (0,4] with at most three decimals, got '$LADDER_REPLAY_RATIO'" >&2
+    exit 1
+  fi
+  if [ $(( replay_milli * SCREEN_BATCH % (SCREEN_MINIBATCH * 1000) )) -ne 0 ]; then
+    echo "LADDER_REPLAY_RATIO=$LADDER_REPLAY_RATIO does not give a whole number of minibatches per epoch ($LADDER_REPLAY_RATIO x $SCREEN_BATCH / $SCREEN_MINIBATCH); the native trainer truncates the count, so use a multiple of 0.125" >&2
+    exit 1
+  fi
+  REPLAY_STEPS_PER_EPOCH=$(( replay_milli * SCREEN_BATCH / (SCREEN_MINIBATCH * 1000) ))
+fi
 POOL_KEEP="${POOL_KEEP:-$((NUM_FROZEN_BANKS - 1))}"
 POOL_ANCHOR="${POOL_ANCHOR:-}"
 PREV_COMPLETE="${PREV_COMPLETE:-}"
@@ -252,6 +281,7 @@ fi
 [ -z "${LADDER_CHAIN_ENT_SCALE:-}" ] || export LADDER_CHAIN_ENT_SCALE
 [ -z "${LADDER_GAMMA:-}" ] || export LADDER_GAMMA
 [ -z "${LADDER_GAE_LAMBDA:-}" ] || export LADDER_GAE_LAMBDA
+[ -z "${LADDER_REPLAY_RATIO:-}" ] || export LADDER_REPLAY_RATIO
 [ -z "${SCRIPTED_BANK_TAG:-}" ] || export SCRIPTED_BANK_TAG
 [ -z "${SCRIPTED_BOT_TYPE:-}" ] || export SCRIPTED_BOT_TYPE
 [ -z "${LADDER_PROFILE:-}" ] || export LADDER_PROFILE
@@ -274,6 +304,8 @@ esac
   echo "  bot  scripted_bank_tag=${SCRIPTED_BANK_TAG:-0} scripted_bot_type=${SCRIPTED_BOT_TYPE:-0}"
 [ -z "${LADDER_GAMMA:-}${LADDER_GAE_LAMBDA:-}" ] || \
   echo "  horizon gamma=${LADDER_GAMMA:-contract} gae_lambda=${LADDER_GAE_LAMBDA:-contract}"
+[ -z "${LADDER_REPLAY_RATIO:-}" ] || \
+  echo "  update replay_ratio=$LADDER_REPLAY_RATIO gradient_steps_per_epoch=$REPLAY_STEPS_PER_EPOCH (batch $SCREEN_BATCH / minibatch $SCREEN_MINIBATCH)"
 export POOL="$POOL_OUT/pool"
 export DEADLINE_HOURS="${DEADLINE_HOURS:-40}"
 exec bash tools/launch_ladder_rung.sh
