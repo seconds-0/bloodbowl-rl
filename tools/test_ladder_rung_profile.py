@@ -1045,3 +1045,67 @@ class LadderReplayRatioTests(unittest.TestCase):
                               "SCREEN_PROFILE": "control-final",
                               "LADDER_REPLAY_RATIO": ""})
         self.assertNotIn("LADDER_REPLAY_RATIO", result.stderr)
+
+    def test_rung_launcher_forwards_the_replay_ratio_and_marks_the_trained_value(self):
+        source = RUNG.read_text(encoding="utf-8")
+        self.assertIn('LADDER_GAMMA="${LADDER_GAMMA:-}" '
+                      'LADDER_GAE_LAMBDA="${LADDER_GAE_LAMBDA:-}" \\\n'
+                      '      LADDER_REPLAY_RATIO="${LADDER_REPLAY_RATIO:-}" \\\n',
+                      source)
+        code = marker_block()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            log = tmp / "arm.log"
+            run_manifest = Path(str(log) + ".manifest.json")
+            result_path = tmp / "r.json"
+            result_path.write_text(json.dumps({
+                "acceptance_pass": True, "tag": "t", "log": str(log),
+                "checkpoint": "c", "checkpoint_sha256": "s",
+                "checkpoint_lineage": "cl", "checkpoint_lineage_sha256": "cls",
+                "eval_metrics": {"tds": 1.6, "perf": 0.57}}))
+            out = tmp / "m.json"
+
+            def mark(trained, **knobs):
+                run_manifest.write_text(json.dumps(trained))
+                if out.exists():
+                    out.unlink()
+                env = {k: v for k, v in os.environ.items()
+                       if not k.startswith("LADDER_")}
+                env.update(knobs)
+                return subprocess.run(
+                    ["python3", "-", str(result_path), str(out), "0", "0",
+                     "3000000000", "42", "w", "p", "pfx", "", "0.5", "4", "0",
+                     "ladder-rung", "", "", "", "", "", "", ""],
+                    input=code, env=env, text=True, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, check=False, timeout=60)
+
+            contract = {"gamma": "0.995", "gae_lambda": "0.85", "replay_ratio": "0.25"}
+            r = mark(contract)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            plain = json.loads(out.read_text())
+            self.assertNotIn("replay_ratio", plain)
+            r = mark({**contract, "replay_ratio": "1.0"}, LADDER_REPLAY_RATIO="1.0")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            marker = json.loads(out.read_text())
+            self.assertEqual(marker.pop("replay_ratio"), 1.0)
+            self.assertEqual(marker, plain)
+            # Chain 30: horizon and update budget recorded together.
+            r = mark({"gamma": "0.999", "gae_lambda": "0.95", "replay_ratio": "1.0"},
+                     LADDER_GAMMA="0.999", LADDER_GAE_LAMBDA="0.95",
+                     LADDER_REPLAY_RATIO="1.0")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            marker = json.loads(out.read_text())
+            self.assertEqual((marker["gamma"], marker["gae_lambda"],
+                              marker["replay_ratio"]), (0.999, 0.95, 1.0))
+            # The value comes from the run manifest the lineage sidecar hashes,
+            # and a declaration the trained run contradicts publishes nothing.
+            r = mark(contract, LADDER_REPLAY_RATIO="1.0")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("LADDER_REPLAY_RATIO=1.0 but the run trained "
+                          "replay_ratio=0.25; refusing to publish this rung", r.stderr)
+            self.assertFalse(out.exists())
+
+    def test_rung_banner_names_the_declared_replay_ratio(self):
+        source = RUNG.read_text(encoding="utf-8")
+        self.assertIn('[ -z "${LADDER_REPLAY_RATIO:-}" ] || \\\n'
+                      '  echo "  update replay_ratio=$LADDER_REPLAY_RATIO"', source)
