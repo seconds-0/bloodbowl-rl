@@ -1,0 +1,156 @@
+diff --git a/pufferlib/pufferl.py b/pufferlib/pufferl.py
+index ed36adf..263af9d 100644
+--- a/pufferlib/pufferl.py
++++ b/pufferlib/pufferl.py
+@@ -124,10 +124,10 @@ def print_dashboard(args, model_size, flat_logs, clear=False, phase_eval=False,
+ 
+     l = Table(box=None, expand=True)
+     l.add_column(f'{c1}Losses', justify="left", width=16)
+-    l.add_column(f'{c1}Value', justify="right", width=8)
++    l.add_column(f'{c1}Value', justify="right", width=10)
+     for k, v in flat_logs.items():
+         if k.startswith('loss/'):
+-            l.add_row(f'{b2}{k[5:]}', f'{b2}{v:.3f}')
++            l.add_row(f'{b2}{k[5:]}', f'{b2}{v:.3g}')
+ 
+     monitor = Table(box=None, expand=True, pad_edge=False)
+     monitor.add_row(s, p, l)
+@@ -196,6 +196,27 @@ def print_dashboard(args, model_size, flat_logs, clear=False, phase_eval=False,
+         env_json, sort_keys=True, allow_nan=False)
+     sys.stdout.flush()
+     os.write(sys.stdout.fileno(), (_panel + chr(10)).encode('utf-8'))
++    # LOCAL PATCH (bloodbowl-rl, deciding-row telemetry): the dashboard rounds
++    # losses, and kl/clipfrac sit near 1e-5 on this recipe. Emit every loss at
++    # full precision as its own atomic record; a non-finite value is written as
++    # a string so a diverged update is recorded instead of raising here.
++    loss_json = {}
++    for key, value in flat_logs.items():
++        if key.startswith('loss/'):
++            value = float(value)
++            loss_json[key[5:]] = value if np.isfinite(value) else repr(value)
++    if loss_json:
++        loss_json.update({
++            '_puffer_loss_schema': 1,
++            '_puffer_phase_eval': int(phase_eval),
++            '_puffer_final_reprint': int(final_reprint),
++            '_puffer_agent_steps': float(flat_logs.get('agent_steps', 0)),
++            '_puffer_epoch': int(phase_epoch),
++        })
++        _loss_panel = 'PUFFER_LOSS_JSON ' + json.dumps(
++            loss_json, sort_keys=True, allow_nan=False)
++        sys.stdout.flush()
++        os.write(sys.stdout.fileno(), (_loss_panel + chr(10)).encode('utf-8'))
+ 
+ def validate_config(args):
+     minibatch_size = args['train']['minibatch_size']
+diff --git a/src/bindings.cu b/src/bindings.cu
+index a012d68..ddf99d8 100644
+--- a/src/bindings.cu
++++ b/src/bindings.cu
+@@ -55,6 +55,25 @@ pybind11::dict puf_log(pybind11::object pufferl_obj) {
+         losses_dict["old_kl"] = losses_host[LOSS_OLD_APPROX_KL] * inv_n;
+         losses_dict["kl"] = losses_host[LOSS_APPROX_KL] * inv_n;
+         losses_dict["clipfrac"] = losses_host[LOSS_CLIPFRAC] * inv_n;
++        // BEGIN deciding-row telemetry log (LOCAL PATCH, bloodbowl-rl, audit B6).
++        // entropy/kl/clipfrac above average over every row, including waiting
++        // rows with singleton support; the *_deciding means exclude those rows.
++        double deciding_acc = losses_host[LOSS_DECIDING_FRAC];
++        losses_dict["deciding_frac"] = deciding_acc * inv_n;
++        if (deciding_acc > 0) {
++            losses_dict["entropy_deciding"] = losses_host[LOSS_DECIDING_ENT] / deciding_acc;
++            losses_dict["kl_deciding"] = losses_host[LOSS_DECIDING_KL] / deciding_acc;
++            losses_dict["clipfrac_deciding"] = losses_host[LOSS_DECIDING_CLIPFRAC] / deciding_acc;
++        }
++        double ret_mean = losses_host[LOSS_RET_MEAN] * (double)inv_n;
++        double ret_var = losses_host[LOSS_RET_SQ] * (double)inv_n - ret_mean * ret_mean;
++        double residual_mean = losses_host[LOSS_VALUE_RESIDUAL_MEAN] * (double)inv_n;
++        double residual_var = losses_host[LOSS_VALUE_RESIDUAL_SQ] * (double)inv_n - residual_mean * residual_mean;
++        if (ret_var > 0) {
++            losses_dict["explained_variance"] = 1.0 - residual_var / ret_var;
++        }
++        losses_dict["grad_norm"] = losses_host[LOSS_GRAD_NORM] * inv_n;
++        // END deciding-row telemetry log
+     }
+     cudaMemset(pufferl.losses_puf.data, 0, numel(pufferl.losses_puf.shape) * sizeof(float));
+     result["loss"] = losses_dict;
+diff --git a/src/pufferlib.cu b/src/pufferlib.cu
+index 45f56fd..c76daea 100644
+--- a/src/pufferlib.cu
++++ b/src/pufferlib.cu
+@@ -20,7 +20,11 @@ static double wall_clock() {
+ enum LossIdx {
+     LOSS_PG = 0, LOSS_VF = 1, LOSS_ENT = 2, LOSS_TOTAL = 3,
+     LOSS_OLD_APPROX_KL = 4, LOSS_APPROX_KL = 5, LOSS_CLIPFRAC = 6,
+-    LOSS_N = 7, NUM_LOSSES = 8,
++    // LOCAL PATCH (bloodbowl-rl, deciding-row telemetry): log-only channels.
++    LOSS_DECIDING_FRAC = 7, LOSS_DECIDING_ENT = 8, LOSS_DECIDING_KL = 9,
++    LOSS_DECIDING_CLIPFRAC = 10, LOSS_RET_MEAN = 11, LOSS_RET_SQ = 12,
++    LOSS_VALUE_RESIDUAL_MEAN = 13, LOSS_VALUE_RESIDUAL_SQ = 14,
++    LOSS_N = 15, LOSS_GRAD_NORM = 16, NUM_LOSSES = 17,
+ };
+ 
+ enum ProfileIdx {
+@@ -882,6 +886,29 @@ __device__ __forceinline__ void ppo_continuous_head(
+     *out_entropy = HALF_1_PLUS_LOG_2PI + log_std;
+ }
+ 
++// LOCAL PATCH (bloodbowl-rl, deciding-row telemetry): true when some head of
++// the stored conditional support enables more than one action, which under
++// exact joint masks is exactly "the joint support has more than one action".
++__device__ __forceinline__ bool row_has_choice(
++        const precision_t* mask, int mask_base, const int* act_sizes, int num_atns) {
++    int logits_offset = 0;
++    for (int h = 0; h < num_atns; ++h) {
++        int enabled = 0;
++        for (int j = 0; j < act_sizes[h]; ++j) {
++            if (action_enabled(mask, mask_base, logits_offset, j) && ++enabled > 1) {
++                return true;
++            }
++        }
++        logits_offset += act_sizes[h];
++    }
++    return false;
++}
++
++// Pre-clip gradient norm, accumulated once per minibatch beside the loss count.
++__global__ void accumulate_grad_norm(float* __restrict__ losses_acc, const float* __restrict__ grad_norm_sq) {
++    losses_acc[LOSS_GRAD_NORM] += sqrtf(*grad_norm_sq);
++}
++
+ __global__ void ppo_loss_compute(
+         float* __restrict__ ppo_partials,
+         PPOKernelArgs a, PPOGraphArgs g) {
+@@ -1053,6 +1080,23 @@ __global__ void ppo_loss_compute(
+     block_losses[LOSS_OLD_APPROX_KL][tid] = (-logratio) * inv_NT;
+     block_losses[LOSS_APPROX_KL][tid] = ((ratio - 1.0f) - logratio) * inv_NT;
+     block_losses[LOSS_CLIPFRAC][tid] = (fabsf(ratio - 1.0f) > a.clip_coef ? 1.0f : 0.0f) * inv_NT;
++    // BEGIN deciding-row telemetry channels (LOCAL PATCH, bloodbowl-rl, audit B6).
++    // A waiting coach's row has one enabled action per head (entropy 0, ratio 1,
++    // no policy gradient) yet counts in inv_NT above. Log-only channels: the
++    // loss and every gradient are computed above and never read these.
++    bool deciding_row = a.is_continuous || row_has_choice(a.action_mask, mask_base, a.act_sizes, a.num_atns);
++    float deciding = deciding_row ? 1.0f : 0.0f;
++    float clip_hit = fabsf(ratio - 1.0f) > a.clip_coef ? 1.0f : 0.0f;
++    float value_residual = ret - val;
++    block_losses[LOSS_DECIDING_FRAC][tid] = deciding * inv_NT;
++    block_losses[LOSS_DECIDING_ENT][tid] = deciding * total_entropy * inv_NT;
++    block_losses[LOSS_DECIDING_KL][tid] = deciding * ((ratio - 1.0f) - logratio) * inv_NT;
++    block_losses[LOSS_DECIDING_CLIPFRAC][tid] = deciding * clip_hit * inv_NT;
++    block_losses[LOSS_RET_MEAN][tid] = ret * inv_NT;
++    block_losses[LOSS_RET_SQ][tid] = ret * ret * inv_NT;
++    block_losses[LOSS_VALUE_RESIDUAL_MEAN][tid] = value_residual * inv_NT;
++    block_losses[LOSS_VALUE_RESIDUAL_SQ][tid] = value_residual * value_residual * inv_NT;
++    // END deciding-row telemetry channels
+     } // end if (idx < total_elements)
+ 
+ // Deterministic aggregation
+@@ -1769,6 +1813,9 @@ clamp_precision_kernel<<<grid_size(numel(rollouts.rewards.shape)), BLOCK_SIZE, 0
+                 grad_logits_puf, grad_logstd_puf, grad_values_puf, stream);
+ 
+             muon_step(&pufferl.muon, pufferl.master_weights, pufferl.grad_puf, hypers.max_grad_norm, stream);
++            // LOCAL PATCH (bloodbowl-rl, deciding-row telemetry): muon_step leaves
++            // the pre-clip squared norm on the device; accumulate it in-graph.
++            accumulate_grad_norm<<<1, 1, 0, stream>>>(pufferl.losses_puf.data, pufferl.muon.grad_norm_ptr);
+             if (USE_BF16) {
+                 int n = numel(pufferl.param_puf.shape);
+                 cast<<<grid_size(n), BLOCK_SIZE, 0, stream>>>(

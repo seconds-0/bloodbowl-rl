@@ -62,6 +62,7 @@ jobs:
             training.test_recurrent_cuda_qualification \
             training.test_exact_joint_actions \
             training.test_recurrent_eval_state \
+            training.test_deciding_row_telemetry \
             training.test_convert_checkpoint
       - name: Build + unit tests
         run: make test
