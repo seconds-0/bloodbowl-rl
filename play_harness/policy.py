@@ -207,10 +207,17 @@ def random_policy(seed=0, kernel="native", scale=0.02):
     return policy
 
 
+MIN_TEMPERATURE = 1e-3
+MAX_TEMPERATURE = 1e3
+
+
 def check_temperature(temperature):
+    """Temperatures outside [1e-3, 1e3] overflow or flatten float32 logits (NaN logprobs,
+    argmax ties), so they are refused."""
     t = float(temperature)
-    if not (math.isfinite(t) and t > 0.0):
-        raise ValueError(f"policy temperature must be finite and > 0, got {temperature!r}")
+    if not (math.isfinite(t) and MIN_TEMPERATURE <= t <= MAX_TEMPERATURE):
+        raise ValueError(f"policy temperature must be in [{MIN_TEMPERATURE:g}, "
+                         f"{MAX_TEMPERATURE:g}], got {temperature!r}")
     return t
 
 
@@ -221,6 +228,9 @@ def select_joint(logits, support, mode="sample", generator=None, temperature=1.0
     and the native sampler. mode='argmax' is the conditional argmax.
     temperature T divides every head's logits before masking and selection
     (T = 1 is the trained policy exactly; argmax choices do not depend on T).
+    This tempers each head's conditional softmax. It is not the joint
+    distribution raised to 1/T and renormalized, which would weigh a type by
+    the tempered mass of all its (arg, square) continuations.
     The returned logprob is under the tempered distribution that was used.
     Returns (tuple, joint logprob, per-head support masks).
     """

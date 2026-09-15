@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import math
 import os
 import random
 import shutil
@@ -124,12 +125,23 @@ def test_temperature_divides_every_head_before_selection():
 
 def test_temperature_must_be_positive_and_finite():
     policy = random_policy(seed=1)
-    for bad in (0.0, -1.0, float("inf"), float("nan")):
+    for bad in (0.0, -1.0, float("inf"), float("nan"), 1e-300, 1e300, 9.9e-4, 1.01e3):
         with pytest.raises(ValueError):
             select_joint(torch.zeros(454), np.array([0], dtype=np.uint32), temperature=bad)
         with pytest.raises(ValueError):
             PolicySeat(policy, 0, temperature=bad)
     assert PolicySeat(policy, 1, temperature=0.7).temperature == 0.7
+    # the range ends stay numerically sound on ordinary logits
+    g = torch.Generator().manual_seed(5)
+    logits = torch.randn(454, generator=g) * 8.0
+    support = np.array([(a << 20) | (b << 10) | c for a in range(3) for b in range(4) for c in range(5)],
+                       dtype=np.int64)
+    for t in (1e-3, 1e3):
+        tup, lp, _ = select_joint(logits, support, "sample", torch.Generator().manual_seed(1),
+                                  temperature=t)
+        assert math.isfinite(lp)
+        assert select_joint(logits, support, "argmax", temperature=t)[0] == \
+            select_joint(logits, support, "argmax")[0]
 
 
 def test_select_joint_rejects_empty_support():
