@@ -1,0 +1,250 @@
+# 0003: exclude frozen-policy rows from the PPO update
+diff --git a/src/pufferl.cu b/src/pufferl.cu
+index 51f6d87f..f13cc5e4 100644
+--- a/src/pufferl.cu
++++ b/src/pufferl.cu
+@@ -293,6 +293,7 @@ __device__ __forceinline__ void block_reduce_sum(
+ #include "algo.cu"
+ #include "protein.cu"
+ #include "exact_joint.h"
++#include "train_rows.h"
+ 
+ typedef struct {
+     int horizon;
+@@ -575,6 +576,13 @@ typedef struct PuffeRL {
+     ulong seed;
+     curandStatePhilox4_32_10_t** rng_states;  // per-buffer persistent RNG states [num_buffers]
+     char env_name[64];  // For policy arch rebuild at create.
++    // PPO learner rows (training/puffer5/patches/0003): only policy 0's rows
++    // enter the training buffer; frozen-policy rows are never gathered.
++    int train_primary_per_buf;  // learner rows per buffer (policy_layout[1])
++    int train_eligible_rows;    // learner rows across all buffers
++    int train_total_rows;       // eligible + wrap pad for contiguous minibatches
++    int* train_row_map;         // device (total_agents,): gathered row -> rollout row
++    int* train_row_map_host;    // pinned host copy, rewritten every epoch
+ } PuffeRL;
+ 
+ // Infer path: sample + forward, then vec workers.
+@@ -1498,6 +1506,53 @@ __global__ void transpose_102(float* dst, const float* src, int A, int B, int C)
+ }
+ #endif
+ 
++// Gather rollout rows (T, B, C) into training rows (R, T, C) through row_map.
++// Replaces the full transpose so frozen-policy rows never reach PPO.
++__global__ void gather_rows_102(precision_t* dst, const precision_t* src,
++        const int* row_map, int T, int B, int C, int R) {
++    int idx = blockIdx.x * blockDim.x + threadIdx.x;
++    int total = R * T * C;
++    if (idx >= total) {
++        return;
++    }
++    int r = idx / (T * C);
++    int rem = idx % (T * C);
++    int t = rem / C;
++    int c = rem % C;
++    dst[idx] = src[(long)t * B * C + (long)row_map[r] * C + c];
++}
++
++#if !defined(PRECISION_FLOAT)
++__global__ void gather_rows_102(float* dst, const float* src,
++        const int* row_map, int T, int B, int C, int R) {
++    int idx = blockIdx.x * blockDim.x + threadIdx.x;
++    int total = R * T * C;
++    if (idx >= total) {
++        return;
++    }
++    int r = idx / (T * C);
++    int rem = idx % (T * C);
++    int t = rem / C;
++    int c = rem % C;
++    dst[idx] = src[(long)t * B * C + (long)row_map[r] * C + c];
++}
++#endif
++
++// Gather initial recurrent state rows: dst (L, A, H) row r <- src row row_map[r].
++__global__ void gather_state_rows(precision_t* dst, const precision_t* src,
++        const int* row_map, int L, int A, int H, int R) {
++    int idx = blockIdx.x * blockDim.x + threadIdx.x;
++    int total = L * R * H;
++    if (idx >= total) {
++        return;
++    }
++    int l = idx / (R * H);
++    int r = (idx / H) % R;
++    int h = idx % H;
++    dst[(long)l * A * H + (long)r * H + h] =
++        src[(long)l * A * H + (long)row_map[r] * H + h];
++}
++
+ // Cosine decay base → min over t in [0, T). Double for t/T (float loses
+ // precision past 2^24). Caller passes epoch and total train epochs.
+ float cosine_annealing(float base, float min_v, long t, long T) {
+@@ -1532,20 +1587,23 @@ static void train_epoch_gpu(PuffeRL* pufferl, RolloutBuf src, int slot,
+     int obs_size = (int)src.observations.shape[2];
+     int num_atns = (int)src.actions.shape[2];
+     int mask_c = src.action_mask.shape[2];
+-    transpose_102<<<grid_size(T * B * obs_size), BLOCK_SIZE, 0, stream>>>(
+-        rollouts->observations.data, src.observations.data, T, B, obs_size);
+-    transpose_102<<<grid_size(T * B * num_atns), BLOCK_SIZE, 0, stream>>>(
+-        rollouts->actions.data, src.actions.data, T, B, num_atns);
+-    transpose_102<<<grid_size(T * B), BLOCK_SIZE, 0, stream>>>(
+-        rollouts->logprobs.data, src.logprobs.data, T, B, 1);
+-    transpose_102<<<grid_size(T * B), BLOCK_SIZE, 0, stream>>>(
+-        rollouts->rewards.data, src.rewards.data, T, B, 1);
+-    transpose_102<<<grid_size(T * B), BLOCK_SIZE, 0, stream>>>(
+-        rollouts->terminals.data, src.terminals.data, T, B, 1);
+-    transpose_102<<<grid_size(T * B), BLOCK_SIZE, 0, stream>>>(
+-        rollouts->values.data, src.values.data, T, B, 1);
+-    transpose_102<<<grid_size(T * B * mask_c), BLOCK_SIZE, 0, stream>>>(
+-        rollouts->action_mask.data, src.action_mask.data, T, B, mask_c);
++    // Learner rows only, in this epoch's rotated order (patch 0003).
++    int R = pufferl->train_total_rows;
++    const int* row_map = pufferl->train_row_map;
++    gather_rows_102<<<grid_size(R * T * obs_size), BLOCK_SIZE, 0, stream>>>(
++        rollouts->observations.data, src.observations.data, row_map, T, B, obs_size, R);
++    gather_rows_102<<<grid_size(R * T * num_atns), BLOCK_SIZE, 0, stream>>>(
++        rollouts->actions.data, src.actions.data, row_map, T, B, num_atns, R);
++    gather_rows_102<<<grid_size(R * T), BLOCK_SIZE, 0, stream>>>(
++        rollouts->logprobs.data, src.logprobs.data, row_map, T, B, 1, R);
++    gather_rows_102<<<grid_size(R * T), BLOCK_SIZE, 0, stream>>>(
++        rollouts->rewards.data, src.rewards.data, row_map, T, B, 1, R);
++    gather_rows_102<<<grid_size(R * T), BLOCK_SIZE, 0, stream>>>(
++        rollouts->terminals.data, src.terminals.data, row_map, T, B, 1, R);
++    gather_rows_102<<<grid_size(R * T), BLOCK_SIZE, 0, stream>>>(
++        rollouts->values.data, src.values.data, row_map, T, B, 1, R);
++    gather_rows_102<<<grid_size(R * T * mask_c), BLOCK_SIZE, 0, stream>>>(
++        rollouts->action_mask.data, src.action_mask.data, row_map, T, B, mask_c, R);
+ 
+     clamp_precision_kernel<<<grid_size(
+         numel(rollouts->rewards.shape)), BLOCK_SIZE, 0, stream>>>(
+@@ -1556,16 +1614,18 @@ static void train_epoch_gpu(PuffeRL* pufferl, RolloutBuf src, int slot,
+             numel(pufferl->train_state.shape) * sizeof(precision_t), stream);
+     } else {
+         Prec slot_st = init_slot(src.initial_states, slot);
+-        cudaMemcpyAsync(pufferl->train_state.data, slot_st.data,
+-            numel(pufferl->train_state.shape) * sizeof(precision_t),
+-            cudaMemcpyDeviceToDevice, stream);
++        int L_st = (int)pufferl->train_state.shape[0];
++        int A_st = (int)pufferl->train_state.shape[1];
++        int H_st = (int)pufferl->train_state.shape[2];
++        gather_state_rows<<<grid_size(L_st * R * H_st), BLOCK_SIZE, 0, stream>>>(
++            pufferl->train_state.data, slot_st.data, row_map, L_st, A_st, H_st, R);
+     }
+     puf_stamp<<<1, 1, 0, stream>>>(st + TE_MID);
+ 
+     int batch_size = hypers->total_agents * hypers->horizon;
+     int mb_segs = hypers->minibatch_size / hypers->horizon;
+     int total_minibatches = hypers->replay_ratio * batch_size / hypers->minibatch_size;
+-    int n_rows = (int)rollouts->observations.shape[0];
++    int n_rows = pufferl->train_eligible_rows;
+     int Nmb = (int)pufferl->train_buf.mb_advantages.shape[0];
+     int Tmb = (int)pufferl->train_buf.mb_advantages.shape[1];
+     constexpr int ADV_THREADS = 64;
+@@ -1666,6 +1726,20 @@ void train_impl(PuffeRL* pufferl, RolloutBuf* src_arg) {
+ 
+     int slot = hypers->async ? pufferl->async_ready_slot : 0;
+     int total_minibatches = hypers->replay_ratio * batch_size / hypers->minibatch_size;
++
++    // Rotate the learner rows this epoch's minibatches cover (patch 0003).
++    // Written outside the graph; the captured gather reads the device map.
++    {
++        int mb_segs = hypers->minibatch_size / hypers->horizon;
++        long start = puf_train_epoch_start(current_epoch, total_minibatches,
++            mb_segs, pufferl->train_eligible_rows);
++        puf_fill_train_row_map(pufferl->train_row_map_host,
++            pufferl->train_total_rows, pufferl->train_eligible_rows,
++            pufferl->train_primary_per_buf, pufferl->vec->agents_per_buf, start);
++        cudaMemcpyAsync(pufferl->train_row_map, pufferl->train_row_map_host,
++            pufferl->train_total_rows * sizeof(int), cudaMemcpyHostToDevice,
++            train_stream);
++    }
+     bool first = hypers->cudagraphs && pufferl->train_cudagraph[slot] == NULL;
+     profile_begin("train_forward_backward", hypers->profile);
+     if (first) {
+@@ -1969,6 +2043,37 @@ PuffeRL* create_pufferl(Ini* ini, TrainContext* ctx) {
+     env_setup(pufferl, vec, &vec_kwargs, env_kwargs);
+     pufferl->vec = vec;
+ 
++    // PPO learner-row layout (patch 0003). policy_layout[1] rows per buffer
++    // belong to the trainable policy; everything after them is frozen.
++    {
++        int apb = vec->agents_per_buf;
++        int primary = vec->policy_layout[1] - vec->policy_layout[0];
++        int mb_segs = hypers.minibatch_size / hypers.horizon;
++        int eligible = num_buffers * primary;
++        int total_rows = eligible + puf_train_pad_rows(eligible, mb_segs);
++        if (primary <= 0 || total_rows > total_agents) {
++            fprintf(stderr,
++                "create_pufferl: %d learner rows per buffer (+%d pad) do not fit "
++                "the %d-row training buffer\n", primary,
++                total_rows - eligible, total_agents);
++            exit(1);
++        }
++        pufferl->train_primary_per_buf = primary;
++        pufferl->train_eligible_rows = eligible;
++        pufferl->train_total_rows = total_rows;
++        cudaMalloc((void**)&pufferl->train_row_map, total_agents * sizeof(int));
++        cudaHostAlloc((void**)&pufferl->train_row_map_host,
++            total_agents * sizeof(int), cudaHostAllocPortable);
++        puf_fill_train_row_map(pufferl->train_row_map_host, total_rows, eligible,
++            primary, apb, 0);
++        cudaMemcpy(pufferl->train_row_map, pufferl->train_row_map_host,
++            total_rows * sizeof(int), cudaMemcpyHostToDevice);
++        if (primary != apb) {
++            printf("PPO learner rows: %d of %d per buffer; %d frozen rows excluded\n",
++                primary, apb, num_buffers * (apb - primary));
++        }
++    }
++
+     cudaMalloc((void**)&pufferl->profile.stamps,
+         2 * NUM_TE * sizeof(unsigned long long));
+     if (PUF_BACKEND == PUF_GPU) {
+diff --git a/src/train_rows.h b/src/train_rows.h
+new file mode 100644
+index 00000000..cc20de0d
+--- /dev/null
++++ b/src/train_rows.h
+@@ -0,0 +1,43 @@
++// Learner-row selection for the PPO update (bloodbowl-rl port).
++//
++// Upstream 5.0 transposes every agent row of the rollout into the training
++// buffer, including rows played by frozen historical policies (selfplay /
++// league banks), whose actions and log-probabilities come from a different
++// policy. This gathers only learner rows (policy 0: the first
++// policy_layout[1] rows of each buffer) into the training buffer, in a rotated
++// order, so frozen rows never reach advantages, the value loss or the policy
++// gradient.
++//
++// Minibatches stay contiguous row slices [mb*mb_segs, +mb_segs) of the
++// gathered buffer. When the eligible count is not a multiple of mb_segs the
++// map wraps into a pad region of mb_segs rows, so every slice is in bounds.
++// The start row rotates by total_minibatches*mb_segs each epoch, so with
++// replay_ratio < 1 every learner row is still visited (upstream always
++// trained rows [0, rr*total) and never the rest).
++#pragma once
++
++static inline int puf_train_pad_rows(int eligible, int mb_segs) {
++    return (eligible % mb_segs) ? mb_segs : 0;
++}
++
++static inline int puf_train_eligible_row(int k, int primary_per_buf, int agents_per_buf) {
++    return (k / primary_per_buf) * agents_per_buf + (k % primary_per_buf);
++}
++
++static inline long puf_train_epoch_start(long epoch, int total_minibatches,
++        int mb_segs, int eligible) {
++    if (eligible <= 0) {
++        return 0;
++    }
++    long step = ((long)total_minibatches * (long)mb_segs) % eligible;
++    return (epoch % eligible) * step % eligible;
++}
++
++// map[r] = physical rollout row for gathered row r, r in [0, total_rows).
++static inline void puf_fill_train_row_map(int* map, int total_rows, int eligible,
++        int primary_per_buf, int agents_per_buf, long epoch_start) {
++    for (int r = 0; r < total_rows; ++r) {
++        int k = (int)((epoch_start + r) % eligible);
++        map[r] = puf_train_eligible_row(k, primary_per_buf, agents_per_buf);
++    }
++}
