@@ -33,7 +33,7 @@ import sys
 import time
 
 from . import engine as E
-from .policy import NONE_TUPLE, PolicySeat, load_checkpoint
+from .policy import NONE_TUPLE, PolicySeat, check_temperature, load_checkpoint
 
 SCHEMA = "bbplay-tournament-game-v1"
 MANIFEST_SCHEMA = "bbplay-tournament-v1"
@@ -57,13 +57,18 @@ def sampling_seed(engine_seed, side):
 
 def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
                max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
-               max_c_steps=200_000):
+               max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0)):
     """One natural match between two policies. Returns (record, seats).
 
+    modes / temperatures are (HOME, AWAY); modes defaults to `mode` for both.
     Raises IntegrityError on any violation of the tournament contract.
     """
-    seats = (seat_factory(home_policy, 0, mode=mode, seed=sampling_seed(engine_seed, 0)),
-             seat_factory(away_policy, 1, mode=mode, seed=sampling_seed(engine_seed, 1)))
+    modes = tuple(modes) if modes is not None else (mode, mode)
+    temperatures = tuple(float(t) for t in temperatures)
+    seats = (seat_factory(home_policy, 0, mode=modes[0], seed=sampling_seed(engine_seed, 0),
+                          temperature=temperatures[0]),
+             seat_factory(away_policy, 1, mode=modes[1], seed=sampling_seed(engine_seed, 1),
+                          temperature=temperatures[1]))
     for seat in seats:
         seat.reset_match()
     eng = E.Engine(engine_seed, episode=episode, max_decisions=max_decisions, lib=lib)
@@ -115,7 +120,9 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
         if counters["decisions_at_terminal"] >= max_decisions:
             raise IntegrityError("decision budget reached at the terminal step")
         record = {
-            "engine_seed": int(engine_seed), "episode": int(episode), "mode": mode,
+            "engine_seed": int(engine_seed), "episode": int(episode),
+            "mode": modes[0] if modes[0] == modes[1] else "mixed",
+            "modes": list(modes), "temperatures": list(temperatures),
             "sampling_seeds": [seats[0].seed, seats[1].seed],
             "team_ids": [int(final.team_id[0]), int(final.team_id[1])],
             "teams": [eng.team_display(final.team_id[0]), eng.team_display(final.team_id[1])],
@@ -135,14 +142,21 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
 
 
 def pair_game(policies, a, b, index, leg, seed0, mode="sample", lib=None,
-              seat_factory=PolicySeat):
-    """One leg of one game of pair (a, b), recorded from A's perspective."""
+              seat_factory=PolicySeat, specs=None):
+    """One leg of one game of pair (a, b), recorded from A's perspective.
+
+    specs maps a player name to {"mode", "temperature"}; a missing name plays
+    `mode` at temperature 1.
+    """
     if leg not in LEGS:
         raise ValueError(f"unknown leg {leg!r}")
     home, away = (a, b) if leg == "A_home" else (b, a)
     seed = int(seed0) + int(index)
-    record, _ = play_match(policies[home], policies[away], seed, mode=mode, lib=lib,
-                           seat_factory=seat_factory)
+    spec = lambda name: {"mode": mode, "temperature": 1.0, **((specs or {}).get(name) or {})}  # noqa: E731
+    record, _ = play_match(policies[home], policies[away], seed, lib=lib,
+                           seat_factory=seat_factory,
+                           modes=(spec(home)["mode"], spec(away)["mode"]),
+                           temperatures=(spec(home)["temperature"], spec(away)["temperature"]))
     a_side = 0 if leg == "A_home" else 1
     a_td, b_td = record["score"][a_side], record["score"][1 - a_side]
     return {"schema": SCHEMA, "pair": [a, b], "game_index": int(index), "leg": leg,
@@ -151,13 +165,60 @@ def pair_game(policies, a, b, index, leg, seed0, mode="sample", lib=None,
             **record}
 
 
-def schedule(names, games_per_pair, seed0):
-    """Tasks (a, b, index, leg) interleaved by game index across all pairs."""
-    if games_per_pair <= 0 or games_per_pair % 2:
-        raise ValueError("games_per_pair must be a positive even number")
-    pairs = list(itertools.combinations(names, 2))
-    return [(a, b, i, leg) for i in range(games_per_pair // 2) for a, b in pairs
+def schedule(names, games_per_pair, seed0, pairs=None):
+    """Tasks (a, b, index, leg) interleaved by game index across pairs.
+
+    pairs: None for the full round robin at games_per_pair, else a list of
+    (a, b) or (a, b, n) with n games for that pair (default games_per_pair).
+    A pair with fewer games stops at its last index while larger pairs go on.
+    """
+    if pairs is None:
+        pairs = list(itertools.combinations(names, 2))
+    sized = []
+    for p in pairs:
+        a, b = p[0], p[1]
+        n = p[2] if len(p) > 2 and p[2] is not None else games_per_pair
+        if n is None or n <= 0 or n % 2:
+            raise ValueError(f"games for pair {a},{b} must be a positive even number")
+        if a == b or a not in names or b not in names:
+            raise ValueError(f"pair {a},{b} needs two distinct known players")
+        sized.append((a, b, int(n)))
+    if len({frozenset(p[:2]) for p in sized}) != len(sized):
+        raise ValueError("duplicate pair")
+    most = max(n for _, _, n in sized)
+    return [(a, b, i, leg) for i in range(most // 2) for a, b, n in sized if i < n // 2
             for leg in LEGS]
+
+
+def parse_pair(text):
+    parts = text.split(",")
+    if len(parts) not in (2, 3):
+        raise ValueError(f"--pair wants A,B or A,B,N, got {text!r}")
+    return (parts[0], parts[1], int(parts[2]) if len(parts) == 3 else None)
+
+
+def parse_assignments(items, cast=str):
+    out = {}
+    for item in items:
+        name, _, value = item.partition("=")
+        if not name or not value:
+            raise ValueError(f"expected NAME=VALUE, got {item!r}")
+        out[name] = cast(value)
+    return out
+
+
+def player_specs(names, mode, player_modes=None, temperatures=None):
+    player_modes, temperatures = player_modes or {}, temperatures or {}
+    unknown = (set(player_modes) | set(temperatures)) - set(names)
+    if unknown:
+        raise ValueError(f"mode/temperature for unknown players {sorted(unknown)}")
+    specs = {}
+    for name in names:
+        m = player_modes.get(name, mode)
+        if m not in ("sample", "argmax"):
+            raise ValueError(f"unknown mode {m!r} for {name}")
+        specs[name] = {"mode": m, "temperature": check_temperature(temperatures.get(name, 1.0))}
+    return specs
 
 
 def task_key(a, b, index, leg):
@@ -180,7 +241,7 @@ def check_record(rec):
 _W = {}
 
 
-def _init_worker(checkpoints, kernel, mode, seed0):
+def _init_worker(checkpoints, kernel, mode, seed0, specs=None):
     os.environ["OMP_NUM_THREADS"] = "1"
     import torch
     torch.set_num_threads(1)
@@ -189,16 +250,18 @@ def _init_worker(checkpoints, kernel, mode, seed0):
     except RuntimeError:
         pass
     _W["lib"] = E.load_library()
-    _W["policies"] = {name: load_checkpoint(path, kernel=kernel)[0]
-                      for name, path in checkpoints.items()}
-    _W["mode"], _W["seed0"] = mode, seed0
+    loaded = {}                      # one policy object per blob; seats hold all state
+    for path in set(checkpoints.values()):
+        loaded[path] = load_checkpoint(path, kernel=kernel)[0]
+    _W["policies"] = {name: loaded[path] for name, path in checkpoints.items()}
+    _W["mode"], _W["seed0"], _W["specs"] = mode, seed0, specs
 
 
 def _run_task(task):
     a, b, index, leg = task
     try:
         rec = pair_game(_W["policies"], a, b, index, leg, _W["seed0"], mode=_W["mode"],
-                        lib=_W["lib"])
+                        lib=_W["lib"], specs=_W["specs"])
         rec["pid"] = os.getpid()
         return rec
     except Exception as exc:  # returned so the parent can abort the pool cleanly
@@ -227,10 +290,18 @@ def main(argv=None):
     ap.add_argument("--checkpoint", action="append", default=[], metavar="NAME=BLOB",
                     help="repeatable; default every chain directory under "
                          ".play-artifacts/checkpoints")
-    ap.add_argument("--games-per-pair", type=int, required=True,
-                    help="even; split evenly between the two legs")
+    ap.add_argument("--games-per-pair", type=int, default=None,
+                    help="even; split evenly between the two legs (default for --pair)")
+    ap.add_argument("--pair", action="append", default=[], metavar="A,B[,N]",
+                    help="repeatable; play only these pairs (A first), N games each; "
+                         "default the full round robin")
     ap.add_argument("--seed0", type=int, default=20260915)
-    ap.add_argument("--mode", default="sample", choices=["sample", "argmax"])
+    ap.add_argument("--mode", default="sample", choices=["sample", "argmax"],
+                    help="default selection mode for every player")
+    ap.add_argument("--player-mode", action="append", default=[], metavar="NAME=MODE",
+                    help="repeatable; per-player sample|argmax override")
+    ap.add_argument("--temperature", action="append", default=[], metavar="NAME=T",
+                    help="repeatable; per-player policy temperature (logits / T), default 1.0")
     ap.add_argument("--kernel", default="native", choices=["native", "torch"])
     ap.add_argument("--workers", type=int, default=MAX_WORKERS)
     ap.add_argument("--max-tasks", type=int, default=None,
@@ -248,11 +319,21 @@ def main(argv=None):
     names = list(checkpoints)
     if len(names) < 2:
         raise SystemExit("need at least two checkpoints")
+    try:
+        pairs = [parse_pair(p) for p in args.pair] or None
+        specs = player_specs(names, args.mode,
+                             parse_assignments(args.player_mode),
+                             parse_assignments(args.temperature, float))
+        tasks = schedule(names, args.games_per_pair, args.seed0, pairs=pairs)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    pair_sizes = {}
+    for a, b, _, _ in tasks:
+        pair_sizes[(a, b)] = pair_sizes.get((a, b), 0) + 1
 
     os.makedirs(args.out_dir, exist_ok=True)
     games_path = os.path.join(args.out_dir, "games.jsonl")
     manifest_path = os.path.join(args.out_dir, "manifest.json")
-    tasks = schedule(names, args.games_per_pair, args.seed0)
     if args.max_tasks is not None:
         tasks = tasks[:args.max_tasks]
 
@@ -266,7 +347,9 @@ def main(argv=None):
     import torch
     manifest = {"schema": MANIFEST_SCHEMA, "checkpoints": provenance,
                 "games_per_pair": args.games_per_pair, "seed0": args.seed0,
-                "mode": args.mode, "kernel": args.kernel, "workers": args.workers,
+                "mode": args.mode, "players": specs,
+                "pairs": [[a, b, n] for (a, b), n in pair_sizes.items()],
+                "kernel": args.kernel, "workers": args.workers,
                 "omp_num_threads": 1, "max_decisions": MAX_DECISIONS,
                 "rosters": "procgen (home_team=away_team=-1), skillup 4/2/0.0",
                 "legs": list(LEGS), "sampling_seed": "keyed by (engine seed, side)",
@@ -276,7 +359,10 @@ def main(argv=None):
     if os.path.exists(manifest_path):
         with open(manifest_path) as f:
             old = json.load(f)
-        for key in ("checkpoints", "games_per_pair", "seed0", "mode", "kernel"):
+        for key in ("checkpoints", "games_per_pair", "seed0", "mode", "players", "pairs",
+                    "kernel"):
+            if key in ("players", "pairs") and key not in old:
+                continue                  # manifests written before per-player specs
             if old.get(key) != manifest[key]:
                 raise SystemExit(f"existing manifest differs on {key}; use a new --out-dir")
     with open(manifest_path, "w") as f:
@@ -299,7 +385,7 @@ def main(argv=None):
     abort = None
     with open(games_path, "a") as out, ctx.Pool(
             args.workers, initializer=_init_worker,
-            initargs=(checkpoints, args.kernel, args.mode, args.seed0)) as pool:
+            initargs=(checkpoints, args.kernel, args.mode, args.seed0, specs)) as pool:
         for rec in pool.imap_unordered(_run_task, pending, chunksize=1):
             problems = [rec["error"]] if "error" in rec else check_record(rec)
             if problems:

@@ -31,8 +31,8 @@ class RecordingSeat(PolicySeat):
 
 
 def recording_factory(made):
-    def factory(policy, seat, mode="sample", seed=0):
-        s = RecordingSeat(policy, seat, mode=mode, seed=seed)
+    def factory(policy, seat, mode="sample", seed=0, temperature=1.0):
+        s = RecordingSeat(policy, seat, mode=mode, seed=seed, temperature=temperature)
         made.append(s)
         return s
     return factory
@@ -117,6 +117,45 @@ def test_schedule_interleaves_pairs_and_legs():
         T.schedule(["x", "y"], 3, seed0=0)
 
 
+def test_schedule_sized_pairs_interleave_and_validate():
+    tasks = T.schedule(["x", "y", "z"], None, seed0=0, pairs=[("x", "y", 4), ("z", "y", 2)])
+    assert tasks == [("x", "y", 0, "A_home"), ("x", "y", 0, "B_home"),
+                     ("z", "y", 0, "A_home"), ("z", "y", 0, "B_home"),
+                     ("x", "y", 1, "A_home"), ("x", "y", 1, "B_home")]
+    assert T.schedule(["x", "y"], 2, seed0=0, pairs=[T.parse_pair("y,x")]) == \
+        [("y", "x", 0, "A_home"), ("y", "x", 0, "B_home")]
+    for bad in ([("x", "y", 3)], [("x", "x", 2)], [("x", "w", 2)],
+                [("x", "y", 2), ("y", "x", 2)], [("x", "y")]):
+        with pytest.raises(ValueError):
+            T.schedule(["x", "y"], None, seed0=0, pairs=bad)
+
+
+def test_player_specs_validate():
+    specs = T.player_specs(["p", "q"], "sample", {"p": "argmax"}, {"q": 0.75})
+    assert specs == {"p": {"mode": "argmax", "temperature": 1.0},
+                     "q": {"mode": "sample", "temperature": 0.75}}
+    for kwargs in ({"player_modes": {"r": "argmax"}}, {"temperatures": {"p": 0.0}},
+                   {"player_modes": {"p": "greedy"}}):
+        with pytest.raises(ValueError):
+            T.player_specs(["p", "q"], "sample", **kwargs)
+
+
+def test_player_specs_follow_the_policy_across_legs(policies):
+    made = []
+    specs = {"A": {"mode": "argmax", "temperature": 1.0},
+             "B": {"mode": "sample", "temperature": 0.5}}
+    recs = {leg: T.pair_game(policies, "A", "B", 2, leg, seed0=600, specs=specs,
+                             seat_factory=recording_factory(made)) for leg in T.LEGS}
+    assert (recs["A_home"]["modes"], recs["A_home"]["temperatures"]) == \
+        (["argmax", "sample"], [1.0, 0.5])
+    assert (recs["B_home"]["modes"], recs["B_home"]["temperatures"]) == \
+        (["sample", "argmax"], [0.5, 1.0])
+    assert all(r["mode"] == "mixed" for r in recs.values())
+    assert [(s.mode, s.temperature) for s in made] == \
+        [("argmax", 1.0), ("sample", 0.5), ("sample", 0.5), ("argmax", 1.0)]
+    assert T.pair_game(policies, "A", "B", 2, "A_home", seed0=600)["temperatures"] == [1.0, 1.0]
+
+
 class SkippingSeat(PolicySeat):
     """Learner-only stepping: the D388 bridge bug the runner must refuse."""
 
@@ -165,3 +204,27 @@ def test_cli_pool_writes_records_and_resumes(tmp_path, monkeypatch):
     monkeypatch.setenv("OMP_NUM_THREADS", "4")
     with pytest.raises(SystemExit):
         T.main(args)
+
+
+@pytest.mark.skipif(not os.path.exists(CHAIN25), reason="chain 25 checkpoint not present")
+def test_cli_pairs_player_modes_and_temperatures(tmp_path, monkeypatch):
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    out = tmp_path / "run"
+    args = ["--checkpoint", f"hot={CHAIN25}", "--checkpoint", f"greedy={CHAIN25}",
+            "--checkpoint", f"plain={CHAIN25}", "--pair", "greedy,hot,2",
+            "--player-mode", "greedy=argmax", "--temperature", "hot=0.8",
+            "--workers", "1", "--seed0", "4343", "--out-dir", str(out)]
+    assert T.main(args) == 0
+    games = [json.loads(line) for line in open(out / "games.jsonl")]
+    assert sorted(tuple(g["pair"]) + (g["leg"],) for g in games) == \
+        [("greedy", "hot", "A_home"), ("greedy", "hot", "B_home")]
+    for g in games:
+        temps = dict(zip((g["home"], g["away"]), g["temperatures"]))
+        modes = dict(zip((g["home"], g["away"]), g["modes"]))
+        assert temps == {"greedy": 1.0, "hot": 0.8} and modes == {"greedy": "argmax", "hot": "sample"}
+    manifest = json.load(open(out / "manifest.json"))
+    assert manifest["players"]["hot"] == {"mode": "sample", "temperature": 0.8}
+    assert manifest["pairs"] == [["greedy", "hot", 2]]
+    changed = [a if a != "hot=0.8" else "hot=0.9" for a in args]
+    with pytest.raises(SystemExit):
+        T.main(changed)                                   # refuses a different spec
