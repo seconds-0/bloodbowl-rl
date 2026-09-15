@@ -173,9 +173,13 @@ bootstrap orders within a tier with P = 0.85 (top) and 0.98 (middle).
 
 - **Model fit.** Bradley-Terry predicts all 15 pairwise shares within |z| <
   1.98. Summing z² gives 20.3 on 10 degrees of freedom (p = 0.026; deviance
-  20.3, p = 0.027): a mild misfit with no intransitive cycle. The largest
-  residuals are chain27 vs chain9 (predicted 0.769, observed 0.742) and chain27
-  vs chain31 (0.623 vs 0.652). (`bt_misfit`, committed in efe339e.)
+  20.3, p = 0.027). Those p-values treat games as independent, but games share
+  seeds across pairs. A seed-cluster Wald test of the same residuals gives
+  26.8 on 10 df, **p = 0.003**. So the misfit is real, although the pairwise
+  results form no intransitive cycle. The largest residuals are chain27 vs
+  chain9 (predicted 0.769, observed 0.742) and chain27 vs chain31 (0.623 vs
+  0.652). The Elo ranking is a summary, not a law of these results. (`bt_misfit`
+  in efe339e; cluster Wald in 3f829f1.)
 - **Dependence between games.** Games share seeds, so a seed-cluster bootstrap
   resamples the 700 seeds jointly across all pairs and both legs
   (`seed_cluster_bootstrap`, committed in dfb7f4a; 2000 replicates). Its pair
