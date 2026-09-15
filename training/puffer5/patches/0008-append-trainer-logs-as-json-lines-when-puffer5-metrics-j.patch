@@ -1,0 +1,31 @@
+# 0008: append trainer logs as JSON lines when PUFFER5_METRICS_JSONL is set
+diff --git a/src/pufferl.cu b/src/pufferl.cu
+index dbc09776..4c565f55 100644
+--- a/src/pufferl.cu
++++ b/src/pufferl.cu
+@@ -3444,6 +3444,25 @@ TrainResult run_train(Ini* ini, TrainContext* ctx) {
+             dict_set(&new_log, "pool/num_hist", selfplay.num_hist);
+             dict_set(&new_log, "pool/num_policies", pufferl->num_policies);
+         }
++        // Machine-readable log line per dashboard refresh (patch 0008).
++        const char* metrics_path = getenv("PUFFER5_METRICS_JSONL");
++        if (metrics_path && ctx->artifact_owner) {
++            FILE* mf = fopen(metrics_path, "a");
++            if (mf) {
++                fputc('{', mf);
++                for (int i = 0; i < new_log.size; i++) {
++                    double v = new_log.items[i].value;
++                    fprintf(mf, "%s\"%s\": ", i ? ", " : "", new_log.items[i].key);
++                    if (isfinite(v)) {
++                        fprintf(mf, "%.17g", v);
++                    } else {
++                        fputs("null", mf);
++                    }
++                }
++                fputs("}\n", mf);
++                fclose(mf);
++            }
++        }
+         // n=0 logs omit env/*; keep last complete-episode snapshot.
+         int episodes = dict_get(&new_log, "env/n") > 0;
+         if (ctx->artifact_owner) {
