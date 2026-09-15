@@ -182,11 +182,25 @@ def test_bradley_terry_refuses_a_disconnected_pair_graph():
 def test_power_helper_round_trips_and_matches_reference():
     mde = S.power_mde_elo(1400, 0.62)
     assert 32.0 < mde < 34.0                                      # about 30 Elo at 1400 games
-    n = S.power_games_per_pair(20.0, 0.62, leg_corr=-0.207)
+    n = S.power_games_per_pair(20.0, 0.62, design_effect=0.793)
     assert 2900 < n < 3100 and n % 2 == 0                         # D399's ~3100 for 20 Elo
-    assert S.power_mde_elo(n, 0.62, leg_corr=-0.207) <= 20.0 < \
-        S.power_mde_elo(n - 40, 0.62, leg_corr=-0.207)
-    assert S.power_mde_elo(1400, 0.62, leg_corr=0.5) > mde         # positive dependence costs power
+    assert S.power_mde_elo(n, 0.62, design_effect=0.793) <= 20.0 < \
+        S.power_mde_elo(n - 40, 0.62, design_effect=0.793)
+    assert S.power_mde_elo(1400, 0.62, design_effect=1.5) > mde    # positive dependence costs power
+
+
+def test_decisive_design_effect_is_not_the_score_correlation():
+    # equal leg margins; the score correlates at 2/7 across legs, but the
+    # decisive-share influence U = 1[W] - p 1[decisive] gives a design effect of 5/3
+    games = _leg_games(("x", "y"), [("W", "D")] * 4 + [("D", "W")] * 4 + [("L", "L")] * 2)
+    lc = S.leg_correlation(games)
+    assert math.isclose(lc["within_pair_centred"], 2 / 7)
+    assert math.isclose(lc["score_design_effect"], 1 + 2 / 7)
+    assert math.isclose(lc["decisive_design_effect"], 5 / 3)
+    # independent legs: about 1
+    rng = np.random.default_rng(8)
+    indep = _leg_games(("x", "y"), [("WDL"[rng.integers(3)], "WDL"[rng.integers(3)]) for _ in range(4000)])
+    assert abs(S.decisive_design_effect(indep) - 1.0) < 0.06
 
 
 def test_sharpness_pools_decisions():

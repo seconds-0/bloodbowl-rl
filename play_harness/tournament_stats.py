@@ -215,10 +215,51 @@ def leg_correlation(games):
         xc.extend(cx)
         yc.extend(cy)
         per_pair[pair] = _corr(cx, cy)
-    xs, ys = np.array(xs), np.array(ys)
+    xs, ys, xc, yc = (np.array(v) for v in (xs, ys, xc, yc))
     return {"within_pair_centred": _corr(xc, yc),
             "pooled_uncentred": _corr(xs - xs.mean(), ys - ys.mean()),
+            "score_design_effect": _deff(xc, yc),
+            "decisive_design_effect": decisive_design_effect(games),
             "seeds": len(xc), "per_pair": per_pair}
+
+
+def _deff(x, y):
+    """Variance of a two-leg cluster sum over the sum of leg variances (1 with independent legs)."""
+    den = float((x * x).sum() + (y * y).sum())
+    return float(((x + y) ** 2).sum() / den) if den > 0 else float("nan")
+
+
+def decisive_design_effect(games):
+    """Design effect of the two-leg seed cluster for the decisive share.
+
+    The decisive share p of a pair is a ratio estimator whose per-game influence
+    is U = 1[A won] - p * 1[decisive]. U sums to zero within each pair, so no
+    further centring is needed. The design effect is sum over seeds of
+    (U_x + U_y)^2 over sum of (U_x^2 + U_y^2), pooled over pairs. With equal
+    leg variances this is 1 + r for the correlation r of U across legs; it is
+    not the W / D / L score correlation.
+    """
+    legs = defaultdict(dict)
+    for g in games:
+        legs[(tuple(g["pair"]), g["engine_seed"])][g["leg"]] = g["result_a"]
+    by_pair = defaultdict(list)
+    for (pair, _), d in legs.items():
+        if "A_home" in d and "B_home" in d:
+            by_pair[pair].append((d["A_home"], d["B_home"]))
+    num = den = 0.0
+    for rows in by_pair.values():
+        results = [r for row in rows for r in row]
+        w = sum(r == "W" for r in results)
+        dec = sum(r != "D" for r in results)
+        if dec == 0:
+            continue
+        p = w / dec
+        u = {"W": 1.0 - p, "L": -p, "D": 0.0}
+        ux = np.array([u[x] for x, _ in rows])
+        uy = np.array([u[y] for _, y in rows])
+        num += float(((ux + uy) ** 2).sum())
+        den += float((ux * ux + uy * uy).sum())
+    return num / den if den > 0 else float("nan")
 
 
 def elo_from_share(p):
@@ -402,24 +443,24 @@ def _z(q):
     return NormalDist().inv_cdf(q)
 
 
-def power_mde_elo(games_per_pair, decisive_frac, leg_corr=0.0, share=0.5, alpha=0.05,
+def power_mde_elo(games_per_pair, decisive_frac, design_effect=1.0, share=0.5, alpha=0.05,
                   power=0.8):
     """Smallest decisive-Elo gap a pair of `games_per_pair` games (both legs) detects
     with a two-sided test at `alpha` with `power`.
 
     Normal approximation on the logit of the decisive share. The two legs of a
-    seed are a cluster of two, so the variance carries the design effect
-    1 + leg_corr, with leg_corr the within-pair centred leg correlation.
+    seed are a cluster of two, so the variance carries `design_effect`, which is
+    decisive_design_effect() of comparable games (1 with independent legs).
     """
     n_decisive = games_per_pair * decisive_frac
-    deff = 1.0 + leg_corr
+    deff = design_effect
     return ELO * (_z(1 - alpha / 2) + _z(power)) * math.sqrt(deff / (n_decisive * share * (1 - share)))
 
 
-def power_games_per_pair(mde_elo, decisive_frac, leg_corr=0.0, share=0.5, alpha=0.05,
+def power_games_per_pair(mde_elo, decisive_frac, design_effect=1.0, share=0.5, alpha=0.05,
                          power=0.8):
     """Games per pair (even, both legs) needed to detect `mde_elo`; inverse of power_mde_elo."""
-    deff = 1.0 + leg_corr
+    deff = design_effect
     z = _z(1 - alpha / 2) + _z(power)
     n_decisive = deff * (z * ELO / mde_elo) ** 2 / (share * (1 - share))
     n = math.ceil(n_decisive / decisive_frac)
