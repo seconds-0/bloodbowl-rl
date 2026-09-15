@@ -13,9 +13,12 @@ never move), and digests every rollout tensor by bank slice. compare requires
 two traces of one config to agree on observations, rewards, terminals and env
 metrics, and on actions/logprobs/values/action masks of every bank except the
 candidate's skipped bank. That slice's actions, logprobs and values must be
-exactly zero, and its mask may only widen: sample_logits rewrites each sampled
-row's mask with the support conditioned on earlier heads, while the skipped
-slice keeps the env's marginal mask, which contains every such support. Run
+exactly zero, and its mask must be binary; it is counted, not compared.
+sample_logits rewrites each sampled row's mask with the exact-joint support
+conditioned on earlier heads, while the skipped slice keeps the env's marginal
+mask. The marginal mask is not the union of those supports (the joint support
+carries virtual values the marginal never marks), so skipped rows can widen and
+narrow at once; compare reports both counts. Run
 compare on two default-build traces first: that control is what shows the
 rollout is deterministic, so a candidate mismatch means the patch changed
 behavior.
@@ -154,10 +157,16 @@ def _require_equal(label: str, left: Any, right: Any) -> None:
         raise ProbeError(f"{label} differs: {left!r} != {right!r}")
 
 
-def skipped_mask_rows_widened(index: int, bank: int, baseline: Mapping[str, Any],
-                              candidate: Mapping[str, Any]) -> int:
-    """(step, row) pairs where the skipped slice's env mask is wider than the
-    baseline's conditional mask; refuses any bit the baseline has and it lacks."""
+def skipped_mask_row_differences(index: int, bank: int, baseline: Mapping[str, Any],
+                                 candidate: Mapping[str, Any]) -> tuple[int, int]:
+    """(widened, narrowed) (step, row) counts for the skipped slice's mask.
+
+    widened rows hold a bit the baseline's conditional mask lacks, narrowed rows
+    lack a bit it holds. Neither direction is refused: the env's marginal mask
+    is not the union of the exact-joint conditional supports (the joint support
+    carries values the marginal mask never marks, such as the virtual arg 32),
+    so a skipped row can differ both ways. Nothing consumes this
+    slice's mask, so the probe only requires binary bits of the same shape."""
     masks = []
     for label, rollout in (("baseline", baseline), ("candidate", candidate)):
         entry = next(e for e in rollout["banks"] if e["bank"] == bank)
@@ -171,13 +180,9 @@ def skipped_mask_rows_widened(index: int, bank: int, baseline: Mapping[str, Any]
     if conditional.shape != marginal.shape:
         raise ProbeError(f"rollout {index} bank {bank} {MASK} shapes differ: "
                          f"{list(conditional.shape)} != {list(marginal.shape)}")
-    narrowed = np.argwhere(conditional & ~marginal)
-    if narrowed.size:
-        step, row, bit = (int(v) for v in narrowed[0])
-        raise ProbeError(
-            f"rollout {index} skipped bank {bank} {MASK} is not a superset of the "
-            f"baseline support (step {step}, slice row {row}, bit {bit})")
-    return int(np.count_nonzero(np.any(conditional != marginal, axis=-1)))
+    widened = int(np.count_nonzero(np.any(marginal & ~conditional, axis=-1)))
+    narrowed = int(np.count_nonzero(np.any(conditional & ~marginal, axis=-1)))
+    return widened, narrowed
 
 
 def compare_traces(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) -> dict[str, Any]:
@@ -202,7 +207,7 @@ def compare_traces(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) ->
     if not rollouts_a or len(rollouts_a) != len(rollouts_b):
         raise ProbeError("traces hold different rollout counts")
     compared = set()
-    widened = 0
+    widened = narrowed = 0
     for index, (a, b) in enumerate(zip(rollouts_a, rollouts_b)):
         _require_equal(f"rollout {index} all-row digests", a["all_rows"], b["all_rows"])
         for bank_a, bank_b in zip(a["banks"], b["banks"], strict=True):
@@ -215,14 +220,17 @@ def compare_traces(baseline: Mapping[str, Any], candidate: Mapping[str, Any]) ->
                     raise ProbeError(
                         f"rollout {index} baseline bank {bank} values are zero; "
                         "the comparison cannot see the forward it removed")
-                widened += skipped_mask_rows_widened(index, bank, a, b)
+                rows_widened, rows_narrowed = skipped_mask_row_differences(index, bank, a, b)
+                widened += rows_widened
+                narrowed += rows_narrowed
                 continue
             for key in PER_BANK + (MASK,):
                 _require_equal(f"rollout {index} bank {bank} {key}", bank_a[key], bank_b[key])
             compared.add(bank)
     _require_equal("env metrics", baseline["env"], candidate["env"])
     return {"accepted": True, "rollouts": len(rollouts_a), "skip_bank": skip,
-            "identical_banks": sorted(compared), "skipped_mask_rows_widened": widened}
+            "identical_banks": sorted(compared), "skipped_mask_rows_widened": widened,
+            "skipped_mask_rows_narrowed": narrowed}
 
 
 def split_overrides(argv: Sequence[str]) -> tuple[list[str], list[str]]:

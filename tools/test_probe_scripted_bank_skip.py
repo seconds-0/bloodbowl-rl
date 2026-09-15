@@ -29,11 +29,16 @@ def arrays(seed=0):
     total = APB * BUFFERS
     # env_mask models the env's marginal mask (pufferlib.cu casts it into every
     # row); action_mask models what sample_logits leaves behind, the support
-    # conditioned on earlier heads, which is a subset of it.
+    # conditioned on earlier heads. That is NOT a subset of the marginal mask:
+    # the exact-joint support carries values the marginal never marks (mostly
+    # the virtual arg 32, measured on the rig on 2026-09-15). Bit MASK_WIDTH-1
+    # plays that value here.
     env_mask = (rng.random((T, total, MASK_WIDTH)) < 0.7).astype(np.float32)
     env_mask[..., 0] = 1.0
+    env_mask[..., MASK_WIDTH - 1] = 0.0
     conditional = env_mask * (rng.random((T, total, MASK_WIDTH)) < 0.4)
     conditional[..., 0] = 1.0
+    conditional[..., MASK_WIDTH - 1] = (rng.random((T, total)) < 0.3).astype(np.float32)
     return {
         "observations": rng.random((T, total, 5), dtype=np.float32),
         "rewards": rng.random((T, total), dtype=np.float32),
@@ -75,6 +80,16 @@ def trace(data_per_rollout, skip_bank=0, binding=False, routed=False, cfg=None):
 def slice_mask(data, bank):
     return np.concatenate([data["action_mask"][:, s:e] for s, e in
                            probe.bank_row_slices(LAYOUT, APB, BUFFERS)[bank]], axis=1)
+
+
+def mask_row_differences(candidate_runs, baseline_runs, bank):
+    """Reference (widened, narrowed) (step, row) counts over every rollout."""
+    widened = narrowed = 0
+    for cand, base in zip(candidate_runs, baseline_runs):
+        c, b = slice_mask(cand, bank) != 0, slice_mask(base, bank) != 0
+        widened += int(np.count_nonzero(np.any(c & ~b, axis=-1)))
+        narrowed += int(np.count_nonzero(np.any(b & ~c, axis=-1)))
+    return widened, narrowed
 
 
 class ProbeLogicTests(unittest.TestCase):
@@ -139,25 +154,34 @@ class ProbeLogicTests(unittest.TestCase):
         candidate = trace([zero_bank(d, 2) for d in runs], skip_bank=2, binding=True, routed=True)
         verdict = probe.compare_traces(baseline, candidate)
         widened = verdict.pop("skipped_mask_rows_widened")
+        narrowed = verdict.pop("skipped_mask_rows_narrowed")
         self.assertEqual(verdict, {"accepted": True, "rollouts": 3, "skip_bank": 2,
                                    "identical_banks": [0, 1]})
-        expected = sum(int(np.count_nonzero(np.any(
-            slice_mask(zero_bank(d, 2), 2) != slice_mask(d, 2), axis=-1))) for d in runs)
-        self.assertGreater(expected, 0)
-        self.assertEqual(widened, expected)
+        expected_widened, expected_narrowed = mask_row_differences(
+            [zero_bank(d, 2) for d in runs], runs, 2)
+        self.assertGreater(expected_widened, 0)
+        self.assertGreater(expected_narrowed, 0)
+        self.assertEqual((widened, narrowed), (expected_widened, expected_narrowed))
 
-    def test_skipped_slice_mask_is_refused_unless_it_widens_the_baseline_support(self):
+    def test_skipped_slice_mask_differences_are_counted_not_refused(self):
         runs = [arrays(i) for i in range(2)]
         baseline = trace(runs)
         good = [zero_bank(d, 2) for d in runs]
         rows = probe.bank_row_slices(LAYOUT, APB, BUFFERS)[2]
+        # A skipped row missing a bit the baseline's conditional support holds
+        # is what the rig measured (virtual arg/square values); it is counted.
         narrowed = copy.deepcopy(good)
         row = rows[1][0]  # buffer 1, first scripted row
         bit = int(np.flatnonzero(runs[1]["action_mask"][2, row])[0])
         narrowed[1]["action_mask"][2, row, bit] = 0.0
-        with self.assertRaisesRegex(probe.ProbeError,
-                                    r"rollout 1 skipped bank 2 action_mask is not a superset"):
-            probe.compare_traces(baseline, trace(narrowed, skip_bank=2, binding=True, routed=True))
+        verdict = probe.compare_traces(
+            baseline, trace(narrowed, skip_bank=2, binding=True, routed=True))
+        self.assertTrue(verdict["accepted"])
+        self.assertEqual(
+            (verdict["skipped_mask_rows_widened"], verdict["skipped_mask_rows_narrowed"]),
+            mask_row_differences(narrowed, runs, 2))
+        good_narrowed = mask_row_differences(good, runs, 2)[1]
+        self.assertGreaterEqual(verdict["skipped_mask_rows_narrowed"], good_narrowed)
         fractional = copy.deepcopy(good)
         fractional[0]["action_mask"][0, rows[0][0], 4] = 0.5
         with self.assertRaisesRegex(probe.ProbeError, "candidate bank 2 action_mask is not binary"):
@@ -181,6 +205,7 @@ class ProbeLogicTests(unittest.TestCase):
         verdict = probe.compare_traces(trace(runs), trace(copy.deepcopy(runs)))
         self.assertEqual(verdict["identical_banks"], [0, 1, 2])
         self.assertEqual(verdict["skipped_mask_rows_widened"], 0)
+        self.assertEqual(verdict["skipped_mask_rows_narrowed"], 0)
         drifted = copy.deepcopy(runs)
         drifted[1]["logprobs"][0, 15] += 1e-6  # the would-be scripted bank
         with self.assertRaisesRegex(probe.ProbeError, "bank 2 logprobs"):

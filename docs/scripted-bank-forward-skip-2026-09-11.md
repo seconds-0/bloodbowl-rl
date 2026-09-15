@@ -63,10 +63,15 @@ activations and recurrent state are now zero or stale, and so is its rollout
 action mask. `sample_logits` rewrites each sampled row's mask with the exact-joint
 support conditioned on the heads sampled before it (`src/pufferlib.cu:558-588` in
 10619e2), but the skip continues before `sample_logits`. The scripted slice
-therefore keeps the env's marginal mask. That mask contains every projection of
-the joint support, so it is a superset of the conditional mask a default build
-stores, and it differs whenever a bot seat has more than one legal option.
-Nothing consumes it: PPO never selects frozen rows. The existing qualification
+therefore keeps the env's marginal mask. That mask is **not** a superset of the
+conditional mask a default build stores. The joint support carries values the
+marginal mask never marks, such as the virtual arg 32 that `my_pack_joint_actions`
+packs for waiting and step tuples. So a skipped row can widen and narrow at the
+same time. Measured on the rig on 2026-09-15 (32 rollouts, 512 agents x H8): the
+scripted slice differed in 290 of 15,360 (step, row) pairs at 4 banks and 177 of
+7,680 at 8 banks. Every differing row both widened and narrowed, and the type
+head never differed. Most narrowed arg bits were arg 32, and the rest were real
+args and squares. Nothing consumes it: PPO never selects frozen rows. The existing qualification
 cells do not use a scripted tag, so they are unaffected. A new qualification cell
 with a scripted tag would see a never-written decoder output for that bank.
 
@@ -211,10 +216,11 @@ Pass conditions:
 - Rollout action masks are compared per bank. Every non-skipped bank must match
   the default trace exactly. For the skipped bank, both traces record the packed
   mask bits of the configured scripted slice. The candidate's bits must be binary
-  and a superset of the baseline's, bit for bit (the marginal mask versus the
-  conditional one, see above). `skipped_mask_rows_widened` counts the (step, row)
-  pairs where they differ. It should be positive, because the bot seats often have
-  more than one legal option. The control reports 0.
+  and of the same shape, but no direction is required (the marginal mask versus the
+  conditional one, see above). `skipped_mask_rows_widened` and
+  `skipped_mask_rows_narrowed` count the (step, row) pairs where the candidate holds
+  a bit the baseline lacks, or lacks one it holds. Both should be positive, and the
+  control reports 0 for both.
 - Every trace's `hard_integrity` is all zero.
 
 If the control fails, the rollout is nondeterministic on this host. That is a
