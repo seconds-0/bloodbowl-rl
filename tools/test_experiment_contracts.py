@@ -3,6 +3,7 @@
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -308,6 +309,86 @@ class ExperimentContractTests(unittest.TestCase):
         without = [n for n in arm_patches
                    if n != "puffer_reward_clamp_range.patch"]
         self.assertNotEqual(bundle_sha(arm_patches), bundle_sha(without))
+
+    def test_opt_in_skip_patch_joins_the_bundle_only_when_installed(self):
+        """S4: the default digest is unchanged; an opted-in tree binds its own.
+
+        Runs the screen's Python bundle block and the arm's shell bundle block
+        against a scratch ROOT whose vendored tree either lacks the opt-in
+        scripted-bank skip or carries it (built from the patch's new side).
+        """
+        default_bundle = [
+            "pufferl_env_dashboard_limit.patch", "pufferl_env_json.patch",
+            "pufferl_env_json_metadata_upgrade.patch",
+            "pufferl_env_phase_contract.patch", "pufferl_eval_episode_gate.patch",
+            "pufferl_metrics_keyerror.patch", "torch_pufferl_trusted_load.patch",
+            "selfplay_league.patch", "puffer_exact_joint_actions.patch",
+            "puffer_recurrent_eval_state.patch", "puffer_frozen_prio_mask.patch",
+            "puffer_recurrent_cuda_qualification.patch",
+            "puffer_reward_clamp_range.patch",
+        ]
+        opt_in = "puffer_skip_scripted_bank_forward.patch"
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(encoding="utf-8")
+        arm = (ROOT / "tools/run_reward_ablation.sh").read_text(encoding="utf-8")
+        screen_block = (
+            screen[screen.index("def sha(path):"):screen.index("# obs-v4, obs-v5")]
+            + screen[screen.index("patches = ["):screen.index("vendor_sources = [")]
+            + "patch_bundle_sha = bundle_sha(patches, [str(path) for path in patches])\n")
+        arm_block = arm[arm.index('PATCH_HASH="$({'):arm.index(
+            "if [ -n \"$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256\" ]")]
+
+        def synthetic_opted_tree(vendor):
+            patch = (ROOT / "training" / opt_in).read_text(encoding="utf-8")
+            for chunk in patch.split("diff --git ")[1:]:
+                name = chunk.split("\n", 1)[0].split(" b/", 1)[1]
+                lines = []
+                for line in chunk.split("\n@@", 1)[1].splitlines()[1:]:
+                    if line.startswith("@@"):
+                        lines.append("// synthetic gap")
+                    elif line.startswith((" ", "+")) or line == "":
+                        lines.append(line[1:])
+                path = vendor / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
+
+        def digests(root):
+            namespace = {"root": root, "vendor": root / "vendor" / "PufferLib",
+                         "hashlib": hashlib, "pathlib": __import__("pathlib"),
+                         "subprocess": subprocess}
+            exec(screen_block, namespace)
+            shell = subprocess.run(
+                ["bash", "-c", f'set -euo pipefail\nROOT="{root}"\n{arm_block}\n'
+                               'printf "%s" "$PATCH_HASH"'],
+                text=True, capture_output=True, check=True)
+            return namespace["patch_bundle_sha"], shell.stdout
+
+        def expected(root, names):
+            return hashlib.sha256(b"".join(
+                f"{hashlib.sha256((root / 'training' / name).read_bytes()).hexdigest()}"
+                f"  {root / 'training' / name}\n".encode()
+                for name in names)).hexdigest()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            shutil.copytree(ROOT / "training", root / "training",
+                            ignore=shutil.ignore_patterns("*.bin", "__pycache__"))
+            vendor = root / "vendor" / "PufferLib"
+            vendor.mkdir(parents=True)
+
+            screen_default, arm_default = digests(root)
+            self.assertEqual(screen_default, arm_default)
+            self.assertEqual(screen_default, expected(root, default_bundle))
+
+            synthetic_opted_tree(vendor)
+            self.assertEqual(subprocess.run(
+                ["git", "-C", str(vendor), "apply", "--reverse", "--check",
+                 "--no-index", str(root / "training" / opt_in)],
+                capture_output=True, check=False).returncode, 0)
+            screen_opted, arm_opted = digests(root)
+            self.assertEqual(screen_opted, arm_opted)
+            self.assertEqual(screen_opted,
+                             expected(root, default_bundle + [opt_in]))
+            self.assertNotEqual(screen_opted, screen_default)
 
     def test_install_drift_check_verifies_both_reward_clamp_backends(self):
         """D234: vendor/ is gitignored, so a re-clone silently drops the edit."""

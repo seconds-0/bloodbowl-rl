@@ -288,6 +288,16 @@ Installer order:
 `--check` reverse-verifies the qualification, frozen-prio, trusted-load, and selfplay-league
 patches, so a stale vendored tree fails before a build rather than after a run.
 
+**Opt-in, off by default:** `puffer_skip_scripted_bank_forward.patch` (audit S4) is applied
+after the whole stack only with `PUFFER_SKIP_SCRIPTED_BANK_FORWARD=1`; any other install
+reverses it, and `--check` refuses a stale copy. It skips the policy forward for the frozen
+bank the scripted bot plays (loop index == `env.scripted_bank_tag`, keyed only when
+`scripted_opponent != 0` and `scripted_opponent_team == 1`), zero-fills that slice, and aborts
+in `set_env_tags` unless every row of the slice is a tagged env's AWAY seat. The launchers
+add it to `puffer_patch_bundle_sha256` only when the tree carries it, so an opted-in build is
+a new lineage (graft, not rehost). Details and the rig recipe:
+`docs/scripted-bank-forward-skip-2026-09-11.md`.
+
 `training/torch_pufferl_bcreg.patch` is **not** in the stack (§11).
 
 ### Warm start

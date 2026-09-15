@@ -885,6 +885,16 @@ patches = [
     # recompute the identical digest.
     root / "training/puffer_reward_clamp_range.patch",
 ]
+# Opt-in patches join the bundle only when the vendored tree carries them, so
+# the default digest is unchanged and an opted-in build is its own lineage.
+# run_reward_ablation.sh appends in the same position.
+for optional_patch in (root / "training/puffer_skip_scripted_bank_forward.patch",):
+    if subprocess.run(
+            ["git", "-C", str(vendor), "apply", "--reverse", "--check",
+             "--no-index", str(optional_patch)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            check=False).returncode == 0:
+        patches.append(optional_patch)
 vendor_sources = [
     "pufferlib/__init__.py", "pufferlib/pufferl.py",
     "pufferlib/selfplay.py", "pufferlib/torch_pufferl.py",
