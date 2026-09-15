@@ -207,6 +207,21 @@ def parse_assignments(items, cast=str):
     return out
 
 
+def legacy_manifest_specs(old):
+    """Fill `players` and `pairs` into a manifest written before per-player specs.
+
+    Such a run played every checkpoint at the run mode and T = 1, in the full
+    round robin at games_per_pair, so a resume must match exactly that.
+    """
+    old = dict(old)
+    names = list(old.get("checkpoints") or {})
+    if "players" not in old:
+        old["players"] = {n: {"mode": old.get("mode"), "temperature": 1.0} for n in names}
+    if "pairs" not in old:
+        old["pairs"] = [[a, b, old.get("games_per_pair")] for a, b in itertools.combinations(names, 2)]
+    return old
+
+
 def player_specs(names, mode, player_modes=None, temperatures=None):
     player_modes, temperatures = player_modes or {}, temperatures or {}
     unknown = (set(player_modes) | set(temperatures)) - set(names)
@@ -358,11 +373,9 @@ def main(argv=None):
                 "python": sys.version.split()[0]}
     if os.path.exists(manifest_path):
         with open(manifest_path) as f:
-            old = json.load(f)
+            old = legacy_manifest_specs(json.load(f))
         for key in ("checkpoints", "games_per_pair", "seed0", "mode", "players", "pairs",
                     "kernel"):
-            if key in ("players", "pairs") and key not in old:
-                continue                  # manifests written before per-player specs
             if old.get(key) != manifest[key]:
                 raise SystemExit(f"existing manifest differs on {key}; use a new --out-dir")
     with open(manifest_path, "w") as f:

@@ -207,6 +207,27 @@ def test_cli_pool_writes_records_and_resumes(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(not os.path.exists(CHAIN25), reason="chain 25 checkpoint not present")
+def test_cli_resume_of_a_legacy_manifest_refuses_new_specs(tmp_path, monkeypatch):
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    out = tmp_path / "run"
+    base = ["--checkpoint", f"c25a={CHAIN25}", "--checkpoint", f"c25b={CHAIN25}",
+            "--games-per-pair", "2", "--workers", "1", "--seed0", "4545", "--max-tasks", "0",
+            "--out-dir", str(out)]
+    assert T.main(base) == 0
+    manifest = json.load(open(out / "manifest.json"))
+    legacy = {k: v for k, v in manifest.items() if k not in ("players", "pairs")}
+    assert T.legacy_manifest_specs(legacy)["players"] == manifest["players"]
+    assert T.legacy_manifest_specs(legacy)["pairs"] == manifest["pairs"]
+    for extra in (["--temperature", "c25b=0.8"], ["--player-mode", "c25a=argmax"],
+                  ["--pair", "c25b,c25a,2"]):
+        json.dump(legacy, open(out / "manifest.json", "w"))
+        with pytest.raises(SystemExit):
+            T.main(base + extra)
+    json.dump(legacy, open(out / "manifest.json", "w"))
+    assert T.main(base) == 0                               # the same legacy run resumes
+
+
+@pytest.mark.skipif(not os.path.exists(CHAIN25), reason="chain 25 checkpoint not present")
 def test_cli_pairs_player_modes_and_temperatures(tmp_path, monkeypatch):
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
     out = tmp_path / "run"
