@@ -1312,3 +1312,49 @@ Every one-factor change around the gamma 0.999 recipe is flat or worse on the sc
 **Two non-training measurements come next, before any further knob screen.**
 1. A head-to-head round robin between chains 9, 14, 25, 27, 30 and 31 on the Mac CPU, run through the play harness backend with every-step recurrence and a sampling policy on random rosters. It checks whether the scripted-bot exam gains transfer to learned opponents.
 2. GPU verification of the two opt-in trainer patches already built: the scripted-bank forward skip (up to about 1.4x SPS for multi-bank runs) and deciding-row telemetry.
+
+**D399 - THE HEAD-TO-HEAD ROUND ROBIN PUTS CHAINS 27 AND 30 ABOUT 100 DECISIVE-ELO ABOVE CHAIN 25; CHAIN 30 BECOMES THE WARM START, THE EXAM KEEPS ITS OFFENSE VETO, AND A FIXED ANCHOR PANEL JOINS THE GATE (2026-09-15 08:30 PDT).** A CPU round robin between chains 9, 14, 25, 27, 30 and 31 ran on the play harness backend (branch `feat/play-harness-20260913`; doc `docs/play-harness/tournament-2026-09-15.md`). It played 21,000 games: 700 seeds x 2 legs per pair, sides swapped, rosters staying with the side, sampling policies, every-step recurrence, 69.5 min on 4 CPU workers. Every game ended naturally with zero hard counters and one forward per engine step per seat.
+
+| Rank | Chain | Decisive-game Bradley-Terry Elo |
+|---|---|---|
+| 1 | 30 | +112.5 (SE 4.7) |
+| 2 | 27 | +105.0 |
+| 3 | 31 | +18.0 |
+| 4 | 25 | +4.2 |
+| 5 | 9 | -104.0 |
+| 6 | 14 | -135.8 |
+
+Every gamma 0.999 chain beats both 0.995 chains, taking 64.6-82.5% of decisive games.
+
+**A three-lens adversarial panel then checked the claim before any action.**
+- **Harness (not refuted, high confidence).**
+  - Weight loading is exact (bias-free CUDA layers, so zero-filled torch biases are exact), and the gate kernel matches native formula by formula.
+  - The env source hash equals training's 3ed6899e, and the sampler and recurrence match the native eval contract.
+  - 12 replayed games reproduce bit for bit, an -mfma build gives identical observation bytes, and a chain 25 bot bench reproduces its exam cells within noise.
+- **Statistics (partly refuted, high confidence).**
+  - All counts, intervals and Elo recompute exactly, and the gap over chain 25 is robust under every model: chain 27 +100.8 +/- 7.2, chain 30 +108.3 +/- 7.2. With draws scored as half it is about +66.
+  - **Chain 30 vs chain 27 is a tie:** +7.5 +/- 7.3, 95% interval [-6, +21]. Head to head chain 27 leads 0.517, and chain 30's rank-1 comes only from beating the 0.995 chains harder. Chain 31 vs chain 25 is also a tie.
+  - The doc's leg correlation is uncentred: -0.087 there, -0.207 centred within pair. Its seed-cluster bootstrap had no committed code, and Kendall tau 0.60 over 6 points is not significant.
+  - At 1400 games per pair the minimum detectable effect is about 30 Elo.
+- **Confounds (partly refuted, medium confidence).**
+  - The pool code shows chain 9's warm seat was the contact bot in d67d527b, so chain 9 was not a frozen opponent for chains 25 or 30, and the residuals show no chain-9 exploitation.
+  - The field contains no opponent from outside the family, and the offense bot is the only opponent none of these rungs trained against.
+  - Elo rank matches per-decision sampling sharpness exactly: mean logprob chain 30 -0.143 down to chain 14 -0.238.
+  - The gain is concentrated on agile rosters and reverses on some bash rosters. Chain 30 vs chain 25: Undead 0.370, Chaos Chosen 0.375, Tomb Kings 0.381 of decisive games, against High Elf 0.933 and Dark Elf 0.927.
+  - Uncertainty covers match noise only, with one training seed per chain.
+
+**Rulings.**
+1. Chain 30 (sha 41ecd998) becomes the frontier warm start. It holds the top decisive-Elo tier, matches chain 25 within the floor on every exam cell including the held-out offense AWAY (-0.0035), and has the best Elo per GPU-hour. This is a warm-start decision, not a production promotion, and not a claim that chain 30 is stronger than chain 27.
+2. Replay ratio 1.0 does not become the recipe until a training-seed replicate confirms it, as D397's positive branch required. It costs 1.43x wall per rung.
+3. D394 and D397 are superseded, not reclassified. Their exam rules were applied as written, but they are insensitive to in-family head-to-head gains. Chain 27's offense veto stands until a held-out re-test clears it.
+4. The gate becomes two-part. The bot exam stays, with the offense AWAY cell as a veto on a drop greater than 0.02 on the mean and on both exam seeds; the contact cells are in-sample. It is joined by a pre-registered tournament against a fixed anchor panel: the frontier, existing seed replicates, and held-out opponents where available. Candidates are never scored against their parent alone. N comes from a power calculation (about 3100 games per pair for 20 Elo), intervals come from committed seed-cluster code, and draw-inclusive score is reported beside decisive share.
+
+**Next.**
+- **GPU: chain 32.** Chain 30's exact recipe at training seed 44 from the chain 9 marker, pool d67d527b, replay ratio 1.0. It replicates the rr effect (paired with chain 26, which is chain 25 at seed 44) and measures training-seed spread at the top tier.
+- **Mac CPU: a second tournament** covering:
+  - replicate pairs as the noise floor: chains 25/26, 9/16 and 14/20
+  - chains 30 and 27 against 25 in argmax mode
+  - chain 25 at a temperature that matches chain 30's sharpness
+  - roster-class stratification
+  - committed seed-cluster and leg-correlation code
+- **Pending before any production promotion:** rig-recorded torch-vs-native parity, and seating the scripted bots in the harness as held-out anchors.

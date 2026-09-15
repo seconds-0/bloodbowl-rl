@@ -31,6 +31,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-15 06:45 (D398): chain 31 reads negative and ambiguous.** Eight banks at 0.06 under the horizon recipe lose contact AWAY on both exam seeds (-0.053 on the mean). This may be population width or the halved bot exposure. The knob screen around chain 25 is complete: every one-factor change is flat or worse. Chain 25 stays the frontier. Next come a CPU head-to-head tournament between checkpoints and GPU verification of the opt-in throughput patches.
 
+**Update 2026-09-15 08:30 (D399): the round robin moves the frontier.** A 21,000-game head-to-head round robin puts chains 27 and 30 about 100 decisive-Elo above chain 25; the two are tied. Chain 30 becomes the warm start. The bot exam keeps its offense veto, and a fixed anchor-panel tournament joins the gate. Both opt-in throughput patches (skip-scripted-bank-forward, deciding-row telemetry) passed GPU verification and are merged (PRs #102/#103). Chain 32 replicates chain 30's recipe at training seed 44.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
