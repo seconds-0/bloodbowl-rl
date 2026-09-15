@@ -1257,3 +1257,26 @@ Caveats named in advance:
 - More gradient steps on the same rollouts raise policy drift per epoch. KL and clipfrac are the diagnostics, not kill signals.
 - The learner phase grows (about 160 ms to about 640 ms per epoch), so expect roughly 25-35% lower SPS. Wall time, not steps, is the cost.
 - LR x2 was rejected twice on warm chains (D259/D271). This changes how often the optimizer steps on the same data, not the step size.
+
+**D397 - CHAIN 30 IS FLAT: FOUR TIMES THE GRADIENT STEPS PER EPOCH (REPLAY RATIO 1.0) LEAVES THE CHAMPION CELLS WHERE CHAIN 25 PUT THEM, SO THE UPDATE BUDGET IS NOT THE BINDING CONSTRAINT; CHAIN 31 TESTS THE OPPONENT POPULATION UNDER THE HORIZON RECIPE (2026-09-14 22:15 PDT).** Chain 30 (`runs/ladder-d0-r0chain30-rr1-20260914`, unit `r0chain30-rr1`) is chain 25's recipe with replay_ratio 1.0, which is 8 Muon steps per 131K-step epoch instead of 2 (PR #101, merge fbaec58).
+- **The first attempt was lost.** It died at about 1.35B steps when the house lost power around 08:08 PDT. The ladder cannot resume, so attempt 2 relaunched from zero at 12:23 PDT after the rig returned. The Windows host came back with a new LAN address, so the Mac now reaches WSL over Tailscale (`ssh bbrig`).
+- **Attempt 2 was clean.** It finished its 3B at about 21:52 PDT with trainer_exit 0 and integrity counters zero, running 85-93K SPS with the Train phase at 572-616 ms (chain 25: 160 ms). That confirms the 8 minibatches on hardware.
+- **Artifacts.** Checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789413829676/0000002999975936.bin` (sha 41ecd998); the marker records gamma 0.999 and replay_ratio 1.0. All six exam cells exited rc=0 with 2026-2055 games each.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.564 / 0.398 | 0.538 / 0.378 | 0.581 / 0.344 |
+| 43 | 0.577 / 0.381 | 0.523 / 0.390 | 0.591 / 0.340 |
+| Two-exam-seed mean | **0.5705 / 0.3895** | **0.5305 / 0.384** | **0.586 / 0.342** |
+
+Champion deltas against chain 25 (0.568, 0.5055, 0.5895) are **+0.0025, +0.025 and -0.0035**.
+- contact AWAY: -0.001 and +0.006 per exam seed
+- contact HOME: +0.049 and +0.001 (the mean clears the floor only through seed 42)
+- offense AWAY: -0.002 and -0.005
+
+D396's positive reading needed both contact cells up more than 0.02, and contact AWAY is flat, so **this is the flat reading: 2 gradient steps per epoch is not what holds the recipe back.** Conceded moves (-0.024, -0.034, +0.027) are not scored under D277. Replay ratio 1.0 costs about 30% SPS for no scored gain, so the recipe keeps 0.25. Chain 25 stays the frontier.
+
+**Next, pre-registered before its exam: chain 31, the opponent population under the horizon recipe** (`runs/ladder-d0-r0chain31-pop8-horizon-20260914`, unit `r0chain31-pop8-horizon`, launched 22:08 PDT). It is chain 23's recipe (8 frozen banks x 0.06, contact bot at tag 8, pool identity 6ffb955b, warm chain 9 marker, seed 42, 3B) with gamma 0.999 and lambda 0.95. The paired comparator is chain 25, which differs in bank count and share: 4 x 0.12 with the bot at tag 4. Chain 23 was flat against its 0.995 comparator (D390); this asks whether a wider population matters once the credit horizon is fixed.
+- **Positive:** both contact champion cells beat chain 25 by more than 0.02, with offense AWAY not down more than 0.02. A seed-44 replicate follows.
+- **Flat:** population width does not matter at this horizon.
+- **Negative:** a contact champion cell down more than 0.02 on the mean and on both exam seeds. That reading stays ambiguous, because bot exposure halves from 12% to 6% (the D389 caveat).

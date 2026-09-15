@@ -27,6 +27,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-14 03:30 (D396): chain 29 marginally overshoots.** Gamma 0.9995 lands below chain 25 on all three champion cells (-0.023, -0.0135, -0.0335) but still above the 0.995 continuations on contact. The dose-response peaks near 0.999, which stays the recipe. Next is the update budget: chain 25's recipe at replay_ratio 1.0 (8 gradient steps per epoch instead of 2), once the ladder gains that knob.
 
+**Update 2026-09-14 22:15 (D397): chain 30 is flat.** Four times the gradient steps per epoch leaves the champion cells within the floor of chain 25 (+0.0025, +0.025, -0.0035) and costs about 30% SPS, so the recipe keeps replay ratio 0.25. Chain 31 is training: 8 opponent banks under the gamma 0.999 recipe, paired with chain 25.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
