@@ -1,0 +1,219 @@
+# 0002: exact joint action sampling with stored conditional masks
+diff --git a/src/exact_joint.h b/src/exact_joint.h
+new file mode 100644
+index 00000000..ee4dcabb
+--- /dev/null
++++ b/src/exact_joint.h
+@@ -0,0 +1,53 @@
++// Exact sequential joint action support (bloodbowl-rl exact-joint-v1 port).
++//
++// An env transports its current legal joint support as packed tuples: each
++// uint32 carries up to three 10-bit head values (head h at bits 10*h).
++// sample_logits samples head 0, then head 1 restricted to tuples whose head 0
++// equals the sampled value, then head 2 restricted to both. For each head the
++// conditional support is written into the rollout action-mask row, so the
++// stored mask is the complete behaviour-distribution artifact that PPO
++// recomputes against; no ragged history survives the rollout step.
++//
++// Host-testable: define __host__/__device__/precision_t/from_float/to_float
++// before including when compiling outside src/pufferl.cu.
++#pragma once
++#include <stdint.h>
++
++#define PUF_JOINT_HEAD_BITS 10
++#define PUF_JOINT_HEAD_MASK 1023u
++#define PUF_JOINT_MAX_HEADS 3
++
++__host__ __device__ static inline int puf_joint_head_value(uint32_t packed, int h) {
++    return (int)((packed >> (PUF_JOINT_HEAD_BITS * h)) & PUF_JOINT_HEAD_MASK);
++}
++
++// Writes the support of head h conditioned on the already-selected earlier
++// heads (selected[0..h-1], stored as floats like the rollout action buffer)
++// into mask_out[0..A-1] (1 = enabled). Returns the number of enabled values.
++__host__ __device__ static inline int puf_joint_fill_head_mask(
++        const uint32_t* support, int count, int h, const float* selected,
++        int A, precision_t* mask_out) {
++    for (int a = 0; a < A; ++a) {
++        mask_out[a] = from_float(0.0f);
++    }
++    int enabled = 0;
++    for (int j = 0; j < count; ++j) {
++        uint32_t packed = support[j];
++        int prefix = 1;
++        for (int p = 0; p < h; ++p) {
++            if (puf_joint_head_value(packed, p) != (int)selected[p]) {
++                prefix = 0;
++                break;
++            }
++        }
++        if (!prefix) {
++            continue;
++        }
++        int v = puf_joint_head_value(packed, h);
++        if (v < A && to_float(mask_out[v]) == 0.0f) {
++            mask_out[v] = from_float(1.0f);
++            enabled++;
++        }
++    }
++    return enabled;
++}
+diff --git a/src/pufferl.cu b/src/pufferl.cu
+index b6064dfd..51f6d87f 100644
+--- a/src/pufferl.cu
++++ b/src/pufferl.cu
+@@ -292,6 +292,7 @@ __device__ __forceinline__ void block_reduce_sum(
+ // Algo + sweeps only depend on basic tensor types and utilities
+ #include "algo.cu"
+ #include "protein.cu"
++#include "exact_joint.h"
+ 
+ typedef struct {
+     int horizon;
+@@ -440,6 +441,12 @@ struct VecEnv {
+     int num_workers;
+     // GPU log reduce scratch (unused on CPU)
+     float* log_scratch;
++    // Exact joint support (envs defining PUF_JOINT_ACTION_MAX). Host pins:
++    // packed tuples in fixed per-buffer regions, per-row offsets/counts.
++    uint32_t* joint_actions;
++    int* joint_offsets;
++    int* joint_counts;
++    int* joint_buffer_counts;
+ };
+ 
+ struct EnvBuf {
+@@ -448,6 +455,10 @@ struct EnvBuf {
+     Float rewards;    // (total_agents,)
+     Float terminals;  // (total_agents,)
+     Byte action_mask; // (total_agents, mask_size); always allocated
++    // Device copies of the exact joint support; NULL for ordinary envs.
++    uint32_t* joint_actions;  // (total_agents * PUF_JOINT_ACTION_MAX,)
++    int* joint_offsets;       // (total_agents,)
++    int* joint_counts;        // (total_agents,)
+ };
+ 
+ // Owned runnable policy instance. policies[0] is trainable; policies[i>0] are
+@@ -599,7 +610,10 @@ __global__ void sample_logits(
+         precision_t* value_out,    // (B,)
+         curandStatePhilox4_32_10_t* rng_states,
+         precision_t* action_mask,  // (B, A_total); always allocated
+-        int mask_stride) {
++        int mask_stride,
++        const uint32_t* joint_actions,  // packed exact support, or NULL
++        const int* joint_offsets,       // (B,) absolute offsets into joint_actions
++        const int* joint_counts) {      // (B,)
+     int B = dec_out.shape[0];
+     int fused_cols = dec_out.shape[1];
+     int num_atns = NUM_ATNS;
+@@ -638,6 +652,15 @@ __global__ void sample_logits(
+         int mask_base = idx * mask_stride;
+         for (int h = 0; h < num_atns; h++) {
+             int A = act_sizes[h];
++            if (joint_actions != NULL) {
++                // Exact sequential support: rewrite this head's mask row with the
++                // values reachable from the heads already sampled in this
++                // transition. The stored row is then the behaviour distribution
++                // PPO recomputes (training/puffer5/patches/0002).
++                puf_joint_fill_head_mask(joint_actions + joint_offsets[idx],
++                    joint_counts[idx], h, actions + idx * num_atns, A,
++                    action_mask + mask_base + logits_offset);
++            }
+             float cache[PPO_MAX_HEAD_A];
+             float logsumexp = ppo_discrete_logsumexp(
+                 logits, logits_base, logits_offset, A, action_mask, mask_base, cache);
+@@ -873,7 +896,10 @@ static void pufferl_forward_step(PuffeRL* pufferl, int buf, int t,
+             act_b.data, env->actions.data + (long)sub * act_cols,
+             lp_b.data, val_b.data,
+             pufferl->rng_states[buf] + off,
+-            mask_b.data, mask_stride);
++            mask_b.data, mask_stride,
++            env->joint_actions,
++            env->joint_offsets ? env->joint_offsets + sub : NULL,
++            env->joint_counts ? env->joint_counts + sub : NULL);
+     }
+ }
+ 
+@@ -1031,6 +1057,19 @@ static void env_setup(PuffeRL* p, VecEnv* vec, Dict* vk, Dict* ek) {
+         cudaHostAllocPortable);
+     cudaHostAlloc((void**)&vec->action_mask, mask_bytes, cudaHostAllocPortable);
+     memset(vec->action_mask, 1, mask_bytes);
++#ifdef PUF_JOINT_ACTION_MAX
++    {
++        size_t joint_bytes = (size_t)total_agents * PUF_JOINT_ACTION_MAX * sizeof(uint32_t);
++        cudaHostAlloc((void**)&vec->joint_actions, joint_bytes, cudaHostAllocPortable);
++        cudaHostAlloc((void**)&vec->joint_offsets, total_agents * sizeof(int),
++            cudaHostAllocPortable);
++        cudaHostAlloc((void**)&vec->joint_counts, total_agents * sizeof(int),
++            cudaHostAllocPortable);
++        memset(vec->joint_offsets, 0, total_agents * sizeof(int));
++        memset(vec->joint_counts, 0, total_agents * sizeof(int));
++        vec->joint_buffer_counts = (int*)calloc(num_buffers, sizeof(int));
++    }
++#endif
+ 
+     float frozen_pct = dict_get(vk, "hist_policy_percent");
+     for (int buf = 0; buf < num_buffers; buf++) {
+@@ -1104,6 +1143,18 @@ static void cpu_upload(PuffeRL* p, int start, int n, cudaStream_t stream) {
+     cudaMemcpyAsync(e->action_mask.data + (size_t)start * mask,
+         v->action_mask + (size_t)start * mask,
+         n * mask * sizeof(unsigned char), cudaMemcpyHostToDevice, stream);
++#ifdef PUF_JOINT_ACTION_MAX
++    cudaMemcpyAsync(e->joint_offsets + start, v->joint_offsets + start,
++        n * sizeof(int), cudaMemcpyHostToDevice, stream);
++    cudaMemcpyAsync(e->joint_counts + start, v->joint_counts + start,
++        n * sizeof(int), cudaMemcpyHostToDevice, stream);
++    for (int b = start / v->agents_per_buf; b < (start + n) / v->agents_per_buf; b++) {
++        size_t base = (size_t)b * v->agents_per_buf * PUF_JOINT_ACTION_MAX;
++        cudaMemcpyAsync(e->joint_actions + base, v->joint_actions + base,
++            (size_t)v->joint_buffer_counts[b] * sizeof(uint32_t),
++            cudaMemcpyHostToDevice, stream);
++    }
++#endif
+ }
+ 
+ // CPU worker handshake. Atomic on worker_state[]; calloc leaves BUF_STARTING.
+@@ -1184,6 +1235,11 @@ static void* vec_thread_main(void* arg) {
+             for (int i = env_start; i < env_start + env_count; i++) {
+                 puf_step(&envs[i]);
+             }
++#ifdef PUF_JOINT_ACTION_MAX
++            puf_pack_joint_actions(envs, env_start, env_count, buf, apb,
++                vec->actions, vec->joint_actions, vec->joint_offsets,
++                vec->joint_counts, vec->joint_buffer_counts);
++#endif
+             clock_gettime(CLOCK_MONOTONIC, &t1);
+             my_accum[PROF_ENV] += (t1.tv_sec - t0.tv_sec) * 1000.0f
+                 + (t1.tv_nsec - t0.tv_nsec) / 1e6f;
+@@ -1211,6 +1267,13 @@ static void env_restart(PuffeRL* p) {
+         for (int i = 0; i < vec->size; i++) {
+             puf_reset(&vec->envs[i]);
+         }
++#ifdef PUF_JOINT_ACTION_MAX
++        for (int b = 0; b < vec->buffers; b++) {
++            puf_pack_joint_actions(vec->envs, vec->env_starts[b], vec->env_counts[b],
++                b, vec->agents_per_buf, vec->actions, vec->joint_actions,
++                vec->joint_offsets, vec->joint_counts, vec->joint_buffer_counts);
++        }
++#endif
+         cpu_upload(p, 0, vec->total_agents, p->default_stream);
+     }
+     for (int b = 0; b < p->num_policies; b++) {
+@@ -1891,6 +1954,17 @@ PuffeRL* create_pufferl(Ini* ini, TrainContext* ctx) {
+     cudaMemset(env->rewards.data, 0, total_agents * sizeof(float));
+     cudaMemset(env->terminals.data, 0, total_agents * sizeof(float));
+     cudaMemset(env->action_mask.data, 1, mask_bytes);
++#ifdef PUF_JOINT_ACTION_MAX
++    if (PUF_BACKEND != PUF_GPU) {
++        size_t joint_bytes = (size_t)total_agents * PUF_JOINT_ACTION_MAX * sizeof(uint32_t);
++        cudaMalloc((void**)&env->joint_actions, joint_bytes);
++        cudaMalloc((void**)&env->joint_offsets, total_agents * sizeof(int));
++        cudaMalloc((void**)&env->joint_counts, total_agents * sizeof(int));
++        cudaMemset(env->joint_actions, 0, joint_bytes);
++        cudaMemset(env->joint_offsets, 0, total_agents * sizeof(int));
++        cudaMemset(env->joint_counts, 0, total_agents * sizeof(int));
++    }
++#endif
+ 
+     env_setup(pufferl, vec, &vec_kwargs, env_kwargs);
+     pufferl->vec = vec;
