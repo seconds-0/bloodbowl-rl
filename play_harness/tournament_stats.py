@@ -405,6 +405,18 @@ def power_games_per_pair(mde_elo, decisive_frac, leg_corr=0.0, share=0.5, alpha=
     return n + (n % 2)
 
 
+# ---- sharpness ------------------------------------------------------------------
+def sharpness(games):
+    """Mean per-decision log-probability of the chosen actions, per player
+    (sum of logprob over sum of decisions, under the distribution each seat used)."""
+    tot = defaultdict(lambda: [0.0, 0])
+    for g in games:
+        for side, name in ((0, g["home"]), (1, g["away"])):
+            tot[name][0] += g["logprob_sum"][side]
+            tot[name][1] += g["decisions"][side]
+    return {n: {"mean_logprob": s / d, "decisions": int(d)} for n, (s, d) in tot.items() if d}
+
+
 def kendall_tau(x, y):
     n = len(x)
     s = 0

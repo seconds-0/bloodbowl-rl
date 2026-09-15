@@ -176,6 +176,14 @@ def test_power_helper_round_trips_and_matches_reference():
     assert S.power_mde_elo(1400, 0.62, leg_corr=0.5) > mde         # positive dependence costs power
 
 
+def test_sharpness_pools_decisions():
+    games = [{"home": "p", "away": "q", "logprob_sum": [-10.0, -3.0], "decisions": [100, 20]},
+             {"home": "q", "away": "p", "logprob_sum": [-1.0, -20.0], "decisions": [10, 100]}]
+    sh = S.sharpness(games)
+    assert math.isclose(sh["p"]["mean_logprob"], -30.0 / 200) and sh["p"]["decisions"] == 200
+    assert math.isclose(sh["q"]["mean_logprob"], -4.0 / 30)
+
+
 def test_rank_correlations():
     assert S.kendall_tau([1, 2, 3, 4], [10, 20, 30, 40]) == 1.0
     assert S.kendall_tau([1, 2, 3, 4], [40, 30, 20, 10]) == -1.0
