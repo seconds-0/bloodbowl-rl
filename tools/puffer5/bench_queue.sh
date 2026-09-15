@@ -72,6 +72,15 @@ EOF
     chmod +x "$OUT/fakebin/nvidia-smi"
     NVSMI=$OUT/fakebin/nvidia-smi
 fi
+# Refuse any output or scratch path that resolves inside the live checkout.
+live_real=$(realpath -m "$LIVE")
+for p in "$OUT" "$BENCH" "$REF40" "$P5"; do
+    case "$(realpath -m "$p")/" in
+        "$live_real"/*)
+            echo "QUEUE-ABORT $p resolves inside the live checkout $LIVE" >&2
+            exit 6 ;;
+    esac
+done
 mkdir -p "$OUT"
 QLOG=$OUT/queue.log
 
@@ -251,6 +260,7 @@ probe_ref40() {  # name rr
     else
         run_probe "$name" ref40 "$WARMUP_40" "$REF40_PUFFER" \
             "CUDA_VISIBLE_DEVICES=0" "PATH=$LIVE_VENV_BIN:$PATH" \
+            "PYTHONDONTWRITEBYTECODE=1" \
             "PYTHONPATH=$REF40_PUFFER" "REF40_TOOLS=$REF40/tools" \
             "BENCH40_EVIDENCE=$OUT/$name.cuda-runtime.json" -- \
             "$LIVE_PY" "$LAUNCH40" "${REF40_ARGS[@]}"
