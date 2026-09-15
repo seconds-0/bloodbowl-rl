@@ -1358,3 +1358,31 @@ Every gamma 0.999 chain beats both 0.995 chains, taking 64.6-82.5% of decisive g
   - roster-class stratification
   - committed seed-cluster and leg-correlation code
 - **Pending before any production promotion:** rig-recorded torch-vs-native parity, and seating the scripted bots in the harness as held-out anchors.
+
+**D400 - CHAIN 30'S HEAD-TO-HEAD GAIN SURVIVES THE TRAINING-SEED FLOOR, ARGMAX PLAY AND A SHARPNESS-MATCHED CHAIN 25, AND IT IS NOT ROSTER-DEPENDENT; THE D399 WARM START STANDS (2026-09-15 10:55 PDT).** The follow-up measurements D399 required ran on the play harness. Doc: `docs/play-harness/tournament-followup-2026-09-15.md` on branch `feat/play-harness-20260913` at 2f99400. The run played 21,600 games in 66.2 min: 3,200 games for each of the three key pairs (minimum detectable effect about 19 Elo) and 2,400 for the other five. Every game ended naturally with zero hard counters and exactly one forward per engine step per seat, and all 46 policy, tournament and stats tests pass.
+- **Training-seed noise floor** (decisive Elo, seed-cluster 95%):
+
+  | Replicate pair | Elo |
+  |---|---|
+  | chain 25 vs chain 26 | +14.2 [+1.1, +28.1] |
+  | chain 9 vs chain 16 | +39.9 [+26.1, +53.6] |
+  | chain 14 vs chain 20 | -15.7 [-30.7, -1.4] |
+
+  Seed alone moves a checkpoint by tens of Elo; the between-seed spread of a checkpoint difference is about 25 Elo.
+- **Chain 30 against the replicates:** +140.7 over chain 26 and +250.4 over chain 16.
+- **Sharpness controls.**
+  - Argmax on both seats: chain 30 over chain 25 is +106.4 [+92, +121], unchanged from sampling (+106.3). Chain 27 over chain 25 falls from +99.6 to +70.8 [+55, +87].
+  - Chain 25 at temperature 0.75, fixed from a calibration grid on a separate seed block before any evaluation game: chain 30 still leads by +109.3 [+95, +124]. The realised sharpness was -0.1444 against chain 30's -0.1396.
+- **Roster dependence.** Splitting by roster class measures roster strength: the replicate pairs show agile minus bash at +0.36 to +0.40 with no policy gap. A per-roster-strength model with a class-specific policy gap gives chain 30 over chain 25 agile minus bash of -29 [-127, +78] in the original round robin, -15 [-87, +58] against the temperature-matched chain 25, and +59 [-13, +144] in argmax. The edge is at least +100 on bash rosters in every condition. The D399 panel's bash-roster reversal was roster strength, not a policy effect.
+
+**Verdicts.** Chain 30's +106 decisive-Elo gap over chain 25 is about four seed-spread standard deviations above the floor. It is not a sampling-greed artifact, and it is not roster-dependent. **The D399 warm start stands, and the head-to-head gains are real within this family.**
+
+**Corrections to D399's evidence.**
+- The round-robin doc's leg correlation is -0.207 (centred), not -0.087.
+- The seed-aware Bradley-Terry misfit test gives p = 0.003, so the misfit is real. It means the field is not one-dimensional, and chain 27 is the main outlier.
+- Codex found six defects in the new statistics code, all fixed with tests.
+
+**Still open before any production promotion.**
+- The floor rests on three replicate pairs, only one at gamma 0.999. Chain 32 (chain 30 at seed 44) will measure chain 30's own recipe seed spread and decide replay ratio 1.0.
+- Torch-vs-native parity is unverified.
+- There are still no held-out opponents.
