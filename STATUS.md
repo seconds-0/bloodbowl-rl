@@ -29,6 +29,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-14 22:15 (D397): chain 30 is flat.** Four times the gradient steps per epoch leaves the champion cells within the floor of chain 25 (+0.0025, +0.025, -0.0035) and costs about 30% SPS, so the recipe keeps replay ratio 0.25. Chain 31 is training: 8 opponent banks under the gamma 0.999 recipe, paired with chain 25.
 
+**Update 2026-09-15 06:45 (D398): chain 31 reads negative and ambiguous.** Eight banks at 0.06 under the horizon recipe lose contact AWAY on both exam seeds (-0.053 on the mean). This may be population width or the halved bot exposure. The knob screen around chain 25 is complete: every one-factor change is flat or worse. Chain 25 stays the frontier. Next come a CPU head-to-head tournament between checkpoints and GPU verification of the opt-in throughput patches.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

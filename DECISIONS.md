@@ -1280,3 +1280,35 @@ D396's positive reading needed both contact cells up more than 0.02, and contact
 - **Positive:** both contact champion cells beat chain 25 by more than 0.02, with offense AWAY not down more than 0.02. A seed-44 replicate follows.
 - **Flat:** population width does not matter at this horizon.
 - **Negative:** a contact champion cell down more than 0.02 on the mean and on both exam seeds. That reading stays ambiguous, because bot exposure halves from 12% to 6% (the D389 caveat).
+
+**D398 - CHAIN 31 READS NEGATIVE: EIGHT BANKS AT 0.06 UNDER THE HORIZON RECIPE LOSE CONTACT AWAY ON BOTH EXAM SEEDS AGAINST CHAIN 25, AMBIGUOUS BETWEEN POPULATION WIDTH AND HALVED BOT EXPOSURE; THE KNOB SCREEN AROUND CHAIN 25 IS COMPLETE (2026-09-15 06:45 PDT).** Chain 31 (`runs/ladder-d0-r0chain31-pop8-horizon-20260914`, unit `r0chain31-pop8-horizon`) finished its 3B at about 06:20 PDT with integrity counters zero, running 97-105K SPS with VRAM 6.5/8 GB and pickups 4.5-5.2. The run manifest recorded `scripted_bank_tag=8`, pool identity 6ffb955b and gamma 0.999. In-run eval tds read 1.66-2.20 and is not evidence. The waiter exam ran both seeds.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.524 / 0.397 | 0.478 / 0.402 | 0.554 / 0.338 |
+| 43 | 0.506 / 0.399 | 0.490 / 0.394 | 0.524 / 0.352 |
+| Two-exam-seed mean | **0.515 / 0.398** | **0.484 / 0.398** | **0.539 / 0.345** |
+
+**Scoring against chain 25 (0.568, 0.5055, 0.5895).** Champion deltas are **-0.053, -0.0215 and -0.0505**.
+- contact AWAY: -0.041 and -0.065 per exam seed
+- contact HOME: -0.011 and -0.032
+- offense AWAY: -0.029 and -0.072
+
+Contact AWAY is down more than 0.02 on the mean and on both exam seeds, so **this is D397's negative reading.** As pre-registered it stays ambiguous: at 8 x 0.06 the scripted contact bot fills one bank seat, so bot exposure falls from 12% to 6%. Losing bot practice predicts exactly a contact champion loss. The contrast with chain 23 (8 banks at gamma 0.995: 0.5085, 0.439, 0.5595) is +0.0065, +0.045 and -0.0205, so the horizon helps the 8-bank recipe as well, mostly on contact HOME. Conceded moves are not scored. Not promoted; chain 25 stays the frontier.
+
+**The screen around chain 25 is complete.**
+
+| Chain | Change from chain 25's recipe | Reading |
+|---|---|---|
+| 26 | Same recipe at training seed 44 | Replicated the gain |
+| 27 | Continued from chain 25 for another 3B | Contact up, offense down, not accepted |
+| 28 | Exact-PBRS distance | Collapsed (D395) |
+| 29 | Gamma 0.9995 | Marginally overshot (D396) |
+| 30 | Replay ratio 1.0 | Flat (D397) |
+| 31 | 8-bank population | Negative, ambiguous |
+
+Every one-factor change around the gamma 0.999 recipe is flat or worse on the scripted-bot exam.
+
+**Two non-training measurements come next, before any further knob screen.**
+1. A head-to-head round robin between chains 9, 14, 25, 27, 30 and 31 on the Mac CPU, run through the play harness backend with every-step recurrence and a sampling policy on random rosters. It checks whether the scripted-bot exam gains transfer to learned opponents.
+2. GPU verification of the two opt-in trainer patches already built: the scripted-bank forward skip (up to about 1.4x SPS for multi-bank runs) and deciding-row telemetry.
