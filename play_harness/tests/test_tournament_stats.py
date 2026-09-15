@@ -1,5 +1,6 @@
 """Tournament summary statistics: Wilson intervals, pair splits, Bradley-Terry."""
 import math
+import os
 
 import numpy as np
 import pytest
@@ -182,6 +183,32 @@ def test_sharpness_pools_decisions():
     sh = S.sharpness(games)
     assert math.isclose(sh["p"]["mean_logprob"], -30.0 / 200) and sh["p"]["decisions"] == 200
     assert math.isclose(sh["q"]["mean_logprob"], -4.0 / 30)
+
+
+@pytest.mark.skipif(not os.path.exists(S.GEN_TEAMS), reason="engine roster table not present")
+def test_roster_classes_follow_the_rule_on_the_bb2025_spec():
+    traits = S.roster_traits()
+    assert len(traits) == 30
+    assert {name: S.classify_roster(t) for name, t in traits.items()} == S.ROSTER_CLASS
+    counts = {c: sum(v == c for v in S.ROSTER_CLASS.values()) for c in S.ROSTER_CLASSES}
+    assert counts == {"agile": 5, "bash": 15, "hybrid": 5, "stunty": 5}
+    assert traits["High Elf"]["lineman"]["ag"] == 2 and traits["Tomb Kings"]["lineman"]["ma"] == 5
+
+
+def test_roster_class_table_uses_the_roster_a_coached():
+    teams = ["High Elf", "Tomb Kings"]
+    games = [{"pair": ["x", "y"], "leg": "A_home", "engine_seed": 1, "result_a": "W", "teams": teams},
+             {"pair": ["x", "y"], "leg": "B_home", "engine_seed": 1, "result_a": "L", "teams": teams},
+             {"pair": ["x", "y"], "leg": "A_home", "engine_seed": 2, "result_a": "W", "teams": teams},
+             {"pair": ["x", "y"], "leg": "B_home", "engine_seed": 2, "result_a": "D", "teams": teams}]
+    table = S.roster_class_table(games, reps=50)
+    rows = {r["class"]: r for r in table["rows"]}
+    assert (rows["agile"]["W"], rows["agile"]["L"]) == (2, 0)         # A coached High Elf at home
+    assert (rows["bash"]["W"], rows["bash"]["D"], rows["bash"]["L"]) == (0, 1, 1)
+    (contrast,) = table["contrasts"]
+    assert math.isclose(contrast["agile_minus_bash"], 1.0)
+    matchup = {r["class"]: r for r in S.roster_class_table(games, reps=20, by="matchup")["rows"]}
+    assert set(matchup) == {"agile|bash", "bash|agile"}
 
 
 def test_rank_correlations():

@@ -417,6 +417,117 @@ def sharpness(games):
     return {n: {"mean_logprob": s / d, "decisions": int(d)} for n, (s, d) in tot.items() if d}
 
 
+# ---- roster archetypes --------------------------------------------------------
+ROSTER_CLASSES = ("agile", "bash", "hybrid", "stunty")
+# The output of classify_roster over engine/src/gen_teams.c (BB2025 spec); a test
+# re-derives it from the spec so the two cannot drift.
+ROSTER_CLASS = {
+    "Amazon": "agile", "Dark Elf": "agile", "Elven Union": "agile", "High Elf": "agile",
+    "Wood Elf": "agile",
+    "Black Orc": "bash", "Chaos Chosen": "bash", "Chaos Dwarf": "bash", "Dwarf": "bash",
+    "Khorne": "bash", "Lizardmen": "bash", "Necromantic Horror": "bash", "Norse": "bash",
+    "Nurgle": "bash", "Ogre": "bash", "Old World Alliance": "bash", "Orc": "bash",
+    "Shambling Undead": "bash", "Tomb Kings": "bash", "Vampire": "bash",
+    "Bretonnian": "hybrid", "Chaos Renegades": "hybrid", "Human": "hybrid",
+    "Imperial Nobility": "hybrid", "Skaven": "hybrid",
+    "Gnome": "stunty", "Goblin": "stunty", "Halfling": "stunty", "Snotling": "stunty",
+    "Underworld Denizens": "stunty",
+}
+GEN_TEAMS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "engine", "src", "gen_teams.c")
+
+
+def roster_traits(path=GEN_TEAMS):
+    """Per roster: the lineman (first 0-12+ position) and slot counts from gen_teams.c."""
+    import re
+    src = open(path).read()
+    team_re = re.compile(r'\{ // [^\n]+\n\s+"[a-z_]+", "([^"]+)", \d+, \d+, \d+, \d+,\n\s+\{\n(.*?)\n\s+\},\n\s+\},', re.S)
+    pos_re = re.compile(r'\{"([^"]+)", (\d+), (\d+), \d+, (\d+), (\d+), (\d+), (-?\d+), (\d+), \d+, '
+                        r'\{([^}]*)\}, \{[^}]*\}, \d+, \d+, (\d+)\}')
+    out = {}
+    for tm in team_re.finditer(src):
+        positions = []
+        for p in pos_re.finditer(tm.group(2)):
+            skills = {s.strip().replace("BB_SK_", "") for s in p.group(9).split(",")} - {"0"}
+            positions.append({"name": p.group(1), "qty_max": int(p.group(3)), "ma": int(p.group(4)),
+                              "st": int(p.group(5)), "ag": int(p.group(6)), "av": int(p.group(8)),
+                              "skills": skills, "big_guy": bool(int(p.group(10)))})
+        lineman = next(p for p in positions if p["qty_max"] >= 12)
+        others = [p for p in positions if p["qty_max"] < 12]
+        out[tm.group(1)] = {
+            "lineman": lineman,
+            "heavy_slots": sum(p["qty_max"] for p in others if p["st"] >= 4),
+            "block_slots": sum(p["qty_max"] for p in others if "BLOCK" in p["skills"]),
+        }
+    return out
+
+
+def classify_roster(t):
+    """Archetype rule, first match wins (heavy = ST 4+ slots outside the lineman, Big Guys included):
+    agile  lineman AG 2+, or a non-Stunty lineman with Dodge;
+    stunty lineman has Stunty and fewer than 5 heavy slots;
+    bash   lineman MA 5 or less, AV 10+ or Block; or 5+ heavy slots; or 4+ Block slots;
+    hybrid everything else."""
+    ln = t["lineman"]
+    if ln["ag"] <= 2 or ("DODGE" in ln["skills"] and "STUNTY" not in ln["skills"]):
+        return "agile"
+    if "STUNTY" in ln["skills"] and t["heavy_slots"] < 5:
+        return "stunty"
+    if (ln["ma"] <= 5 or ln["av"] >= 10 or "BLOCK" in ln["skills"] or t["heavy_slots"] >= 5
+            or t["block_slots"] >= 4):
+        return "bash"
+    return "hybrid"
+
+
+def a_roster(g):
+    """The roster A coached in this leg (rosters stay with the side)."""
+    return g["teams"][0 if g["leg"] == "A_home" else 1]
+
+
+def b_roster(g):
+    return g["teams"][1 if g["leg"] == "A_home" else 0]
+
+
+def roster_class_table(games, reps=2000, seed=0, classes=ROSTER_CLASS, by="a"):
+    """A's decisive share per pair and roster class, with seed-cluster and Wilson intervals.
+
+    by='a' stratifies on the class A coached, 'matchup' on (A class, B class).
+    Contrast rows give A's agile minus bash decisive share with a cluster interval.
+    """
+    if by == "a":
+        key = lambda g: (tuple(g["pair"]), classes[a_roster(g)])  # noqa: E731
+    elif by == "matchup":
+        key = lambda g: (tuple(g["pair"]), classes[a_roster(g)] + "|" + classes[b_roster(g)])  # noqa: E731
+    elif by == "roster":
+        key = lambda g: (tuple(g["pair"]), a_roster(g))  # noqa: E731
+    else:
+        raise ValueError(f"unknown stratification {by!r}")
+    _, cells, counts = cluster_counts(games, key)
+    boots = bootstrap_cluster_counts(counts, reps, seed)
+    point = counts.sum(axis=0)
+    rows, pos = [], {}
+    for k, (pair, cls) in enumerate(cells):
+        share, score = _shares(boots[:, k])
+        p_share, p_score = _shares(point[k])
+        w, d, l_ = (int(v) for v in point[k])
+        pos[(pair, cls)] = k
+        rows.append({"a": pair[0], "b": pair[1], "class": cls, "games": w + d + l_,
+                     "W": w, "D": d, "L": l_, "decisive": w + l_,
+                     "decisive_share": float(p_share), "cluster_ci95": _ci(share),
+                     "wilson_ci95": list(wilson(w, w + l_)), "score_rate": float(p_score)})
+    contrasts = []
+    if by == "a":
+        for pair in sorted({c[0] for c in cells}):
+            if (pair, "agile") in pos and (pair, "bash") in pos:
+                sa, _ = _shares(boots[:, pos[(pair, "agile")]])
+                sb, _ = _shares(boots[:, pos[(pair, "bash")]])
+                pa, _ = _shares(point[pos[(pair, "agile")]])
+                pb, _ = _shares(point[pos[(pair, "bash")]])
+                contrasts.append({"a": pair[0], "b": pair[1], "agile_minus_bash": float(pa - pb),
+                                  "cluster_ci95": _ci(sa - sb)})
+    return {"by": by, "rows": rows, "contrasts": contrasts}
+
+
 def kendall_tau(x, y):
     n = len(x)
     s = 0
