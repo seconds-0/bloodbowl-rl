@@ -1,0 +1,56 @@
+# 0001: build: compile C env translation units and cap nvcc threads
+diff --git a/build.sh b/build.sh
+index 6822e9d7..67791311 100755
+--- a/build.sh
++++ b/build.sh
+@@ -237,9 +237,29 @@ if [ -n "$DEBUG" ] || [ "$MODE" = "local" ]; then
+ else
+ # No -DNDEBUG: keep assert() active (train/sweep fail-fast with messages).
+     CLANG_OPT=(-O2 "${CLANG_WARN[@]}" "${SIMD_FLAGS[@]}")
+-    NVCC_OPT="-O2 --threads 0"
++    NVCC_OPT="-O2 --threads ${NVCC_THREADS:-0}"
+     LINK_OPT="-O2"
+ fi
++
++# bloodbowl-rl: envs that ship ocean/ENV/ENV5_env.c keep their simulation in a
++# separate C11 translation unit (not C++ clean, so it cannot be included into
++# pufferl.cu). Compile it with the 4.0 static-library flags and link the object.
++ENV_OBJECTS=()
++build_env_object() {
++    local env_src="$SRC_DIR/${ENV}5_env.c"
++    [ -f "$env_src" ] || return 0
++    mkdir -p build
++    local obj="build/${ENV}_env.o"
++    local omp=(-fopenmp)
++    [ "$PLATFORM" = "Linux" ] || omp=()
++    echo "Compiling $env_src -> $obj..."
++    ${ENV_CC:-${CC:-clang}} -c -O2 -DNDEBUG "${CLANG_WARN[@]}" -Wno-unused-function \
++        "${SIMD_FLAGS[@]}" \
++        -I. -Isrc -I"$SRC_DIR/env" -I"$SRC_DIR/shim" -Ivendor -I./$RAYLIB_NAME/include \
++        -DPLATFORM_DESKTOP -fno-semantic-interposition -fvisibility=hidden -fPIC \
++        "${omp[@]}" "$env_src" -o "$obj"
++    ENV_OBJECTS+=("$obj")
++}
+ # Dashboard / cache / trailer: compile SRC_FILE only (not puffercpu / CUDA / obs_t).
+ if [ "$STANDALONE" = "1" ]; then
+     if [ "$MODE" = "web" ] || [ "$MODE" = "profile" ]; then
+@@ -296,9 +316,10 @@ if [ "$MODE" = "cpu" ]; then
+             )
+             ;;
+     esac
++    build_env_object
+     FLAGS=(
+         -I. -Isrc -I$SRC_DIR -Ivendor "${INCLUDES[@]}"
+-        "$STANDALONE_SOURCE" $EXTRA_SRC -o "$OUTPUT_NAME"
++        "$STANDALONE_SOURCE" $EXTRA_SRC "${ENV_OBJECTS[@]}" -o "$OUTPUT_NAME"
+         "${LINK_ARCHIVES[@]}"
+         "${EXTRA_LDFLAGS[@]}"
+         "${STANDALONE_LDFLAGS[@]}"
+@@ -502,6 +523,7 @@ if [ "$MODE" = "native" ]; then
+                 -o "$OSRS_RENDER_OBJECT"
+             ;;
+     esac
++    build_env_object
+     echo "Compiling $ENV_HEADER -> $TRAIN_BIN..."
+     $NVCC $NVCC_OPT -arch=$ARCH -std=c++17 \
+         -I. -Isrc -I$SRC_DIR -Ivendor \
