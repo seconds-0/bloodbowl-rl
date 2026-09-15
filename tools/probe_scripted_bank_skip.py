@@ -272,7 +272,20 @@ def single_gpu_args(args: dict[str, Any]) -> dict[str, Any]:
     return args
 
 
+def require_cuda_visible_devices(environ: Mapping[str, str]) -> str:
+    """The CUDA preflight records CUDA_VISIBLE_DEVICES and refuses an unset or
+    empty value only after importing _C; say so before any CUDA call instead."""
+    value = environ.get("CUDA_VISIBLE_DEVICES")
+    if not value:
+        raise ProbeError(
+            "CUDA_VISIBLE_DEVICES is unset or empty; the CUDA runtime preflight "
+            "(tools/puffer_cuda_runtime.py) refuses it. export CUDA_VISIBLE_DEVICES=0 "
+            "as the ladder launchers do")
+    return value
+
+
 def load_trainer(puffer_root: pathlib.Path, overrides: Sequence[str]):
+    require_cuda_visible_devices(os.environ)
     sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
     from qualify_recurrent_cuda import _load_backend  # CUDART before _C (D225)
 

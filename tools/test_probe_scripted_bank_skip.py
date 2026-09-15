@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import copy
+import os
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -318,6 +320,18 @@ class ProbeLogicTests(unittest.TestCase):
                          (1, "", 0, 0))
         with self.assertRaises(probe.ProbeError):
             probe.single_gpu_args({"train": {"gpus": 2}})
+
+    def test_cuda_visible_devices_is_required_before_any_cuda_call(self):
+        # The rig preflight refused every trace with "CUDA_VISIBLE_DEVICES evidence
+        # is missing or invalid" when the recipe shell never exported it.
+        self.assertEqual(probe.require_cuda_visible_devices({"CUDA_VISIBLE_DEVICES": "0"}), "0")
+        for environ in ({}, {"CUDA_VISIBLE_DEVICES": ""}):
+            with self.assertRaisesRegex(probe.ProbeError, "export CUDA_VISIBLE_DEVICES=0"):
+                probe.require_cuda_visible_devices(environ)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            with self.assertRaisesRegex(probe.ProbeError, "CUDA_VISIBLE_DEVICES"):
+                probe.load_trainer(pathlib.Path("/nonexistent"), [])
 
     def test_per_epoch_split(self):
         perf = {"rollout": 10.0, "eval_gpu": 6.0, "eval_env": 2.0, "train_misc": 0.5,

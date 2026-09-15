@@ -129,6 +129,7 @@ on 2026-09-11; see audit B11). Stop any probe at 82 C.
 D=/tmp/bbfix-skip-scripted-bank-forward
 SRC=/home/rache/bloodbowl-rl-qualification-candidate-10619e2
 PY=$SRC/vendor/PufferLib/.venv/bin/python
+export CUDA_VISIBLE_DEVICES=0   # the CUDA preflight refuses an unset value, as the launchers export
 WARM=$SRC/vendor/PufferLib/checkpoints/bloodbowl/1787584031608/0000002999975936.bin
 sha256sum "$WARM"   # expect 4344e588c124f7df2c887a824e1847008a02be57e63bd423c3c0b02964258dcc
 mkdir -p "$D" && cd "$D"
