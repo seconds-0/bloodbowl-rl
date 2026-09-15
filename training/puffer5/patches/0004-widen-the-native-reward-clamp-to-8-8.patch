@@ -1,0 +1,14 @@
+# 0004: widen the native reward clamp to [-8, 8]
+diff --git a/src/pufferl.cu b/src/pufferl.cu
+index f13cc5e4..92de1e0c 100644
+--- a/src/pufferl.cu
++++ b/src/pufferl.cu
+@@ -1607,7 +1607,7 @@ static void train_epoch_gpu(PuffeRL* pufferl, RolloutBuf src, int slot,
+ 
+     clamp_precision_kernel<<<grid_size(
+         numel(rollouts->rewards.shape)), BLOCK_SIZE, 0, stream>>>(
+-        rollouts->rewards.data, -1.0f, 1.0f, numel(rollouts->rewards.shape));
++        rollouts->rewards.data, -8.0f, 8.0f, numel(rollouts->rewards.shape));
+ 
+     if (hypers->reset_every_horizon || src.initial_states.data == NULL) {
+         cudaMemsetAsync(pufferl->train_state.data, 0,
