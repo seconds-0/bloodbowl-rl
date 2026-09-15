@@ -99,9 +99,11 @@ which rows a step sees:
 ## Algorithm differences that remain (upstream 5.0 design, not ported)
 
 1. **Minibatch selection.** No prioritized replay and no importance weights.
-2. **Advantages.** 4.0 computes GAE once per epoch from rollout values and
-   normalizes advantages per minibatch. 5.0 recomputes GAE inside every
-   minibatch from the current network's values and uses unnormalized advantages.
+2. **Advantages.** 4.0 recomputes GAE over the whole rollout buffer before every
+   minibatch (with the stored ratio and values it writes back after each step),
+   zeroes frozen rows, samples by priority, and normalizes advantages. 5.0
+   computes GAE only over the minibatch's own rows, from the current network's
+   values, and uses unnormalized advantages.
 3. **Value clip gradient.** When the clipped term wins, 5.0 gives zero value
    gradient; 4.0 kept `v_clipped - ret` inside the clip range.
 4. **Training-time terminal reset.** 5.0 zeroes recurrent state at terminal rows
