@@ -2,10 +2,12 @@
 //   src/exact_joint.h    (patch 0002, exact sequential joint masks)
 //   src/train_rows.h     (patch 0003, learner-row gather excludes frozen rows)
 //   src/scripted_bank.h  (patch 0006, scripted bank forward skip keying)
+//   src/masked_softmax.h (patch 0009, disabled categories excluded)
 //   algo.cu NaN guard predicates are exercised through puf_ppo_* in
 //   src/ppo_guard.h      (patch 0005)
 //
 // Build: clang++ -std=c++17 -O1 -I<puffer5 tree>/src test_trainer_helpers.cpp -o t && ./t
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -20,6 +22,7 @@ typedef float precision_t;
 #define from_float(x) (x)
 #define to_float(x) (x)
 #include "exact_joint.h"
+#include "masked_softmax.h"
 #include "ppo_guard.h"
 #include "scripted_bank.h"
 #include "train_rows.h"
@@ -99,12 +102,17 @@ static void test_train_rows() {
     const int apb = 1024, buffers = 2, primary = 536, mb_segs = 256;
     const int total_agents = apb * buffers;
     const int eligible = buffers * primary;
-    int pad = puf_train_pad_rows(eligible, mb_segs);
-    CHECK(pad == 256, "pad %d", pad);
-    int rows = eligible + pad;
-    CHECK(rows <= total_agents, "rows %d exceed capacity", rows);
+    CHECK(puf_train_pad_rows(eligible, mb_segs, 8) == 208, "rr 1.0 pad %d",
+        puf_train_pad_rows(eligible, mb_segs, 8));
+    CHECK(puf_train_pad_rows(eligible, mb_segs, 2) == 0, "rr 0.25 pad");
+    // Review case: 1920 eligible rows at 8 steps x 256 rows reach offset 1792,
+    // so 128 pad rows suffice and 2048 rows fit (the old whole-minibatch pad refused it).
+    CHECK(puf_train_pad_rows(1920, 256, 8) == 128, "1920-row pad %d",
+        puf_train_pad_rows(1920, 256, 8));
     for (double rr : {1.0, 0.25}) {
         int total_mb = (int)(rr * total_agents * 64 / (mb_segs * 64));
+        int rows = eligible + puf_train_pad_rows(eligible, mb_segs, total_mb);
+        CHECK(rows <= total_agents, "rows %d exceed capacity", rows);
         std::vector<int> visits(total_agents, 0);
         const int epochs = 12;
         for (long epoch = 0; epoch < epochs; ++epoch) {
@@ -138,7 +146,7 @@ static void test_train_rows() {
             rr, epochs, total_mb, min_v, max_v);
     }
     // No frozen policies: identity rows, no pad.
-    CHECK(puf_train_pad_rows(2048, 256) == 0, "no pad expected");
+    CHECK(puf_train_pad_rows(2048, 256, 8) == 0, "no pad expected");
     std::vector<int> id(2048);
     puf_fill_train_row_map(id.data(), 2048, 2048, 1024, 1024, 0);
     for (int r = 0; r < 2048; ++r) CHECK(id[r] == r, "identity map broken at %d", r);
@@ -169,7 +177,50 @@ static void test_ppo_guard() {
     CHECK(!puf_muon_norm_ok(-1.0f), "negative norm");
 }
 
+static void test_masked_softmax() {
+    // Review counterexample: singleton support whose legal logit is -1e4.
+    // With a -1e4 substitute every disabled category took probability 1/30.
+    const int A = 30;
+    std::vector<float> logits(A, -10000.0f), mask(A, 0.0f), cache(A);
+    mask[7] = 1.0f;
+    float lse = puf_masked_logsumexp(logits.data(), 0, 0, A, mask.data(), 0, cache.data());
+    CHECK(std::fabs((cache[7] - lse) - 0.0f) < 1e-6f, "legal logp %g", cache[7] - lse);
+    std::vector<float> g(A);
+    for (int j = 0; j < A; ++j) g[j] = cache[j] - lse;
+    float ent = puf_masked_head_entropy(g.data(), mask.data(), A);
+    CHECK(ent == 0.0f && std::isfinite(ent), "singleton entropy %g", ent);
+    puf_masked_head_grad(g.data(), mask.data(), A, 7, 0.5f, -0.01f, ent);
+    for (int j = 0; j < A; ++j) {
+        CHECK(std::isfinite(g[j]), "grad %d not finite", j);
+        if (j != 7) CHECK(g[j] == 0.0f, "disabled grad %d = %g", j, g[j]);
+    }
+    // Random logits against a float64 log-softmax over the enabled subset.
+    srand(7);
+    for (int trial = 0; trial < 200; ++trial) {
+        int n = 391;
+        std::vector<float> lg(n), mk(n), ch(n);
+        int enabled = 0;
+        for (int j = 0; j < n; ++j) {
+            lg[j] = (float)((rand() % 20000) - 10000) * 0.3f;
+            mk[j] = (rand() % 7 == 0) ? 1.0f : 0.0f;
+            enabled += mk[j] != 0.0f;
+        }
+        if (!enabled) { mk[0] = 1.0f; enabled = 1; }
+        float l = puf_masked_logsumexp(lg.data(), 0, 0, n, mk.data(), 0, ch.data());
+        double mx = -1e300;
+        for (int j = 0; j < n; ++j) if (mk[j] != 0.0f && lg[j] > mx) mx = lg[j];
+        double sum = 0.0;
+        for (int j = 0; j < n; ++j) if (mk[j] != 0.0f) sum += std::exp((double)lg[j] - mx);
+        double ref = mx + std::log(sum);
+        CHECK(std::fabs(l - ref) <= 1e-3 * std::max(1.0, std::fabs(ref)), "lse %g ref %g", l, ref);
+        for (int j = 0; j < n; ++j) {
+            if (mk[j] == 0.0f) CHECK(ch[j] == -INFINITY, "disabled cache %d", j);
+        }
+    }
+}
+
 int main() {
+    test_masked_softmax();
     test_exact_joint();
     test_train_rows();
     test_scripted_bank();
