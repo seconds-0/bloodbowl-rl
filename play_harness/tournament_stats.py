@@ -80,6 +80,15 @@ def bt_fit(wins, iters=10_000, tol=1e-12):
     """Bradley-Terry MLE by the MM algorithm (Hunter 2004). Returns log-strengths, mean 0."""
     n = wins.shape[0]
     games = wins + wins.T
+    seen, stack = {0}, [0]
+    while stack:
+        for j in np.nonzero(games[stack.pop()])[0]:
+            if int(j) not in seen:
+                seen.add(int(j))
+                stack.append(int(j))
+    if len(seen) != n:
+        raise ValueError("the pair graph is not connected: strengths in different "
+                         "components are not comparable")
     total_wins = wins.sum(axis=1)
     if np.any(total_wins == 0) or np.any(total_wins == games.sum(axis=1)):
         raise ValueError("a player with no decisive wins or no decisive losses has no finite MLE")

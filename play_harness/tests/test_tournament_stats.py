@@ -142,6 +142,12 @@ def test_score_rate_counts_draws_as_half_and_elo_scale():
     assert float(S.elo_from_share(0.5)) == 0.0
 
 
+def test_bradley_terry_refuses_a_disconnected_pair_graph():
+    wins = np.array([[0, 5, 0, 0], [4, 0, 0, 0], [0, 0, 0, 6], [0, 0, 3, 0]], dtype=float)
+    with pytest.raises(ValueError, match="connected"):
+        S.bt_fit(wins)
+
+
 def test_rank_correlations():
     assert S.kendall_tau([1, 2, 3, 4], [10, 20, 30, 40]) == 1.0
     assert S.kendall_tau([1, 2, 3, 4], [40, 30, 20, 10]) == -1.0
