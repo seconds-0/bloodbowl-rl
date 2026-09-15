@@ -207,9 +207,38 @@ def test_roster_class_table_uses_the_roster_a_coached():
     assert (rows["agile"]["W"], rows["agile"]["L"]) == (2, 0)         # A coached High Elf at home
     assert (rows["bash"]["W"], rows["bash"]["D"], rows["bash"]["L"]) == (0, 1, 1)
     (contrast,) = table["contrasts"]
-    assert math.isclose(contrast["agile_minus_bash"], 1.0)
+    assert contrast["contrast"] == "agile_minus_bash_share" and math.isclose(contrast["value"], 1.0)
     matchup = {r["class"]: r for r in S.roster_class_table(games, reps=20, by="matchup")["rows"]}
     assert set(matchup) == {"agile|bash", "bash|agile"}
+
+
+def test_seed_matchup_strata_cancel_roster_strength():
+    # Two equal policies. High Elf beats Tomb Kings 80% whoever coaches; the mirror
+    # seeds (Dwarf-Orc, Dark Elf-Wood Elf) are coin flips. There is no policy gap.
+    rng = np.random.default_rng(12)
+    games = []
+    for i in range(1500):
+        u = rng.random()
+        teams = (["High Elf", "Tomb Kings"] if u < 0.5 else
+                 ["Dwarf", "Orc"] if u < 0.8 else ["Dark Elf", "Wood Elf"])
+        for leg in LEGS:
+            ar = teams[0 if leg == "A_home" else 1]
+            p = 0.8 if ar == "High Elf" else 0.2 if ar == "Tomb Kings" else 0.5
+            games.append({"pair": ["x", "y"], "leg": leg, "engine_seed": i, "teams": teams,
+                          "result_a": "W" if rng.random() < p else "L"})
+    coached = {r["class"]: r for r in S.roster_class_table(games, reps=100)["rows"]}
+    # expected (0.5*0.8 + 0.4*0.5) / 0.9 = 0.667 and (0.5*0.2 + 0.6*0.5) / 1.1 = 0.364
+    assert coached["agile"]["decisive_share"] > 0.62 and coached["bash"]["decisive_share"] < 0.40
+    balanced = S.roster_class_table(games, reps=300, by="seed_matchup")
+    rows = {r["class"]: r for r in balanced["rows"]}
+    assert set(rows) == {"agile|bash", "bash|bash", "agile|agile"}
+    assert rows["agile|bash"]["games"] == 2 * sum(g["teams"][0] == "High Elf" for g in games) // 2
+    for r in rows.values():
+        assert r["cluster_ci95"][0] < 0.5 < r["cluster_ci95"][1]
+    contrasts = {c["contrast"]: c for c in balanced["contrasts"]}
+    assert set(contrasts) == {"g_agile_minus_g_bash_elo", "agile_mirror_minus_bash_mirror_elo"}
+    for c in contrasts.values():
+        assert c["cluster_ci95"][0] < 0.0 < c["cluster_ci95"][1]
 
 
 def test_stats_cli_prints_and_writes_the_report(tmp_path, capsys):

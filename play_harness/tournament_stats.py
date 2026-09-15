@@ -499,8 +499,19 @@ def b_roster(g):
 def roster_class_table(games, reps=2000, seed=0, classes=ROSTER_CLASS, by="a"):
     """A's decisive share per pair and roster class, with seed-cluster and Wilson intervals.
 
-    by='a' stratifies on the class A coached, 'matchup' on (A class, B class).
-    Contrast rows give A's agile minus bash decisive share with a cluster interval.
+    by='a' stratifies on the class A coached, 'matchup' on (A class, B class),
+    'roster' on A's roster. These mix the policy gap with roster strength: when A
+    coaches a strong roster, B coaches the seed's other roster.
+
+    by='seed_matchup' stratifies on the seed's unordered pair of roster classes
+    and pools both legs. Both legs use the same two rosters with the coaches
+    swapped, so roster strength cancels and each stratum measures the policy gap
+    alone. On the logit scale a stratum {c, d} reads about (g_c + g_d) / 2,
+    where g_c is A's gap over B when coaching class c, so bash|bash gives g_bash
+    and 2 * (agile|bash - bash|bash) gives g_agile - g_bash.
+
+    Contrast rows: by='a' gives A's agile minus bash decisive share; by='seed_matchup'
+    gives g_agile - g_bash and agile|agile - bash|bash in Elo, with cluster intervals.
     """
     if by == "a":
         key = lambda g: (tuple(g["pair"]), classes[a_roster(g)])  # noqa: E731
@@ -508,6 +519,9 @@ def roster_class_table(games, reps=2000, seed=0, classes=ROSTER_CLASS, by="a"):
         key = lambda g: (tuple(g["pair"]), classes[a_roster(g)] + "|" + classes[b_roster(g)])  # noqa: E731
     elif by == "roster":
         key = lambda g: (tuple(g["pair"]), a_roster(g))  # noqa: E731
+    elif by == "seed_matchup":
+        key = lambda g: (tuple(g["pair"]),  # noqa: E731
+                         "|".join(sorted((classes[g["teams"][0]], classes[g["teams"][1]]))))
     else:
         raise ValueError(f"unknown stratification {by!r}")
     _, cells, counts = cluster_counts(games, key)
@@ -531,8 +545,22 @@ def roster_class_table(games, reps=2000, seed=0, classes=ROSTER_CLASS, by="a"):
                 sb, _ = _shares(boots[:, pos[(pair, "bash")]])
                 pa, _ = _shares(point[pos[(pair, "agile")]])
                 pb, _ = _shares(point[pos[(pair, "bash")]])
-                contrasts.append({"a": pair[0], "b": pair[1], "agile_minus_bash": float(pa - pb),
-                                  "cluster_ci95": _ci(sa - sb)})
+                contrasts.append({"a": pair[0], "b": pair[1], "contrast": "agile_minus_bash_share",
+                                  "value": float(pa - pb), "cluster_ci95": _ci(sa - sb)})
+    if by == "seed_matchup":
+        for pair in sorted({c[0] for c in cells}):
+            for name, (hi, lo), scale in (("g_agile_minus_g_bash_elo", ("agile|bash", "bash|bash"), 2.0),
+                                          ("agile_mirror_minus_bash_mirror_elo",
+                                           ("agile|agile", "bash|bash"), 1.0)):
+                if (pair, hi) in pos and (pair, lo) in pos:
+                    bh, _ = _shares(boots[:, pos[(pair, hi)]])
+                    bl, _ = _shares(boots[:, pos[(pair, lo)]])
+                    ph, _ = _shares(point[pos[(pair, hi)]])
+                    pl, _ = _shares(point[pos[(pair, lo)]])
+                    contrasts.append({
+                        "a": pair[0], "b": pair[1], "contrast": name,
+                        "value": float(scale * (elo_from_share(ph) - elo_from_share(pl))),
+                        "cluster_ci95": _ci(scale * (elo_from_share(bh) - elo_from_share(bl)))})
     return {"by": by, "rows": rows, "contrasts": contrasts}
 
 
@@ -593,18 +621,20 @@ def seed_cluster_markdown(boot):
 
 
 def roster_markdown(table):
-    lines = [f"| A | B | {'A roster class' if table['by'] == 'a' else table['by']} | games "
-             "| W / D / L | decisive share | 95% seed-cluster | 95% Wilson |",
-             "|---|---|---|---|---|---|---|---|"]
+    label = {"a": "A roster class", "seed_matchup": "seed class matchup (both legs)"}.get(
+        table["by"], table["by"])
+    lines = [f"| A | B | {label} | games | W / D / L | decisive share | 95% seed-cluster "
+             "| 95% Wilson |", "|---|---|---|---|---|---|---|---|"]
     for r in table["rows"]:
         lines.append(f"| {r['a']} | {r['b']} | {r['class']} | {r['games']} "
                      f"| {r['W']} / {r['D']} / {r['L']} | {r['decisive_share']:.3f} "
                      f"| {_fmt_ci(r['cluster_ci95'])} | {_fmt_ci(r['wilson_ci95'])} |")
     if table["contrasts"]:
-        lines += ["", "| A | B | agile minus bash | 95% seed-cluster |", "|---|---|---|---|"]
+        lines += ["", "| A | B | contrast | value | 95% seed-cluster |", "|---|---|---|---|---|"]
         for c in table["contrasts"]:
-            lines.append(f"| {c['a']} | {c['b']} | {c['agile_minus_bash']:+.3f} "
-                         f"| {_fmt_ci(c['cluster_ci95'], '{:+.3f}')} |")
+            fmt = "{:+.3f}" if c["contrast"].endswith("share") else "{:+.1f}"
+            lines.append(f"| {c['a']} | {c['b']} | {c['contrast']} | {fmt.format(c['value'])} "
+                         f"| {_fmt_ci(c['cluster_ci95'], fmt)} |")
     return "\n".join(lines)
 
 
@@ -623,7 +653,9 @@ def report(games, reps=2000, seed=0):
            "seed_cluster": seed_cluster_bootstrap(games, reps=reps, seed=seed),
            "leg_correlation": leg_correlation(games), "sharpness": sharpness(games),
            "roster_classes": roster_class_table(games, reps=reps, seed=seed),
-           "roster_matchups": roster_class_table(games, reps=reps, seed=seed, by="matchup")}
+           "roster_matchups": roster_class_table(games, reps=reps, seed=seed, by="matchup"),
+           "roster_seed_matchups": roster_class_table(games, reps=reps, seed=seed,
+                                                      by="seed_matchup")}
     try:
         rank = ranking(games, reps=reps, seed=seed)
         out["ranking"] = rank
@@ -658,6 +690,7 @@ def main(argv=None):
     for name, s in sorted(rep["sharpness"].items(), key=lambda kv: -kv[1]["mean_logprob"]):
         print(f"| {name} | {s['mean_logprob']:.4f} | {s['decisions']} |")
     print("\n" + roster_markdown(rep["roster_classes"]))
+    print("\n" + roster_markdown(rep["roster_seed_matchups"]))
     if args.json:
         with open(args.json, "w") as f:
             json.dump(_jsonable(rep), f, indent=1)
