@@ -375,6 +375,36 @@ def bt_misfit(wins, names, theta=None):
             "p_deviance": chi2_sf(dev, df) if df > 0 else float("nan"), "rows": rows}
 
 
+# ---- power ----------------------------------------------------------------------
+def _z(q):
+    from statistics import NormalDist
+    return NormalDist().inv_cdf(q)
+
+
+def power_mde_elo(games_per_pair, decisive_frac, leg_corr=0.0, share=0.5, alpha=0.05,
+                  power=0.8):
+    """Smallest decisive-Elo gap a pair of `games_per_pair` games (both legs) detects
+    with a two-sided test at `alpha` with `power`.
+
+    Normal approximation on the logit of the decisive share. The two legs of a
+    seed are a cluster of two, so the variance carries the design effect
+    1 + leg_corr, with leg_corr the within-pair centred leg correlation.
+    """
+    n_decisive = games_per_pair * decisive_frac
+    deff = 1.0 + leg_corr
+    return ELO * (_z(1 - alpha / 2) + _z(power)) * math.sqrt(deff / (n_decisive * share * (1 - share)))
+
+
+def power_games_per_pair(mde_elo, decisive_frac, leg_corr=0.0, share=0.5, alpha=0.05,
+                         power=0.8):
+    """Games per pair (even, both legs) needed to detect `mde_elo`; inverse of power_mde_elo."""
+    deff = 1.0 + leg_corr
+    z = _z(1 - alpha / 2) + _z(power)
+    n_decisive = deff * (z * ELO / mde_elo) ** 2 / (share * (1 - share))
+    n = math.ceil(n_decisive / decisive_frac)
+    return n + (n % 2)
+
+
 def kendall_tau(x, y):
     n = len(x)
     s = 0

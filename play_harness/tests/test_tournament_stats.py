@@ -166,6 +166,16 @@ def test_bradley_terry_refuses_a_disconnected_pair_graph():
         S.bt_fit(wins)
 
 
+def test_power_helper_round_trips_and_matches_reference():
+    mde = S.power_mde_elo(1400, 0.62)
+    assert 32.0 < mde < 34.0                                      # about 30 Elo at 1400 games
+    n = S.power_games_per_pair(20.0, 0.62, leg_corr=-0.207)
+    assert 2900 < n < 3100 and n % 2 == 0                         # D399's ~3100 for 20 Elo
+    assert S.power_mde_elo(n, 0.62, leg_corr=-0.207) <= 20.0 < \
+        S.power_mde_elo(n - 40, 0.62, leg_corr=-0.207)
+    assert S.power_mde_elo(1400, 0.62, leg_corr=0.5) > mde         # positive dependence costs power
+
+
 def test_rank_correlations():
     assert S.kendall_tau([1, 2, 3, 4], [10, 20, 30, 40]) == 1.0
     assert S.kendall_tau([1, 2, 3, 4], [40, 30, 20, 10]) == -1.0
