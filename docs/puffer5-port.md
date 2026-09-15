@@ -49,6 +49,16 @@ LD_LIBRARY_PATH=<nccl lib> ./puffer train --base.load_model_path=... \
 | 0006 scripted bank | skips the forward for the frozen policy whose seats the env plays with the contact bot; refuses learning runs whose scripted opponent would sit on learner rows | `test_trainer_helpers` keying cases |
 | 0007 warm start and league | `base.load_model_path` seeds the learner; `selfplay.league_preseed` loads bank b from `<pool>/%016d.bin` and disables resampling; weight files must match the policy size exactly | exercised by the benchmark probes |
 | 0008 metrics | `PUFFER5_METRICS_JSONL` appends each trainer log as one JSON line | exercised by the benchmark probes |
+| 0009 masked categories | disabled categories are excluded from the log-normalizer, sampling, entropy and gradient, as in the 4.0 exact-action patch (upstream substituted a -1e4 logit, which leaks probability once legal logits approach -1e4) | `test_trainer_helpers`: the review counterexample (singleton support at logit -1e4 now gives log-probability 0, zero entropy, zero disabled gradient) plus 200 random 391-way heads against a float64 masked log-softmax |
+| 0010 padding | pad rows sized to the furthest reachable minibatch slice; refuses gathers beyond int indexing | `test_trainer_helpers`: pad 208 at rr 1.0 and 0 at rr 0.25 for chain 30, 128 for a 1920-row layout |
+
+A Codex review (gpt-6-astra, `.codex-reviews/puffer5-port-review.md`, not
+committed) reconstructed the series byte for byte from `6ffa5b1`. It found no
+graph-capture race, no frozen-row leakage and no defect in the NaN-guard control
+flow, seat routing or Log move. It reported four P2 defects, all fixed:
+0009, 0010 (padding and int overflow), idempotent reinstall, and bytecode or
+path writes from the 4.0 probe. It also corrected this document's description
+of 4.0 advantages.
 
 Recurrent evaluation state (task item e) needs no patch. 5.0's `zero_term_state`
 zeroes each policy's state for terminal rows before the next observation is
