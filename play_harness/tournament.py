@@ -1,0 +1,335 @@
+"""Policy-vs-policy tournament runner: both seats are trained checkpoints.
+
+Each seat is a PolicySeat stepped on EVERY env c_step (native evaluation-mode
+recurrence), with fresh recurrent state and a fresh sampling generator per
+match. Rosters are procgen as in training (random teams, training skill-up
+settings), fixed by the engine seed.
+
+Schedule. A pair (A, B) plays game index i twice with the same engine seed
+seed0 + i: leg "A_home" (A HOME, B AWAY), then leg "B_home" (B HOME, A AWAY).
+The sampling seeds are keyed by side, so the swapped leg reuses both the
+engine seed and the per-side sampling seeds; only which policy sits where
+changes. Every pair uses the same seed list (common random numbers), and tasks
+are interleaved by game index so a partial run stays balanced across pairs.
+
+Integrity. A game is accepted only when it ends naturally (MATCH_OVER), every
+hard counter is zero, and each seat made exactly one forward per engine step.
+Any violation aborts the whole run.
+
+  OMP_NUM_THREADS=1 .venv/bin/python -m play_harness.tournament \\
+      --games-per-pair 400 --workers 4 --out-dir .play-artifacts/tournaments/<stamp>
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import itertools
+import json
+import os
+import platform
+import struct
+import subprocess
+import sys
+import time
+
+from . import engine as E
+from .policy import NONE_TUPLE, PolicySeat, load_checkpoint
+
+SCHEMA = "bbplay-tournament-game-v1"
+MANIFEST_SCHEMA = "bbplay-tournament-v1"
+MAX_DECISIONS = 4096
+MAX_WORKERS = 4
+HARD_COUNTERS = ("illegal", "projection_collision", "error_episodes",
+                 "rejected_submissions", "precheck_collisions")
+LEGS = ("A_home", "B_home")
+CHECKPOINT_BLOB = "0000002999975936.bin"
+DEFAULT_CHECKPOINT_DIR = os.path.join(E.ROOT, ".play-artifacts", "checkpoints")
+
+
+class IntegrityError(RuntimeError):
+    pass
+
+
+def sampling_seed(engine_seed, side):
+    """Per-side torch sampling seed; identical for both legs of a game."""
+    return (int(engine_seed) * 1_000_003 + 17 + int(side)) % (1 << 62)
+
+
+def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
+               max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
+               max_c_steps=200_000):
+    """One natural match between two policies. Returns (record, seats).
+
+    Raises IntegrityError on any violation of the tournament contract.
+    """
+    seats = (seat_factory(home_policy, 0, mode=mode, seed=sampling_seed(engine_seed, 0)),
+             seat_factory(away_policy, 1, mode=mode, seed=sampling_seed(engine_seed, 1)))
+    for seat in seats:
+        seat.reset_match()
+    eng = E.Engine(engine_seed, episode=episode, max_decisions=max_decisions, lib=lib)
+    t0 = time.time()
+    c_steps = 0
+    trail = hashlib.sha256()
+    logprob = [0.0, 0.0]
+    try:
+        while True:
+            if eng.status != E.STATUS_DECISION:
+                raise IntegrityError(f"engine not at a decision before step {c_steps}: "
+                                     f"status={eng.status}")
+            team = eng.decision_team
+            if team not in (0, 1):
+                raise IntegrityError(f"decision team {team} at step {c_steps}")
+            outs = [seats[s].step(eng.obs(s), eng.joint_support(s), s == team)
+                    for s in (0, 1)]
+            c_steps += 1
+            for s in (0, 1):
+                if seats[s].forwards != c_steps:
+                    raise IntegrityError(f"seat {s} made {seats[s].forwards} forwards "
+                                         f"over {c_steps} engine steps")
+            if tuple(outs[1 - team]["tuple"]) != NONE_TUPLE:
+                raise IntegrityError(f"waiting seat {1 - team} emitted {outs[1 - team]['tuple']}")
+            tup = tuple(int(v) for v in outs[team]["tuple"])
+            if eng.tuple_index(*tup) < 0:
+                raise IntegrityError(f"seat {team} tuple {tup} outside exact support")
+            logprob[team] += float(outs[team]["logprob"])
+            trail.update(struct.pack("<Biii", team, *tup))
+            rc = eng.step(*tup)
+            if rc == E.STEP_TERMINAL:
+                break
+            if rc < 0:
+                raise IntegrityError(f"engine refused seat {team} tuple {tup}: rc={rc}")
+            if c_steps >= max_c_steps:
+                raise IntegrityError(f"no terminal after {c_steps} steps")
+        final = eng.final_match()
+        counters = eng.counters()
+        if final is None:
+            raise IntegrityError("terminal step without a final match snapshot")
+        natural = final.status == E.STATUS_MATCH_OVER
+        integrity = {k: counters[k] for k in HARD_COUNTERS}
+        if not natural:
+            raise IntegrityError(f"match ended unnaturally: status={final.status}")
+        if any(integrity.values()):
+            raise IntegrityError(f"nonzero integrity counters: {integrity}")
+        if counters["steps"] != c_steps:
+            raise IntegrityError(f"engine applied {counters['steps']} steps, runner {c_steps}")
+        if counters["decisions_at_terminal"] >= max_decisions:
+            raise IntegrityError("decision budget reached at the terminal step")
+        record = {
+            "engine_seed": int(engine_seed), "episode": int(episode), "mode": mode,
+            "sampling_seeds": [seats[0].seed, seats[1].seed],
+            "team_ids": [int(final.team_id[0]), int(final.team_id[1])],
+            "teams": [eng.team_display(final.team_id[0]), eng.team_display(final.team_id[1])],
+            "score": [int(final.score[0]), int(final.score[1])],
+            "natural": bool(natural), "final_status": int(final.status),
+            "half": int(final.half), "turns": [int(final.turn[0]), int(final.turn[1])],
+            "c_steps": c_steps, "forwards": [seats[0].forwards, seats[1].forwards],
+            "decisions": [seats[0].decisions, seats[1].decisions],
+            "engine_decisions": counters["decisions_at_terminal"],
+            "logprob_sum": [round(logprob[0], 4), round(logprob[1], 4)],
+            "integrity": integrity, "action_trail_sha256": trail.hexdigest(),
+            "final_digest": f"{eng.digest():016x}", "seconds": round(time.time() - t0, 3),
+        }
+        return record, seats
+    finally:
+        eng.close()
+
+
+def pair_game(policies, a, b, index, leg, seed0, mode="sample", lib=None,
+              seat_factory=PolicySeat):
+    """One leg of one game of pair (a, b), recorded from A's perspective."""
+    if leg not in LEGS:
+        raise ValueError(f"unknown leg {leg!r}")
+    home, away = (a, b) if leg == "A_home" else (b, a)
+    seed = int(seed0) + int(index)
+    record, _ = play_match(policies[home], policies[away], seed, mode=mode, lib=lib,
+                           seat_factory=seat_factory)
+    a_side = 0 if leg == "A_home" else 1
+    a_td, b_td = record["score"][a_side], record["score"][1 - a_side]
+    return {"schema": SCHEMA, "pair": [a, b], "game_index": int(index), "leg": leg,
+            "home": home, "away": away, "a_td": a_td, "b_td": b_td,
+            "result_a": "W" if a_td > b_td else ("D" if a_td == b_td else "L"),
+            **record}
+
+
+def schedule(names, games_per_pair, seed0):
+    """Tasks (a, b, index, leg) interleaved by game index across all pairs."""
+    if games_per_pair <= 0 or games_per_pair % 2:
+        raise ValueError("games_per_pair must be a positive even number")
+    pairs = list(itertools.combinations(names, 2))
+    return [(a, b, i, leg) for i in range(games_per_pair // 2) for a, b in pairs
+            for leg in LEGS]
+
+
+def task_key(a, b, index, leg):
+    return f"{a}|{b}|{index}|{leg}"
+
+
+def check_record(rec):
+    """Parent-side re-check of the contract on a finished record."""
+    problems = []
+    if not rec.get("natural"):
+        problems.append("unnatural ending")
+    if any(rec.get("integrity", {}).get(k, 1) for k in HARD_COUNTERS):
+        problems.append(f"integrity {rec.get('integrity')}")
+    if rec.get("forwards") != [rec.get("c_steps")] * 2:
+        problems.append(f"forwards {rec.get('forwards')} vs c_steps {rec.get('c_steps')}")
+    return problems
+
+
+# ---- worker pool --------------------------------------------------------------
+_W = {}
+
+
+def _init_worker(checkpoints, kernel, mode, seed0):
+    os.environ["OMP_NUM_THREADS"] = "1"
+    import torch
+    torch.set_num_threads(1)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
+    _W["lib"] = E.load_library()
+    _W["policies"] = {name: load_checkpoint(path, kernel=kernel)[0]
+                      for name, path in checkpoints.items()}
+    _W["mode"], _W["seed0"] = mode, seed0
+
+
+def _run_task(task):
+    a, b, index, leg = task
+    try:
+        rec = pair_game(_W["policies"], a, b, index, leg, _W["seed0"], mode=_W["mode"],
+                        lib=_W["lib"])
+        rec["pid"] = os.getpid()
+        return rec
+    except Exception as exc:  # returned so the parent can abort the pool cleanly
+        return {"error": f"{type(exc).__name__}: {exc}", "task": list(task)}
+
+
+def discover_checkpoints(directory=DEFAULT_CHECKPOINT_DIR):
+    out = {}
+    for name in sorted(os.listdir(directory)):
+        path = os.path.join(directory, name, CHECKPOINT_BLOB)
+        if os.path.exists(path) and os.path.exists(path + ".lineage.json"):
+            out[name] = path
+    return out
+
+
+def _git_head():
+    try:
+        return subprocess.run(["git", "-C", E.ROOT, "rev-parse", "HEAD"], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    except Exception:
+        return None
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--checkpoint", action="append", default=[], metavar="NAME=BLOB",
+                    help="repeatable; default every chain directory under "
+                         ".play-artifacts/checkpoints")
+    ap.add_argument("--games-per-pair", type=int, required=True,
+                    help="even; split evenly between the two legs")
+    ap.add_argument("--seed0", type=int, default=20260915)
+    ap.add_argument("--mode", default="sample", choices=["sample", "argmax"])
+    ap.add_argument("--kernel", default="native", choices=["native", "torch"])
+    ap.add_argument("--workers", type=int, default=MAX_WORKERS)
+    ap.add_argument("--max-tasks", type=int, default=None,
+                    help="pilot: play only the first K scheduled tasks")
+    ap.add_argument("--out-dir", required=True)
+    args = ap.parse_args(argv)
+    if not 1 <= args.workers <= MAX_WORKERS:
+        raise SystemExit(f"--workers must be 1..{MAX_WORKERS}")
+    if os.environ.get("OMP_NUM_THREADS") != "1":
+        raise SystemExit("set OMP_NUM_THREADS=1 (one thread per worker)")
+    if args.checkpoint:
+        checkpoints = dict(item.split("=", 1) for item in args.checkpoint)
+    else:
+        checkpoints = discover_checkpoints()
+    names = list(checkpoints)
+    if len(names) < 2:
+        raise SystemExit("need at least two checkpoints")
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    games_path = os.path.join(args.out_dir, "games.jsonl")
+    manifest_path = os.path.join(args.out_dir, "manifest.json")
+    tasks = schedule(names, args.games_per_pair, args.seed0)
+    if args.max_tasks is not None:
+        tasks = tasks[:args.max_tasks]
+
+    provenance = {}
+    for name, path in checkpoints.items():
+        _, prov = load_checkpoint(path, kernel=args.kernel)
+        lineage = prov["lineage"] or {}
+        provenance[name] = {"path": prov["checkpoint_path"], "sha256": prov["checkpoint_sha256"],
+                            "producer": lineage.get("producer"),
+                            "compatibility": lineage.get("compatibility")}
+    import torch
+    manifest = {"schema": MANIFEST_SCHEMA, "checkpoints": provenance,
+                "games_per_pair": args.games_per_pair, "seed0": args.seed0,
+                "mode": args.mode, "kernel": args.kernel, "workers": args.workers,
+                "omp_num_threads": 1, "max_decisions": MAX_DECISIONS,
+                "rosters": "procgen (home_team=away_team=-1), skillup 4/2/0.0",
+                "legs": list(LEGS), "sampling_seed": "keyed by (engine seed, side)",
+                "tasks": len(tasks), "harness_git_head": _git_head(),
+                "torch": torch.__version__, "host": platform.node(),
+                "python": sys.version.split()[0]}
+    if os.path.exists(manifest_path):
+        with open(manifest_path) as f:
+            old = json.load(f)
+        for key in ("checkpoints", "games_per_pair", "seed0", "mode", "kernel"):
+            if old.get(key) != manifest[key]:
+                raise SystemExit(f"existing manifest differs on {key}; use a new --out-dir")
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=1)
+
+    done = set()
+    if os.path.exists(games_path):
+        with open(games_path) as f:
+            for line in f:
+                rec = json.loads(line)
+                done.add(task_key(*rec["pair"], rec["game_index"], rec["leg"]))
+    pending = [t for t in tasks if task_key(*t) not in done]
+    print(f"{len(tasks)} tasks, {len(done)} already recorded, {len(pending)} to play, "
+          f"{args.workers} workers", flush=True)
+
+    import multiprocessing as mp
+    ctx = mp.get_context("spawn")
+    t0 = time.time()
+    played = 0
+    abort = None
+    with open(games_path, "a") as out, ctx.Pool(
+            args.workers, initializer=_init_worker,
+            initargs=(checkpoints, args.kernel, args.mode, args.seed0)) as pool:
+        for rec in pool.imap_unordered(_run_task, pending, chunksize=1):
+            problems = [rec["error"]] if "error" in rec else check_record(rec)
+            if problems:
+                abort = {"task": rec.get("task") or [*rec["pair"], rec["game_index"], rec["leg"]],
+                         "problems": problems, "played": played}
+                pool.terminate()
+                break
+            out.write(json.dumps(rec, separators=(",", ":")) + "\n")
+            out.flush()
+            played += 1
+            if played % 100 == 0 or played == len(pending):
+                rate = played / (time.time() - t0)
+                eta = (len(pending) - played) / rate if rate else float("inf")
+                print(f"{played}/{len(pending)} games, {rate:.2f} games/s wall, "
+                      f"eta {eta / 60:.1f} min", flush=True)
+    wall = time.time() - t0
+    if abort is not None:
+        with open(os.path.join(args.out_dir, "ABORTED.json"), "w") as f:
+            json.dump(abort, f, indent=1)
+        print(f"ABORTED: {abort}", flush=True)
+        return 2
+    summary = {"played": played, "wall_seconds": round(wall, 1),
+               "games_per_second_wall": round(played / wall, 3) if wall else None,
+               "complete": len(done) + played == len(tasks)}
+    if summary["complete"] and args.max_tasks is None:
+        with open(os.path.join(args.out_dir, "COMPLETE.json"), "w") as f:
+            json.dump(summary, f, indent=1)
+    print(json.dumps(summary), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
