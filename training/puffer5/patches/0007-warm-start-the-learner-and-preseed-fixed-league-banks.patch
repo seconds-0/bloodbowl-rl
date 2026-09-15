@@ -1,0 +1,70 @@
+# 0007: warm start the learner and preseed fixed league banks
+diff --git a/src/pufferl.cu b/src/pufferl.cu
+index 0110bf0d..dbc09776 100644
+--- a/src/pufferl.cu
++++ b/src/pufferl.cu
+@@ -1892,6 +1892,15 @@ void puf_load_weights_into(Float dst, Prec params,
+     int64_t nbytes = numel(dst.shape) * sizeof(float);
+     FILE* fp = fopen(path, "rb");
+     assert(fp && "failed to open weights for reading");
++    // A different policy shape must not load by prefix (patch 0007).
++    fseek(fp, 0, SEEK_END);
++    long file_bytes = ftell(fp);
++    rewind(fp);
++    if (file_bytes != (long)nbytes) {
++        fprintf(stderr, "weights %s: %ld bytes, policy needs %lld\n",
++            path, file_bytes, (long long)nbytes);
++        exit(1);
++    }
+     char* buf = (char*)malloc(nbytes);
+     size_t nread = fread(buf, 1, nbytes, fp);
+     fclose(fp);
+@@ -3236,6 +3245,17 @@ TrainResult run_train(Ini* ini, TrainContext* ctx) {
+     }
+ 
+     PuffeRL* pufferl = create_pufferl(ini, ctx);
++    // Warm start (patch 0007): base.load_model_path seeds the trainable policy.
++    // The async actor copies policies[0] at every rollout_start.
++    {
++        char warm_buf[4096];
++        const char* warm = puf_checkpoint_path_key(ini, "load_model_path",
++            warm_buf, sizeof(warm_buf));
++        if (warm) {
++            printf("warm start: %s\n", warm);
++            pufferl_load_policy(pufferl, 0, warm);
++        }
++    }
+     // A learning run with a scripted opponent must route the bot to a frozen
+     // bank seat; global scripted mode would put the bot on learner rows
+     // (4.0 pufferl_scripted_training_guard).
+@@ -3268,12 +3288,29 @@ TrainResult run_train(Ini* ini, TrainContext* ctx) {
+         long current_step = pufferl->global_step * pufferl->hypers.world_size;
+ 
+         selfplay_add_checkpoint(&selfplay, initial_checkpoint);
++        // League preseed (patch 0007): a tools/build_league.py pool dir fixes
++        // bank b to <dir>/%016d.bin and disables opponent resampling.
++        const char* preseed = NULL;
++        DictItem* pre = dict_find(puf_ini_section(ini, "selfplay", 0), "league_preseed");
++        if (pre && pre->str && pre->str[0] && strcmp(pre->str, "None") != 0) {
++            preseed = pre->str;
++        }
+         for (int s = 0; s < selfplay.num_hist; s++) {
+             SelfplayHist* hist = &selfplay.hist[s];
+             hist->policy_idx = s + 1;
+-            pufferl_load_policy(pufferl, hist->policy_idx, selfplay_sample(&selfplay));
++            if (preseed) {
++                char bank_path[4096];
++                snprintf(bank_path, sizeof(bank_path), "%s/%016d.bin", preseed, s);
++                printf("league bank %d: %s\n", s, bank_path);
++                pufferl_load_policy(pufferl, hist->policy_idx, bank_path);
++            } else {
++                pufferl_load_policy(pufferl, hist->policy_idx, selfplay_sample(&selfplay));
++            }
+             hist->opp_started_step = current_step;
+         }
++        if (preseed) {
++            selfplay.opp_timeout_steps = 0;
++        }
+     }
+ 
+     long total_timesteps = puf_ini_get(ini, "train", "total_timesteps");
