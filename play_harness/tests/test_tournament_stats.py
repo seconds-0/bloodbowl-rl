@@ -72,6 +72,34 @@ def test_pair_table_side_splits():
     assert math.isclose(row["a_td_per_game"], 1.0) and math.isclose(row["b_td_per_game"], 2 / 3)
 
 
+def _leg_games(pair, outcomes, seed0=0):
+    """outcomes: list of (A result in leg A_home, A result in leg B_home), one per seed."""
+    games = []
+    for i, (x, y) in enumerate(outcomes):
+        for leg, res in (("A_home", x), ("B_home", y)):
+            games.append({"pair": list(pair), "leg": leg, "engine_seed": seed0 + i,
+                          "game_index": i, "result_a": res})
+    return games
+
+
+def test_leg_correlation_is_centred_within_pair():
+    # Inside each pair the two legs are exactly independent (p = 0.8, then 0.2),
+    # so the within-pair correlation is 0. Pooling the pairs without centring
+    # each one adds the between-pair strength gap and reads positive.
+    strong = [("W", "W")] * 16 + [("W", "L")] * 4 + [("L", "W")] * 4 + [("L", "L")]
+    weak = [("L", "L")] * 16 + [("L", "W")] * 4 + [("W", "L")] * 4 + [("W", "W")]
+    games = _leg_games(("x", "y"), strong) + _leg_games(("x", "z"), weak, seed0=100)
+    corr = S.leg_correlation(games)
+    assert abs(corr["within_pair_centred"]) < 1e-12
+    # pooled: between-pair variance 0.09 over total 0.25 -> 0.36
+    assert math.isclose(corr["pooled_uncentred"], 0.36)
+    assert all(abs(r) < 1e-12 for r in corr["per_pair"].values()) and corr["seeds"] == 50
+    # legs that always disagree inside a pair: exactly -1 once centred
+    flip = [("W", "L")] * 10 + [("L", "W")] * 10
+    assert math.isclose(S.leg_correlation(_leg_games(("x", "y"), flip))["within_pair_centred"],
+                        -1.0)
+
+
 def test_rank_correlations():
     assert S.kendall_tau([1, 2, 3, 4], [10, 20, 30, 40]) == 1.0
     assert S.kendall_tau([1, 2, 3, 4], [40, 30, 20, 10]) == -1.0

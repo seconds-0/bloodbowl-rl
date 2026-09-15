@@ -159,6 +159,51 @@ def ranking(games, names=None, reps=2000, seed=0):
     return {"names": names, "rows": rows, "bootstrap_reps": int(len(boots))}
 
 
+SCORE = {"W": 1.0, "D": 0.5, "L": 0.0}
+
+
+def leg_pairs(games):
+    """{pair: [(A score in leg A_home, A score in leg B_home), ...]} over complete seeds."""
+    legs = defaultdict(dict)
+    for g in games:
+        legs[(tuple(g["pair"]), g["engine_seed"])][g["leg"]] = SCORE[g["result_a"]]
+    out = defaultdict(list)
+    for (pair, _), d in sorted(legs.items()):
+        if "A_home" in d and "B_home" in d:
+            out[pair].append((d["A_home"], d["B_home"]))
+    return dict(out)
+
+
+def _corr(x, y):
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    denom = math.sqrt(float((x * x).sum() * (y * y).sum()))
+    return float((x * y).sum() / denom) if denom > 0 else float("nan")
+
+
+def leg_correlation(games):
+    """Correlation of A's score (W 1, D 0.5, L 0) across the two legs of one seed.
+
+    within_pair_centred subtracts each pair's own leg means before pooling, so
+    strength gaps between pairs cannot pass for dependence between legs. This is
+    the intraclass correlation that sets the design effect 1 + r of a two-leg
+    cluster. pooled_uncentred is the Pearson correlation over all pairs pooled
+    with no within-pair centring; the round robin doc first reported that one.
+    """
+    xs, ys, xc, yc, per_pair = [], [], [], [], {}
+    for pair, rows in leg_pairs(games).items():
+        a = np.array(rows, dtype=float)
+        cx, cy = a[:, 0] - a[:, 0].mean(), a[:, 1] - a[:, 1].mean()
+        xs.extend(a[:, 0])
+        ys.extend(a[:, 1])
+        xc.extend(cx)
+        yc.extend(cy)
+        per_pair[pair] = _corr(cx, cy)
+    xs, ys = np.array(xs), np.array(ys)
+    return {"within_pair_centred": _corr(xc, yc),
+            "pooled_uncentred": _corr(xs - xs.mean(), ys - ys.mean()),
+            "seeds": len(xc), "per_pair": per_pair}
+
+
 def kendall_tau(x, y):
     n = len(x)
     s = 0
