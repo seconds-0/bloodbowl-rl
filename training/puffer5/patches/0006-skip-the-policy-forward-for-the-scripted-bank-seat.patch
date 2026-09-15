@@ -1,0 +1,113 @@
+# 0006: skip the policy forward for the scripted bank seat
+diff --git a/src/pufferl.cu b/src/pufferl.cu
+index 92de1e0c..0110bf0d 100644
+--- a/src/pufferl.cu
++++ b/src/pufferl.cu
+@@ -294,6 +294,7 @@ __device__ __forceinline__ void block_reduce_sum(
+ #include "protein.cu"
+ #include "exact_joint.h"
+ #include "train_rows.h"
++#include "scripted_bank.h"
+ 
+ typedef struct {
+     int horizon;
+@@ -583,6 +584,9 @@ typedef struct PuffeRL {
+     int train_total_rows;       // eligible + wrap pad for contiguous minibatches
+     int* train_row_map;         // device (total_agents,): gathered row -> rollout row
+     int* train_row_map_host;    // pinned host copy, rewritten every epoch
++    // Frozen policy whose seats the env plays with its scripted bot (patch
++    // 0006); its forward and sampling are skipped. 0 = none.
++    int scripted_skip_policy;
+ } PuffeRL;
+ 
+ // Infer path: sample + forward, then vec workers.
+@@ -878,6 +882,17 @@ static void pufferl_forward_step(PuffeRL* pufferl, int buf, int t,
+         Prec val_b  = puf_slice(rollouts.values,       t, sub, n);
+         Prec mask_b = puf_slice(rollouts.action_mask,  t, sub, n);
+ 
++        if (b > 0 && b == pufferl->scripted_skip_policy) {
++            // The env plays every seat of this slice with its scripted bot and
++            // never reads their actions; these frozen rows never reach PPO.
++            cudaMemsetAsync(act_b.data, 0, (size_t)n * act_cols * sizeof(float), stream);
++            cudaMemsetAsync(env->actions.data + (long)sub * act_cols, 0,
++                (size_t)n * act_cols * sizeof(float), stream);
++            cudaMemsetAsync(lp_b.data, 0, (size_t)n * sizeof(precision_t), stream);
++            cudaMemsetAsync(val_b.data, 0, (size_t)n * sizeof(precision_t), stream);
++            continue;
++        }
++
+         // Per-policy state is compact (n agents); local index 0..n-1.
+         int state_n = (int)st->shape[0] * n * (int)st->shape[2];
+         zero_term_state<<<grid_size(state_n), BLOCK_SIZE, 0, stream>>>(
+@@ -2074,6 +2089,21 @@ PuffeRL* create_pufferl(Ini* ini, TrainContext* ctx) {
+         }
+     }
+ 
++    // Scripted bank seat (patch 0006): decided before any graph capture.
++    {
++        DictItem* so = dict_find(env_kwargs, "scripted_opponent");
++        DictItem* team = dict_find(env_kwargs, "scripted_opponent_team");
++        DictItem* tag = dict_find(env_kwargs, "scripted_bank_tag");
++        pufferl->scripted_skip_policy = puf_scripted_skip_policy(
++            so ? (int)so->value : 0, team ? (int)team->value : 1,
++            tag ? (int)tag->value : 0, vec->num_policies);
++        if (pufferl->scripted_skip_policy > 0) {
++            printf("scripted bank: env tag %d seats are the scripted bot; "
++                "policy %d forward skipped\n", pufferl->scripted_skip_policy,
++                pufferl->scripted_skip_policy);
++        }
++    }
++
+     cudaMalloc((void**)&pufferl->profile.stamps,
+         2 * NUM_TE * sizeof(unsigned long long));
+     if (PUF_BACKEND == PUF_GPU) {
+@@ -3206,6 +3236,20 @@ TrainResult run_train(Ini* ini, TrainContext* ctx) {
+     }
+ 
+     PuffeRL* pufferl = create_pufferl(ini, ctx);
++    // A learning run with a scripted opponent must route the bot to a frozen
++    // bank seat; global scripted mode would put the bot on learner rows
++    // (4.0 pufferl_scripted_training_guard).
++    {
++        DictItem* so = dict_find(puf_ini_section(ini, "env", 0), "scripted_opponent");
++        if (so && so->value != 0 && pufferl->hypers.lr > 0.0f
++                && pufferl->scripted_skip_policy <= 0) {
++            fprintf(stderr,
++                "run_train: env.scripted_opponent while learning requires a scripted "
++                "bank seat: selfplay.enabled=1, env.scripted_opponent_team=1 and "
++                "1 <= env.scripted_bank_tag <= vec.num_policies-1\n");
++            exit(1);
++        }
++    }
+     Selfplay selfplay = {0};
+     if (use_selfplay) {
+         char initial_checkpoint[4096];
+diff --git a/src/scripted_bank.h b/src/scripted_bank.h
+new file mode 100644
+index 00000000..26d025f0
+--- /dev/null
++++ b/src/scripted_bank.h
+@@ -0,0 +1,23 @@
++// Scripted bank seat (bloodbowl-rl port of puffer_skip_scripted_bank_forward).
++//
++// The Blood Bowl env plays the AWAY seat of every env whose tag equals
++// env.scripted_bank_tag with a deterministic scripted bot and never reads the
++// policy action there (bloodbowl.h c_step). 5.0's env_setup tags an env with
++// the largest policy index among its seats, and the adapter routes seat 1 of
++// historical envs to frozen policy 1 + bank, so the bot seats are exactly the
++// rows of frozen policy `scripted_bank_tag`. That policy's forward and
++// sampling are discarded work; the trainer skips them. Those rows are frozen
++// rows and never reach PPO (train_rows.h).
++#pragma once
++
++// Policy index whose rollout forward is skipped, or 0 for none.
++static inline int puf_scripted_skip_policy(int scripted_opponent,
++        int scripted_opponent_team, int scripted_bank_tag, int num_policies) {
++    if (!scripted_opponent || scripted_opponent_team != 1) {
++        return 0;
++    }
++    if (scripted_bank_tag < 1 || scripted_bank_tag > num_policies - 1) {
++        return 0;
++    }
++    return scripted_bank_tag;
++}
