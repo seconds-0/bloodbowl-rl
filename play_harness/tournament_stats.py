@@ -241,6 +241,13 @@ def _haldane_share(c):
     return (c[..., 0] + 0.5) / (c[..., 0] + c[..., 2] + 1.0)
 
 
+def _ahead(share):
+    """Share of replicates with A ahead, over replicates where the share is defined."""
+    share = np.asarray(share, dtype=float)
+    valid = share[np.isfinite(share)]
+    return float(np.mean(valid > 0.5)) if valid.size else float("nan")
+
+
 def _ci(x):
     x = np.asarray(x, dtype=float)
     x = x[np.isfinite(x)]
@@ -301,7 +308,7 @@ def seed_cluster_bootstrap(games, names=None, reps=2000, seed=0):
             "elo_score": float(elo_from_share(p_score)),
             "elo_score_ci95": _ci(elo_from_share(score)),
             "elo_score_se": float(np.nanstd(elo_from_share(score))),
-            "p_a_ahead": float(np.mean(share > 0.5)),
+            "p_a_ahead": _ahead(share), "valid_reps": int(np.isfinite(share).sum()),
         })
     out = {"names": names, "seeds": len(seeds), "reps": int(reps), "pairs": rows}
     idx = {n: i for i, n in enumerate(names)}

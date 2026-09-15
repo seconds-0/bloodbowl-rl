@@ -144,6 +144,17 @@ def test_score_rate_counts_draws_as_half_and_elo_scale():
     assert float(S.elo_from_share(0.5)) == 0.0
 
 
+def test_ahead_frequency_ignores_undefined_replicates():
+    all_draws = S.seed_cluster_bootstrap(_leg_games(("x", "y"), [("D", "D")] * 20), reps=50)
+    (row,) = all_draws["pairs"]
+    assert math.isnan(row["p_a_ahead"]) and row["valid_reps"] == 0
+    # one decisive game A won, nineteen draws: every replicate that has the win reads A ahead
+    sparse = S.seed_cluster_bootstrap(_leg_games(("x", "y"), [("W", "D")] + [("D", "D")] * 19),
+                                      reps=400, seed=2)
+    (row,) = sparse["pairs"]
+    assert 0 < row["valid_reps"] < 400 and row["p_a_ahead"] == 1.0
+
+
 def test_chi2_sf_reference_values():
     assert math.isclose(S.chi2_sf(3.841458820694124, 1), 0.05, abs_tol=1e-9)
     assert math.isclose(S.chi2_sf(18.307038053275146, 10), 0.05, abs_tol=1e-9)
