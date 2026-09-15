@@ -9,7 +9,7 @@ import pytest
 import torch
 
 from play_harness import engine as E
-from play_harness.policy import (MinGRUPolicy, joint_logprob, load_checkpoint,
+from play_harness.policy import (MinGRUPolicy, PolicySeat, joint_logprob, load_checkpoint,
                                  random_policy, select_joint)
 
 from .conftest import CHAIN25, PUFFER_MODELS
@@ -92,6 +92,44 @@ def test_select_joint_stays_inside_support():
         if eng.step(*rng.choice(sorted(legal))) == E.STEP_TERMINAL:
             break
     assert windows > 100
+
+
+def test_temperature_divides_every_head_before_selection():
+    # unsaturated logits over real exact supports (a random network's logits are one-hot)
+    eng = E.Engine(9)
+    rng = random.Random(3)
+    g = torch.Generator().manual_seed(11)
+    sharp, plain, windows = 0.0, 0.0, 0
+    for _ in range(300):
+        dec = eng.decision_team
+        support = eng.joint_support(dec)
+        lg = torch.randn(454, generator=g) * 2.0
+        base = select_joint(lg, support, "sample", torch.Generator().manual_seed(windows))
+        same = select_joint(lg, support, "sample", torch.Generator().manual_seed(windows),
+                            temperature=1.0)
+        assert base[0] == same[0] and base[1] == same[1]          # T = 1 is exact
+        tup, lp, masks = select_joint(lg, support, "sample",
+                                      torch.Generator().manual_seed(windows), temperature=0.5)
+        assert abs(joint_logprob(lg / 0.5, masks, tup) - lp) < 1e-5  # every head tempered
+        assert select_joint(lg, support, "argmax", temperature=0.3)[0] == \
+            select_joint(lg, support, "argmax")[0]
+        sharp += lp
+        plain += base[1]
+        windows += 1
+        if eng.step(*rng.choice(sorted({E.unpack_tuple(v) for v in support}))) == E.STEP_TERMINAL:
+            break
+    assert windows > 100
+    assert sharp / windows > plain / windows          # T < 1 sharpens the sampled actions
+
+
+def test_temperature_must_be_positive_and_finite():
+    policy = random_policy(seed=1)
+    for bad in (0.0, -1.0, float("inf"), float("nan")):
+        with pytest.raises(ValueError):
+            select_joint(torch.zeros(454), np.array([0], dtype=np.uint32), temperature=bad)
+        with pytest.raises(ValueError):
+            PolicySeat(policy, 0, temperature=bad)
+    assert PolicySeat(policy, 1, temperature=0.7).temperature == 0.7
 
 
 def test_select_joint_rejects_empty_support():

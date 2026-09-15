@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import sys
 
@@ -206,14 +207,27 @@ def random_policy(seed=0, kernel="native", scale=0.02):
     return policy
 
 
-def select_joint(logits, support, mode="sample", generator=None):
+def check_temperature(temperature):
+    t = float(temperature)
+    if not (math.isfinite(t) and t > 0.0):
+        raise ValueError(f"policy temperature must be finite and > 0, got {temperature!r}")
+    return t
+
+
+def select_joint(logits, support, mode="sample", generator=None, temperature=1.0):
     """Sequential exact joint selection (type, arg | type, square | type,arg).
 
     Mirrors sample_joint_logits in training/puffer_exact_joint_actions.patch
     and the native sampler. mode='argmax' is the conditional argmax.
+    temperature T divides every head's logits before masking and selection
+    (T = 1 is the trained policy exactly; argmax choices do not depend on T).
+    The returned logprob is under the tempered distribution that was used.
     Returns (tuple, joint logprob, per-head support masks).
     """
+    temperature = check_temperature(temperature)
     logits = torch.as_tensor(logits).reshape(-1)
+    if temperature != 1.0:
+        logits = logits / temperature
     packed = np.asarray(support, dtype=np.int64).reshape(-1)
     if packed.size == 0:
         raise ValueError("empty joint support")
@@ -265,12 +279,13 @@ class PolicySeat:
     step() must be called exactly once per env c_step, whoever decides.
     """
 
-    def __init__(self, policy, seat, mode="sample", seed=0, provenance=None):
+    def __init__(self, policy, seat, mode="sample", seed=0, provenance=None, temperature=1.0):
         if seat not in (0, 1):
             raise ValueError("seat must be 0 (HOME) or 1 (AWAY)")
         self.policy = policy
         self.seat = seat
         self.mode = mode
+        self.temperature = check_temperature(temperature)
         self.seed = int(seed)
         self.provenance = provenance or {}
         self.generator = torch.Generator().manual_seed(self.seed)
@@ -290,7 +305,8 @@ class PolicySeat:
         self.forwards += 1
         logits = logits[0]
         if deciding:
-            action, logprob, _ = select_joint(logits, support, self.mode, self.generator)
+            action, logprob, _ = select_joint(logits, support, self.mode, self.generator,
+                                              temperature=self.temperature)
             self.decisions += 1
         else:
             packed = np.asarray(support).reshape(-1)
