@@ -276,12 +276,6 @@ def _shares(c):
         return w / (w + l_), (w + 0.5 * d) / (w + d + l_)
 
 
-def _haldane_share(c):
-    """(W + 0.5) / (W + L + 1): a decisive share whose logit stays finite in sparse strata."""
-    c = np.asarray(c, dtype=float)
-    return (c[..., 0] + 0.5) / (c[..., 0] + c[..., 2] + 1.0)
-
-
 def _ahead(share):
     """Share of replicates with A ahead, over replicates where the share is defined."""
     share = np.asarray(share, dtype=float)
@@ -599,15 +593,14 @@ def roster_class_table(games, reps=2000, seed=0, classes=ROSTER_CLASS, by="a"):
 
     by='seed_matchup' stratifies on the seed's unordered pair of roster classes
     and pools both legs. Both legs use the same two rosters with the coaches
-    swapped, so roster strength cancels and each stratum measures the policy gap
-    alone. On the logit scale a stratum {c, d} reads about (g_c + g_d) / 2,
-    where g_c is A's gap over B when coaching class c, so bash|bash gives g_bash
-    and 2 * (agile|bash - bash|bash) gives g_agile - g_bash.
+    swapped, so exposure to each roster is balanced. The rows are descriptive:
+    pooling win probabilities over legs with a roster offset h gives
+    (sigma(g + h) + sigma(g - h)) / 2, whose logit is not g, so strata with
+    different roster offsets are not comparable on the Elo scale. Use
+    roster_gap_model for class-specific policy gaps.
 
-    Contrast rows: by='a' gives A's agile minus bash decisive share; by='seed_matchup'
-    gives g_agile - g_bash and agile|agile - bash|bash in Elo, with cluster intervals.
-    The Elo contrasts use the Haldane share (W + 0.5) / (W + L + 1), so a sparse
-    stratum with no wins or no losses in some replicates stays finite.
+    Contrast rows (by='a' only): A's agile minus bash decisive share, with a
+    cluster interval. That contrast mixes the policy gap with roster strength.
     """
     if by == "a":
         key = lambda g: (tuple(g["pair"]), classes[a_roster(g)])  # noqa: E731
@@ -643,21 +636,77 @@ def roster_class_table(games, reps=2000, seed=0, classes=ROSTER_CLASS, by="a"):
                 pb, _ = _shares(point[pos[(pair, "bash")]])
                 contrasts.append({"a": pair[0], "b": pair[1], "contrast": "agile_minus_bash_share",
                                   "value": float(pa - pb), "cluster_ci95": _ci(sa - sb)})
-    if by == "seed_matchup":
-        for pair in sorted({c[0] for c in cells}):
-            for name, (hi, lo), scale in (("g_agile_minus_g_bash_elo", ("agile|bash", "bash|bash"), 2.0),
-                                          ("agile_mirror_minus_bash_mirror_elo",
-                                           ("agile|agile", "bash|bash"), 1.0)):
-                if (pair, hi) in pos and (pair, lo) in pos:
-                    bh = _haldane_share(boots[:, pos[(pair, hi)]])
-                    bl = _haldane_share(boots[:, pos[(pair, lo)]])
-                    ph = _haldane_share(point[pos[(pair, hi)]])
-                    pl = _haldane_share(point[pos[(pair, lo)]])
-                    contrasts.append({
-                        "a": pair[0], "b": pair[1], "contrast": name,
-                        "value": float(scale * (elo_from_share(ph) - elo_from_share(pl))),
-                        "cluster_ci95": _ci(scale * (elo_from_share(bh) - elo_from_share(bl)))})
     return {"by": by, "rows": rows, "contrasts": contrasts}
+
+
+def _logit_fit(X, w, l_, ridge, iters, beta0=None):
+    """Ridge-penalized binomial logistic regression by Newton steps (step length capped)."""
+    n = w + l_
+    beta = np.zeros(X.shape[1]) if beta0 is None else np.array(beta0, dtype=float)
+    pen = np.full(X.shape[1], ridge)
+    for _ in range(iters):
+        p = 1.0 / (1.0 + np.exp(-(X @ beta)))
+        grad = X.T @ (w - n * p) - pen * beta
+        hess = (X.T * (n * p * (1 - p))) @ X + np.diag(pen)
+        step = np.linalg.solve(hess, grad)
+        big = np.abs(step).max()
+        if big > 5.0:
+            step *= 5.0 / big
+        beta += step
+        if big < 1e-9:
+            return beta, True
+    return beta, False
+
+
+def roster_gap_model(games, reps=2000, seed=0, classes=ROSTER_CLASS, ridge=1e-3, iters=60):
+    """Class-specific policy gaps with roster strength fitted, per pair.
+
+    For each decisive game: logit P(A wins) = g[class of the roster A coaches]
+    + s[A's roster] - s[B's roster]. s is one strength per roster (a weak ridge
+    fixes the free constant and keeps sparse rosters finite); g[c] is A's
+    decisive-Elo gap over B when A coaches class c. Swapped legs identify s,
+    and mirror seeds pin g. Intervals come from the seed-cluster bootstrap, with
+    each replicate refitted from the point estimate. Classes A never coached in
+    a decisive game read NaN.
+    """
+    rosters = sorted(classes)
+    r_idx = {r: i for i, r in enumerate(rosters)}
+    c_idx = {c: i for i, c in enumerate(ROSTER_CLASSES)}
+    nc = len(ROSTER_CLASSES)
+    key = lambda g: (tuple(g["pair"]), a_roster(g), b_roster(g))  # noqa: E731
+    _, cells, counts = cluster_counts(games, key)
+    boots = bootstrap_cluster_counts(counts, reps, seed)
+    point = counts.sum(axis=0)
+    out = []
+    for pair in sorted({c[0] for c in cells}):
+        ks = [k for k, c in enumerate(cells) if c[0] == pair]
+        X = np.zeros((len(ks), nc + len(rosters)))
+        for row, k in enumerate(ks):
+            _, ra, rb = cells[k]
+            X[row, c_idx[classes[ra]]] = 1.0
+            X[row, nc + r_idx[ra]] += 1.0
+            X[row, nc + r_idx[rb]] -= 1.0
+        w, l_ = point[ks, 0], point[ks, 2]
+        beta, converged = _logit_fit(X, w, l_, ridge, iters)
+        decisive = {c: int((w + l_)[X[:, c_idx[c]] == 1.0].sum()) for c in ROSTER_CLASSES}
+        draws = []
+        for rep in boots:
+            b, _ = _logit_fit(X, rep[ks, 0], rep[ks, 2], ridge, 30, beta0=beta)
+            draws.append(b[:nc])
+        draws = np.array(draws) * ELO
+        g_elo, g_ci = {}, {}
+        for c in ROSTER_CLASSES:
+            ok = decisive[c] > 0
+            g_elo[c] = float(beta[c_idx[c]] * ELO) if ok else float("nan")
+            g_ci[c] = _ci(draws[:, c_idx[c]]) if ok else [float("nan")] * 2
+        ag, ba = c_idx["agile"], c_idx["bash"]
+        have = decisive["agile"] > 0 and decisive["bash"] > 0
+        out.append({"a": pair[0], "b": pair[1], "converged": bool(converged), "decisive": decisive,
+                    "g_elo": g_elo, "g_elo_ci95": g_ci,
+                    "agile_minus_bash_elo": float((beta[ag] - beta[ba]) * ELO) if have else float("nan"),
+                    "agile_minus_bash_ci95": _ci(draws[:, ag] - draws[:, ba]) if have
+                    else [float("nan")] * 2})
+    return {"reps": int(reps), "ridge": ridge, "pairs": out}
 
 
 def kendall_tau(x, y):
@@ -734,6 +783,18 @@ def roster_markdown(table):
     return "\n".join(lines)
 
 
+def roster_gap_markdown(model):
+    lines = ["| A | B | " + " | ".join(f"g {c}, Elo [95%]" for c in ROSTER_CLASSES)
+             + " | g agile - g bash [95%] |", "|---" * (len(ROSTER_CLASSES) + 3) + "|"]
+    for r in model["pairs"]:
+        cells = [f"{r['g_elo'][c]:+.0f} {_fmt_ci(r['g_elo_ci95'][c], '{:+.0f}')}"
+                 if math.isfinite(r["g_elo"][c]) else "-" for c in ROSTER_CLASSES]
+        diff = (f"{r['agile_minus_bash_elo']:+.0f} {_fmt_ci(r['agile_minus_bash_ci95'], '{:+.0f}')}"
+                if math.isfinite(r["agile_minus_bash_elo"]) else "-")
+        lines.append(f"| {r['a']} | {r['b']} | " + " | ".join(cells) + f" | {diff} |")
+    return "\n".join(lines)
+
+
 def _jsonable(obj):
     if isinstance(obj, dict):
         return {("|".join(k) if isinstance(k, tuple) else k): _jsonable(v) for k, v in obj.items()}
@@ -751,7 +812,8 @@ def report(games, reps=2000, seed=0):
            "roster_classes": roster_class_table(games, reps=reps, seed=seed),
            "roster_matchups": roster_class_table(games, reps=reps, seed=seed, by="matchup"),
            "roster_seed_matchups": roster_class_table(games, reps=reps, seed=seed,
-                                                      by="seed_matchup")}
+                                                      by="seed_matchup"),
+           "roster_gap_model": roster_gap_model(games, reps=reps, seed=seed)}
     try:
         rank = ranking(games, reps=reps, seed=seed)
         out["ranking"] = rank
@@ -789,6 +851,8 @@ def main(argv=None):
         print(f"| {name} | {s['mean_logprob']:.4f} | {s['decisions']} |")
     print("\n" + roster_markdown(rep["roster_classes"]))
     print("\n" + roster_markdown(rep["roster_seed_matchups"]))
+    print("\nRoster gap model (logit = g[class A coaches] + s[A roster] - s[B roster]):\n")
+    print(roster_gap_markdown(rep["roster_gap_model"]))
     if args.json:
         with open(args.json, "w") as f:
             json.dump(_jsonable(rep), f, indent=1)

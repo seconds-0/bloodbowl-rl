@@ -261,9 +261,10 @@ def test_roster_class_table_uses_the_roster_a_coached():
     assert set(matchup) == {"agile|bash", "bash|agile"}
 
 
-def test_seed_matchup_strata_cancel_roster_strength():
+def test_seed_matchup_strata_pool_both_legs():
     # Two equal policies. High Elf beats Tomb Kings 80% whoever coaches; the mirror
-    # seeds (Dwarf-Orc, Dark Elf-Wood Elf) are coin flips. There is no policy gap.
+    # seeds (Dwarf-Orc, Dark Elf-Wood Elf) are coin flips. There is no policy gap,
+    # so by symmetry every seed-matchup stratum reads 0.5 while the coached split does not.
     rng = np.random.default_rng(12)
     games = []
     for i in range(1500):
@@ -284,14 +285,11 @@ def test_seed_matchup_strata_cancel_roster_strength():
     assert rows["agile|bash"]["games"] == 2 * sum(g["teams"][0] == "High Elf" for g in games) // 2
     for r in rows.values():
         assert r["cluster_ci95"][0] < 0.5 < r["cluster_ci95"][1]
-    contrasts = {c["contrast"]: c for c in balanced["contrasts"]}
-    assert set(contrasts) == {"g_agile_minus_g_bash_elo", "agile_mirror_minus_bash_mirror_elo"}
-    for c in contrasts.values():
-        assert c["cluster_ci95"][0] < 0.0 < c["cluster_ci95"][1]
+    assert balanced["contrasts"] == []                  # no Elo contrast on pooled legs
 
 
-def test_seed_matchup_contrasts_stay_finite_in_sparse_strata():
-    # a mirror-agile stratum of three decisive games that A never wins
+def test_roster_gap_model_stays_finite_in_sparse_strata():
+    # three decisive agile games that A never wins; the ridge keeps g and s finite
     games = []
     for i in range(3):
         games += [{"pair": ["x", "y"], "leg": leg, "engine_seed": i, "result_a": res,
@@ -299,11 +297,58 @@ def test_seed_matchup_contrasts_stay_finite_in_sparse_strata():
     for i in range(3, 40):
         games += [{"pair": ["x", "y"], "leg": leg, "engine_seed": i, "result_a": "W" if (i + k) % 2 else "L",
                    "teams": ["Dwarf", "Orc"]} for k, leg in enumerate(LEGS)]
-    (c,) = [c for c in S.roster_class_table(games, reps=200, by="seed_matchup")["contrasts"]
-            if c["contrast"] == "agile_mirror_minus_bash_mirror_elo"]
-    # Haldane: agile|agile 0.5 / 4 -> -337.9 Elo; bash|bash (37 + 0.5) / 75 -> 0
-    assert math.isclose(c["value"], float(S.elo_from_share(0.125)), abs_tol=1e-9)
-    assert all(math.isfinite(v) and abs(v) < 1000 for v in c["cluster_ci95"])
+    (fit,) = S.roster_gap_model(games, reps=100, seed=3)["pairs"]
+    assert fit["decisive"]["agile"] == 3 and fit["g_elo"]["agile"] < -300
+    for v in (fit["g_elo"]["agile"], fit["g_elo"]["bash"], *fit["agile_minus_bash_ci95"]):
+        assert math.isfinite(v) and abs(v) < 5000
+
+
+def _roster_model_games(g_by_class, seeds, rng, h=math.log(4.0)):
+    """A beats B in a decisive game with logit g[class A coaches] + s[A roster] - s[B roster].
+
+    Cross seeds: High Elf (s = +h/2) vs Tomb Kings (s = -h/2); mirrors: Dark Elf vs
+    Wood Elf and Dwarf vs Orc at equal strength. No draws.
+    """
+    strength = {"High Elf": h / 2, "Tomb Kings": -h / 2}
+    games = []
+    for i in range(seeds):
+        u = rng.random()
+        teams = (["High Elf", "Tomb Kings"] if u < 0.4 else
+                 ["Dark Elf", "Wood Elf"] if u < 0.7 else ["Dwarf", "Orc"])
+        for leg in LEGS:
+            ra, rb = (teams[0], teams[1]) if leg == "A_home" else (teams[1], teams[0])
+            logit = g_by_class[S.ROSTER_CLASS[ra]] + strength.get(ra, 0.0) - strength.get(rb, 0.0)
+            win = rng.random() < 1 / (1 + math.exp(-logit))
+            games.append({"pair": ["x", "y"], "leg": leg, "engine_seed": i, "teams": teams,
+                          "result_a": "W" if win else "L"})
+    return games
+
+
+def test_roster_gap_model_separates_roster_strength_from_the_policy_gap():
+    # The same policy gap (log 2, 120.4 Elo) on every class, with a strong roster
+    # offset in the mixed seeds. Pooling legs by seed matchup reads about -84 Elo
+    # for g_agile - g_bash; the model reads about 0.
+    games = _roster_model_games({"agile": math.log(2.0), "bash": math.log(2.0)}, 4000,
+                                np.random.default_rng(31))
+    rows = {r["class"]: r for r in S.roster_class_table(games, reps=20, by="seed_matchup")["rows"]}
+    pooled = 2 * float(S.elo_from_share(rows["agile|bash"]["decisive_share"])
+                       - S.elo_from_share(rows["bash|bash"]["decisive_share"]))
+    assert pooled < -40
+    (fit,) = S.roster_gap_model(games, reps=200, seed=4)["pairs"]
+    assert fit["converged"]
+    for cls in ("agile", "bash"):
+        assert abs(fit["g_elo"][cls] - 120.4) < 35
+    lo, hi = fit["agile_minus_bash_ci95"]
+    assert lo < 0 < hi and abs(fit["agile_minus_bash_elo"]) < 40
+
+
+def test_roster_gap_model_recovers_a_class_dependent_gap():
+    games = _roster_model_games({"agile": math.log(3.0), "bash": 0.0}, 4000,
+                                np.random.default_rng(32))
+    (fit,) = S.roster_gap_model(games, reps=200, seed=5)["pairs"]
+    assert abs(fit["agile_minus_bash_elo"] - 190.8) < 60
+    assert fit["agile_minus_bash_ci95"][0] > 0
+    assert math.isnan(fit["g_elo"]["hybrid"]) and fit["decisive"]["hybrid"] == 0
 
 
 def test_stats_cli_prints_and_writes_the_report(tmp_path, capsys):
