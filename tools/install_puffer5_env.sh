@@ -15,10 +15,11 @@
 # Usage: tools/install_puffer5_env.sh PUFFER5_TREE
 #        tools/install_puffer5_env.sh --check PUFFER5_TREE
 #
-# --check is the drift guard: it rebuilds the expected patched files from the
-# pinned commit in a temp dir and compares them with the tree, and compares the
-# installed env snapshot hash with puffer/bloodbowl. Exit 1 means reinstall
-# into a clean pinned checkout.
+# The expected patched files are rebuilt from the pinned commit in a temp dir.
+# Install applies the series to a tree whose touched files are still pristine,
+# accepts a tree that already equals the full series (refreshing env, adapter
+# and config), and refuses anything in between. --check is the drift guard:
+# exit 1 means reinstall into a clean pinned checkout.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -44,24 +45,15 @@ snapshot_hash() {
     (cd "$1" && find -L . -type f ! -name .content_hash -print0 | LC_ALL=C sort -z \
         | xargs -0 $SHA256 | $SHA256 | awk '{print $1}')
 }
+patches() {
+    ls "$PATCH_DIR"/*.patch 2>/dev/null | LC_ALL=C sort || true
+}
 patch_bundle_hash() {
     # A loop, not xargs: GNU xargs runs the hasher on stdin for an empty list.
     (cd "$PATCH_DIR" && for p in $(ls *.patch 2>/dev/null | LC_ALL=C sort); do
         $SHA256 "$p"
     done | $SHA256 | awk '{print $1}')
 }
-patches() {
-    ls "$PATCH_DIR"/*.patch 2>/dev/null | LC_ALL=C sort || true
-}
-
-head_sha="$(git -C "$PUFFER" rev-parse HEAD 2>/dev/null || echo none)"
-if [ "$head_sha" != "$PIN" ]; then
-    echo "error: $PUFFER HEAD is $head_sha, expected pinned 5.0 commit $PIN" >&2
-    exit 1
-fi
-
-source_hash="$(snapshot_hash "$SRC")"
-
 # Files the patch series touches, derived from the patch headers.
 touched_files() {
     for p in $(patches); do
@@ -69,13 +61,36 @@ touched_files() {
     done | LC_ALL=C sort -u
 }
 
-expected_tree() {
-    local out="$1"
-    git -C "$PUFFER" archive "$PIN" | tar -x -C "$out"
-    for p in $(patches); do
-        git -C "$out" apply --no-index "$p" 2>/dev/null || (cd "$out" && git apply "$p") || {
-            echo "error: patch does not apply to pinned tree: $p" >&2; return 1; }
+head_sha="$(git -C "$PUFFER" rev-parse HEAD 2>/dev/null || echo none)"
+if [ "$head_sha" != "$PIN" ]; then
+    echo "error: $PUFFER HEAD is $head_sha, expected pinned 5.0 commit $PIN" >&2
+    exit 1
+fi
+source_hash="$(snapshot_hash "$SRC")"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+git -C "$PUFFER" archive "$PIN" | tar -x -C "$tmp"
+for p in $(patches); do
+    (cd "$tmp" && git apply "$p") || {
+        echo "error: patch series does not apply to the pinned tree: $(basename "$p")" >&2
+        exit 1; }
+done
+
+series_state() {
+    local all_applied=1 pristine=1
+    for f in $(touched_files); do
+        cmp -s "$tmp/$f" "$PUFFER/$f" || all_applied=0
+        if git -C "$PUFFER" cat-file -e "$PIN:$f" 2>/dev/null; then
+            git -C "$PUFFER" diff --quiet "$PIN" -- "$f" || pristine=0
+        elif [ -e "$PUFFER/$f" ]; then
+            pristine=0
+        fi
     done
+    if [ "$all_applied" = 1 ]; then echo applied
+    elif [ "$pristine" = 1 ]; then echo pristine
+    else echo mixed
+    fi
 }
 
 write_generated_header() {
@@ -103,17 +118,18 @@ EOF
 }
 
 if [ "$MODE" = "install" ]; then
-    for p in $(patches); do
-        if git -C "$PUFFER" apply --reverse --check "$p" 2>/dev/null; then
-            echo "patch already applied: $(basename "$p")"
-        else
-            git -C "$PUFFER" apply --check "$p" || {
-                echo "error: $(basename "$p") does not apply; start from a clean $PIN checkout" >&2
-                exit 1; }
-            git -C "$PUFFER" apply "$p"
-            echo "applied: $(basename "$p")"
-        fi
-    done
+    case "$(series_state)" in
+        applied)
+            echo "patch series already applied" ;;
+        pristine)
+            for p in $(patches); do
+                git -C "$PUFFER" apply "$p"
+                echo "applied: $(basename "$p")"
+            done ;;
+        *)
+            echo "error: $PUFFER is partially patched or locally modified; start from a clean $PIN checkout" >&2
+            exit 1 ;;
+    esac
     rm -rf "$DST"
     mkdir -p "$DST/env" "$DST/shim"
     cp -RL "$SRC/." "$DST/env/"
@@ -143,20 +159,16 @@ if ! cmp -s "$INI" "$PUFFER/config/bloodbowl.ini"; then
     echo "drift check: config/bloodbowl.ini differs" >&2
     fail=1
 fi
-if ! grep -Fq "\"$source_hash\"" "$DST/bloodbowl5_generated.h" 2>/dev/null; then
+if ! grep -Fq "\"$source_hash\"" "$DST/bloodbowl5_generated.h" 2>/dev/null ||
+   ! grep -Fq "\"$(patch_bundle_hash)\"" "$DST/bloodbowl5_generated.h" 2>/dev/null; then
     echo "drift check: bloodbowl5_generated.h missing or stale" >&2
     fail=1
 fi
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
-if expected_tree "$tmp"; then
+if [ "$(series_state)" != applied ]; then
     for f in $(touched_files); do
-        if ! cmp -s "$tmp/$f" "$PUFFER/$f"; then
+        cmp -s "$tmp/$f" "$PUFFER/$f" ||
             echo "drift check: patched file differs from pinned series: $f" >&2
-            fail=1
-        fi
     done
-else
     fail=1
 fi
 if [ "$fail" -ne 0 ]; then
