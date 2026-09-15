@@ -1,0 +1,215 @@
+"""Summaries for tournament game records: pair tables, Wilson CIs, Bradley-Terry.
+
+  .venv/bin/python -m play_harness.tournament_stats --run-dir <dir> [--json out.json]
+
+Pair rows are from A's perspective (A is the first name of the pair). The
+decisive-game win share drops draws. The Bradley-Terry fit uses decisive games
+only; strengths are reported on the Elo scale (400 / ln 10 per logit) anchored
+at mean zero, with standard errors from the observed Fisher information and a
+nonparametric bootstrap that resamples games within each pair (rank
+frequencies, 95% percentile intervals).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+from collections import defaultdict
+
+import numpy as np
+
+ELO = 400.0 / math.log(10.0)
+
+
+def wilson(k, n, z=1.959963984540054):
+    """Wilson score interval for k successes in n trials."""
+    if n <= 0:
+        return (float("nan"), float("nan"))
+    p = k / n
+    denom = 1.0 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
+    return (max(0.0, centre - half), min(1.0, centre + half))
+
+
+def load_games(run_dir):
+    with open(os.path.join(run_dir, "games.jsonl")) as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def _side_split(games):
+    w = sum(g["result_a"] == "W" for g in games)
+    d = sum(g["result_a"] == "D" for g in games)
+    l_ = sum(g["result_a"] == "L" for g in games)
+    n = len(games)
+    return {"games": n, "W": w, "D": d, "L": l_,
+            "a_td_per_game": sum(g["a_td"] for g in games) / n if n else float("nan"),
+            "b_td_per_game": sum(g["b_td"] for g in games) / n if n else float("nan"),
+            "decisive": w + l_, "a_win_share": w / (w + l_) if w + l_ else float("nan")}
+
+
+def pair_table(games):
+    by_pair = defaultdict(list)
+    for g in games:
+        by_pair[tuple(g["pair"])].append(g)
+    rows = []
+    for (a, b), gs in by_pair.items():
+        row = {"a": a, "b": b, **_side_split(gs)}
+        row["ci95"] = wilson(row["W"], row["decisive"])
+        row["a_home"] = _side_split([g for g in gs if g["leg"] == "A_home"])
+        row["b_home"] = _side_split([g for g in gs if g["leg"] == "B_home"])
+        rows.append(row)
+    return rows
+
+
+def win_matrix(games, names):
+    """wins[i, j] = decisive games player i won against player j."""
+    idx = {n: i for i, n in enumerate(names)}
+    wins = np.zeros((len(names), len(names)))
+    for g in games:
+        a, b = g["pair"]
+        if g["result_a"] == "W":
+            wins[idx[a], idx[b]] += 1
+        elif g["result_a"] == "L":
+            wins[idx[b], idx[a]] += 1
+    return wins
+
+
+def bt_fit(wins, iters=10_000, tol=1e-12):
+    """Bradley-Terry MLE by the MM algorithm (Hunter 2004). Returns log-strengths, mean 0."""
+    n = wins.shape[0]
+    games = wins + wins.T
+    total_wins = wins.sum(axis=1)
+    if np.any(total_wins == 0) or np.any(total_wins == games.sum(axis=1)):
+        raise ValueError("a player with no decisive wins or no decisive losses has no finite MLE")
+    p = np.ones(n)
+    for _ in range(iters):
+        denom = (games / (p[:, None] + p[None, :])).sum(axis=1)
+        new = total_wins / denom
+        new /= math.exp(np.log(new).mean())
+        if np.max(np.abs(new - p)) < tol:
+            p = new
+            break
+        p = new
+    theta = np.log(p)
+    return theta - theta.mean()
+
+
+def bt_standard_errors(wins, theta):
+    """SEs of mean-zero log-strengths from the observed Fisher information."""
+    games = wins + wins.T
+    diff = theta[:, None] - theta[None, :]
+    q = 1.0 / (1.0 + np.exp(-diff))
+    w = games * q * (1 - q)
+    info = np.diag(w.sum(axis=1)) - w
+    cov = np.linalg.pinv(info)          # minimum-norm inverse = mean-zero constraint
+    return np.sqrt(np.clip(np.diag(cov), 0, None)), cov
+
+
+def bootstrap(games, names, reps=2000, seed=0):
+    """Resample games within each pair; refit BT. Returns thetas (reps x n)."""
+    rng = np.random.default_rng(seed)
+    idx = {n: i for i, n in enumerate(names)}
+    counts = defaultdict(lambda: np.zeros(3))          # A wins, draws, A losses per pair
+    for g in games:
+        counts[tuple(g["pair"])]["WDL".index(g["result_a"])] += 1
+    out = []
+    for _ in range(reps):
+        wins = np.zeros((len(names), len(names)))
+        for (a, b), c in counts.items():
+            n = int(c.sum())
+            w, _, l_ = rng.multinomial(n, c / n)       # same law as resampling the pair's games
+            wins[idx[a], idx[b]] += w
+            wins[idx[b], idx[a]] += l_
+        try:
+            out.append(bt_fit(wins))
+        except ValueError:
+            continue
+    return np.array(out)
+
+
+def ranking(games, names=None, reps=2000, seed=0):
+    names = names or sorted({n for g in games for n in g["pair"]})
+    wins = win_matrix(games, names)
+    theta = bt_fit(wins)
+    se, _ = bt_standard_errors(wins, theta)
+    boots = bootstrap(games, names, reps=reps, seed=seed)
+    ranks = (-boots).argsort(axis=1).argsort(axis=1) + 1 if len(boots) else None
+    score = defaultdict(lambda: [0.0, 0])
+    for g in games:
+        a, b = g["pair"]
+        pts = {"W": 1.0, "D": 0.5, "L": 0.0}[g["result_a"]]
+        score[a][0] += pts
+        score[a][1] += 1
+        score[b][0] += 1.0 - pts
+        score[b][1] += 1
+    rows = []
+    for i, name in enumerate(names):
+        row = {"name": name, "elo": float(theta[i] * ELO), "elo_se": float(se[i] * ELO),
+               "decisive_wins": int(wins[i].sum()), "decisive_losses": int(wins[:, i].sum()),
+               "score_rate": score[name][0] / score[name][1]}
+        if ranks is not None:
+            row["elo_boot_ci95"] = [float(np.percentile(boots[:, i], 2.5) * ELO),
+                                    float(np.percentile(boots[:, i], 97.5) * ELO)]
+            row["rank_freq"] = {int(r): float((ranks[:, i] == r).mean())
+                                for r in range(1, len(names) + 1)}
+        rows.append(row)
+    rows.sort(key=lambda r: -r["elo"])
+    return {"names": names, "rows": rows, "bootstrap_reps": int(len(boots))}
+
+
+def kendall_tau(x, y):
+    n = len(x)
+    s = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            s += np.sign(x[i] - x[j]) * np.sign(y[i] - y[j])
+    return s / (n * (n - 1) / 2)
+
+
+def spearman_rho(x, y):
+    rx = np.argsort(np.argsort(x))
+    ry = np.argsort(np.argsort(y))
+    return float(np.corrcoef(rx, ry)[0, 1])
+
+
+def markdown_tables(games, rank):
+    lines = ["| A | B | games | A W / D / L | A TD/g | B TD/g | decisive | A win share | 95% CI "
+             "| A home W/D/L (A TD, B TD) | B home W/D/L (A TD, B TD) |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in sorted(pair_table(games), key=lambda r: (r["a"], r["b"])):
+        ah, bh = r["a_home"], r["b_home"]
+        lines.append(
+            f"| {r['a']} | {r['b']} | {r['games']} | {r['W']} / {r['D']} / {r['L']} "
+            f"| {r['a_td_per_game']:.3f} | {r['b_td_per_game']:.3f} | {r['decisive']} "
+            f"| {r['a_win_share']:.3f} | [{r['ci95'][0]:.3f}, {r['ci95'][1]:.3f}] "
+            f"| {ah['W']}/{ah['D']}/{ah['L']} ({ah['a_td_per_game']:.2f}, {ah['b_td_per_game']:.2f}) "
+            f"| {bh['W']}/{bh['D']}/{bh['L']} ({bh['a_td_per_game']:.2f}, {bh['b_td_per_game']:.2f}) |")
+    lines += ["", "| rank | checkpoint | Elo (BT, mean 0) | SE | bootstrap 95% | P(rank 1) "
+              "| decisive W-L | score rate |", "|---|---|---|---|---|---|---|---|"]
+    for i, r in enumerate(rank["rows"], 1):
+        ci = r.get("elo_boot_ci95", [float("nan")] * 2)
+        p1 = r.get("rank_freq", {}).get(1, float("nan"))
+        lines.append(f"| {i} | {r['name']} | {r['elo']:+.1f} | {r['elo_se']:.1f} "
+                     f"| [{ci[0]:+.1f}, {ci[1]:+.1f}] | {p1:.3f} "
+                     f"| {r['decisive_wins']}-{r['decisive_losses']} | {r['score_rate']:.3f} |")
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--run-dir", required=True)
+    ap.add_argument("--reps", type=int, default=2000)
+    ap.add_argument("--json", default=None)
+    args = ap.parse_args(argv)
+    games = load_games(args.run_dir)
+    rank = ranking(games, reps=args.reps)
+    print(markdown_tables(games, rank))
+    if args.json:
+        with open(args.json, "w") as f:
+            json.dump({"pairs": pair_table(games), "ranking": rank}, f, indent=1)
+
+
+if __name__ == "__main__":
+    main()
