@@ -172,16 +172,24 @@ bootstrap orders within a tier with P = 0.85 (top) and 0.98 (middle).
 **Robustness.**
 
 - **Model fit.** Bradley-Terry predicts all 15 pairwise shares within |z| <
-  1.93. Summing z² gives about 20 on 10 degrees of freedom (p ≈ 0.03): a mild
-  misfit with no intransitive cycle. The largest residuals are chain27 vs chain9
-  (predicted 0.769, observed 0.742) and chain27 vs chain31 (0.623 vs 0.652).
+  1.98. Summing z² gives 20.3 on 10 degrees of freedom (p = 0.026; deviance
+  20.3, p = 0.027): a mild misfit with no intransitive cycle. The largest
+  residuals are chain27 vs chain9 (predicted 0.769, observed 0.742) and chain27
+  vs chain31 (0.623 vs 0.652). (`bt_misfit`, committed in efe339e.)
 - **Dependence between games.** Games share seeds, so a seed-cluster bootstrap
-  resampled the 700 seeds jointly across all pairs and both legs. It gives
-  intervals that match the Wilson and Fisher intervals within 0.01 on every pair
-  share, and Elo SEs of 4.0 to 4.9. A's results across the two legs correlate at
-  -0.087 (a roster or side effect), so treating games as independent is slightly
-  conservative. The seed-cluster bootstrap gives P(chain30 > chain27) = 0.87 and
-  P(chain31 > chain25) = 0.98.
+  resamples the 700 seeds jointly across all pairs and both legs
+  (`seed_cluster_bootstrap`, committed in dfb7f4a; 2000 replicates). Its pair
+  intervals match the Wilson intervals within 0.006 at every endpoint, and its
+  Bradley-Terry Elo SEs are 4.0 to 5.0. **Correction:** this doc first gave the
+  leg correlation as -0.087. That is the Pearson correlation over all pairs
+  pooled, without centring within each pair. Centred within each pair
+  (`leg_correlation`, committed in ec3d633), A's score across the two legs of a
+  seed correlates at **-0.207**, a roster or side effect. The negative
+  dependence means treating games as independent is conservative: the
+  seed-cluster intervals are about 10% narrower than Wilson. The seed-cluster
+  bootstrap gives P(chain30 > chain27) = 0.87 and P(chain31 > chain25) = 0.98.
+- **Follow-up.** Replicate noise floor, argmax and temperature controls, and
+  roster stratification are in `tournament-followup-2026-09-15.md`.
 
 ## Against the bot exam
 
