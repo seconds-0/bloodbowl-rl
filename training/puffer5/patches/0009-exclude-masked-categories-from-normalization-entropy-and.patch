@@ -1,0 +1,154 @@
+# 0009: exclude masked categories from normalization, entropy and gradients
+diff --git a/src/algo.cu b/src/algo.cu
+index 6a7ad077..845993ef 100644
+--- a/src/algo.cu
++++ b/src/algo.cu
+@@ -1,5 +1,6 @@
+ // PufferNet model API + architecture
+ #include "ppo_guard.h"
++#include "masked_softmax.h"
+ // Writing custom nets in 4.0+ requires a fair bit of code because you are
+ // responsible for defining your own activation and gradient buffers.
+ // You usually only ever need a custom Encoder.
+@@ -1350,37 +1351,15 @@ void register_ppo_buffers(PPOBufs& bufs, Allocator* alloc, int N, int T, int A_t
+ }
+ 
+ // Discrete only. mask is always present (env mask or synthetic all-ones).
+-__device__ __forceinline__ float load_logit_masked(
+-        const precision_t* __restrict__ logits, int logits_base,
+-        int logits_offset, int a,
+-        const precision_t* __restrict__ mask, int mask_base) {
+-    float l = to_float(logits[logits_base + logits_offset + a]);
+-    float m = to_float(mask[mask_base + logits_offset + a]);
+-    if (m == 0.0f) {
+-        l = -1e4f;
+-    }
+-    return l;
+-}
+-
+ // Shared by sample_logits + ppo_loss. Fills cache[0..A) (sized PPO_MAX_HEAD_A).
+ __device__ __forceinline__ float ppo_discrete_logsumexp(
+         const precision_t* __restrict__ logits, int logits_base,
+         int logits_offset, int A,
+         const precision_t* __restrict__ mask, int mask_base,
+         float* __restrict__ cache) {
+-    float max_logit = -INFINITY;
+-    float sum = 0.0f;
+-    for (int a = 0; a < A; ++a) {
+-        float l = load_logit_masked(
+-            logits, logits_base, logits_offset, a, mask, mask_base);
+-        cache[a] = l;
+-        if (l > max_logit) {
+-            sum *= __expf(max_logit - l);
+-            max_logit = l;
+-        }
+-        sum += __expf(l - max_logit);
+-    }
+-    return max_logit + __logf(sum);
++    // Disabled categories are excluded, not given a -1e4 logit (patch 0009).
++    return puf_masked_logsumexp(logits, logits_base, logits_offset, A,
++        mask, mask_base, cache);
+ }
+ 
+ __device__ __forceinline__ void ppo_continuous_head(
+@@ -1585,11 +1564,9 @@ __global__ void ppo_loss_compute(
+                     }
+     #endif
+                     int act = (int)g.actions[nt * a.num_atns + h];
+-                    float ent = 0.0f;
+-                    for (int j = 0; j < A; ++j) {
+-                        float logp = a.grad_logits[at_base + logits_offset + j];
+-                        ent -= __expf(logp) * logp;
+-                    }
++                    float ent = puf_masked_head_entropy(
++                        a.grad_logits + at_base + logits_offset,
++                        a.action_mask + at_base + logits_offset, A);
+                     total_entropy += ent;
+     #ifdef PUFFER_NETHACK
+                     float d_logp = d_new_logp;
+@@ -1603,13 +1580,9 @@ __global__ void ppo_loss_compute(
+     #else
+                     float d_logp = d_new_logp;
+     #endif
+-                    for (int j = 0; j < A; ++j) {
+-                        float logp = a.grad_logits[at_base + logits_offset + j];
+-                        float p = __expf(logp);
+-                        a.grad_logits[at_base + logits_offset + j] =
+-                            ((j == act ? 1.0f : 0.0f) - p) * d_logp
+-                            + d_entropy_term * p * (-ent - logp);
+-                    }
++                    puf_masked_head_grad(a.grad_logits + at_base + logits_offset,
++                        a.action_mask + at_base + logits_offset, A, act, d_logp,
++                        d_entropy_term, ent);
+                     logits_offset += A;
+                 }
+             }
+diff --git a/src/masked_softmax.h b/src/masked_softmax.h
+new file mode 100644
+index 00000000..1235c1f0
+--- /dev/null
++++ b/src/masked_softmax.h
+@@ -0,0 +1,63 @@
++// Masked categorical head math (bloodbowl-rl port; 4.0 exact-joint patch).
++//
++// Disabled categories are excluded from the log-normalizer, can never be
++// sampled, and contribute no entropy and no gradient. Upstream 5.0 instead
++// substituted a -1e4 logit, which keeps disabled categories in the
++// distribution whenever legal logits approach that magnitude.
++//
++// Host-testable: define __host__/__device__/precision_t/to_float before including.
++#pragma once
++#include <math.h>
++
++// Fills cache[0..A) with the masked logits (-INFINITY when disabled) and returns
++// log(sum over enabled categories of exp(logit)); -INFINITY for empty support.
++__host__ __device__ static inline float puf_masked_logsumexp(
++        const precision_t* logits, int logits_base, int logits_offset, int A,
++        const precision_t* mask, int mask_base, float* cache) {
++    float max_logit = -INFINITY;
++    float sum = 0.0f;
++    for (int a = 0; a < A; ++a) {
++        if (to_float(mask[mask_base + logits_offset + a]) == 0.0f) {
++            cache[a] = -INFINITY;
++            continue;
++        }
++        float l = to_float(logits[logits_base + logits_offset + a]);
++        cache[a] = l;
++        if (l > max_logit) {
++            sum *= exp(max_logit - l);
++            max_logit = l;
++        }
++        sum += exp(l - max_logit);
++    }
++    return max_logit + log(sum);
++}
++
++// Entropy of one head from log-probabilities, enabled categories only.
++__host__ __device__ static inline float puf_masked_head_entropy(
++        const float* logps, const precision_t* mask, int A) {
++    float ent = 0.0f;
++    for (int j = 0; j < A; ++j) {
++        if (to_float(mask[j]) == 0.0f) {
++            continue;
++        }
++        ent -= exp(logps[j]) * logps[j];
++    }
++    return ent;
++}
++
++// In: grad[0..A) holds log-probabilities. Out: gradient of
++// d_logp * logp(act) - ent_coef * entropy w.r.t. the logits; zero when disabled.
++__host__ __device__ static inline void puf_masked_head_grad(float* grad,
++        const precision_t* mask, int A, int act, float d_logp,
++        float d_entropy_term, float ent) {
++    for (int j = 0; j < A; ++j) {
++        if (to_float(mask[j]) == 0.0f) {
++            grad[j] = 0.0f;
++            continue;
++        }
++        float logp = grad[j];
++        float p = exp(logp);
++        grad[j] = ((j == act ? 1.0f : 0.0f) - p) * d_logp
++            + d_entropy_term * p * (-ent - logp);
++    }
++}
