@@ -1,9 +1,10 @@
 # Scripted bank forward skip (audit S4), 2026-09-11
 
 Branch `fix/skip-scripted-bank-forward-20260911`. Status: implemented as an opt-in
-patch and verified on the Mac, including a patch-apply check against the rig's real
-vendored sources. It has **not** been compiled or run on CUDA yet. The rig recipe
-below is still to do.
+patch. Verified on the Mac, and **compiled, trace-checked and benchmarked on the RTX
+2070 rig on 2026-09-15**: accepted. Skip SPS was x1.148 at 1 bank, x1.080 at 4 and
+x1.061 at 8, against a 2.07% 0-bank noise band, and every trace check passed. See
+"Rig verification results, 2026-09-15" below.
 
 ## What it does
 
@@ -121,7 +122,10 @@ must print nothing, and neither a trainer nor a queued job may hold the GPU. Do 
 touch BBTV services or the kt-e2e GPU lock. Do not write into the 10619e2 checkout.
 Work only under `/tmp/bbfix-skip-scripted-bank-forward`. Record `nvidia-smi
 --query-gpu=power.limit,temperature.gpu --format=csv` first (it read 175.00 W, 56 C
-on 2026-09-11; see audit B11). Stop any probe at 82 C.
+on 2026-09-11; see audit B11). Hold `/home/rache/kt-e2e/kt-gpu.lock` with `flock`
+for each probe and log acquired/released lines in its `.log`, as the exam waiters do.
+Stop any probe at 86 C and start each throughput probe below 58 C (see step 3 for
+why 82 C and 70 C did not work at the chain 9 layout).
 
 ### 1. Scratch trees and builds
 
@@ -233,7 +237,11 @@ explained.
 This uses the full chain 9 layout (2048 agents, H64, minibatch 16384, 16 threads)
 with a 120 s timed window after 3 warmup epochs. It alternates rollouts and PPO
 updates, the same phases the dashboard reports. Interleave the builds per bank count
-and wait for the GPU to fall below 70 C between probes.
+and wait for the GPU to fall below 58 C between probes, so both arms start from
+the same near-idle temperature. A 70 C start is not enough: on 2026-09-15 this
+layout heated the 2070 from 65 C to 82 C in 86 s and from 57 C to 82 C in 87 s,
+and every cell peaks at 80-82 C with the power cap engaged. Stop a probe at 86 C,
+the rig's own alert level (ladder runs sit at 80-83 C for hours), not at 82 C.
 
 ```bash
 BANKS0=(--selfplay.enabled 0 --vec.num-frozen-banks 0 --vec.frozen-bank-pct 0
@@ -242,7 +250,7 @@ BANKS1=(--vec.num-frozen-banks 1 --vec.frozen-bank-pct 0.12 --env.scripted-bank-
 for n in 0 1 4 8; do
   eval "B=(\"\${BANKS$n[@]}\")"
   for arm in default skip; do
-    until [ "$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits)" -lt 70 ]; do sleep 20; done
+    until [ "$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits)" -lt 58 ]; do sleep 20; done
     "$PY" "$PROBE" throughput --puffer-root "$D/$arm" --output "$D/tput-$arm-$n.json" \
       --seconds 120 --warmup-epochs 3 -- "${COMMON[@]}" "${B[@]}"
   done
@@ -276,6 +284,105 @@ SPS beats default at 1, 4 and 8 banks by more than the 0-bank noise band.
 
 `rm -rf /tmp/bbfix-skip-scripted-bank-forward` after the JSON results are copied off.
 Nothing else was created.
+
+## Rig verification results, 2026-09-15
+
+**Verdict: accepted.** Every trace check passes, and skip SPS beats default at 1, 4
+and 8 banks, well outside the 0-bank noise band.
+
+Setup: `ssh bbrig`, scratch trees under `/tmp/bbverify` (the live checkout
+`/home/rache/bloodbowl-rl-qualification-candidate-10619e2` at fbaec58 was only read).
+The branch sha was d673a07, and both repair commits below landed during the run.
+Each probe held `kt-gpu.lock`. Recorded first: 175.00 W power limit, 56 C idle.
+
+- **Builds.** Default and skip were installed from the branch, both at content hash
+  `3ed6899e…`. Exact-action backend digests are `85fa29c0…` for default (the rig's
+  recorded default) and `a54985f4…` for skip. Both builds compiled (the skip CUDA
+  code for the first time) in about 33 s each, with ccache off and `taskset -c 0-7`.
+  Both `--check` passed, and only skip printed `opt-in scripted-bank forward skip is
+  installed`. Precision is 4 for both, and `scripted_bank_forward_skip` reads False
+  and True. Every module imported from its own scratch tree.
+- **Warm start.** `4344e588…` as expected.
+
+### Trace control and candidate (512 agents x H8, 32 rollouts, `max-decisions 48`)
+
+| Comparison | accepted | identical_banks | mask rows widened / narrowed |
+|---|---|---|---|
+| control, 4 banks (default a vs b) | true | [0, 1, 2, 3, 4] | 0 / 0 |
+| candidate, 4 banks (default a vs skip) | true | [0, 1, 2, 3] | 290 / 290 of 15,360 |
+| control, 8 banks | true | [0..8] | 0 / 0 |
+| candidate, 8 banks | true | [0..7] | 177 / 177 of 7,680 |
+
+- **Routing.** The skip traces report `skip.routed: true`, and stderr shows
+  `create_pufferl: skipping the policy forward for scripted bank tag 4 (frozen bank 3)`
+  (then tag 8).
+- **What matched.** Observations, rewards, terminals, env metrics and every
+  non-skipped bank's actions, logprobs, values and masks were identical in all 32
+  rollouts. The skipped slice's actions, logprobs and values were exactly zero.
+  `hard_integrity` was zero on all six traces.
+- **Mask differences.** Every differing mask row widened and narrowed at once. The
+  type head never differed. Most narrowed arg bits were the virtual arg 32 (111 of
+  the 4-bank head-1 rows), and the rest were real args and squares. See "What stays
+  identical" above.
+- **Comparator.** The candidate also matches default trace b.
+
+### Throughput grid (chain 9 layout: 2048 agents, 2 buffers, 16 threads, H64, minibatch 16384)
+
+120 s timed window after 3 warmup epochs. Each probe started below 58 C, and every
+cell reached 80-82 C with the power cap engaged. "Thermal" counts the 5 s samples
+that carried a thermal slowdown flag (0x20/0x40).
+
+| Banks | Build | SPS | GPU ms | Env ms | Train ms | VRAM GB | Max C | Thermal | Integrity zero |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | default | 203,285 | 252.2 | 203.7 | 154.7 | 6.20 | 81 | 2 | yes |
+| 0 | skip | 206,299 | 250.9 | 195.8 | 156.7 | 6.20 | 82 | 8 | yes |
+| 1 | default | 177,971 | 332.6 | 210.7 | 156.5 | 6.24 | 82 | 10 | yes |
+| 1 | skip | 204,251 | 245.9 | 204.6 | 157.5 | 6.23 | 82 | 8 | yes |
+| 4 | default | 132,754 | 597.8 | 198.5 | 156.4 | 6.36 | 82 | 6 | yes |
+| 4 | skip | 143,389 | 513.6 | 207.3 | 155.5 | 6.35 | 82 | 0 | yes |
+| 8 | default | 104,671 | 852.2 | 203.5 | 154.6 | 6.47 | 81 | 1 | yes |
+| 8 | skip | 111,004 | 783.2 | 202.2 | 154.6 | 6.47 | 80 | 0 | yes |
+
+A third 0-bank default sample, started at 52 C, read 207,535 SPS. The three 0-bank
+samples span 2.07% of their mean, and that is the noise band.
+
+| Banks | skip / default SPS | GPU ms saved | Outside band |
+|---|---|---|---|
+| 0 | x1.015 (+1.5%) | 1 | (sets the band) |
+| 1 | **x1.148 (+14.8%)** | 87 | yes |
+| 4 | **x1.080 (+8.0%)** | 84 | yes |
+| 8 | **x1.061 (+6.1%)** | 69 | yes |
+
+- **Per-forward cost.** The saving is one bank forward, 69-87 ms per epoch, which
+  sits at or below the audit's 86-115 ms inference. At 1 bank the skip build's GPU
+  time (246 ms) returns to the 0-bank level.
+- **Caveat.** Thermal-flag counts differ between cells: the 1-bank default had 10
+  flagged samples to skip's 8, and the 4- and 8-bank skip cells had none. The GPU
+  time saved matches one forward at each bank count, so throttling does not explain
+  the gain. Still, a single 120 s window per cell is not a precise multiplier, so
+  read these as roughly +15%, +8% and +6%.
+- **Chain 9 reading.** Chain 9's layout (4 banks) should gain about 8% SPS, and chain
+  23/31's layout (8 x 0.06) about 6%.
+
+### What the verification fixed on this branch
+
+- **e4cd23c.** `compare` refused every candidate: the doc's claim that the marginal
+  mask is a superset of the conditional mask is false on real data. The probe now
+  counts both directions and still requires binary bits of the same shape. The test
+  fixture models a conditional bit the marginal lacks.
+- **76ef16e.** Every trace died in the CUDA preflight ("CUDA_VISIBLE_DEVICES evidence
+  is missing or invalid") because the recipe never exported the variable. The probe
+  now refuses an unset value before any CUDA call, and step 1 exports
+  `CUDA_VISIBLE_DEVICES=0`.
+- **Recipe.** Step 3's cooldown and stop rules changed from 70 C / 82 C to 58 C /
+  86 C. At 82 C four probes were killed 86-87 s in, from 57-65 C starts.
+
+### Adopting it
+
+An opted-in rung changes `puffer_patch_bundle_sha256` away from `de77f6c0…`, so the
+next rung warm-starting from chain 9 lineage needs `LADDER_PROFILE=graft` with
+`GRAFT_FROM_PATCH_BUNDLE_SHA256=de77f6c0…`, the unchanged `GRAFT_FROM_SOURCE_SHA256`,
+and a `GRAFT_REASON` naming S4 (see "Opting in and provenance").
 
 ## Batching the remaining bank forwards: design (not implemented)
 
