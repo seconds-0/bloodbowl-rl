@@ -173,6 +173,30 @@ def test_bt_misfit_passes_bt_data_and_flags_a_cycle():
     assert bad["df"] == 1 and bad["p"] < 1e-12 and bad["p_deviance"] < 1e-12
 
 
+def test_bt_misfit_cluster_wald_holds_its_level_under_shared_seed_effects():
+    # Three equal players; a per-seed effect of +-1 shifts the log-odds of ab, ac, bc
+    # with signs (+, -, +), along the cycle BT cannot absorb. The independent-games
+    # chi-square over-rejects; the seed-cluster Wald test holds about 5%.
+    rng = np.random.default_rng(40)
+    names = ["a", "b", "c"]
+    naive = cluster = 0
+    sims = 300
+    for _ in range(sims):
+        games = []
+        for s in range(300):
+            u = 1.0 if rng.random() < 0.5 else -1.0
+            for a, b, sign in (("a", "b", 1), ("a", "c", -1), ("b", "c", 1)):
+                p = 1 / (1 + math.exp(-sign * u))
+                for leg in LEGS:
+                    games.append({"pair": [a, b], "leg": leg, "engine_seed": s,
+                                  "result_a": "W" if rng.random() < p else "L"})
+        fit = S.bt_misfit(S.win_matrix(games, names), names, games=games)
+        assert fit["cluster_df"] == 1
+        naive += fit["p"] < 0.05
+        cluster += fit["p_cluster"] < 0.05
+    assert naive / sims > 0.08 and cluster / sims < 0.08
+
+
 def test_bradley_terry_refuses_a_disconnected_pair_graph():
     wins = np.array([[0, 5, 0, 0], [4, 0, 0, 0], [0, 0, 0, 6], [0, 0, 3, 0]], dtype=float)
     with pytest.raises(ValueError, match="connected"):

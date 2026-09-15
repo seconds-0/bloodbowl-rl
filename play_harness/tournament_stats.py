@@ -409,11 +409,16 @@ def chi2_sf(x, k):
     return min(1.0, max(0.0, math.exp(log_front) * h))
 
 
-def bt_misfit(wins, names, theta=None):
+def bt_misfit(wins, names, theta=None, games=None):
     """Pearson and deviance goodness of fit of Bradley-Terry to the decisive pair counts.
 
-    df = observed pairs - (players - 1). Games are treated as independent: with
-    the negative within-seed leg correlation this is slightly conservative.
+    df = observed pairs - (players - 1). chi2 / p and deviance / p_deviance treat
+    games as independent binomials. Games of different pairs share seeds, and a
+    seed effect can correlate results across pairs, so those p-values are not
+    calibrated for this design and can over-reject. Pass `games` to add
+    cluster_wald / p_cluster: a Wald test of the same pair residuals using a
+    seed-cluster covariance, on the P - (n - 1) residual directions the fit leaves
+    free.
     """
     theta = bt_fit(wins) if theta is None else theta
     rows, chi2, dev = [], 0.0, 0.0
@@ -432,9 +437,44 @@ def bt_misfit(wins, names, theta=None):
             rows.append({"a": names[i], "b": names[j], "decisive": int(n),
                          "observed": float(w / n), "predicted": float(p), "z": float(z)})
     df = len(rows) - (len(names) - 1)
-    return {"chi2": chi2, "deviance": dev, "df": df,
-            "p": chi2_sf(chi2, df) if df > 0 else float("nan"),
-            "p_deviance": chi2_sf(dev, df) if df > 0 else float("nan"), "rows": rows}
+    out = {"chi2": chi2, "deviance": dev, "df": df,
+           "p": chi2_sf(chi2, df) if df > 0 else float("nan"),
+           "p_deviance": chi2_sf(dev, df) if df > 0 else float("nan"), "rows": rows}
+    if games is not None:
+        out.update(_cluster_wald(games, names, theta))
+    return out
+
+
+def _cluster_wald(games, names, theta):
+    idx = {n: i for i, n in enumerate(names)}
+    pairs = sorted({(min(idx[g["pair"][0]], idx[g["pair"][1]]), max(idx[g["pair"][0]], idx[g["pair"][1]]))
+                    for g in games if g["result_a"] != "D"})
+    pk = {p: k for k, p in enumerate(pairs)}
+    seeds = sorted({g["engine_seed"] for g in games})
+    si = {s: k for k, s in enumerate(seeds)}
+    resid = np.zeros((len(seeds), len(pairs)))      # per seed: sum of 1[i beat j] - p_ij
+    for g in games:
+        if g["result_a"] == "D":
+            continue
+        a, b = idx[g["pair"][0]], idx[g["pair"][1]]
+        i, j = min(a, b), max(a, b)
+        p = 1.0 / (1.0 + math.exp(theta[j] - theta[i]))
+        i_won = (g["result_a"] == "W") == (a == i)
+        resid[si[g["engine_seed"]], pk[(i, j)]] += float(i_won) - p
+    total = resid.sum(axis=0)
+    centred = resid - total / len(seeds)
+    cov = centred.T @ centred * len(seeds) / max(1, len(seeds) - 1)
+    incidence = np.zeros((len(names), len(pairs)))
+    for k, (i, j) in enumerate(pairs):
+        incidence[i, k], incidence[j, k] = 1.0, -1.0
+    _, sv, vt = np.linalg.svd(incidence)
+    free = vt[int((sv > 1e-9).sum()):].T            # residual directions the fit leaves free
+    df = free.shape[1]
+    if df == 0:
+        return {"cluster_wald": float("nan"), "cluster_df": 0, "p_cluster": float("nan")}
+    q = free.T @ total
+    stat = float(q @ np.linalg.pinv(free.T @ cov @ free) @ q)
+    return {"cluster_wald": stat, "cluster_df": df, "p_cluster": chi2_sf(stat, df)}
 
 
 # ---- power ----------------------------------------------------------------------
@@ -715,7 +755,7 @@ def report(games, reps=2000, seed=0):
     try:
         rank = ranking(games, reps=reps, seed=seed)
         out["ranking"] = rank
-        out["bt_misfit"] = bt_misfit(win_matrix(games, rank["names"]), rank["names"])
+        out["bt_misfit"] = bt_misfit(win_matrix(games, rank["names"]), rank["names"], games=games)
     except ValueError as exc:
         out["ranking"], out["ranking_skipped"] = None, str(exc)
     return out
@@ -733,7 +773,9 @@ def main(argv=None):
         print(markdown_tables(games, rep["ranking"]))
         fit = rep["bt_misfit"]
         print(f"\nBradley-Terry misfit: chi2 {fit['chi2']:.2f}, deviance {fit['deviance']:.2f} "
-              f"on {fit['df']} df, p = {fit['p']:.4f} (deviance p = {fit['p_deviance']:.4f})")
+              f"on {fit['df']} df, p = {fit['p']:.4f} (deviance p = {fit['p_deviance']:.4f}); "
+              f"seed-cluster Wald {fit['cluster_wald']:.2f} on {fit['cluster_df']} df, "
+              f"p = {fit['p_cluster']:.4f}")
     else:
         print(f"(no Bradley-Terry ranking: {rep['ranking_skipped']})")
     print("\nSeed-cluster bootstrap (seeds resampled jointly across pairs and legs, "
