@@ -184,5 +184,17 @@ state carries rounding forward, and both float32 implementations sit 5e-3 to
 native (4.0 fast-sigmoid) kernel and its torch kernel differ from each other by
 6.1e-5.
 
+**Seat routing** (`tests/puffer5/seat_routing`). The adapter's routing, fed
+through a verbatim copy of 5.0 `env_setup`'s layout loop, is compared with the
+unmodified 4.0 `build_perm_tags` from the live `selfplay.py` (sha `69cd7fe6`).
+Every env's tag and seat rows agree, and the bot seats exactly fill the skipped
+policy's slice:
+
+| Config | Result |
+|---|---|
+| 4 banks x 0.12, bot tag 4 (chain 30) | layout `[0, 536, 658, 780, 902, 1024]`, 244 bot seats, 0 failures |
+| 8 banks x 0.06, bot tag 8 | 0 failures |
+| 1 bank x 0.10 | 0 failures |
+
 **Build.** `nvcc` 12.4, `-arch=sm_75`, `--float`, 4 threads: the trainer builds
 and links, and the `--cpu` binary builds. Neither has run on the GPU yet.
