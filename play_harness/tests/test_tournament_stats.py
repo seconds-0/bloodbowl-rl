@@ -100,6 +100,48 @@ def test_leg_correlation_is_centred_within_pair():
                         -1.0)
 
 
+def test_seed_cluster_resampling_moves_whole_seeds():
+    rng = np.random.default_rng(0)
+    games = []
+    for i in range(40):
+        for pair in (("x", "y"), ("x", "z")):
+            for leg in LEGS:
+                games.append({"pair": list(pair), "leg": leg, "engine_seed": 900 + i,
+                              "game_index": i, "result_a": "WDL"[rng.integers(3)]})
+    _, cells, counts = S.cluster_counts(games, key=lambda g: (tuple(g["pair"]), g["leg"]))
+    assert len(cells) == 4 and counts.shape == (40, 4, 3)
+    boots = S.bootstrap_cluster_counts(counts, reps=200, seed=3)
+    per_cell = boots.sum(axis=-1)                       # games per (pair, leg) per replicate
+    assert np.all(per_cell == 40)                         # a drawn seed brings every pair and leg
+    assert not np.all(boots == boots[0])                  # and replicates differ
+
+
+def test_seed_cluster_intervals_track_leg_dependence():
+    rng = np.random.default_rng(9)
+    same, flip = [], []
+    for i in range(600):
+        r = "W" if rng.random() < 0.5 else "L"
+        other = "L" if r == "W" else "W"
+        same += _leg_games(("x", "y"), [(r, r)], seed0=i)
+        flip += _leg_games(("x", "y"), [(r, other)], seed0=i)
+    iid_se = math.sqrt(0.25 / 1200)
+    boot_same = S.seed_cluster_bootstrap(same, reps=600, seed=1)["pairs"][0]
+    half_width = (boot_same["decisive_share_ci95"][1] - boot_same["decisive_share_ci95"][0]) / 2
+    assert math.isclose(half_width / 1.96, math.sqrt(2) * iid_se, rel_tol=0.15)
+    boot_flip = S.seed_cluster_bootstrap(flip, reps=200, seed=1)["pairs"][0]
+    assert boot_flip["decisive_share_ci95"] == [0.5, 0.5]
+
+
+def test_score_rate_counts_draws_as_half_and_elo_scale():
+    games = _leg_games(("x", "y"), [("W", "D"), ("D", "D"), ("L", "W")])
+    (row,) = S.seed_cluster_bootstrap(games, reps=50)["pairs"]
+    assert (row["W"], row["D"], row["L"]) == (2, 3, 1)
+    assert math.isclose(row["decisive_share"], 2 / 3)
+    assert math.isclose(row["score_rate"], 3.5 / 6)
+    assert math.isclose(float(S.elo_from_share(0.64)), 100.0, abs_tol=0.5)
+    assert float(S.elo_from_share(0.5)) == 0.0
+
+
 def test_rank_correlations():
     assert S.kendall_tau([1, 2, 3, 4], [10, 20, 30, 40]) == 1.0
     assert S.kendall_tau([1, 2, 3, 4], [40, 30, 20, 10]) == -1.0

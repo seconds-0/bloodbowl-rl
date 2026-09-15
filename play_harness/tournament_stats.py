@@ -204,6 +204,103 @@ def leg_correlation(games):
             "seeds": len(xc), "per_pair": per_pair}
 
 
+def elo_from_share(p):
+    """Elo gap implied by a share p (decisive share or draw-inclusive score)."""
+    p = np.clip(np.asarray(p, dtype=float), 1e-12, 1 - 1e-12)
+    return ELO * np.log(p / (1 - p))
+
+
+def _shares(c):
+    """(decisive share, draw-inclusive score rate) from W/D/L counts on the last axis."""
+    c = np.asarray(c, dtype=float)
+    w, d, l_ = c[..., 0], c[..., 1], c[..., 2]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return w / (w + l_), (w + 0.5 * d) / (w + d + l_)
+
+
+def _ci(x):
+    x = np.asarray(x, dtype=float)
+    x = x[np.isfinite(x)]
+    return [float(np.percentile(x, 2.5)), float(np.percentile(x, 97.5))] if x.size else \
+        [float("nan")] * 2
+
+
+# ---- seed-cluster bootstrap ---------------------------------------------------
+def cluster_counts(games, key=lambda g: tuple(g["pair"])):
+    """W/D/L counts per (engine seed, cell). Returns (seeds, cells, counts[S, K, 3]).
+
+    Every pair and both legs of a game index share one engine seed, so the
+    seed is the unit of dependence; key(g) names the cell (None drops a game).
+    """
+    keyed = [(g, key(g)) for g in games]
+    seeds = sorted({g["engine_seed"] for g, k in keyed if k is not None})
+    cells = sorted({k for _, k in keyed if k is not None})
+    si = {s: i for i, s in enumerate(seeds)}
+    ci = {c: i for i, c in enumerate(cells)}
+    counts = np.zeros((len(seeds), len(cells), 3))
+    for g, k in keyed:
+        if k is not None:
+            counts[si[g["engine_seed"]], ci[k], "WDL".index(g["result_a"])] += 1
+    return seeds, cells, counts
+
+
+def bootstrap_cluster_counts(counts, reps=2000, seed=0):
+    """Resample seeds with replacement; a drawn seed brings all its cells and legs."""
+    rng = np.random.default_rng(seed)
+    n = counts.shape[0]
+    out = np.empty((reps,) + counts.shape[1:])
+    for r in range(reps):
+        mult = np.bincount(rng.integers(0, n, n), minlength=n).astype(float)
+        out[r] = np.tensordot(mult, counts, axes=1)
+    return out
+
+
+def seed_cluster_bootstrap(games, names=None, reps=2000, seed=0):
+    """Pair shares, score rates and Elo gaps with seed-cluster percentile intervals,
+    plus Bradley-Terry strengths when the pair graph is connected."""
+    names = names or sorted({n for g in games for n in g["pair"]})
+    seeds, pairs, counts = cluster_counts(games)
+    boots = bootstrap_cluster_counts(counts, reps, seed)
+    point = counts.sum(axis=0)
+    rows = []
+    for k, (a, b) in enumerate(pairs):
+        share, score = _shares(boots[:, k])
+        p_share, p_score = _shares(point[k])
+        rows.append({
+            "a": a, "b": b, "seeds": int((counts[:, k].sum(axis=-1) > 0).sum()),
+            "games": int(point[k].sum()), "W": int(point[k, 0]), "D": int(point[k, 1]),
+            "L": int(point[k, 2]),
+            "decisive_share": float(p_share), "decisive_share_ci95": _ci(share),
+            "score_rate": float(p_score), "score_rate_ci95": _ci(score),
+            "elo_decisive": float(elo_from_share(p_share)),
+            "elo_decisive_ci95": _ci(elo_from_share(share)),
+            "elo_decisive_se": float(np.nanstd(elo_from_share(share))),
+            "elo_score": float(elo_from_share(p_score)),
+            "elo_score_ci95": _ci(elo_from_share(score)),
+            "elo_score_se": float(np.nanstd(elo_from_share(score))),
+            "p_a_ahead": float(np.mean(share > 0.5)),
+        })
+    out = {"names": names, "seeds": len(seeds), "reps": int(reps), "pairs": rows}
+    idx = {n: i for i, n in enumerate(names)}
+    thetas = []
+    for rep in boots:
+        wins = np.zeros((len(names), len(names)))
+        for k, (a, b) in enumerate(pairs):
+            wins[idx[a], idx[b]] += rep[k, 0]
+            wins[idx[b], idx[a]] += rep[k, 2]
+        try:
+            thetas.append(bt_fit(wins))
+        except ValueError:
+            continue
+    if thetas:
+        th = np.array(thetas)
+        out["bt"] = {"reps": len(th), "elo_se": {n: float(th[:, i].std() * ELO) for n, i in idx.items()},
+                     "elo_ci95": {n: _ci(th[:, i] * ELO) for n, i in idx.items()},
+                     "p_ahead": {a: {b: float(np.mean(th[:, idx[a]] > th[:, idx[b]]))
+                                     for b in names if b != a} for a in names}}
+    return out
+
+
 def kendall_tau(x, y):
     n = len(x)
     s = 0
