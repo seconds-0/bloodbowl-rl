@@ -310,6 +310,71 @@ def seed_cluster_bootstrap(games, names=None, reps=2000, seed=0):
     return out
 
 
+# ---- model fit ----------------------------------------------------------------
+def chi2_sf(x, k):
+    """Chi-square upper tail Q(k/2, x/2) by series / Lentz continued fraction."""
+    a, x = 0.5 * k, 0.5 * float(x)
+    if k <= 0:
+        raise ValueError("degrees of freedom must be positive")
+    if x <= 0:
+        return 1.0
+    log_front = -x + a * math.log(x) - math.lgamma(a)
+    if x < a + 1:
+        ap, term, total = a, 1.0 / a, 1.0 / a
+        for _ in range(100_000):
+            ap += 1
+            term *= x / ap
+            total += term
+            if abs(term) < abs(total) * 1e-16:
+                break
+        return min(1.0, max(0.0, 1.0 - total * math.exp(log_front)))
+    tiny = 1e-300
+    b = x + 1 - a
+    c, d = 1 / tiny, 1 / b
+    h = d
+    for i in range(1, 100_000):
+        an = -i * (i - a)
+        b += 2
+        d = an * d + b
+        d = tiny if abs(d) < tiny else d
+        c = b + an / c
+        c = tiny if abs(c) < tiny else c
+        d = 1 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1) < 1e-16:
+            break
+    return min(1.0, max(0.0, math.exp(log_front) * h))
+
+
+def bt_misfit(wins, names, theta=None):
+    """Pearson and deviance goodness of fit of Bradley-Terry to the decisive pair counts.
+
+    df = observed pairs - (players - 1). Games are treated as independent: with
+    the negative within-seed leg correlation this is slightly conservative.
+    """
+    theta = bt_fit(wins) if theta is None else theta
+    rows, chi2, dev = [], 0.0, 0.0
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            n = wins[i, j] + wins[j, i]
+            if n == 0:
+                continue
+            p = 1.0 / (1.0 + math.exp(theta[j] - theta[i]))
+            w = wins[i, j]
+            z = (w - n * p) / math.sqrt(n * p * (1 - p))
+            chi2 += z * z
+            for obs, exp_ in ((w, n * p), (n - w, n * (1 - p))):
+                if obs > 0:
+                    dev += 2 * obs * math.log(obs / exp_)
+            rows.append({"a": names[i], "b": names[j], "decisive": int(n),
+                         "observed": float(w / n), "predicted": float(p), "z": float(z)})
+    df = len(rows) - (len(names) - 1)
+    return {"chi2": chi2, "deviance": dev, "df": df,
+            "p": chi2_sf(chi2, df) if df > 0 else float("nan"),
+            "p_deviance": chi2_sf(dev, df) if df > 0 else float("nan"), "rows": rows}
+
+
 def kendall_tau(x, y):
     n = len(x)
     s = 0

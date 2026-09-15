@@ -142,6 +142,24 @@ def test_score_rate_counts_draws_as_half_and_elo_scale():
     assert float(S.elo_from_share(0.5)) == 0.0
 
 
+def test_chi2_sf_reference_values():
+    assert math.isclose(S.chi2_sf(3.841458820694124, 1), 0.05, abs_tol=1e-9)
+    assert math.isclose(S.chi2_sf(18.307038053275146, 10), 0.05, abs_tol=1e-9)
+    assert math.isclose(S.chi2_sf(20.0, 10), 0.029252688076961, abs_tol=1e-9)
+    assert math.isclose(S.chi2_sf(2.0, 4), math.exp(-1.0) * 2.0, abs_tol=1e-12)
+    assert S.chi2_sf(0.0, 3) == 1.0
+
+
+def test_bt_misfit_passes_bt_data_and_flags_a_cycle():
+    theta = np.array([0.3, 0.0, -0.3, 0.1])
+    names, games = _synthetic_games(theta, 3000, np.random.default_rng(21))
+    fit = S.bt_misfit(S.win_matrix(games, names), names)
+    assert fit["df"] == 6 - 3 and fit["p"] > 0.01 and len(fit["rows"]) == 6
+    cycle = np.array([[0, 700, 300], [300, 0, 700], [700, 300, 0]], dtype=float)
+    bad = S.bt_misfit(cycle, ["a", "b", "c"])
+    assert bad["df"] == 1 and bad["p"] < 1e-12 and bad["p_deviance"] < 1e-12
+
+
 def test_bradley_terry_refuses_a_disconnected_pair_graph():
     wins = np.array([[0, 5, 0, 0], [4, 0, 0, 0], [0, 0, 0, 6], [0, 0, 3, 0]], dtype=float)
     with pytest.raises(ValueError, match="connected"):
