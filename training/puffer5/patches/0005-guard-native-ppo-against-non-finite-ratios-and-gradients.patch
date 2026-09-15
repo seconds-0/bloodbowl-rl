@@ -1,0 +1,290 @@
+# 0005: guard native PPO against non-finite ratios and gradients
+diff --git a/src/algo.cu b/src/algo.cu
+index 13b2d974..6a7ad077 100644
+--- a/src/algo.cu
++++ b/src/algo.cu
+@@ -1,4 +1,5 @@
+ // PufferNet model API + architecture
++#include "ppo_guard.h"
+ // Writing custom nets in 4.0+ requires a fair bit of code because you are
+ // responsible for defining your own activation and gradient buffers.
+ // You usually only ever need a custom Encoder.
+@@ -1052,6 +1053,10 @@ __global__ void muon_sum_sq_reduce(float* __restrict__ out,
+ __global__ void muon_clip_nesterov(float* __restrict__ mb,
+         precision_t* __restrict__ gc, const float* __restrict__ sum_sq_ptr,
+         float max_norm, float eps, float mu, int n) {
++    // Non-finite global norm: leave momentum untouched (patch 0005).
++    if (!puf_muon_norm_ok(*sum_sq_ptr)) {
++        return;
++    }
+     float clip_coef = fminf(max_norm / (sqrtf(*sum_sq_ptr) + eps), 1.0f);
+     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+     if (idx < n) {
+@@ -1084,7 +1089,12 @@ __global__ void muon_store_update(precision_t* __restrict__ dst,
+ // wb = wb * (1 - lr*wd) - lr * update  (update already scaled; one call for all params)
+ __global__ void muon_weight_update(float* __restrict__ wb,
+         const precision_t* __restrict__ update,
+-        const float* __restrict__ lr_ptr, float wd, int n) {
++        const float* __restrict__ lr_ptr, const float* __restrict__ sum_sq_ptr,
++        float wd, int n) {
++    // Non-finite global norm: skip the whole optimizer step (patch 0005).
++    if (!puf_muon_norm_ok(*sum_sq_ptr)) {
++        return;
++    }
+     float lr = *lr_ptr;
+     float wd_scale = 1.0f - lr * wd;
+     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+@@ -1207,7 +1217,7 @@ void muon_step(Muon* m, Float weights, Prec grads,
+             gc_ptr, x_buf.data, scale, (int)ne);
+     }
+     muon_weight_update<<<grid_size(n_grad), BLOCK_SIZE, 0, stream>>>(
+-        weights.data, grads.data, m->lr, 0.0f, n_grad);
++        weights.data, grads.data, m->lr, m->grad_norm, 0.0f, n_grad);
+ }
+ 
+ // Train layout is (B, T). Views are sliced each mb; scratch is allocated.
+@@ -1499,107 +1509,124 @@ __global__ void ppo_loss_compute(
+         float val_pred = to_float(a.values_pred[logits_base]);
+         float ent_coef = *a.ent_coef;
+         float d_entropy_term = inv_NT * (-ent_coef);
+-        float logratio = a.grad_values_pred[nt] - to_float(g.old_logprobs[nt]);
+-        float ratio = __expf(logratio);
+-
+-        // Value loss + gradient: 0.5 * max((v-r)^2, (v_clip-r)^2).
+-        // When clipped term wins, v_clip is constant in val_pred → grad 0.
+-        float v_error = val_pred - val;
+-        float v_clipped = val + fmaxf(-a.vf_clip_coef, fminf(a.vf_clip_coef, v_error));
+-        float v_loss_unclipped = (val_pred - ret) * (val_pred - ret);
+-        float v_loss_clipped = (v_clipped - ret) * (v_clipped - ret);
+-        float v_loss = 0.5f * fmaxf(v_loss_unclipped, v_loss_clipped);
+-        float d_val_pred = (v_loss_clipped > v_loss_unclipped) ? 0.0f : (val_pred - ret);
+-        a.grad_values_pred[nt] = inv_NT * a.vf_coef * d_val_pred;
+-        float clip_lo = 1.0f - a.clip_coef;
+-        float clip_hi = 1.0f + a.clip_coef;
+-        float ratio_clipped = fmaxf(clip_lo, fminf(clip_hi, ratio));
+-        float wa = -adv_for_pg;
+-        float pg_loss1 = wa * ratio;
+-        float pg_loss2 = wa * ratio_clipped;
+-        float pg_loss = fmaxf(pg_loss1, pg_loss2);
+-        float d_ratio = wa * inv_NT;
+-        if (pg_loss2 > pg_loss1 && (ratio <= clip_lo || ratio >= clip_hi)) {
+-            d_ratio = 0.0f;
+-        }
+-        float d_new_logp = d_ratio * ratio;
+-        float total_entropy = 0.0f;
+-
+-        if (a.is_continuous) {
+-            for (int h = 0; h < a.num_atns; ++h) {
+-                float mean = safe_continuous_mean(a.logits, logits_base + h);
+-                float c_logstd = safe_continuous_logstd(a.logstd, h);
+-                float c_action = finite_or_clamp(
+-                    g.actions[nt * a.num_atns + h], -1.0e6f, 1.0e6f);
+-                float lp, ent;
+-                ppo_continuous_head(mean, c_logstd, c_action, &lp, &ent);
+-                total_entropy += ent;
+-                float std = __expf(c_logstd);
+-                float var = std * std;
+-                float diff = c_action - mean;
+-                a.grad_logits[at_base + h] = d_new_logp * diff / var;
+-                a.grad_logstd[nt * a.num_atns + h] =
+-                    d_new_logp * (diff * diff / var - 1.0f) + d_entropy_term;
++        float new_logp = a.grad_values_pred[nt];
++        float old_logp = to_float(g.old_logprobs[nt]);
++        // NaN guard (patch 0005, port of 4.0 f14b71c): an element with any
++        // non-finite input contributes no gradient and no loss.
++        if (!puf_ppo_element_finite(new_logp, old_logp, adv_for_pg, val_pred, val, ret)) {
++            a.grad_values_pred[nt] = 0.0f;
++            for (int j = 0; j < a.A_total; ++j) {
++                a.grad_logits[at_base + j] = 0.0f;
++            }
++            if (a.is_continuous) {
++                for (int h = 0; h < a.num_atns; ++h) {
++                    a.grad_logstd[nt * a.num_atns + h] = 0.0f;
++                }
+             }
+         } else {
+-#ifdef PUFFER_NETHACK
+-            int verb = (int)g.actions[nt * a.num_atns];
+-            float verb_mix_scale = 1.0f;
+-#endif
+-            int logits_offset = 0;
+-            for (int h = 0; h < a.num_atns; ++h) {
+-                int A = a.act_sizes[h];
+-#ifdef PUFFER_NETHACK
+-                if (!nethack_head_used(verb, h)) {
++            float logratio = new_logp - old_logp;
++            // Ratio from the clamped logratio; KL metrics keep the raw logratio.
++            float ratio = __expf(puf_ppo_ratio_logratio(logratio));
++
++            // Value loss + gradient: 0.5 * max((v-r)^2, (v_clip-r)^2).
++            // When clipped term wins, v_clip is constant in val_pred → grad 0.
++            float v_error = val_pred - val;
++            float v_clipped = val + fmaxf(-a.vf_clip_coef, fminf(a.vf_clip_coef, v_error));
++            float v_loss_unclipped = (val_pred - ret) * (val_pred - ret);
++            float v_loss_clipped = (v_clipped - ret) * (v_clipped - ret);
++            float v_loss = 0.5f * fmaxf(v_loss_unclipped, v_loss_clipped);
++            float d_val_pred = (v_loss_clipped > v_loss_unclipped) ? 0.0f : (val_pred - ret);
++            a.grad_values_pred[nt] = inv_NT * a.vf_coef * d_val_pred;
++            float clip_lo = 1.0f - a.clip_coef;
++            float clip_hi = 1.0f + a.clip_coef;
++            float ratio_clipped = fmaxf(clip_lo, fminf(clip_hi, ratio));
++            float wa = -adv_for_pg;
++            float pg_loss1 = wa * ratio;
++            float pg_loss2 = wa * ratio_clipped;
++            float pg_loss = fmaxf(pg_loss1, pg_loss2);
++            float d_ratio = wa * inv_NT;
++            if (pg_loss2 > pg_loss1 && (ratio <= clip_lo || ratio >= clip_hi)) {
++                d_ratio = 0.0f;
++            }
++            float d_new_logp = d_ratio * ratio;
++            float total_entropy = 0.0f;
++
++            if (a.is_continuous) {
++                for (int h = 0; h < a.num_atns; ++h) {
++                    float mean = safe_continuous_mean(a.logits, logits_base + h);
++                    float c_logstd = safe_continuous_logstd(a.logstd, h);
++                    float c_action = finite_or_clamp(
++                        g.actions[nt * a.num_atns + h], -1.0e6f, 1.0e6f);
++                    float lp, ent;
++                    ppo_continuous_head(mean, c_logstd, c_action, &lp, &ent);
++                    total_entropy += ent;
++                    float std = __expf(c_logstd);
++                    float var = std * std;
++                    float diff = c_action - mean;
++                    a.grad_logits[at_base + h] = d_new_logp * diff / var;
++                    a.grad_logstd[nt * a.num_atns + h] =
++                        d_new_logp * (diff * diff / var - 1.0f) + d_entropy_term;
++                }
++            } else {
++    #ifdef PUFFER_NETHACK
++                int verb = (int)g.actions[nt * a.num_atns];
++                float verb_mix_scale = 1.0f;
++    #endif
++                int logits_offset = 0;
++                for (int h = 0; h < a.num_atns; ++h) {
++                    int A = a.act_sizes[h];
++    #ifdef PUFFER_NETHACK
++                    if (!nethack_head_used(verb, h)) {
++                        for (int j = 0; j < A; ++j) {
++                            a.grad_logits[at_base + logits_offset + j] = 0.0f;
++                        }
++                        logits_offset += A;
++                        continue;
++                    }
++    #endif
++                    int act = (int)g.actions[nt * a.num_atns + h];
++                    float ent = 0.0f;
+                     for (int j = 0; j < A; ++j) {
+-                        a.grad_logits[at_base + logits_offset + j] = 0.0f;
++                        float logp = a.grad_logits[at_base + logits_offset + j];
++                        ent -= __expf(logp) * logp;
++                    }
++                    total_entropy += ent;
++    #ifdef PUFFER_NETHACK
++                    float d_logp = d_new_logp;
++                    if (h == 0) {
++                        nethack_verb_train_logp(
++                            a.action_mask + at_base + logits_offset, A,
++                            a.grad_logits[at_base + act],
++                            &verb_mix_scale);
++                        d_logp *= verb_mix_scale;
++                    }
++    #else
++                    float d_logp = d_new_logp;
++    #endif
++                    for (int j = 0; j < A; ++j) {
++                        float logp = a.grad_logits[at_base + logits_offset + j];
++                        float p = __expf(logp);
++                        a.grad_logits[at_base + logits_offset + j] =
++                            ((j == act ? 1.0f : 0.0f) - p) * d_logp
++                            + d_entropy_term * p * (-ent - logp);
+                     }
+                     logits_offset += A;
+-                    continue;
+                 }
+-#endif
+-                int act = (int)g.actions[nt * a.num_atns + h];
+-                float ent = 0.0f;
+-                for (int j = 0; j < A; ++j) {
+-                    float logp = a.grad_logits[at_base + logits_offset + j];
+-                    ent -= __expf(logp) * logp;
+-                }
+-                total_entropy += ent;
+-#ifdef PUFFER_NETHACK
+-                float d_logp = d_new_logp;
+-                if (h == 0) {
+-                    nethack_verb_train_logp(
+-                        a.action_mask + at_base + logits_offset, A,
+-                        a.grad_logits[at_base + act],
+-                        &verb_mix_scale);
+-                    d_logp *= verb_mix_scale;
+-                }
+-#else
+-                float d_logp = d_new_logp;
+-#endif
+-                for (int j = 0; j < A; ++j) {
+-                    float logp = a.grad_logits[at_base + logits_offset + j];
+-                    float p = __expf(logp);
+-                    a.grad_logits[at_base + logits_offset + j] =
+-                        ((j == act ? 1.0f : 0.0f) - p) * d_logp
+-                        + d_entropy_term * p * (-ent - logp);
+-                }
+-                logits_offset += A;
+             }
+-        }
+ 
+-        float thread_loss = (pg_loss + a.vf_coef * v_loss
+-            - ent_coef * total_entropy) * inv_NT;
+-
+-        block_losses[LOSS_PG][tid] = pg_loss * inv_NT;
+-        block_losses[LOSS_VF][tid] = v_loss * inv_NT;
+-        block_losses[LOSS_ENT][tid] = total_entropy * inv_NT;
+-        block_losses[LOSS_TOTAL][tid] = thread_loss;
+-        block_losses[LOSS_OLD_APPROX_KL][tid] = (-logratio) * inv_NT;
+-        block_losses[LOSS_APPROX_KL][tid] = ((ratio - 1.0f) - logratio) * inv_NT;
+-        block_losses[LOSS_CLIPFRAC][tid] =
+-            (fabsf(ratio - 1.0f) > a.clip_coef ? 1.0f : 0.0f) * inv_NT;
+-        block_losses[LOSS_IMP][tid] = ratio * inv_NT;
++            float thread_loss = (pg_loss + a.vf_coef * v_loss
++                - ent_coef * total_entropy) * inv_NT;
++
++            block_losses[LOSS_PG][tid] = pg_loss * inv_NT;
++            block_losses[LOSS_VF][tid] = v_loss * inv_NT;
++            block_losses[LOSS_ENT][tid] = total_entropy * inv_NT;
++            block_losses[LOSS_TOTAL][tid] = thread_loss;
++            block_losses[LOSS_OLD_APPROX_KL][tid] = (-logratio) * inv_NT;
++            block_losses[LOSS_APPROX_KL][tid] = ((ratio - 1.0f) - logratio) * inv_NT;
++            block_losses[LOSS_CLIPFRAC][tid] =
++                (fabsf(ratio - 1.0f) > a.clip_coef ? 1.0f : 0.0f) * inv_NT;
++            block_losses[LOSS_IMP][tid] = ratio * inv_NT;
++        }
+     }
+ 
+     block_reduce_sum(&block_losses[0][0], &ppo_partials[blockIdx.x * LOSS_N],
+diff --git a/src/ppo_guard.h b/src/ppo_guard.h
+new file mode 100644
+index 00000000..99887d3e
+--- /dev/null
++++ b/src/ppo_guard.h
+@@ -0,0 +1,21 @@
++// Native PPO NaN guard (bloodbowl-rl port of 4.0 commit f14b71c).
++//
++// The importance ratio is exp(clamp(logratio, -10, 10)) while the KL metrics
++// keep the raw logratio; a PPO element with any non-finite input contributes
++// zero gradient and zero loss; and Muon skips the momentum and weight update
++// when the global gradient norm is non-finite.
++#pragma once
++
++__host__ __device__ static inline float puf_ppo_ratio_logratio(float raw_logratio) {
++    return fminf(10.0f, fmaxf(-10.0f, raw_logratio));
++}
++
++__host__ __device__ static inline bool puf_ppo_element_finite(float new_logp,
++        float old_logp, float advantage, float value_pred, float value, float ret) {
++    return isfinite(new_logp) && isfinite(old_logp) && isfinite(advantage)
++        && isfinite(value_pred) && isfinite(value) && isfinite(ret);
++}
++
++__host__ __device__ static inline bool puf_muon_norm_ok(float sum_sq) {
++    return isfinite(sum_sq) && sum_sq >= 0.0f;
++}
