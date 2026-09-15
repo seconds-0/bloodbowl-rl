@@ -3,11 +3,19 @@
   .venv/bin/python -m play_harness.tournament_stats --run-dir <dir> [--json out.json]
 
 Pair rows are from A's perspective (A is the first name of the pair). The
-decisive-game win share drops draws. The Bradley-Terry fit uses decisive games
-only; strengths are reported on the Elo scale (400 / ln 10 per logit) anchored
-at mean zero, with standard errors from the observed Fisher information and a
-nonparametric bootstrap that resamples games within each pair (rank
-frequencies, 95% percentile intervals).
+decisive-game win share drops draws; the score rate counts a draw as half. The
+Bradley-Terry fit uses decisive games only; strengths are reported on the Elo
+scale (400 / ln 10 per logit) anchored at mean zero, with standard errors from
+the observed Fisher information and a nonparametric bootstrap that resamples
+games within each pair (rank frequencies, 95% percentile intervals).
+
+Games of every pair and both legs share an engine seed, so the seed is the unit
+of dependence: seed_cluster_bootstrap resamples seeds jointly across pairs and
+legs. leg_correlation centres A's score within each pair before pooling.
+bt_misfit is the Pearson / deviance goodness of fit of Bradley-Terry;
+power_mde_elo / power_games_per_pair size a pair; sharpness is the mean
+per-decision log-probability of each player's chosen actions; roster_class_table
+stratifies by the BB2025 roster archetypes in ROSTER_CLASS.
 """
 from __future__ import annotations
 
@@ -566,6 +574,65 @@ def markdown_tables(games, rank):
     return "\n".join(lines)
 
 
+def _fmt_ci(ci, fmt="{:.3f}"):
+    return "[" + ", ".join(fmt.format(v) for v in ci) + "]"
+
+
+def seed_cluster_markdown(boot):
+    lines = ["| A | B | games | W / D / L | decisive share | 95% seed-cluster | decisive Elo "
+             "| 95% | SE | score rate | 95% | draw-incl. Elo | 95% |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for r in boot["pairs"]:
+        lines.append(
+            f"| {r['a']} | {r['b']} | {r['games']} | {r['W']} / {r['D']} / {r['L']} "
+            f"| {r['decisive_share']:.3f} | {_fmt_ci(r['decisive_share_ci95'])} "
+            f"| {r['elo_decisive']:+.1f} | {_fmt_ci(r['elo_decisive_ci95'], '{:+.1f}')} "
+            f"| {r['elo_decisive_se']:.1f} | {r['score_rate']:.3f} | {_fmt_ci(r['score_rate_ci95'])} "
+            f"| {r['elo_score']:+.1f} | {_fmt_ci(r['elo_score_ci95'], '{:+.1f}')} |")
+    return "\n".join(lines)
+
+
+def roster_markdown(table):
+    lines = [f"| A | B | {'A roster class' if table['by'] == 'a' else table['by']} | games "
+             "| W / D / L | decisive share | 95% seed-cluster | 95% Wilson |",
+             "|---|---|---|---|---|---|---|---|"]
+    for r in table["rows"]:
+        lines.append(f"| {r['a']} | {r['b']} | {r['class']} | {r['games']} "
+                     f"| {r['W']} / {r['D']} / {r['L']} | {r['decisive_share']:.3f} "
+                     f"| {_fmt_ci(r['cluster_ci95'])} | {_fmt_ci(r['wilson_ci95'])} |")
+    if table["contrasts"]:
+        lines += ["", "| A | B | agile minus bash | 95% seed-cluster |", "|---|---|---|---|"]
+        for c in table["contrasts"]:
+            lines.append(f"| {c['a']} | {c['b']} | {c['agile_minus_bash']:+.3f} "
+                         f"| {_fmt_ci(c['cluster_ci95'], '{:+.3f}')} |")
+    return "\n".join(lines)
+
+
+def _jsonable(obj):
+    if isinstance(obj, dict):
+        return {("|".join(k) if isinstance(k, tuple) else k): _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonable(v) for v in obj]
+    if isinstance(obj, np.generic):
+        return obj.item()
+    return obj
+
+
+def report(games, reps=2000, seed=0):
+    out = {"pairs_wilson": pair_table(games),
+           "seed_cluster": seed_cluster_bootstrap(games, reps=reps, seed=seed),
+           "leg_correlation": leg_correlation(games), "sharpness": sharpness(games),
+           "roster_classes": roster_class_table(games, reps=reps, seed=seed),
+           "roster_matchups": roster_class_table(games, reps=reps, seed=seed, by="matchup")}
+    try:
+        rank = ranking(games, reps=reps, seed=seed)
+        out["ranking"] = rank
+        out["bt_misfit"] = bt_misfit(win_matrix(games, rank["names"]), rank["names"])
+    except ValueError as exc:
+        out["ranking"], out["ranking_skipped"] = None, str(exc)
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--run-dir", required=True)
@@ -573,11 +640,27 @@ def main(argv=None):
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
     games = load_games(args.run_dir)
-    rank = ranking(games, reps=args.reps)
-    print(markdown_tables(games, rank))
+    rep = report(games, reps=args.reps)
+    if rep["ranking"] is not None:
+        print(markdown_tables(games, rep["ranking"]))
+        fit = rep["bt_misfit"]
+        print(f"\nBradley-Terry misfit: chi2 {fit['chi2']:.2f}, deviance {fit['deviance']:.2f} "
+              f"on {fit['df']} df, p = {fit['p']:.4f} (deviance p = {fit['p_deviance']:.4f})")
+    else:
+        print(f"(no Bradley-Terry ranking: {rep['ranking_skipped']})")
+    print("\nSeed-cluster bootstrap (seeds resampled jointly across pairs and legs, "
+          f"{args.reps} replicates):\n")
+    print(seed_cluster_markdown(rep["seed_cluster"]))
+    lc = rep["leg_correlation"]
+    print(f"\nLeg correlation of A's score: within-pair centred {lc['within_pair_centred']:+.3f}, "
+          f"pooled uncentred {lc['pooled_uncentred']:+.3f} over {lc['seeds']} seed-pairs")
+    print("\n| player | mean logprob per decision | decisions |\n|---|---|---|")
+    for name, s in sorted(rep["sharpness"].items(), key=lambda kv: -kv[1]["mean_logprob"]):
+        print(f"| {name} | {s['mean_logprob']:.4f} | {s['decisions']} |")
+    print("\n" + roster_markdown(rep["roster_classes"]))
     if args.json:
         with open(args.json, "w") as f:
-            json.dump({"pairs": pair_table(games), "ranking": rank}, f, indent=1)
+            json.dump(_jsonable(rep), f, indent=1)
 
 
 if __name__ == "__main__":

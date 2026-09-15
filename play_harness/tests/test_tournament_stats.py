@@ -1,4 +1,5 @@
 """Tournament summary statistics: Wilson intervals, pair splits, Bradley-Terry."""
+import json
 import math
 import os
 
@@ -209,6 +210,31 @@ def test_roster_class_table_uses_the_roster_a_coached():
     assert math.isclose(contrast["agile_minus_bash"], 1.0)
     matchup = {r["class"]: r for r in S.roster_class_table(games, reps=20, by="matchup")["rows"]}
     assert set(matchup) == {"agile|bash", "bash|agile"}
+
+
+def test_stats_cli_prints_and_writes_the_report(tmp_path, capsys):
+    rng = np.random.default_rng(4)
+    teams = ["High Elf", "Tomb Kings", "Human", "Goblin"]
+    lines = []
+    for i in range(40):
+        for pair in (("x", "y"), ("x", "z"), ("y", "z")):
+            for leg in LEGS:
+                res = "WDL"[rng.integers(3)]
+                home, away = pair if leg == "A_home" else pair[::-1]
+                lines.append({"pair": list(pair), "leg": leg, "engine_seed": 70 + i,
+                              "game_index": i, "result_a": res, "a_td": int(res == "W"),
+                              "b_td": int(res == "L"), "teams": [teams[i % 4], teams[(i + 1) % 4]],
+                              "home": home, "away": away, "logprob_sum": [-10.0, -12.0],
+                              "decisions": [80, 90]})
+    (tmp_path / "games.jsonl").write_text("\n".join(json.dumps(g) for g in lines))
+    S.main(["--run-dir", str(tmp_path), "--reps", "40", "--json", str(tmp_path / "r.json")])
+    out = capsys.readouterr().out
+    assert "Seed-cluster bootstrap" in out and "within-pair centred" in out
+    assert "misfit" in out and "| x | y | agile |" in out
+    rep = json.load(open(tmp_path / "r.json"))
+    assert rep["bt_misfit"]["df"] == 1 and len(rep["seed_cluster"]["pairs"]) == 3
+    assert "x|y" in rep["leg_correlation"]["per_pair"]
+    assert rep["sharpness"]["x"]["decisions"] == 2 * 40 * (80 + 90)    # two pairs, both legs
 
 
 def test_rank_correlations():
