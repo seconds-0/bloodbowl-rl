@@ -241,6 +241,22 @@ def test_seed_matchup_strata_cancel_roster_strength():
         assert c["cluster_ci95"][0] < 0.0 < c["cluster_ci95"][1]
 
 
+def test_seed_matchup_contrasts_stay_finite_in_sparse_strata():
+    # a mirror-agile stratum of three decisive games that A never wins
+    games = []
+    for i in range(3):
+        games += [{"pair": ["x", "y"], "leg": leg, "engine_seed": i, "result_a": res,
+                   "teams": ["High Elf", "Wood Elf"]} for leg, res in (("A_home", "L"), ("B_home", "D"))]
+    for i in range(3, 40):
+        games += [{"pair": ["x", "y"], "leg": leg, "engine_seed": i, "result_a": "W" if (i + k) % 2 else "L",
+                   "teams": ["Dwarf", "Orc"]} for k, leg in enumerate(LEGS)]
+    (c,) = [c for c in S.roster_class_table(games, reps=200, by="seed_matchup")["contrasts"]
+            if c["contrast"] == "agile_mirror_minus_bash_mirror_elo"]
+    # Haldane: agile|agile 0.5 / 4 -> -337.9 Elo; bash|bash (37 + 0.5) / 75 -> 0
+    assert math.isclose(c["value"], float(S.elo_from_share(0.125)), abs_tol=1e-9)
+    assert all(math.isfinite(v) and abs(v) < 1000 for v in c["cluster_ci95"])
+
+
 def test_stats_cli_prints_and_writes_the_report(tmp_path, capsys):
     rng = np.random.default_rng(4)
     teams = ["High Elf", "Tomb Kings", "Human", "Goblin"]

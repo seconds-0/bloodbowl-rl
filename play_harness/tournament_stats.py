@@ -235,6 +235,12 @@ def _shares(c):
         return w / (w + l_), (w + 0.5 * d) / (w + d + l_)
 
 
+def _haldane_share(c):
+    """(W + 0.5) / (W + L + 1): a decisive share whose logit stays finite in sparse strata."""
+    c = np.asarray(c, dtype=float)
+    return (c[..., 0] + 0.5) / (c[..., 0] + c[..., 2] + 1.0)
+
+
 def _ci(x):
     x = np.asarray(x, dtype=float)
     x = x[np.isfinite(x)]
@@ -512,6 +518,8 @@ def roster_class_table(games, reps=2000, seed=0, classes=ROSTER_CLASS, by="a"):
 
     Contrast rows: by='a' gives A's agile minus bash decisive share; by='seed_matchup'
     gives g_agile - g_bash and agile|agile - bash|bash in Elo, with cluster intervals.
+    The Elo contrasts use the Haldane share (W + 0.5) / (W + L + 1), so a sparse
+    stratum with no wins or no losses in some replicates stays finite.
     """
     if by == "a":
         key = lambda g: (tuple(g["pair"]), classes[a_roster(g)])  # noqa: E731
@@ -553,10 +561,10 @@ def roster_class_table(games, reps=2000, seed=0, classes=ROSTER_CLASS, by="a"):
                                           ("agile_mirror_minus_bash_mirror_elo",
                                            ("agile|agile", "bash|bash"), 1.0)):
                 if (pair, hi) in pos and (pair, lo) in pos:
-                    bh, _ = _shares(boots[:, pos[(pair, hi)]])
-                    bl, _ = _shares(boots[:, pos[(pair, lo)]])
-                    ph, _ = _shares(point[pos[(pair, hi)]])
-                    pl, _ = _shares(point[pos[(pair, lo)]])
+                    bh = _haldane_share(boots[:, pos[(pair, hi)]])
+                    bl = _haldane_share(boots[:, pos[(pair, lo)]])
+                    ph = _haldane_share(point[pos[(pair, hi)]])
+                    pl = _haldane_share(point[pos[(pair, lo)]])
                     contrasts.append({
                         "a": pair[0], "b": pair[1], "contrast": name,
                         "value": float(scale * (elo_from_share(ph) - elo_from_share(pl))),
