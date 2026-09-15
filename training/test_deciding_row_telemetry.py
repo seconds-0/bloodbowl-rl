@@ -410,16 +410,33 @@ def screen_bundle_sha(root_label, names):
         for name in names)).hexdigest()
 
 
+# The launchers append these only when the installed tree carries them, so they
+# are not part of the default bundle.
+OPTIONAL_BUNDLE_PATCHES = frozenset({"puffer_skip_scripted_bank_forward.patch"})
+
+
+def default_screen_bundle():
+    return [name for name in bundle_list(SCREEN, r'root / "training/([\w.]+\.patch)"')
+            if name not in OPTIONAL_BUNDLE_PATCHES]
+
+
 class DefaultBundleTests(unittest.TestCase):
     def test_screen_and_arm_bundles_exclude_the_opt_in_patch(self):
-        screen = bundle_list(SCREEN, r'root / "training/([\w.]+\.patch)"')
+        screen = default_screen_bundle()
         arm = bundle_list(ABLATION, r'sha256sum "\$ROOT/training/([\w.]+\.patch)"')
         self.assertEqual(screen, arm)
         self.assertEqual(len(screen), 13)
         self.assertNotIn(PATCH.name, screen)
 
+    def test_optional_bundle_patches_are_appended_conditionally(self):
+        screen = SCREEN.read_text(encoding="utf-8")
+        ablation = ABLATION.read_text(encoding="utf-8")
+        for name in OPTIONAL_BUNDLE_PATCHES:
+            self.assertIn(f'for optional_patch in (root / "training/{name}",)', screen)
+            self.assertIn(f'optional_patch="$ROOT/training/{name}"', ablation)
+
     def test_default_bundle_digest_is_the_chain9_lineage_digest(self):
-        names = bundle_list(SCREEN, r'root / "training/([\w.]+\.patch)"')
+        names = default_screen_bundle()
         self.assertEqual(screen_bundle_sha(RIG_ROOT, names), CHAIN9_PATCH_BUNDLE_SHA256)
 
     def test_installer_gates_the_patch_on_the_flag(self):

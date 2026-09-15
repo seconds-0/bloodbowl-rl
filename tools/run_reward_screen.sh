@@ -55,8 +55,8 @@ LADDER_SEED="${LADDER_SEED:-}"
 # coefficients halved) for a chained rung warm-started from a fitted r0 rung.
 LADDER_ARM="${LADDER_ARM:-s_both}"
 case "$LADDER_ARM" in
-  s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_poss_zero|r0_gain_half|r0_poss_half_gain_half|r0_blockev_half|r0_poss_half_rush_zero) ;;
-  *) echo "LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter, r0_poss_zero, r0_gain_half, r0_poss_half_gain_half, r0_blockev_half or r0_poss_half_rush_zero, got '$LADDER_ARM'" >&2; exit 1 ;;
+  s_both|sparse|r0|r0_dist_half|r0_dist_quarter|r0_dist_zero|r0_dist_ball_half|r0_poss_half|r0_poss_quarter|r0_poss_zero|r0_gain_half|r0_poss_half_gain_half|r0_blockev_half|r0_poss_half_rush_zero|r0_poss_half_pbrs999) ;;
+  *) echo "LADDER_ARM must be s_both, sparse, r0, r0_dist_half, r0_dist_quarter, r0_dist_zero, r0_dist_ball_half, r0_poss_half, r0_poss_quarter, r0_poss_zero, r0_gain_half, r0_poss_half_gain_half, r0_blockev_half, r0_poss_half_rush_zero or r0_poss_half_pbrs999, got '$LADDER_ARM'" >&2; exit 1 ;;
 esac
 # ladder-rung only: scripted BANK. SCRIPTED_BANK_TAG=b+1 replaces frozen bank
 # b's seat with a scripted bot in that bank's envs (bloodbowl.h
@@ -95,6 +95,21 @@ LADDER_CHAIN_LR_SCALE="${LADDER_CHAIN_LR_SCALE:-1}"
 # chained rung probe entropy alone; 1 = the fixed contract. Same domain and
 # validation as the LR scale.
 LADDER_CHAIN_ENT_SCALE="${LADDER_CHAIN_ENT_SCALE:-1}"
+# ladder-rung / graft / bridge only: the trainer's discount and GAE lambda for
+# a horizon arm (docs/audit-2026-08-20.md F11). Unset keeps the fixed contract
+# below and publishes the same SCREEN_MANIFEST as before the knobs existed;
+# when either is set, both effective values are recorded in contract.ladder.
+LADDER_GAMMA="${LADDER_GAMMA:-}"
+LADDER_GAE_LAMBDA="${LADDER_GAE_LAMBDA:-}"
+# ladder-rung / graft / bridge only: the trainer's replay ratio for an
+# update-budget arm (D396). The native trainer takes
+# int(replay_ratio x TOTAL_AGENTS x HORIZON / MINIBATCH_SIZE) Muon steps per
+# epoch (vendor/PufferLib/src/pufferlib.cu, total_minibatches), 2 at the fixed
+# 0.25 below; the batch and minibatch stay fixed, so only the step count moves.
+# Unset keeps the fixed contract and publishes the same SCREEN_MANIFEST as
+# before the knob existed; when set, the effective value is recorded in
+# contract.ladder.
+LADDER_REPLAY_RATIO="${LADDER_REPLAY_RATIO:-}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -124,29 +139,6 @@ EXPECT_BYTES=16066560
 LR=0.00028
 ENT_COEF=0.009
 GAMMA=0.995
-# Every arm this screen launches must discount at the SAME gamma its reward
-# manifest claims for exact PBRS, or beta*(gamma*Phi' - Phi) is not exact and the
-# distance channels quietly reacquire the bias the discounted form removes. The
-# per-arm launcher asserts the pair (tools/run_reward_ablation.sh), but it only
-# sees the gamma this script passes it, so a divergence here would be invisible:
-# assert it once, up front, against every manifest the profile can select.
-if ! python3 -c '
-import json, pathlib, sys
-root, gamma = pathlib.Path(sys.argv[1]), float(sys.argv[2])
-bad = []
-for m in sorted((root / "puffer/config/rewards").glob("*.json")):
-    reward = json.loads(m.read_text(encoding="utf-8")).get("reward", {})
-    claimed = reward.get("reward_dist_pbrs_gamma", 0.0)
-    if claimed and abs(float(claimed) - gamma) > 1e-9:
-        bad.append(f"{m.name} claims {claimed}")
-if bad:
-    print("; ".join(bad))
-    sys.exit(1)
-' "$ROOT" "$GAMMA" 2>/dev/null; then
-  echo "a reward manifest declares an exact-PBRS gamma other than $GAMMA;" >&2
-  echo "  the distance channels would not be exact PBRS under this screen" >&2
-  exit 1
-fi
 GAE_LAMBDA=0.85
 HORIZON=64
 MINIBATCH_SIZE=16384
@@ -250,6 +242,46 @@ case "$LADDER_CHAIN_ENT_SCALE" in 4.*[1-9]*) echo "LADDER_CHAIN_ENT_SCALE must b
 case "$LADDER_CHAIN_ENT_SCALE" in 0|0.0|0.00|0.000) echo "LADDER_CHAIN_ENT_SCALE must be > 0" >&2; exit 1 ;; esac
 if [ "$LADDER_CHAIN_ENT_SCALE" != "1" ]; then
   ENT_COEF="$(python3 -c 'import sys; print(repr(float(sys.argv[1])*float(sys.argv[2])))' "$ENT_COEF" "$LADDER_CHAIN_ENT_SCALE")"
+fi
+if [ "$RUNG_LIKE" != "1" ] && [ -n "$LADDER_GAMMA$LADDER_GAE_LAMBDA" ]; then
+  echo "LADDER_GAMMA and LADDER_GAE_LAMBDA are only valid with SCREEN_PROFILE=ladder-rung, graft or bridge" >&2
+  exit 1
+fi
+for knob in LADDER_GAMMA LADDER_GAE_LAMBDA; do
+  value="${!knob}"
+  if [ -n "$value" ] && { [[ ! "$value" =~ ^0\.[0-9]{1,6}$ ]] || [[ ! "$value" =~ [1-9] ]]; }; then
+    echo "$knob must be a decimal in (0,1) with at most six decimals, got '$value'" >&2
+    exit 1
+  fi
+done
+[ -z "$LADDER_GAMMA" ] || GAMMA="$LADDER_GAMMA"
+[ -z "$LADDER_GAE_LAMBDA" ] || GAE_LAMBDA="$LADDER_GAE_LAMBDA"
+if [ "$RUNG_LIKE" != "1" ] && [ -n "$LADDER_REPLAY_RATIO" ]; then
+  echo "LADDER_REPLAY_RATIO is only valid with SCREEN_PROFILE=ladder-rung, graft or bridge" >&2
+  exit 1
+fi
+if [ -n "$LADDER_REPLAY_RATIO" ]; then
+  # The minibatch count is a float32 product truncated toward zero, so a ratio
+  # whose count is not whole trains fewer steps than it declares (0.3 trains as
+  # 0.25, 0.1 trains nothing). Under the fixed batch and minibatch above the
+  # exact ratios are the multiples of MINIBATCH_SIZE / (TOTAL_AGENTS x HORIZON)
+  # = 0.125, from 1 to 32 steps per epoch.
+  if [[ ! "$LADDER_REPLAY_RATIO" =~ ^([0-4])(\.([0-9]{1,3}))?$ ]]; then
+    echo "LADDER_REPLAY_RATIO must be a decimal in (0,4] with at most three decimals, got '$LADDER_REPLAY_RATIO'" >&2
+    exit 1
+  fi
+  replay_fraction="${BASH_REMATCH[3]}000"
+  replay_milli=$(( 10#${BASH_REMATCH[1]} * 1000 + 10#${replay_fraction:0:3} ))
+  if [ "$replay_milli" -le 0 ] || [ "$replay_milli" -gt 4000 ]; then
+    echo "LADDER_REPLAY_RATIO must be a decimal in (0,4] with at most three decimals, got '$LADDER_REPLAY_RATIO'" >&2
+    exit 1
+  fi
+  if [ $(( replay_milli * TOTAL_AGENTS * HORIZON % (MINIBATCH_SIZE * 1000) )) -ne 0 ]; then
+    replay_step_milli=$(( MINIBATCH_SIZE * 1000 / (TOTAL_AGENTS * HORIZON) ))
+    echo "LADDER_REPLAY_RATIO=$LADDER_REPLAY_RATIO does not give a whole number of minibatches per epoch ($LADDER_REPLAY_RATIO x $(( TOTAL_AGENTS * HORIZON )) / $MINIBATCH_SIZE); the native trainer truncates the count, so use a multiple of $(( replay_step_milli / 1000 )).$(printf '%03d' $(( replay_step_milli % 1000 )))" >&2
+    exit 1
+  fi
+  REPLAY_RATIO="$LADDER_REPLAY_RATIO"
 fi
 case "$SCREEN_PROFILE" in
   distance-possession|possession-gain|possession-gain-exact|exact-action-canary|genesis|genesis-pool|control-final|ladder-rung|graft|bridge)
@@ -358,6 +390,132 @@ case "$SCREEN_PROFILE" in
   *) echo "SCREEN_PROFILE must be distance-possession, possession-gain, possession-gain-exact, exact-action-canary, genesis, genesis-pool, ladder-rung, graft, bridge, paired-confirmation, paired-final, or control-final" >&2
      exit 1 ;;
 esac
+
+manifest_for() {
+  case "$1" in
+    r0) printf '%s\n' "$ROOT/puffer/config/rewards/r0_full.json" ;;
+    # Distance anneal step 1 (chained from a fitted r0 rung): r0_full with both
+    # legacy raw-delta distance coefficients halved, everything else identical.
+    r0_dist_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_half.json" ;;
+    # Anneal steps 2 and 3: quarter, then zero (same family, reached only by
+    # chaining from an accepted earlier anneal rung).
+    r0_dist_quarter) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_quarter.json" ;;
+    r0_dist_zero) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_zero.json" ;;
+    # Ball-distance-only half step (endzone term intact), for when the paired
+    # half step regresses a cell (D264).
+    r0_dist_ball_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_ball_half.json" ;;
+    # Possession-annuity-only half step (ball gain and both distance terms
+    # intact): the D178 decomposition, after both distance anneals lost the
+    # offense-bot cell (D264/D265).
+    r0_poss_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_half.json" ;;
+    # Possession-annuity quarter step, chained from the r0_poss_half rung only
+    # if that step held on the two-seed exam.
+    r0_poss_quarter) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_quarter.json" ;;
+    # Possession annuity removed, chained from the r0_poss_quarter rung only if
+    # that step held on the two-seed exam (D266 accepted the half step).
+    r0_poss_zero) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_zero.json" ;;
+    # Ball-gain-only half step (annuity and both distance terms intact): the
+    # other half of the D178 decomposition, chained from the chain 2 frontier.
+    r0_gain_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_gain_half.json" ;;
+    # Ball-gain half step with the annuity at the accepted D266 half value: the
+    # single-knob gain step from the chain 9 (r0_poss_half) frontier after the
+    # quarter annuity step (chain 10) was rejected on the three-seed exam (D268).
+    r0_poss_half_gain_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_half_gain_half.json" ;;
+    # Block-EV family half step, chained from the accepted r0_poss_half rung
+    # only: the five reward_k_ coefficients are a linear weighted sum over
+    # pre-roll bb_block_ev probabilities, so halving all five halves that
+    # shaping mass with every relative weight preserved. First anneal outside
+    # the distance / possession / ball-gain families.
+    r0_blockev_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_blockev_half.json" ;;
+    # r0_poss_half with the rush fine removed (reward_rush_cost 0.015 -> 0),
+    # the last nonzero shaping term in r0_poss_half no arm has ever varied.
+    r0_poss_half_rush_zero) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_half_rush_zero.json" ;;
+    # r0_poss_half with the distance channels switched from the pinned legacy
+    # raw delta to exact discounted PBRS at gamma 0.999, every coefficient
+    # identical. A horizon arm only: it trains with LADDER_GAMMA=0.999 and
+    # separates the horizon change from the legacy distance bias (D391/D393).
+    r0_poss_half_pbrs999) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_half_pbrs999.json" ;;
+    r1) printf '%s\n' "$ROOT/puffer/config/rewards/r1_no_distance.json" ;;
+    r2) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
+    r3) printf '%s\n' "$ROOT/puffer/config/rewards/r3_minimal_block.json" ;;
+    both) printf '%s\n' "$ROOT/puffer/config/rewards/r0_full.json" ;;
+    # Genesis roots the lineage, so it trains on the CORRECTED distance form
+    # rather than the legacy ratchet. r4 differs from r0_full in exactly one
+    # declared factor, reward_dist_pbrs_gamma.
+    pbrs) printf '%s\n' "$ROOT/puffer/config/rewards/r4_pbrs_distance.json" ;;
+    # The corrected decomposition 2x2. All four carry the exact PBRS distance
+    # form, so the possession/gain contrast is not confounded by the farmable
+    # raw-delta shaping, and the ball-gain family is a symmetric gain/loss pair.
+    s_both) printf '%s\n' "$ROOT/puffer/config/rewards/s0_both.json" ;;
+    s_possession_only) printf '%s\n' "$ROOT/puffer/config/rewards/s1_possession_only.json" ;;
+    s_gain_only) printf '%s\n' "$ROOT/puffer/config/rewards/s2_gain_only.json" ;;
+    s_neither) printf '%s\n' "$ROOT/puffer/config/rewards/s3_neither.json" ;;
+    # Objective-only (D252 audit arm): touchdown, win, draw; every dense term 0.
+    sparse) printf '%s\n' "$ROOT/puffer/config/rewards/s4_sparse.json" ;;
+    possession_only) printf '%s\n' "$ROOT/puffer/config/rewards/p1_possession_only.json" ;;
+    gain_only) printf '%s\n' "$ROOT/puffer/config/rewards/p2_gain_only.json" ;;
+    neither) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
+    *) echo "unknown arm: $1" >&2; return 1 ;;
+  esac
+}
+
+# Every arm this screen launches must discount at the SAME gamma its reward
+# manifest claims for exact PBRS, or beta*(gamma*Phi' - Phi) is not exact and the
+# distance channels quietly reacquire the bias the discounted form removes. The
+# per-arm launcher asserts the pair (tools/run_reward_ablation.sh), but it only
+# sees the gamma this script passes it, so a divergence here would be invisible:
+# assert it once, up front, against every manifest the profile can select. The
+# same check refuses distance coefficients with no gamma, which select the
+# farmable legacy raw-delta ratchet unless the manifest declares that form or is
+# a pinned historical one (reward_manifest.distance_form).
+# At the fixed contract gamma every shipped manifest is held to it. A horizon
+# arm trains exactly LADDER_ARM, so only that manifest is held to LADDER_GAMMA:
+# the exact-PBRS manifests minted at 0.995 cannot train at 0.999 and must not
+# block a pinned legacy raw-delta arm that can.
+# A horizon arm's manifest is exact PBRS minted at a gamma other than the
+# contract one, and it trains only as LADDER_ARM with LADDER_GAMMA at that
+# gamma. The contract-gamma sweep holds each named horizon arm to the gamma it
+# declares (it must be exact PBRS there), and the selected rung arm is always
+# held to GAMMA, so selecting one without its horizon is still refused up front.
+HORIZON_ARM_MANIFESTS=("$(manifest_for r0_poss_half_pbrs999)")
+GUARD_MANIFESTS=()
+[ -z "$LADDER_GAMMA" ] || GUARD_MANIFESTS=("$(manifest_for "$LADDER_ARM")")
+GUARD_SELECTED=""
+[ "$RUNG_LIKE" != "1" ] || GUARD_SELECTED="$(manifest_for "$LADDER_ARM")"
+if ! GUARD_SELECTED="$GUARD_SELECTED" \
+     GUARD_HORIZON_ARMS="$(printf '%s\n' "${HORIZON_ARM_MANIFESTS[@]}")" \
+     python3 - "$ROOT" "$GAMMA" ${GUARD_MANIFESTS[@]+"${GUARD_MANIFESTS[@]}"} <<'PY'
+import os, pathlib, sys
+root, gamma = pathlib.Path(sys.argv[1]), float(sys.argv[2])
+sys.path.insert(0, str(root / "tools"))
+from reward_manifest import distance_form, load_manifest
+explicit = [pathlib.Path(path) for path in sys.argv[3:]]
+selected = os.environ.get("GUARD_SELECTED", "")
+selected = pathlib.Path(selected).resolve() if selected else None
+horizon = {pathlib.Path(path).resolve()
+           for path in os.environ.get("GUARD_HORIZON_ARMS", "").splitlines()
+           if path}
+bad = []
+for m in (explicit or sorted((root / "puffer/config/rewards").glob("*.json"))):
+    try:
+        manifest, digest = load_manifest(m)
+        if not explicit and m.resolve() in horizon and m.resolve() != selected:
+            own = manifest["reward"].get("reward_dist_pbrs_gamma", 0.0)
+            if not own > 0.0:
+                raise ValueError("listed as a horizon arm but not exact PBRS")
+            distance_form(manifest, digest, own)
+            continue
+        distance_form(manifest, digest, gamma)
+    except (OSError, ValueError) as exc:
+        bad.append(f"  {m.name}: {exc}")
+if bad:
+    print("\n".join(bad), file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  echo "a reward manifest would not train the distance form it claims under train gamma $GAMMA" >&2
+  exit 1
+fi
 
 if [ "$SCREEN_PROFILE" = "exact-action-canary" ] || \
    [ "$SCREEN_PROFILE" = "genesis" ] || \
@@ -575,69 +733,6 @@ SCREEN_MANIFEST="$OUT_DIR/SCREEN_MANIFEST.json"
 SCREEN_STATUS="$OUT_DIR/SCREEN_STATUS.json"
 SCREEN_COMPLETE="$OUT_DIR/SCREEN_COMPLETE.json"
 
-manifest_for() {
-  case "$1" in
-    r0) printf '%s\n' "$ROOT/puffer/config/rewards/r0_full.json" ;;
-    # Distance anneal step 1 (chained from a fitted r0 rung): r0_full with both
-    # legacy raw-delta distance coefficients halved, everything else identical.
-    r0_dist_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_half.json" ;;
-    # Anneal steps 2 and 3: quarter, then zero (same family, reached only by
-    # chaining from an accepted earlier anneal rung).
-    r0_dist_quarter) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_quarter.json" ;;
-    r0_dist_zero) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_zero.json" ;;
-    # Ball-distance-only half step (endzone term intact), for when the paired
-    # half step regresses a cell (D264).
-    r0_dist_ball_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_dist_ball_half.json" ;;
-    # Possession-annuity-only half step (ball gain and both distance terms
-    # intact): the D178 decomposition, after both distance anneals lost the
-    # offense-bot cell (D264/D265).
-    r0_poss_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_half.json" ;;
-    # Possession-annuity quarter step, chained from the r0_poss_half rung only
-    # if that step held on the two-seed exam.
-    r0_poss_quarter) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_quarter.json" ;;
-    # Possession annuity removed, chained from the r0_poss_quarter rung only if
-    # that step held on the two-seed exam (D266 accepted the half step).
-    r0_poss_zero) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_zero.json" ;;
-    # Ball-gain-only half step (annuity and both distance terms intact): the
-    # other half of the D178 decomposition, chained from the chain 2 frontier.
-    r0_gain_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_gain_half.json" ;;
-    # Ball-gain half step with the annuity at the accepted D266 half value: the
-    # single-knob gain step from the chain 9 (r0_poss_half) frontier after the
-    # quarter annuity step (chain 10) was rejected on the three-seed exam (D268).
-    r0_poss_half_gain_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_half_gain_half.json" ;;
-    # Block-EV family half step, chained from the accepted r0_poss_half rung
-    # only: the five reward_k_ coefficients are a linear weighted sum over
-    # pre-roll bb_block_ev probabilities, so halving all five halves that
-    # shaping mass with every relative weight preserved. First anneal outside
-    # the distance / possession / ball-gain families.
-    r0_blockev_half) printf '%s\n' "$ROOT/puffer/config/rewards/r0_blockev_half.json" ;;
-    # r0_poss_half with the rush fine removed (reward_rush_cost 0.015 -> 0),
-    # the last nonzero shaping term in r0_poss_half no arm has ever varied.
-    r0_poss_half_rush_zero) printf '%s\n' "$ROOT/puffer/config/rewards/r0_poss_half_rush_zero.json" ;;
-    r1) printf '%s\n' "$ROOT/puffer/config/rewards/r1_no_distance.json" ;;
-    r2) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
-    r3) printf '%s\n' "$ROOT/puffer/config/rewards/r3_minimal_block.json" ;;
-    both) printf '%s\n' "$ROOT/puffer/config/rewards/r0_full.json" ;;
-    # Genesis roots the lineage, so it trains on the CORRECTED distance form
-    # rather than the legacy ratchet. r4 differs from r0_full in exactly one
-    # declared factor, reward_dist_pbrs_gamma.
-    pbrs) printf '%s\n' "$ROOT/puffer/config/rewards/r4_pbrs_distance.json" ;;
-    # The corrected decomposition 2x2. All four carry the exact PBRS distance
-    # form, so the possession/gain contrast is not confounded by the farmable
-    # raw-delta shaping, and the ball-gain family is a symmetric gain/loss pair.
-    s_both) printf '%s\n' "$ROOT/puffer/config/rewards/s0_both.json" ;;
-    s_possession_only) printf '%s\n' "$ROOT/puffer/config/rewards/s1_possession_only.json" ;;
-    s_gain_only) printf '%s\n' "$ROOT/puffer/config/rewards/s2_gain_only.json" ;;
-    s_neither) printf '%s\n' "$ROOT/puffer/config/rewards/s3_neither.json" ;;
-    # Objective-only (D252 audit arm): touchdown, win, draw; every dense term 0.
-    sparse) printf '%s\n' "$ROOT/puffer/config/rewards/s4_sparse.json" ;;
-    possession_only) printf '%s\n' "$ROOT/puffer/config/rewards/p1_possession_only.json" ;;
-    gain_only) printf '%s\n' "$ROOT/puffer/config/rewards/p2_gain_only.json" ;;
-    neither) printf '%s\n' "$ROOT/puffer/config/rewards/r2_no_possession.json" ;;
-    *) echo "unknown arm: $1" >&2; return 1 ;;
-  esac
-}
-
 # The bash arm/seed schedule above is the single definition; the manifest writer
 # receives it rather than restating it in Python.
 SCHEDULE=()
@@ -677,6 +772,9 @@ SCREEN_PLAN="$(
       BRIDGE_REASON="$BRIDGE_REASON" \
       LADDER_CHAIN_LR_SCALE="$LADDER_CHAIN_LR_SCALE" LADDER_CHAIN_ENT_SCALE="$LADDER_CHAIN_ENT_SCALE" \
       LADDER_ARM="$LADDER_ARM" LR="$LR" ENT_COEF="$ENT_COEF" \
+      LADDER_GAMMA="$LADDER_GAMMA" LADDER_GAE_LAMBDA="$LADDER_GAE_LAMBDA" \
+      GAMMA="$GAMMA" GAE_LAMBDA="$GAE_LAMBDA" \
+      LADDER_REPLAY_RATIO="$LADDER_REPLAY_RATIO" REPLAY_RATIO="$REPLAY_RATIO" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
 
@@ -787,6 +885,16 @@ patches = [
     # recompute the identical digest.
     root / "training/puffer_reward_clamp_range.patch",
 ]
+# Opt-in patches join the bundle only when the vendored tree carries them, so
+# the default digest is unchanged and an opted-in build is its own lineage.
+# run_reward_ablation.sh appends in the same position.
+for optional_patch in (root / "training/puffer_skip_scripted_bank_forward.patch",):
+    if subprocess.run(
+            ["git", "-C", str(vendor), "apply", "--reverse", "--check",
+             "--no-index", str(optional_patch)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            check=False).returncode == 0:
+        patches.append(optional_patch)
 vendor_sources = [
     "pufferlib/__init__.py", "pufferlib/pufferl.py",
     "pufferlib/selfplay.py", "pufferlib/torch_pufferl.py",
@@ -848,8 +956,9 @@ else:
         raise SystemExit(
             f"warm checkpoint is {warm.stat().st_size} bytes; expected {expect_size}")
     # The lineage sidecar is the only thing that keeps an obs-v4 checkpoint out
-    # of an obs-v6 run. The per-arm launcher validates the four pool banks the
-    # same way, against the same expectations, before it allocates GPU state.
+    # of an obs-v6 run. The per-arm launcher validates the NUM_FROZEN_BANKS pool
+    # banks the same way, against the same expectations, before it allocates
+    # GPU state.
     #
     # graft: some sidecars were published on an OLD build, so the expected
     # implementation overrides are dropped -- each sidecar must still be
@@ -915,8 +1024,12 @@ else:
     graft_sidecars = [] if warm_payload is None else [("warm", warm_payload)]
     pool_manifest_raw = (pool / "league_seeds.json").read_bytes()
     banks = json.loads(pool_manifest_raw).get("seeds")
-    if not isinstance(banks, list) or len(banks) != 4:
-        raise SystemExit("screen pool must contain exactly four banks")
+    num_banks = int(os.environ["NUM_FROZEN_BANKS"])
+    if not isinstance(banks, list) or len(banks) != num_banks:
+        got = len(banks) if isinstance(banks, list) else "no seed list"
+        raise SystemExit(
+            f"screen pool must contain exactly NUM_FROZEN_BANKS={num_banks} "
+            f"banks, got {got}")
     if bridge:
         # lineage-v6 leaves the pool to the per-arm launcher; a bridge checks
         # it here too, because the pool is the ONLY lineage a bridge has and
@@ -1070,6 +1183,11 @@ if profile in ("ladder-rung", "graft", "bridge"):
         "learning_rate": float(os.environ["LR"]),
         "ent_coef": float(os.environ["ENT_COEF"]),
     }
+    if os.environ.get("LADDER_GAMMA") or os.environ.get("LADDER_GAE_LAMBDA"):
+        contract["ladder"]["gamma"] = float(os.environ["GAMMA"])
+        contract["ladder"]["gae_lambda"] = float(os.environ["GAE_LAMBDA"])
+    if os.environ.get("LADDER_REPLAY_RATIO"):
+        contract["ladder"]["replay_ratio"] = float(os.environ["REPLAY_RATIO"])
 if profile in ("paired-confirmation", "paired-final"):
     from analyze_reward_candidate_transfer import (
         TransferError, validate_completion_evidence,
@@ -1551,6 +1669,7 @@ PY
         EXPECTED_PUFFER_PATCH_BUNDLE_SHA256="$SCREEN_PATCH_BUNDLE_SHA" \
         TOTAL_AGENTS="$TOTAL_AGENTS" NUM_BUFFERS="$NUM_BUFFERS" \
         NUM_THREADS="$NUM_THREADS" FROZEN_BANK_PCT="$FROZEN_BANK_PCT" \
+        NUM_FROZEN_BANKS="$NUM_FROZEN_BANKS" \
         EXPECT_BYTES="$EXPECT_BYTES" LR="$LR" ENT_COEF="$ENT_COEF" \
         GAMMA="$GAMMA" GAE_LAMBDA="$GAE_LAMBDA" HORIZON="$HORIZON" \
         MINIBATCH_SIZE="$MINIBATCH_SIZE" CHECKPOINT_STEPS="$CHECKPOINT_STEPS" \

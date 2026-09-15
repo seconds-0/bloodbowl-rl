@@ -215,6 +215,16 @@ if [ "$MODE" = "check" ]; then
         echo "  fix: tools/install_puffer_env.sh $PUFFER (reverses it), or export BBE_DECIDING_ROW_TELEMETRY=1" >&2
         exit 1
     fi
+    # Opt-in scripted-bank forward skip: absent, or exactly the tracked patch.
+    if git -C "$PUFFER" apply --reverse --check --no-index \
+            "$ROOT/training/puffer_skip_scripted_bank_forward.patch" 2>/dev/null; then
+        echo "drift check: opt-in scripted-bank forward skip is installed"
+    elif grep -Fq 'scripted_skip_bank' "$PUFFER/src/pufferlib.cu" 2>/dev/null || \
+         [ -e "$PUFFER/src/scripted_bank_skip.h" ]; then
+        echo "drift check: installed scripted-bank forward skip is stale" >&2
+        echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+        exit 1
+    fi
     PYBIN="$PUFFER/.venv/bin/python"
     if [ ! -x "$PYBIN" ]; then
         echo "drift check: vendored Python is missing: $PYBIN" >&2
@@ -686,6 +696,45 @@ elif grep -Fq 'LOSS_DECIDING_FRAC' "$PUFFER/src/pufferlib.cu" 2>/dev/null; then
         echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
         exit 1
     fi
+fi
+
+# Opt-in, off by default (audit S4): skip the frozen-policy forward on the rows
+# of the bank the scripted bot plays (env.scripted_bank_tag); c_step never
+# reads those sampled actions. PUFFER_SKIP_SCRIPTED_BANK_FORWARD=1 installs it
+# and any other install removes it, so the default tree stays byte-identical to
+# the stack above. The launchers add it to the patch bundle only when the tree
+# carries it. Applied last because it is cut against the complete tree.
+SKIP_SCRIPTED_PATCH="$ROOT/training/puffer_skip_scripted_bank_forward.patch"
+SKIP_SCRIPTED_REQUEST="${PUFFER_SKIP_SCRIPTED_BANK_FORWARD:-0}"
+case "$SKIP_SCRIPTED_REQUEST" in
+    0|1) ;;
+    *) echo "error: PUFFER_SKIP_SCRIPTED_BANK_FORWARD must be 0 or 1, got '$SKIP_SCRIPTED_REQUEST'" >&2
+       exit 1 ;;
+esac
+if [ ! -f "$SKIP_SCRIPTED_PATCH" ]; then
+    echo "error: missing $SKIP_SCRIPTED_PATCH" >&2
+    exit 1
+fi
+if git -C "$PUFFER" apply --reverse --check --no-index "$SKIP_SCRIPTED_PATCH" 2>/dev/null; then
+    SKIP_SCRIPTED_INSTALLED=1
+elif grep -Fq 'scripted_skip_bank' "$PUFFER/src/pufferlib.cu" 2>/dev/null || \
+     [ -e "$PUFFER/src/scripted_bank_skip.h" ]; then
+    echo "error: installed scripted-bank forward skip is stale" >&2
+    echo "  fix: recreate the pinned Puffer tree and reinstall the complete patch stack" >&2
+    exit 1
+else
+    SKIP_SCRIPTED_INSTALLED=0
+fi
+if [ "$SKIP_SCRIPTED_REQUEST" = 1 ] && [ "$SKIP_SCRIPTED_INSTALLED" = 0 ]; then
+    if git -C "$PUFFER" apply --no-index "$SKIP_SCRIPTED_PATCH"; then
+        echo "applied:   opt-in scripted-bank forward skip -> Puffer native backend"
+    else
+        echo "error: scripted-bank forward skip patch did not apply" >&2
+        exit 1
+    fi
+elif [ "$SKIP_SCRIPTED_REQUEST" = 0 ] && [ "$SKIP_SCRIPTED_INSTALLED" = 1 ]; then
+    git -C "$PUFFER" apply --reverse --no-index "$SKIP_SCRIPTED_PATCH"
+    echo "reversed:  opt-in scripted-bank forward skip (PUFFER_SKIP_SCRIPTED_BANK_FORWARD=0)"
 fi
 
 EXACT_BACKEND_HASH="$(exact_backend_hash)" || {

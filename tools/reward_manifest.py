@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 import shlex
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,34 @@ REWARD_INT_KEYS = ("reward_injury_value_scaled",)
 # default. Schema 2 must state every one of them explicitly.
 SCHEMA2_ONLY_FLOAT_KEYS = ("reward_dist_pbrs_gamma",)
 MAX_SCHEMA_VERSION = 2
+
+# Distance-channel form. A nonzero reward_dist_pbrs_gamma selects exact PBRS;
+# zero, or its absence under schema 1, selects the legacy raw-delta ratchet
+# (D226), which re-anchors across every possession gap, so carrying the ball
+# forward and then losing it keeps the advance unrepaid. A launch must never
+# reach that form by omission: a manifest either declares it with
+# DISTANCE_MODE_KEY or is one of the historical manifests pinned below. Those
+# cannot take the declaration, because their digests are quoted as provenance
+# (DECISIONS.md; chain 9 and chain 14 record r0_poss_half as 433c7920...), so
+# they are admitted by digest instead, and any edit to one loses the pass.
+DISTANCE_MODE_KEY = "reward_dist_mode"
+LEGACY_RAW_DELTA = "legacy_raw_delta"
+LEGACY_RAW_DELTA_SHA256 = {
+    "e5e6744b95085f9b5cd8c0e280cf532e90b39b539114cfaf9692dd2221f6026f": "p1_possession_only",
+    "627468ec2e5d238b01606227cc5ffcfed764e391227fc76b517a946d29e7459d": "p2_gain_only",
+    "152f1e6f94b46633ae5bceec345fa51705ebb73643b542cc339c70ca32198bc0": "r0_blockev_half",
+    "bb7a5b95f50d79bb677ea00430a2b57171441d41ea7de660f8d89b89b62cabf6": "r0_dist_ball_half",
+    "2a539b237c37d65c7f3bb9d79c76d5032b5ce845ad289ed78462d440d1cf4bd3": "r0_dist_half",
+    "40469c83224b580e7c36b74260ac6eba89cd9ae7168666c2d5f1a5d4a96a7e41": "r0_dist_quarter",
+    "14b718f28b2c925ea3279444dfbc679631c0cceea0f84d9e3547e3318ce6e90e": "r0_full",
+    "616f5c58ea4c23c92ccf8e27b7357406f2dbd7b5519be6cc129de8a0c0cbd04a": "r0_gain_half",
+    "65bc61aac33636e9e7ec8b992af0a4693a2717c14ea5d140d24ab22f953d8469": "r0_poss_half_gain_half",
+    "7aa1d629208ec33a087558dc4e91d8319f057d5b3275e014e100441fbd3fcdf3": "r0_poss_half_rush_zero",
+    "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c": "r0_poss_half",
+    "76700762b665b8fa153935d638603cd020ac55e5acd05cb480e2bffe3368659e": "r0_poss_quarter",
+    "729e9cd5f5292b20cd06ae2bf71a869ca2c7d3ea1ef7c0e86f2ed8f9ae4040c3": "r0_poss_zero",
+    "5e31a13e5885c71c89af90f2ab504bbf7fcb94230ea33c834ba2d45fc9b930ae": "r2_no_possession",
+}
 
 # The vendored trainer's reward clamp, applied in both backends by
 # training/puffer_reward_clamp_range.patch and mirrored as
@@ -120,6 +149,15 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         if value not in (0, 1):
             raise ValueError(f"{key} must be 0 or 1")
         reward[key] = int(value)
+
+    if DISTANCE_MODE_KEY in manifest:
+        if manifest[DISTANCE_MODE_KEY] != LEGACY_RAW_DELTA:
+            raise ValueError(
+                f"{DISTANCE_MODE_KEY} may only declare {LEGACY_RAW_DELTA!r}")
+        if reward.get("reward_dist_pbrs_gamma", 0.0) != 0.0:
+            raise ValueError(
+                f"{DISTANCE_MODE_KEY}={LEGACY_RAW_DELTA!r} contradicts a "
+                "nonzero reward_dist_pbrs_gamma")
 
     # A touchdown that decides a non-drawn match receives both terms on one
     # agent-step. Other shaping can also co-fire and is monitored at runtime,
@@ -214,6 +252,36 @@ def load_manifest(path: str | Path) -> tuple[dict[str, Any], str]:
     return manifest, digest
 
 
+def distance_form(manifest: dict[str, Any], digest: str,
+                  train_gamma: float) -> str:
+    """Resolve the distance form a launch at train_gamma would train.
+
+    Returns "exact_pbrs", LEGACY_RAW_DELTA, or "none"; raises ValueError for
+    an exact-PBRS gamma other than train_gamma and for the legacy ratchet
+    reached without a declaration or a pinned historical digest.
+    """
+    reward = manifest["reward"]
+    gamma = reward.get("reward_dist_pbrs_gamma", 0.0)
+    if gamma != 0.0:
+        if not abs(gamma - train_gamma) <= 1e-9:
+            raise ValueError(
+                f"reward_dist_pbrs_gamma ({gamma!r}) != train gamma "
+                f"({train_gamma!r}): the distance channels would not be exact "
+                "PBRS under this trainer")
+        return "exact_pbrs"
+    if reward["reward_dist_ball"] == 0.0 and reward["reward_dist_endzone"] == 0.0:
+        return "none"
+    if (manifest.get(DISTANCE_MODE_KEY) == LEGACY_RAW_DELTA or
+            digest in LEGACY_RAW_DELTA_SHA256):
+        return LEGACY_RAW_DELTA
+    raise ValueError(
+        f"manifest {manifest['name']!r} ({digest}) has nonzero distance "
+        "coefficients without reward_dist_pbrs_gamma, which selects the "
+        "farmable legacy raw-delta form; set reward_dist_pbrs_gamma to the "
+        f"train gamma, or declare \"{DISTANCE_MODE_KEY}\": "
+        f"\"{LEGACY_RAW_DELTA}\"")
+
+
 def _format_value(value: float | int) -> str:
     if isinstance(value, int):
         return str(value)
@@ -249,14 +317,34 @@ def parse_args() -> argparse.Namespace:
     output.add_argument(
         "--json", action="store_true",
         help="print name/hash/CLI args as JSON")
-    return parser.parse_args()
+    output.add_argument(
+        "--distance-form", action="store_true",
+        help="print the resolved distance form (requires --train-gamma)")
+    parser.add_argument(
+        "--train-gamma", type=float,
+        help="refuse the manifest unless its distance form is sound at this "
+             "trainer gamma (see distance_form)")
+    args = parser.parse_args()
+    if args.distance_form and args.train_gamma is None:
+        parser.error("--distance-form requires --train-gamma")
+    return args
 
 
 def main() -> int:
     args = parse_args()
     manifest, digest = load_manifest(args.manifest)
+    form = None
+    if args.train_gamma is not None:
+        try:
+            form = distance_form(manifest, digest, args.train_gamma)
+        except ValueError as exc:
+            print(f"refusing reward manifest {args.manifest}: {exc}",
+                  file=sys.stderr)
+            return 1
     rendered_args = cli_args(manifest)
-    if args.lines:
+    if args.distance_form:
+        print(form)
+    elif args.lines:
         print("\n".join(rendered_args))
     elif args.shell:
         print(shlex.join(rendered_args))

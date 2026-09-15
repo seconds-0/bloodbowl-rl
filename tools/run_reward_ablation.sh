@@ -33,7 +33,12 @@
 #   TOTAL_AGENTS=2048 NUM_BUFFERS=2 NUM_THREADS=<cpu cap>
 #   FROZEN_BANK_PCT=0.06 EXPECT_BYTES=16066560
 #   LR=0.00028 ENT_COEF=0.009 GAMMA=0.995 GAE_LAMBDA=0.85
+#                       (GAMMA and GAE_LAMBDA: decimals in (0,1), at most six
+#                       decimals)
 #   HORIZON=64 MINIBATCH_SIZE=16384 CHECKPOINT_STEPS=50000000
+#   REPLAY_RATIO=0.25    a decimal in (0,4], at most three decimals, giving a
+#                       whole number of minibatches per epoch
+#                       (REPLAY_RATIO x TOTAL_AGENTS x HORIZON / MINIBATCH_SIZE)
 #   RIG_ALLOW_FLOAT=1   required for native fp32 on the RTX 2070/Turing rig
 #   SCRIPTED_BANK_TAG=0 pool-backed modes only: 1..4 replaces frozen bank (tag-1)'s
 #                       seat with the scripted bot in that bank's envs (native
@@ -251,6 +256,15 @@ elif [ -n "$BRIDGE_WARM_SHA256$BRIDGE_WARM_OBS_VERSION$BRIDGE_PROVENANCE$BRIDGE_
   exit 1
 fi
 
+# Banks reserved for the frozen selfplay pool. Capped at BBE_MAX_BANKS
+# (puffer/bloodbowl/bloodbowl.h); selfplay.py raises above the same 8 (D97-A).
+# Parsed before the scripted bank, whose tag domain is 0..NUM_FROZEN_BANKS.
+NUM_FROZEN_BANKS_REQ="${NUM_FROZEN_BANKS:-4}"
+case "$NUM_FROZEN_BANKS_REQ" in
+  [1-8]) ;;
+  *) echo "NUM_FROZEN_BANKS must be an integer in 1..8 (BBE_MAX_BANKS), got '$NUM_FROZEN_BANKS_REQ'" >&2; exit 1 ;;
+esac
+
 # Scripted BANK: train the learner against a scripted bot at native SPS. The
 # env applies the bot only in envs whose selfplay tag equals SCRIPTED_BANK_TAG,
 # i.e. the historical envs of frozen bank (tag-1). Those envs' opponent seats
@@ -266,10 +280,14 @@ fi
 SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
 SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
 case "$SCRIPTED_BANK_TAG" in
-  0|1|2|3|4) ;;
-  *) echo "SCRIPTED_BANK_TAG must be an integer in 0..4, got '$SCRIPTED_BANK_TAG'" >&2
+  [0-9]) ;;
+  *) echo "SCRIPTED_BANK_TAG must be an integer in 0..$NUM_FROZEN_BANKS_REQ (NUM_FROZEN_BANKS), got '$SCRIPTED_BANK_TAG'" >&2
      exit 1 ;;
 esac
+if [ "$SCRIPTED_BANK_TAG" -gt "$NUM_FROZEN_BANKS_REQ" ]; then
+  echo "SCRIPTED_BANK_TAG must be an integer in 0..$NUM_FROZEN_BANKS_REQ (NUM_FROZEN_BANKS), got '$SCRIPTED_BANK_TAG'" >&2
+  exit 1
+fi
 case "$SCRIPTED_BOT_TYPE" in
   0|1) ;;
   *) echo "SCRIPTED_BOT_TYPE must be 0 (contact) or 1 (offense), got '$SCRIPTED_BOT_TYPE'" >&2
@@ -278,7 +296,7 @@ esac
 if [ "$SCRIPTED_BANK_TAG" != "0" ] && [ "$POOL_MODE" != "1" ]; then
   echo "SCRIPTED_BANK_TAG=$SCRIPTED_BANK_TAG requires BOOTSTRAP_MODE=lineage-v6 (or graft-v6 / bridge-v4):" >&2
   echo "the bot seat is only excluded from PPO inside a frozen-bank row slice," >&2
-  echo "and only the pool-backed modes allocate the four-bank pool" >&2
+  echo "and only the pool-backed modes allocate the frozen-bank pool" >&2
   exit 1
 fi
 
@@ -288,13 +306,6 @@ LOG="${LOG:-/tmp/${TAG}.log}"
 TOTAL_AGENTS="${TOTAL_AGENTS:-2048}"
 NUM_BUFFERS="${NUM_BUFFERS:-2}"
 FROZEN_BANK_PCT="${FROZEN_BANK_PCT:-0.06}"
-# Banks reserved for the frozen selfplay pool. Capped at BBE_MAX_BANKS
-# (puffer/bloodbowl/bloodbowl.h); selfplay.py raises above the same 8 (D97-A).
-NUM_FROZEN_BANKS_REQ="${NUM_FROZEN_BANKS:-4}"
-case "$NUM_FROZEN_BANKS_REQ" in
-  [1-8]) ;;
-  *) echo "NUM_FROZEN_BANKS must be an integer in 1..8 (BBE_MAX_BANKS), got '$NUM_FROZEN_BANKS_REQ'" >&2; exit 1 ;;
-esac
 EXPECT_BYTES="${EXPECT_BYTES:-16066560}"
 LR="${LR:-0.00028}"
 ENT_COEF="${ENT_COEF:-0.009}"
@@ -317,6 +328,15 @@ LIVE_INTEGRITY_FAILURE="${LIVE_INTEGRITY_FAILURE:-}"
 LIVE_INTEGRITY_MAX_SILENCE="${LIVE_INTEGRITY_MAX_SILENCE:-180}"
 LIVE_INTEGRITY_POLL_SECONDS="${LIVE_INTEGRITY_POLL_SECONDS:-30}"
 
+# Both reach --train.gamma / --train.gae-lambda verbatim, and GAMMA is also the
+# train gamma the distance-form guard below holds the reward manifest to.
+for knob in GAMMA GAE_LAMBDA; do
+  value="${!knob}"
+  if [[ ! "$value" =~ ^0\.[0-9]{1,6}$ ]] || [[ ! "$value" =~ [1-9] ]]; then
+    echo "$knob must be a decimal in (0,1) with at most six decimals, got '$value'" >&2
+    exit 1
+  fi
+done
 for digest_name in SCREEN_MANIFEST_SHA256 \
                    EXPECTED_PUFFER_PATCH_BUNDLE_SHA256; do
   digest="${!digest_name}"
@@ -390,6 +410,27 @@ fi
 FINAL_STEPS=$(( TRAIN_EPOCHS * ROLLOUT_QUANTUM ))
 CHECKPOINT_INTERVAL=$(( (CHECKPOINT_STEPS + ROLLOUT_QUANTUM / 2) / ROLLOUT_QUANTUM ))
 [ "$CHECKPOINT_INTERVAL" -gt 0 ] || CHECKPOINT_INTERVAL=1
+# REPLAY_RATIO reaches --train.replay-ratio verbatim, and the native trainer
+# runs int(replay_ratio * total_agents * horizon / minibatch_size) minibatches,
+# one Muon step each, per epoch (vendor/PufferLib/src/pufferlib.cu,
+# total_minibatches): a float32 product truncated toward zero. A ratio whose
+# count is not whole trains fewer steps than it declares (0.3 trains as 0.25 at
+# the fixed batch, 0.1 trains nothing), so refuse it along with anything that
+# is not a plain decimal in (0,4] with at most three decimals.
+if [[ ! "$REPLAY_RATIO" =~ ^([0-4])(\.([0-9]{1,3}))?$ ]]; then
+  echo "REPLAY_RATIO must be a decimal in (0,4] with at most three decimals, got '$REPLAY_RATIO'" >&2
+  exit 1
+fi
+REPLAY_FRACTION="${BASH_REMATCH[3]}000"
+REPLAY_MILLI=$(( 10#${BASH_REMATCH[1]} * 1000 + 10#${REPLAY_FRACTION:0:3} ))
+if [ "$REPLAY_MILLI" -le 0 ] || [ "$REPLAY_MILLI" -gt 4000 ]; then
+  echo "REPLAY_RATIO must be a decimal in (0,4] with at most three decimals, got '$REPLAY_RATIO'" >&2
+  exit 1
+fi
+if [ $(( REPLAY_MILLI * ROLLOUT_QUANTUM % (MINIBATCH_SIZE * 1000) )) -ne 0 ]; then
+  echo "REPLAY_RATIO=$REPLAY_RATIO does not give a whole number of minibatches per epoch ($REPLAY_RATIO x $ROLLOUT_QUANTUM / $MINIBATCH_SIZE); the native trainer truncates the count" >&2
+  exit 1
+fi
 OPP_TIMEOUT=$(( STEPS * 10 ))
 
 PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
@@ -477,15 +518,13 @@ cd "$ROOT/vendor/PufferLib"
 REWARD_ARGS=()
 while IFS= read -r token; do REWARD_ARGS+=("$token"); done < <(
   "$PYBIN" "$ROOT/tools/reward_manifest.py" "$REWARD_MANIFEST" --lines)
-read -r REWARD_NAME REWARD_HASH REWARD_PBRS_GAMMA < <(
+read -r REWARD_NAME REWARD_HASH < <(
   "$PYBIN" - "$ROOT" "$REWARD_MANIFEST" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1] + "/tools")
 from reward_manifest import load_manifest
 manifest, digest = load_manifest(sys.argv[2])
-# 0 means the manifest is schema 1, i.e. legacy raw delta-Phi distance shaping.
-print(manifest["name"], digest,
-      manifest["reward"].get("reward_dist_pbrs_gamma", 0.0))
+print(manifest["name"], digest)
 PY
 )
 
@@ -493,17 +532,17 @@ PY
 # mismatch does not fail loudly -- it silently reintroduces the same class of
 # bias the discounted form exists to remove -- so it is checked here, where both
 # numbers are in scope, rather than left to the env which cannot see train.gamma.
-if [ "${REWARD_PBRS_GAMMA:-0}" != "0" ] && [ "${REWARD_PBRS_GAMMA:-0}" != "0.0" ]; then
-  if ! "$PYBIN" -c "
-import sys
-manifest_gamma, train_gamma = float(sys.argv[1]), float(sys.argv[2])
-sys.exit(0 if abs(manifest_gamma - train_gamma) <= 1e-9 else 1)
-" "$REWARD_PBRS_GAMMA" "$GAMMA"; then
-    echo "reward_dist_pbrs_gamma ($REWARD_PBRS_GAMMA) != train gamma ($GAMMA):" \
-         "the distance channels would not be exact PBRS under this trainer" >&2
-    exit 1
-  fi
+# Distance coefficients with no gamma are refused too unless the manifest
+# declares the legacy raw-delta form or is a pinned historical one. A command
+# substitution, not the process substitutions above, so a refusal stops launch.
+if ! REWARD_DISTANCE_FORM="$(
+  "$PYBIN" "$ROOT/tools/reward_manifest.py" "$REWARD_MANIFEST" \
+    --train-gamma "$GAMMA" --distance-form)"; then
+  echo "refusing to launch: the distance channels would not train the form" \
+       "$REWARD_MANIFEST claims under train gamma $GAMMA" >&2
+  exit 1
 fi
+echo "reward_distance_form=$REWARD_DISTANCE_FORM train_gamma=$GAMMA"
 
 WARM_HASH=""
 WARM_LINEAGE_HASH=""
@@ -522,10 +561,11 @@ if [ "$POOL_MODE" = "1" ]; then
   # Validate the pool body, bank order, hashes, lineage paths, and architecture
   # before any trainer allocates GPU state.
   read -r POOL_HASH POOL_BANKS POOL_MANIFEST_HASH < <(
-    "$PYBIN" - "$POOL" "$EXPECT_BYTES" <<'PY'
+    "$PYBIN" - "$POOL" "$EXPECT_BYTES" "$NUM_FROZEN_BANKS" <<'PY'
 import hashlib, json, pathlib, sys
 pool = pathlib.Path(sys.argv[1])
 expect = int(sys.argv[2])
+num_banks = int(sys.argv[3])
 manifest_path = pool / "league_seeds.json"
 manifest_raw = manifest_path.read_bytes()
 manifest = json.loads(manifest_raw)
@@ -533,8 +573,11 @@ if manifest.get("expected_bytes") != expect:
     raise SystemExit(
         f"pool expected_bytes={manifest.get('expected_bytes')}, expected {expect}")
 seeds = manifest.get("seeds")
-if not isinstance(seeds, list) or len(seeds) != 4:
-    raise SystemExit("static reward pool must contain exactly four seeds")
+if not isinstance(seeds, list) or len(seeds) != num_banks:
+    got = len(seeds) if isinstance(seeds, list) else "no seed list"
+    raise SystemExit(
+        f"static reward pool must contain exactly NUM_FROZEN_BANKS={num_banks} "
+        f"seeds, got {got}")
 identity = []
 seen_names = set()
 seen_hashes = set()
@@ -723,6 +766,13 @@ PATCH_HASH="$({
   # torch_pufferl.py does not change compiled_module_sha256, and
   # vendor_source_sha256 is recorded below but never validated.
   sha256sum "$ROOT/training/puffer_reward_clamp_range.patch"
+  # Opt-in: joins the digest only when the vendored tree carries it, in the
+  # same position run_reward_screen.sh appends it.
+  optional_patch="$ROOT/training/puffer_skip_scripted_bank_forward.patch"
+  if git -C "$ROOT/vendor/PufferLib" apply --reverse --check --no-index \
+      "$optional_patch" 2>/dev/null; then
+    sha256sum "$optional_patch"
+  fi
 } | sha256sum | awk '{print $1}')"
 if [ -n "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ] && \
    [ "$PATCH_HASH" != "$EXPECTED_PUFFER_PATCH_BUNDLE_SHA256" ]; then

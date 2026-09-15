@@ -2,6 +2,35 @@
 
 ## Current verdict
 
+**Update 2026-09-12 (D388/D389): direction reset, chain 23 training.** From Sep 4 to Sep 11 the program ran on an uncommitted obs-v7 tree, now archived as `archive/codex-improvement-20260911`, where decisions D290-D387 live. Every model it trained scored zero learner touchdowns. A 154-agent audit found no engine, observation, reward-plumbing or evaluation bug behind that result. The cause was direction:
+- Every learner started from weights that never scored.
+- The imitation teacher scores 0.19 TD/game, while migrated chain 9 still scores 0.40 through the same harness.
+
+The obs-v6 chain 9 lineage is the program again. Chain 23 launched 2026-09-12 06:42 PDT from 2ae5144 at 98-104K SPS:
+- warm start: chain 9
+- opponents: 8 frozen banks x 0.06, contact bot at tag 8
+- reward: `r0_poss_half`, seed 42, 3B steps
+
+The pre-registered paired analysis against chain 14 is in `docs/opponent-population-scope.md`.
+
+**Update 2026-09-12 15:30 (D390): chain 23 is flat.** Chain 23 finished clean at 3B. Its two-seed exam lands within the 0.02 noise floor of chain 14 on all three champion cells (+0.005, -0.0045, -0.016), so it is not promoted and not rejected. It stays below the chain 9 + chain 16 frontier. Chain 9 remains the frontier. Next is a horizon arm: chain 14's exact recipe with train gamma 0.999 and GAE lambda 0.95. The ladder launch path is getting that knob now. The chain 24 seed replicate stays staged but unlaunched.
+
+**Update 2026-09-12 16:43 (D391): chain 25 is training.** The horizon knob merged (PR #99), and chain 25 launched with chain 14's pool identity d67d527b and gamma 0.999 / lambda 0.95 confirmed in the arm banner. The exam waiter is staged. The pre-registered reading is in `docs/horizon-arm-scope-2026-09-12.md`.
+
+**Update 2026-09-12 23:35 (D392): chain 25 reads positive.** Its two-seed exam beats chain 14 by +0.0645 on contact AWAY, +0.062 on contact HOME and +0.014 on offense AWAY, with both contact cells up on both exam seeds. It sits above the chain 9 + chain 16 frontier on all three champion cells for the first time. It is not promoted. Chain 26 replicates it at training seed 44, paired with chain 20, before any verdict.
+
+**Update 2026-09-13 07:05 (D393): the horizon gain replicates.** Chain 26 beats chain 20 by +0.047 and +0.035 on the two contact champion cells, both up on both exam seeds. Gamma 0.999 / lambda 0.95 is now the ladder recipe, and chain 25 is the new frontier warm start. Chain 27 continues from chain 25 under the horizon recipe to test whether the continuation plateau was a horizon artifact.
+
+**Update 2026-09-13 13:55 (D394): chain 27 is not accepted.** Chain 27 raises both contact champion cells against chain 25 (+0.035, +0.0275) but drops offense on both exam seeds (-0.0385 on the mean). Chain 25 stays the frontier. Chain 28, the exact-PBRS distance arm at gamma 0.999 paired with chain 25, launched automatically through the rig queue.
+
+**Update 2026-09-13 20:40 (D395): chain 28 collapsed.** Switching the distance channels to exact PBRS on the chain 9 warm start halved scoring and doubled conceded touchdowns: pickup attempts fell 43% while blocks held steady. This is the D253 pattern: never switch a reward form on a warm checkpoint. The recipe stays legacy `r0_poss_half` at gamma 0.999, and chain 25 stays the frontier. Chain 29 tests a longer horizon (gamma 0.9995, lambda 0.97) on chain 25's recipe.
+
+**Update 2026-09-14 03:30 (D396): chain 29 marginally overshoots.** Gamma 0.9995 lands below chain 25 on all three champion cells (-0.023, -0.0135, -0.0335) but still above the 0.995 continuations on contact. The dose-response peaks near 0.999, which stays the recipe. Next is the update budget: chain 25's recipe at replay_ratio 1.0 (8 gradient steps per epoch instead of 2), once the ladder gains that knob.
+
+**Update 2026-09-14 22:15 (D397): chain 30 is flat.** Four times the gradient steps per epoch leaves the champion cells within the floor of chain 25 (+0.0025, +0.025, -0.0035) and costs about 30% SPS, so the recipe keeps replay ratio 0.25. Chain 31 is training: 8 opponent banks under the gamma 0.999 recipe, paired with chain 25.
+
+**Update 2026-09-15 06:45 (D398): chain 31 reads negative and ambiguous.** Eight banks at 0.06 under the horizon recipe lose contact AWAY on both exam seeds (-0.053 on the mean). This may be population width or the halved bot exposure. The knob screen around chain 25 is complete: every one-factor change is flat or worse. Chain 25 stays the frontier. Next come a CPU head-to-head tournament between checkpoints and GPU verification of the opt-in throughput patches.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

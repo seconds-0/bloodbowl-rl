@@ -1095,3 +1095,220 @@ The rung is launched under an explicitly limited claim, because D277's asymmetri
 **D288 - CHAIN 22 LAUNCHED: THE RUSH FINE IS THE LAST NONZERO SHAPING TERM IN r0_poss_half THAT NO ARM HAS EVER VARIED (2026-08-28 07:24 PDT).** With the continuation question closed by D287 and the knob screen closed twice over (D274 arithmetic ceiling, D277 power revision), an inventory of `puffer/config/rewards/r0_poss_half.json` leaves exactly one nonzero coefficient the anneal never walked. Distance moved in D264/D265, the possession-vs-ball-gain decomposition in D266/D267/D269/D270, the five block-EV terms as a family in D278/D281, `reward_td` 0.4 and `reward_win` 0.6 are the objective and are not shaping - which leaves `reward_rush_cost` 0.015, a per-attempt fine on Rush that has been carried unexamined since the July manifests. It is the one term whose sign points against scoring: at this capability the policy already under-converts field position, and a standing fine on the cheapest way to close the last squares is a plausible brake on exactly the contact champion cells that have been flat for eight rungs. Chain 22 (`/home/rache/r0chain22.sh`, unit `r0chain22-1787926840`, `runs/ladder-d0-r0chain22-rushzero-20260828`, new arm **`r0_poss_half_rush_zero`** = `r0_poss_half` with `reward_rush_cost` 0.015 -> 0.0 and every other coefficient byte-identical) is warm-started from **the chain 9 frontier marker at SEED 42**, so its paired comparator is chain 14, the same-parent same-seed plain continuation whose exam is already on the board at 0.504 / 0.415, 0.444 / 0.410, 0.576 / 0.345 (D273/D274), with the chain 9 + chain 16 pooled frontier mean 0.537 / 0.416, 0.492 / 0.406, 0.571 / 0.350 as the absolute bar. Pre-registered power limits, unchanged from D278: champion cells judged from this one training seed at a 0.02 floor, conceded and net not scored from one run at all (D277's 0.05 conceded floor), and a seed-43 replicate from the chain 16 marker queued only if the champion read is positive. Three files changed to make the arm launchable and all are pushed: the manifest, the `run_reward_screen.sh` arm-to-manifest map, and its `LADDER_ARM` whitelist (the first launch attempt at 07:19 PDT failed closed on that whitelist before touching the GPU, which is the guard behaving correctly; the aborted run dir was removed and `tools/test_ladder_rung_profile.py` passes 23/23 with the new arm). Launch verified clean at 07:24 PDT: warm `1787584031608/0000002999975936.bin`, arm `r0_poss_half_rush_zero`, seed 42, scripted_bank_tag 4, scripted_bot_type 0, bot share 0.12, LR 2.8e-4, 3B cap, pid 1396090, trainer count 3, rig drift check OK. The structural decision from D275 is unchanged and still Alex's.
 
 **D289 - THE RUSH FINE IS EXONERATED: ZEROING `reward_rush_cost` IS FLAT ON BOTH CONTACT CELLS AND NEGATIVE ON OFFENSE, SO THE REWARD ANNEAL IS FINISHED WITH NOTHING PROMOTED AND CHAIN 9 STILL THE FRONTIER (2026-08-28 15:05 PDT).** Chain 22 (`runs/ladder-d0-r0chain22-rushzero-20260828`, unit `r0chain22-1787926840`, arm `r0_poss_half_rush_zero` = `r0_poss_half` with `reward_rush_cost` 0.015 -> 0.0 and every other coefficient byte-identical, warm = the chain 9 frontier marker, SEED 42, LR 2.8e-4, bot share 0.12, contact bot) finished its 3B at the exact 2,999,975,936-step cap at about 14:18 PDT with the unit going inactive on its own. Clean: final panel error_episodes 0, illegal_frac 0, pickup_attempts 5.051, pickup_success 2.841, possession_rate 0.373, tds 1.700 (t0 0.998 / t1 0.703), blocks_thrown 14.03, hist_score_bank_3 0.096, in-run eval tds 1.700 / perf 0.585, checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1787926845500/0000002999975936.bin`. The arm did what it claims: the emitted-ledger channel `reward_component_rush` reads exactly 0.0 on the final panel against a nonzero possession channel (-0.00476), so the term was live-zeroed and not merely absent from a config. The staged two-seed exam ran on the idle rig (unit `exam-c22-1787953688`, `EXAMS_DONE_C22_BOTH_SEEDS` at 14:56 PDT): seed 42 (`runs/exam-c22-s42`) contact AWAY 0.496 / 0.405, contact HOME 0.442 / 0.447, offense AWAY 0.560 / 0.358; seed 43 (`runs/exam-c22-s43`) 0.491 / 0.427, 0.474 / 0.434, 0.548 / 0.352; two-exam-seed mean **0.4935 / 0.416, 0.458 / 0.4405, 0.554 / 0.355**. D288 pre-registered chain 14 as the paired comparator - same parent, same training seed, same recipe, same 3B, the rush coefficient the only difference - and chain 14's own two exam draws are on the board at seed 42 0.511 / 0.424, 0.439 / 0.428, 0.579 / 0.320 and seed 43 0.496 / 0.406, 0.448 / 0.392, 0.572 / 0.369, mean 0.5035 / 0.415, 0.4435 / 0.410, 0.5755 / 0.3445. Champion deltas on the shared exam seeds are **-0.010, +0.0145 and -0.0215**: contact AWAY down inside the 0.02 floor (-0.015 and -0.005 per seed), contact HOME up inside it (+0.003 and +0.026), and offense AWAY down on both seeds (-0.019 and -0.024) for the only mean that clears the floor at all, and it clears it against the knob. D288's promotion condition was both contact cells up outside 0.02 with offense not down; not one clause of it is met, so **the seed-43 replicate is not spent and the knob is rejected.** Conceded moved +0.001, +0.0305 and +0.0105, all below D277's 0.05 floor and not scoreable from one training run in any case. Against the chain 9 + chain 16 pooled frontier mean (0.537 / 0.416, 0.492 / 0.406, 0.571 / 0.350) chain 22 is -0.0435, -0.034 and -0.017 champion, negative on all three cells like every other continuation since D273. **The hypothesis D288 stated - that a standing per-attempt fine on Rush is a brake on the flat contact champion cells - is refuted: removing it does not free scoring, it costs about 0.02 TD/game of offense while leaving both contact cells inside the reproducibility floor.** The practical consequence is that the reward-anneal program is now complete. Distance (D264/D265), the possession-vs-ball-gain decomposition (D266/D267/D269/D270), the block-EV family (D278/D281) and now the rush fine have each been varied one at a time from `r0_poss_half`, every one of them either null or negative, and the only nonzero coefficients left are `reward_td` 0.4 and `reward_win` 0.6, which are the objective and not shaping. **The inventory of un-annealed shaping terms is empty and no reward arm has ever beaten the plain lineage.** Combined with the two closed opponent-knob screens (bot share at the 0.124 arithmetic ceiling, D274; LR x2 rejected twice, D259/D271; offense bot in the bank seat rejected twice, D260/D272; entropy, D262) and the five plain continuations that all land flat (chains 14, 19, 20, 21 across two parents and four training seeds, D273/D284/D285/D287), the loop has exhausted every direction available to it below the structural decision D275 handed to Alex. Chain 22 is NOT promoted, chain 9 remains the frontier it has been since D266, and the rig is deliberately left idle rather than spending a sixth 12-hour replicate of a result five runs have already established.
+
+**D388 - THE SEPTEMBER ZERO-TOUCHDOWN WEEK WAS DIRECTION, NOT A BUG, SO THE CHAIN 9 LINEAGE IS THE PROGRAM AGAIN (2026-09-12 07:00 PDT).** From Sep 4 to Sep 11 a Codex goal-mode session worked in an uncommitted obs-v7 tree covering engine rules repairs, exact-joint obs-v7, terminal-aware MinGRU TBPTT and supervised full-match imitation of a scripted teacher. Its entries D290-D387 are preserved on branch `archive/codex-improvement-20260911` (f794adaa), and its audit artifacts are in B2 at `bbr:bloodbowl-rl/archive/codex-improvement-20260904/`. They are not on main, so numbering here continues from D388. Every model that program trained scored zero learner touchdowns: the 1B-step fresh-initialization memory PPO screen, and every supervised arm (512 exam games, TD 0-470). Its own frozen obs-v7 migration of chain 9 scored W63/D142/L51 and TD 102-91 over 256 games through the same exam. A 154-agent audit with three-lens adversarial verification (59 findings confirmed, 12 refuted) re-ran the engine tests, observation checks, reward emission tests and TD attribution, and none of them explains the result. The causes were the starting points and the teacher. Every September learner began from weights that had never scored, the PPO screen ran with no banks or bots, and the imitation teacher (offense_bot) scores 0.19 TD/game against migrated chain 9's 0.40 and loses to chain 9 head to head 33-48. **Rulings:**
+- Stop fresh-initialization scoring screens.
+- Retire the offense_bot teacher-label line, and do not launch its 192-game exam as a discovery step.
+- Never compare TD rates across the torch bridge, per-game and vectorized harnesses. The bridge only steps the recurrent policy on learner decisions, so chain 9 reads 0.22 TD/game there against 0.40 native.
+- Continue the obs-v6 chain 9 lineage now. Reach obs-v7 only through a declared migrated graft (branch `fix/graft-v7-migrated-20260911`, not merged), and only once a v7 opponent pool exists and VRAM and thermal headroom with banks have been probed.
+
+Two engineering findings from the same audit. First, `bbe_profile.c` sampled each action head independently, so every profile since 9217256 measured setup-error episodes. With that fixed (`fix/profile-joint-sampling-20260911`), legal enumeration is 67% of a 7.7 microsecond env step and ACTIVATION blitz reachability is nearly all of it. Second, an exact early-exit reachability query for blitz declarations makes env steps 2.29x faster per core, with bit-identical goldens, legal sets and masks (`fix/blitz-reachability-fastpath-20260911`, v6 port in progress). It changes the source digest, so it lands between rungs behind a graft and never inside a paired comparison.
+
+**D389 - CHAIN 23 LAUNCHED: THE FIRST 8-BANK RUNG, OPPONENT POPULATION AT MATCHED SHARE (2026-09-12 07:00 PDT).** PR #95 made NUM_FROZEN_BANKS settable, but three gates still required four banks: the screen's embedded pool validator, the launcher's pool check and the launcher's SCRIPTED_BANK_TAG range 0..4. The staged chain 23 could never have launched. PR #96 sizes all three to NUM_FROZEN_BANKS (merge 2ae5144; tools only, default unchanged). On the rig the checkout moved from e350aa3 to 2ae5144 with no reinstall. The drift check reads OK at 3ed6899e, the module is d63498f6 and the patch bundle is de77f6c0, so chain 9's lineage sidecar binds unchanged. The plan-only preflight verified the screen plan and built pool identity 6ffb955b: anchor-kickbot, chains 1, 2, 3, 11, 13b and 17, plus the chain 9 warm seat taken by the contact bot at tag 8. Launch details:
+- Launched 06:42 PDT as `r0chain23-1789220563.service` via `/home/rache/r0chain23-locked.sh`.
+- The wrapper holds the Kill Team e2e `kt-gpu.lock` for the whole run, so browser GPU jobs queue behind it.
+- It runs a copy of `r0chain23.sh` with DEADLINE_HOURS 18 instead of 12. The inferred 8-bank wall time crowded the old deadline, and the deadline is operational only, not part of the screen contract.
+
+The recipe is otherwise chain 14's: `r0_poss_half`, LR 2.8e-4, seed 42, 3B steps, 2048 agents, H64. At startup it ran 98-104K SPS with VRAM 6.5/8 GB, error_episodes 0, illegal_frac 0, and all eight banks reporting. Expected completion is about 15:00 PDT. Exam: `SEED=42` and `SEED=43` through `/home/rache/rig_exam.sh` on the final checkpoint, scored against chain 14 on champion cells only under the D268 rule. A loss is ambiguous, not a rejection of population, because bot exposure halves from 12% to 6% (`docs/opponent-population-scope.md`). Housekeeping on 2026-09-11/12:
+- Disabled three stale rig timers: two halted August campaign supervisors, and the vacation overflow watch, which had failed 4,064 times.
+- PR #97 refuses legacy raw-delta distance shaping reached by omission. The 14 shipped legacy manifests are digest-pinned, so `r0_poss_half` keeps reward sha 433c7920.
+- PR #98 stops the campaign supervisor from rewriting state on terminal ticks.
+
+**D390 - CHAIN 23 IS FLAT AGAINST CHAIN 14: EIGHT OPPONENT BANKS AT MATCHED SHARE NEITHER HELP NOR HURT ON ONE TRAINING SEED (2026-09-12 15:30 PDT).** Chain 23 (`runs/ladder-d0-r0chain23-pop8-20260901`, unit `r0chain23-1789220563`) finished its 3B at the 2,999,975,936-step cap at 14:55 PDT with trainer_exit 0. It ran 98-105K SPS for about 8h13m, with VRAM 6.5/8 GB, error_episodes 0 and illegal_frac 0 throughout, and the GPU at 80-83 C. It never hit the 86 C alert. Final checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789220569465/0000002999975936.bin` (sha c3bc5325). In-run eval tds 1.835 against the chain 9 warm marker's 1.534; that is a both-sides mixture and not evidence. The waiter unit `exam-c23-waiter-1789239082` ran the staged two-seed exam at 14:56 while holding the shared GPU lock. All six cells exited rc=0 with 2015 games each, and both seeds took 9 minutes in total.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.519 / 0.422 | 0.442 / 0.415 | 0.558 / 0.339 |
+| 43 | 0.498 / 0.424 | 0.436 / 0.460 | 0.561 / 0.334 |
+| Two-exam-seed mean | **0.5085 / 0.423** | **0.439 / 0.4375** | **0.5595 / 0.3365** |
+
+D389 pre-registered chain 14 as the paired comparator (mean 0.5035 / 0.415, 0.4435 / 0.410, 0.5755 / 0.3445). Champion deltas are **+0.005, -0.0045 and -0.016**: every cell is inside the 0.02 floor, and none improves outside the 0.011 reproducibility floor. Offense AWAY leans negative on both seeds (-0.021, -0.011) but clears no threshold. The conceded moves (+0.008, +0.0275, -0.008) are below D277's reseeding noise and are not scored. **Not promoted, not rejected: a flat null on one training seed.** Against the chain 9 + chain 16 pooled frontier (0.537 / 0.416, 0.492 / 0.406, 0.571 / 0.350) chain 23's champion is -0.0285, -0.053 and -0.0115. That is below it on all three cells, like every continuation since D273, so opponent population at 8x0.06 recovers nothing over plain continuation. Per the scope doc this is not "population rejected": bot exposure halved from 12% to 6%, and one training seed is not a verdict. The pre-registered replicate is chain 24 (seed 44, paired with chain 20). The audit-ranked alternative is a horizon arm (gamma 0.999, lambda 0.95) from chain 9 at the chain 14 recipe. A Kill Team e2e job queued behind the chain 23 lock at 06:47 PDT and was interrupted by its own wrapper 14 minutes later.
+
+**D391 - CHAIN 25 LAUNCHED INSTEAD OF THE CHAIN 24 REPLICATE: THE FIRST HORIZON ARM, GAMMA 0.999 AND LAMBDA 0.95 ON CHAIN 14'S EXACT RECIPE (2026-09-12 16:43 PDT).** **Why the pre-registered replicate was skipped.** Chain 23's null cannot be promoted, so replicating it at seed 44 would only firm up a null. The credit horizon has never been varied: every run in history used gamma in [0.9948, 0.9976] with lambda 0.85. The audit measured a median of 146.5 decisions and about 179 c-steps from first pickup to touchdown. Chain 24 (`/home/rache/r0chain24.sh`) stays staged, unlaunched.
+
+**The knob.** `run_reward_screen.sh` hardcoded gamma 0.995, so PR #99 (merge c50fbe6) adds validated `LADDER_GAMMA` / `LADDER_GAE_LAMBDA` knobs through ladder_stage, launch_ladder_rung, the screen and the arm launcher.
+- Unset, the screen publishes the same contract as before.
+- Set, both effective values are recorded in contract.ladder and the completion marker.
+- With the knob set, the reward-form guard holds only the selected arm's manifest to the effective gamma. The pinned legacy raw-delta `r0_poss_half` passes at 0.999, and exact-PBRS manifests minted at 0.995 are refused at 0.999.
+
+**The recipe.** Chain 25 is `/home/rache/r0chain14-lose.sh`'s recipe with only the discount changed:
+- warm = chain 9 marker, `r0_poss_half`, seed 42, 3B steps
+- 4 frozen banks x 0.12, contact bot at tag 4, LR 2.8e-4
+- `LADDER_GAMMA=0.999 LADDER_GAE_LAMBDA=0.95`
+
+**Preflight.** The rig checkout moved from 2ae5144 to c50fbe6 with no reinstall. The drift check reads OK at 3ed6899e and the module is d63498f6. The live plan-only preflight rebuilt chain 14's pool identity d67d527b (anchor-kickbot, rung0warm1, rung0warm2, chain 9 as rung0warm) and published a contract with ladder gamma 0.999 and gae_lambda 0.95, source 3ed6899e, patch bundle de77f6c0 and module d63498f6.
+
+**Launch.** At 16:43 PDT as `r0chain25-horizon.service` via `/home/rache/r0chain25-locked.sh`, which holds the Kill Team `kt-gpu.lock`. The arm banner reads `reward_distance_form=legacy_raw_delta train_gamma=0.999` and `gamma=0.999 gae_lambda=0.95`. The exam waiter `exam-c25-waiter.service` runs `/home/rache/exam_c25.sh` (seeds 42 and 43 through `rig_exam.sh`) once the completion marker exists. Expected about 6h40m at chain 14's ~125K SPS, which is an estimate, not a measurement.
+
+**Pre-registered reading** (`docs/horizon-arm-scope-2026-09-12.md`). Champion cells only, two-exam-seed mean, deltas against chain 14.
+- **Positive:** both contact champion cells up more than 0.02, and offense AWAY not down more than 0.02. This queues a seed-44 replicate paired with chain 20; it is not a promotion.
+- **Negative:** a contact champion cell down more than 0.02 on the mean and on both exam seeds. The horizon arm is rejected at this budget.
+- **Anything else:** a flat null.
+
+**Named in advance.**
+- The warm value head was fitted at gamma 0.995, so an early value-loss spike is the critic re-fitting, not a kill signal.
+- At 0.999 the legacy raw-delta distance bias is 5x smaller, so a positive read cannot be attributed to the horizon alone.
+
+**D392 - CHAIN 25 READS POSITIVE: THE HORIZON ARM BEATS CHAIN 14 ON BOTH CONTACT CHAMPION CELLS BY THREE TIMES THE FLOOR, SO THE SEED-44 REPLICATE IS QUEUED (2026-09-12 23:35 PDT).** Chain 25 (`runs/ladder-d0-r0chain25-horizon-20260912`, unit `r0chain25-horizon`, gamma 0.999, lambda 0.95) finished its 3B at 23:21 PDT with exit 0, after about 6h38m at 123-129K SPS (VRAM 6.4/8 GB, GPU 80-83 C, integrity counters zero). The value loss read 0.011-0.014 throughout against chain 14's 0.003-0.004 band, which is the named critic re-fit and not a failure. The completion marker records gamma 0.999, gae_lambda 0.95 and pool identity d67d527b. Final checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789256596423/0000002999975936.bin` (sha 109c55d3). In-run eval: tds 1.574, perf 0.645, a both-sides mixture that is not evidence. The waiter `exam-c25-waiter` took the GPU lock 40 seconds after training released it. All six cells exited rc=0 with 2000-2062 games each.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.565 / 0.417 | 0.489 / 0.417 | 0.583 / 0.317 |
+| 43 | 0.571 / 0.410 | 0.522 / 0.419 | 0.596 / 0.313 |
+| Two-exam-seed mean | **0.568 / 0.4135** | **0.5055 / 0.418** | **0.5895 / 0.315** |
+
+Champion deltas against chain 14 (0.5035, 0.4435, 0.5755) are **+0.0645, +0.062 and +0.014**. Per exam seed they are +0.054 and +0.075 on contact AWAY, +0.050 and +0.074 on contact HOME, and +0.004 and +0.024 on offense AWAY. Both contact champion cells are up by more than 0.02 on the mean and on both exam seeds, and offense AWAY is not down. **By D391's pre-registered rule this is the positive reading.** It is the first arm since D266 to clear the floor against its paired comparator on any contact champion cell. Against the chain 9 + chain 16 pooled frontier (0.537 / 0.416, 0.492 / 0.406, 0.571 / 0.350), chain 25's champion is **+0.031, +0.0135 and +0.0185, above it on all three cells for the first time**. Contact HOME clears it by less than 0.02. Conceded moves against chain 14 are -0.0015, +0.008 and -0.0295, not scored under D277. **Not promoted.** D281 retracted a one-training-seed pass, and D391 fixed the consequence of a positive read as a seed-44 replicate, so chain 26 now repeats chain 25 at training seed 44, paired with chain 20 (0.5045 / 0.4075, 0.4625 / 0.4040, 0.5570 / 0.3420). Caveat named in advance and still open: the arm changes the credit horizon and shrinks the legacy distance-delta bias 5x together, so a replicated gain is attributable to the horizon change and the distance form jointly, not to the horizon alone.
+
+**D393 - THE HORIZON GAIN REPLICATES: CHAIN 26 (TRAINING SEED 44) BEATS CHAIN 20 ON BOTH CONTACT CHAMPION CELLS, SO GAMMA 0.999 / LAMBDA 0.95 IS THE LADDER RECIPE AND CHAIN 25 IS THE NEW FRONTIER (2026-09-13 07:05 PDT).** Chain 26 (`runs/ladder-d0-r0chain26-horizon-s44-20260913`, unit `r0chain26-horizon-s44`) is chain 25 repeated at training seed 44: the same chain 9 warm marker, pool identity d67d527b, gamma 0.999 and lambda 0.95. It finished its 3B at 06:13 PDT with trainer_exit 0, running 126-131K SPS with VRAM 6.4/8 GB, integrity counters zero and value loss 0.011-0.013. Checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789281314386/0000002999975936.bin` (sha 0ff7bfb7). In-run eval tds 1.489 and perf 0.648 are not evidence. The waiter exam ran 06:14-06:22 PDT; all six cells exited rc=0 with 2002-2055 games each. The session's own monitors had died in a Mac session restart, and the queue ran unattended anyway.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.539 / 0.420 | 0.489 / 0.390 | 0.567 / 0.324 |
+| 43 | 0.564 / 0.418 | 0.506 / 0.413 | 0.564 / 0.324 |
+| Two-exam-seed mean | **0.5515 / 0.419** | **0.4975 / 0.4015** | **0.5655 / 0.324** |
+
+**The replicate.** The paired comparator is chain 20 (seed 44 at gamma 0.995; mean 0.5045 / 0.4075, 0.4625 / 0.4040, 0.5570 / 0.3420). Champion deltas are **+0.047, +0.035 and +0.0085**. Per exam seed: +0.026 and +0.068 on contact AWAY, +0.024 and +0.046 on contact HOME, +0.008 and +0.009 on offense AWAY. Both contact champion cells are up by more than 0.02 on the mean and on both exam seeds, and offense AWAY is not down. **D391's positive reading replicates on a second training seed.**
+
+**Pooled over both training seeds.**
+- Against the matched continuation pair (chains 14 and 20), the horizon pair (chains 25 and 26) is **+0.056, +0.0485 and +0.011** champion, with the net TD differential up +0.051, +0.046 and +0.035.
+- Against the chain 9 + chain 16 pooled frontier it is +0.023, +0.0095 and +0.0065 champion: above it on every cell, outside the 0.02 floor only on contact AWAY.
+
+**Rulings.**
+1. Gamma 0.999 with lambda 0.95 replaces 0.995 / 0.85 as the recipe for chained rungs. Every plain continuation since D273 at 0.995 landed flat or net-worse. Both horizon rungs land up, on separate training seeds.
+2. Chain 25 (sha 109c55d3) becomes the frontier warm start. Its exam is the best in the ledger on all three champion cells (0.568, 0.5055, 0.5895), and it is the first rung to clear the pooled frontier on every cell. This is a ladder acceptance, not a production promotion.
+3. The D391 confound stands. The arm moved the credit horizon and also shrank the legacy raw-delta distance bias 5x, so the gain belongs to the pair until an exact-PBRS arm at gamma 0.999 separates them.
+
+**Next, pre-registered before its exam.** Chain 27 (`runs/ladder-d0-r0chain27-horizon-cont-20260913`, unit `r0chain27-horizon-cont`, launched 07:00 PDT) continues from the chain 25 marker under the horizon recipe: seed 42, 3B steps, `r0_poss_half`, 4 banks x 0.12, contact bot at tag 4. The automatic rotation built pool identity 28846cd8: anchor-kickbot, rung0warm2 (the chain 2 checkpoint), chain 9, and chain 25 in the warm seat. The run tests whether the D273 continuation plateau was a horizon artifact.
+- **Accept:** both contact champion cells beat chain 25's own exam (0.568, 0.5055) by more than 0.02 on the two-exam-seed mean, with offense AWAY not down more than 0.02.
+- **Plateau survives:** a flat read at 3B.
+- **Reject:** a contact champion cell down more than 0.02 on the mean and on both exam seeds.
+
+**D394 - CHAIN 27 IS NOT ACCEPTED: CONTINUING CHAIN 25 UNDER THE HORIZON RECIPE RAISES BOTH CONTACT CHAMPION CELLS BUT DROPS OFFENSE ON BOTH EXAM SEEDS, SO CHAIN 25 STAYS THE FRONTIER (2026-09-13 13:55 PDT).** Chain 27 (`runs/ladder-d0-r0chain27-horizon-cont-20260913`, unit `r0chain27-horizon-cont`) finished its 3B at 13:35 PDT with trainer_exit 0. It ran 122-133K SPS with VRAM 6.4/8 GB, integrity counters zero and value loss 0.011-0.015. Checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789308028008/0000002999975936.bin` (sha 67d62bee). In-run eval tds 1.596 and perf 0.700 are a both-sides mixture, not evidence. The exam waiter ran both seeds; all six cells exited rc=0 with 2022-2032 games each.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.614 / 0.394 | 0.538 / 0.366 | 0.560 / 0.322 |
+| 43 | 0.592 / 0.418 | 0.528 / 0.384 | 0.542 / 0.317 |
+| Two-exam-seed mean | **0.603 / 0.406** | **0.533 / 0.375** | **0.551 / 0.3195** |
+
+Against chain 25's own exam (0.568, 0.5055, 0.5895), champion deltas are **+0.035, +0.0275 and -0.0385**.
+- contact AWAY: +0.049 and +0.021 per exam seed
+- contact HOME: +0.049 and +0.006
+- offense AWAY: -0.023 and -0.054
+
+D393's acceptance needs both contact cells up more than 0.02 on the mean, which is met, and offense AWAY not down more than 0.02, which fails on the mean and on both seeds. **Not accepted. Chain 25 stays the frontier.** This is also not D393's flat plateau, nor its reject condition (no contact cell is down). The continuation moved, and it traded offense-bot scoring for contact-bot scoring. Contact HOME's per-seed gain (+0.006 at seed 43) does not clear the floor on its own. Conceded moves (-0.0075, -0.043, +0.0045) are not scored under D277. Chain 27's contact AWAY champion (0.603) is the highest ever recorded, but one training seed on a mixed read is not a result. The pre-registered horizon program continues: chain 28 (`r0_poss_half_pbrs999`, exact PBRS at 0.999, paired with chain 25) launched automatically at 13:52 PDT through `queue-c28`. The queue moved the rig checkout to 842969a (PR #100) and passed the drift check (3ed6899e), module check (d63498f6), SCREEN PLAN VERIFIED, pool identity d67d527b and the contract check (arm `r0_poss_half_pbrs999`, gamma 0.999, lambda 0.95).
+
+**D395 - CHAIN 28 COLLAPSES: SWITCHING THE DISTANCE CHANNELS TO EXACT PBRS ON THE CHAIN 9 WARM START HALVES SCORING AND DOUBLES CONCEDED, AS D253 PREDICTED, SO THE ATTRIBUTION QUESTION STAYS OPEN AND THE LEGACY RECIPE STAYS (2026-09-13 20:40 PDT).** Chain 28 (`runs/ladder-d0-r0chain28-pbrs999-20260913`, unit `r0chain28-pbrs999`, arm `r0_poss_half_pbrs999`) is chain 25's recipe with only the distance channels switched to exact discounted PBRS at gamma 0.999. It finished its 3B at 20:20 PDT with trainer_exit 0, running 122-132K SPS with integrity counters zero; the hardware run confirmed `reward_distance_form=exact_pbrs train_gamma=0.999`. Checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789332476463/0000002999975936.bin` (sha d9e9228c). In-run eval tds 1.145 and perf 0.404 against the warm marker's 1.534; the regression gate floor of 0.5 did not catch it. The exam ran all six cells with rc=0 and 2016-2051 games each.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.276 / 0.873 | 0.244 / 0.888 | 0.272 / 0.520 |
+| 43 | 0.271 / 0.875 | 0.257 / 0.896 | 0.278 / 0.538 |
+| Two-exam-seed mean | **0.2735 / 0.874** | **0.2505 / 0.892** | **0.275 / 0.529** |
+
+**Scoring.** Champion deltas against chain 25 are **-0.2945, -0.255 and -0.3145**, down on every cell and both exam seeds, and conceded roughly doubles. By D393's pre-registered rule this is the loss reading, but at ten to fifteen times the floor it is a regime collapse, not an attribution result. Chain 28 sits far below chain 9 and every continuation in the ledger.
+
+**Mechanism** (READ from the training panels). On the final panels against chain 25:
+- pickup_attempts 2.854 vs 4.971 (-43%)
+- pickup_success 1.546 vs 2.805
+- possession_rate 0.303 vs 0.374
+- blocks_thrown 14.58 vs 14.36 (unchanged)
+- tds 1.145 vs 1.574
+- entropy 0.120 vs 0.082
+
+The trajectory starts at the parent's level (tds 1.635 at 53M) and decays to about 1.0 by 210M, where it stays. Under exact PBRS a lost carry charges the potential drop (up to 1.0 on the carry channel), which the legacy raw delta never did. The warm critic was fitted to the legacy stream, so the switched reward made pickups look negative-EV, and the policy stopped going for the ball while keeping its contact game. This is the D253 pattern (`s0_both` collapsed the July warm in 500M).
+
+**Rulings.**
+1. Chain 28 is rejected and must never be a warm start or pool bank.
+2. D253 stands, restated: never switch a reward form on a warm checkpoint. A warm switch is not a neutral intervention, so chain 28 does not answer D391's question of horizon versus legacy distance bias. Only a lineage trained under exact PBRS from its root, or a gradual anneal between the forms, could, and neither is cheap.
+3. The recipe stays legacy `r0_poss_half` at gamma 0.999 / lambda 0.95. Chain 25 stays the frontier.
+4. The regression gate floor (eval tds 0.5) is too loose to catch a halving; tightening it is noted as tooling work.
+
+**Next, pre-registered before its exam: chain 29, a horizon dose-response** (`runs/ladder-d0-r0chain29-horizon9995-20260913`, unit `r0chain29-horizon9995`). It is chain 25's exact recipe (warm chain 9 marker, seed 42, 3B, pool identity d67d527b, `r0_poss_half`) with `LADDER_GAMMA=0.9995 LADDER_GAE_LAMBDA=0.97`. That doubles the discount half-life from about 693 to about 1386 steps, roughly one full match. The paired comparator is chain 25.
+- **Trend continues:** both contact champion cells beat chain 25 by more than 0.02 on the mean, with offense AWAY not down more than 0.02. A seed-44 replicate follows before any recipe change.
+- **Enough at 0.999:** a flat read.
+- **Overshot:** a contact champion cell down more than 0.02 on the mean and on both exam seeds.
+
+Caveat named in advance: the legacy distance bias shrinks a further 2x at 0.9995, so the dose-response still moves horizon and bias together, and the larger critic re-fit costs part of the 3B budget.
+
+**D396 - CHAIN 29 OVERSHOOTS, MARGINALLY: GAMMA 0.9995 / LAMBDA 0.97 IS BELOW CHAIN 25 ON ALL THREE CHAMPION CELLS BUT STILL ABOVE THE 0.995 CONTINUATIONS, SO THE DOSE-RESPONSE PEAKS NEAR 0.999 AND THE RECIPE STAYS (2026-09-14 03:30 PDT).** Chain 29 (`runs/ladder-d0-r0chain29-horizon9995-20260913`, unit `r0chain29-horizon9995`) finished its 3B at about 03:10 PDT with integrity counters zero, running 120-131K SPS with value loss 0.018-0.025. The launch banner read `reward_distance_form=legacy_raw_delta train_gamma=0.9995`. The in-run panels tracked chain 25 throughout (pickups 4.2-5.2, no D395-style avoidance), and the early dip to tds 1.25 at 470M recovered.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.546 / 0.431 | 0.498 / 0.427 | 0.573 / 0.349 |
+| 43 | 0.544 / 0.422 | 0.486 / 0.442 | 0.539 / 0.346 |
+| Two-exam-seed mean | **0.545 / 0.4265** | **0.492 / 0.4345** | **0.556 / 0.3475** |
+
+**Scoring against chain 25 (0.568, 0.5055, 0.5895).** Champion deltas are **-0.023, -0.0135 and -0.0335**.
+- contact AWAY: -0.019 and -0.027 per exam seed
+- contact HOME: +0.009 and -0.036
+- offense AWAY: -0.010 and -0.057
+
+D395's "overshot" condition is met by the smallest margin: contact AWAY is down more than 0.02 on the mean (-0.023) and down on both exam seeds. **Not accepted. The recipe stays gamma 0.999 / lambda 0.95.**
+
+**The dose-response.** Against the 0.995 continuation chain 14 (0.5035, 0.4435, 0.5755), chain 29 is still +0.0415, +0.0485 and -0.0195 champion. The curve on contact AWAY is 0.5035 at 0.995, 0.568 at 0.999 and 0.545 at 0.9995, which peaks near 0.999. That curve comes from one training seed per point.
+
+**Next (pre-registered here; launches once the knob lands).** The update budget. The native trainer takes replay_ratio x (batch / minibatch) = 0.25 x (131072 / 16384) = 2 Muon gradient steps per 131K-step epoch (D252). No ladder rung has ever varied that, and the ladder path fixes REPLAY_RATIO. Chain 30 will be chain 25's exact recipe (warm chain 9 marker, seed 42, 3B, pool identity d67d527b, `r0_poss_half`, gamma 0.999 / lambda 0.95) with replay_ratio 1.0, which is 8 gradient steps per epoch. The paired comparator is chain 25.
+- **Positive:** both contact champion cells beat chain 25 by more than 0.02 on the mean, with offense AWAY not down more than 0.02. A seed-44 replicate follows before any recipe change.
+- **Flat:** 2 steps per epoch is not the binding constraint.
+- **Negative:** a contact champion cell down more than 0.02 on the mean and on both exam seeds.
+
+Caveats named in advance:
+- More gradient steps on the same rollouts raise policy drift per epoch. KL and clipfrac are the diagnostics, not kill signals.
+- The learner phase grows (about 160 ms to about 640 ms per epoch), so expect roughly 25-35% lower SPS. Wall time, not steps, is the cost.
+- LR x2 was rejected twice on warm chains (D259/D271). This changes how often the optimizer steps on the same data, not the step size.
+
+**D397 - CHAIN 30 IS FLAT: FOUR TIMES THE GRADIENT STEPS PER EPOCH (REPLAY RATIO 1.0) LEAVES THE CHAMPION CELLS WHERE CHAIN 25 PUT THEM, SO THE UPDATE BUDGET IS NOT THE BINDING CONSTRAINT; CHAIN 31 TESTS THE OPPONENT POPULATION UNDER THE HORIZON RECIPE (2026-09-14 22:15 PDT).** Chain 30 (`runs/ladder-d0-r0chain30-rr1-20260914`, unit `r0chain30-rr1`) is chain 25's recipe with replay_ratio 1.0, which is 8 Muon steps per 131K-step epoch instead of 2 (PR #101, merge fbaec58).
+- **The first attempt was lost.** It died at about 1.35B steps when the house lost power around 08:08 PDT. The ladder cannot resume, so attempt 2 relaunched from zero at 12:23 PDT after the rig returned. The Windows host came back with a new LAN address, so the Mac now reaches WSL over Tailscale (`ssh bbrig`).
+- **Attempt 2 was clean.** It finished its 3B at about 21:52 PDT with trainer_exit 0 and integrity counters zero, running 85-93K SPS with the Train phase at 572-616 ms (chain 25: 160 ms). That confirms the 8 minibatches on hardware.
+- **Artifacts.** Checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789413829676/0000002999975936.bin` (sha 41ecd998); the marker records gamma 0.999 and replay_ratio 1.0. All six exam cells exited rc=0 with 2026-2055 games each.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.564 / 0.398 | 0.538 / 0.378 | 0.581 / 0.344 |
+| 43 | 0.577 / 0.381 | 0.523 / 0.390 | 0.591 / 0.340 |
+| Two-exam-seed mean | **0.5705 / 0.3895** | **0.5305 / 0.384** | **0.586 / 0.342** |
+
+Champion deltas against chain 25 (0.568, 0.5055, 0.5895) are **+0.0025, +0.025 and -0.0035**.
+- contact AWAY: -0.001 and +0.006 per exam seed
+- contact HOME: +0.049 and +0.001 (the mean clears the floor only through seed 42)
+- offense AWAY: -0.002 and -0.005
+
+D396's positive reading needed both contact cells up more than 0.02, and contact AWAY is flat, so **this is the flat reading: 2 gradient steps per epoch is not what holds the recipe back.** Conceded moves (-0.024, -0.034, +0.027) are not scored under D277. Replay ratio 1.0 costs about 30% SPS for no scored gain, so the recipe keeps 0.25. Chain 25 stays the frontier.
+
+**Next, pre-registered before its exam: chain 31, the opponent population under the horizon recipe** (`runs/ladder-d0-r0chain31-pop8-horizon-20260914`, unit `r0chain31-pop8-horizon`, launched 22:08 PDT). It is chain 23's recipe (8 frozen banks x 0.06, contact bot at tag 8, pool identity 6ffb955b, warm chain 9 marker, seed 42, 3B) with gamma 0.999 and lambda 0.95. The paired comparator is chain 25, which differs in bank count and share: 4 x 0.12 with the bot at tag 4. Chain 23 was flat against its 0.995 comparator (D390); this asks whether a wider population matters once the credit horizon is fixed.
+- **Positive:** both contact champion cells beat chain 25 by more than 0.02, with offense AWAY not down more than 0.02. A seed-44 replicate follows.
+- **Flat:** population width does not matter at this horizon.
+- **Negative:** a contact champion cell down more than 0.02 on the mean and on both exam seeds. That reading stays ambiguous, because bot exposure halves from 12% to 6% (the D389 caveat).
+
+**D398 - CHAIN 31 READS NEGATIVE: EIGHT BANKS AT 0.06 UNDER THE HORIZON RECIPE LOSE CONTACT AWAY ON BOTH EXAM SEEDS AGAINST CHAIN 25, AMBIGUOUS BETWEEN POPULATION WIDTH AND HALVED BOT EXPOSURE; THE KNOB SCREEN AROUND CHAIN 25 IS COMPLETE (2026-09-15 06:45 PDT).** Chain 31 (`runs/ladder-d0-r0chain31-pop8-horizon-20260914`, unit `r0chain31-pop8-horizon`) finished its 3B at about 06:20 PDT with integrity counters zero, running 97-105K SPS with VRAM 6.5/8 GB and pickups 4.5-5.2. The run manifest recorded `scripted_bank_tag=8`, pool identity 6ffb955b and gamma 0.999. In-run eval tds read 1.66-2.20 and is not evidence. The waiter exam ran both seeds.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.524 / 0.397 | 0.478 / 0.402 | 0.554 / 0.338 |
+| 43 | 0.506 / 0.399 | 0.490 / 0.394 | 0.524 / 0.352 |
+| Two-exam-seed mean | **0.515 / 0.398** | **0.484 / 0.398** | **0.539 / 0.345** |
+
+**Scoring against chain 25 (0.568, 0.5055, 0.5895).** Champion deltas are **-0.053, -0.0215 and -0.0505**.
+- contact AWAY: -0.041 and -0.065 per exam seed
+- contact HOME: -0.011 and -0.032
+- offense AWAY: -0.029 and -0.072
+
+Contact AWAY is down more than 0.02 on the mean and on both exam seeds, so **this is D397's negative reading.** As pre-registered it stays ambiguous: at 8 x 0.06 the scripted contact bot fills one bank seat, so bot exposure falls from 12% to 6%. Losing bot practice predicts exactly a contact champion loss. The contrast with chain 23 (8 banks at gamma 0.995: 0.5085, 0.439, 0.5595) is +0.0065, +0.045 and -0.0205, so the horizon helps the 8-bank recipe as well, mostly on contact HOME. Conceded moves are not scored. Not promoted; chain 25 stays the frontier.
+
+**The screen around chain 25 is complete.**
+
+| Chain | Change from chain 25's recipe | Reading |
+|---|---|---|
+| 26 | Same recipe at training seed 44 | Replicated the gain |
+| 27 | Continued from chain 25 for another 3B | Contact up, offense down, not accepted |
+| 28 | Exact-PBRS distance | Collapsed (D395) |
+| 29 | Gamma 0.9995 | Marginally overshot (D396) |
+| 30 | Replay ratio 1.0 | Flat (D397) |
+| 31 | 8-bank population | Negative, ambiguous |
+
+Every one-factor change around the gamma 0.999 recipe is flat or worse on the scripted-bot exam.
+
+**Two non-training measurements come next, before any further knob screen.**
+1. A head-to-head round robin between chains 9, 14, 25, 27, 30 and 31 on the Mac CPU, run through the play harness backend with every-step recurrence and a sampling policy on random rosters. It checks whether the scripted-bot exam gains transfer to learned opponents.
+2. GPU verification of the two opt-in trainer patches already built: the scripted-bank forward skip (up to about 1.4x SPS for multi-bank runs) and deciding-row telemetry.

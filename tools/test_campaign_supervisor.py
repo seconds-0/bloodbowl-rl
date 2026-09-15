@@ -1,4 +1,7 @@
+import contextlib
+import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -189,6 +192,190 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(self.launched, [])
         self.assertFalse(state_path.exists(), "dry run must not write state")
+
+
+class TerminalTickTests(unittest.TestCase):
+    """A terminal campaign must stop churning its state file and lock.
+
+    The rig's stale timers kept rewriting CAMPAIGN_STATE.json and its lock
+    every five minutes for campaigns that had halted or completed weeks before.
+    """
+
+    OLD = 1_600_000_000
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.campaign_dir = self.root / "runs" / "campaigns" / "camp-x"
+        self.campaign_dir.mkdir(parents=True)
+        self.plan_path = self.campaign_dir / "CAMPAIGN_PLAN.json"
+        self.state_path = self.campaign_dir / "CAMPAIGN_STATE.json"
+        self.lock_path = self.campaign_dir / "CAMPAIGN_STATE.json.lock"
+        self.plan = plan(self.root)
+        self.plan_path.write_text(json.dumps(self.plan), encoding="utf-8")
+        self.launched = []
+        self.probed = []
+        self._real_launch = sup.launch_stage
+        self._real_alive = sup.trainer_is_alive
+        sup.launch_stage = lambda root, stage, log_dir, attempt: (
+            self.launched.append((stage["name"], attempt)) or 4242
+        )
+        sup.trainer_is_alive = lambda pattern: self.probed.append(pattern) or False
+
+    def tearDown(self):
+        sup.launch_stage = self._real_launch
+        sup.trainer_is_alive = self._real_alive
+        self._tmp.cleanup()
+
+    def write_state(self, state):
+        self.state_path.write_text(json.dumps(state), encoding="utf-8")
+        self.lock_path.write_bytes(b"")
+        os.utime(self.state_path, (self.OLD, self.OLD))
+        os.utime(self.lock_path, (self.OLD, self.OLD))
+
+    def run_main(self, *extra):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = sup.main(
+                ["--plan", str(self.plan_path), "--state", str(self.state_path), *extra]
+            )
+        return rc, out.getvalue()
+
+    def assert_untouched(self, before_bytes):
+        self.assertEqual(self.state_path.stat().st_mtime, self.OLD, "state rewritten")
+        self.assertEqual(self.state_path.read_bytes(), before_bytes)
+        self.assertEqual(self.lock_path.stat().st_mtime, self.OLD, "lock touched")
+        self.assertFalse(
+            self.state_path.with_suffix(".json.tmp").exists(), "temp state left behind"
+        )
+
+    def test_halted_campaign_writes_nothing_and_exits_zero(self):
+        st = sup._blank_state(self.plan)
+        st["halted"] = True
+        st["halt_reason"] = "operator"
+        self.write_state(st)
+        before = self.state_path.read_bytes()
+        for _ in range(3):
+            rc, out = self.run_main()
+            self.assertEqual(rc, 0)
+            self.assertTrue(out.startswith("HALTED operator"), out)
+            self.assert_untouched(before)
+        self.assertEqual(self.launched, [])
+        self.assertIn(
+            "systemctl --user disable --now campaign-supervisor@camp-x.timer", out
+        )
+
+    def test_complete_campaign_writes_nothing_and_exits_zero(self):
+        (self.root / "one.done").write_text("x", encoding="utf-8")
+        (self.root / "two.done").write_text("x", encoding="utf-8")
+        st = sup._blank_state(self.plan)
+        st["complete"] = True
+        self.write_state(st)
+        before = self.state_path.read_bytes()
+        for _ in range(3):
+            rc, out = self.run_main()
+            self.assertEqual(rc, 0)
+            self.assertTrue(out.startswith("COMPLETE"), out)
+            self.assert_untouched(before)
+        self.assertEqual(self.launched, [])
+        self.assertEqual(self.probed, [], "a complete campaign must not probe pgrep")
+        self.assertIn(
+            "systemctl --user disable --now campaign-supervisor@camp-x.timer", out
+        )
+
+    def test_timer_unit_override_is_printed_verbatim(self):
+        st = sup._blank_state(self.plan)
+        st["halted"] = True
+        st["halt_reason"] = "operator"
+        self.write_state(st)
+        rc, out = self.run_main("--timer-unit", "other-supervisor@foo.timer")
+        self.assertEqual(rc, 0)
+        self.assertIn("systemctl --user disable --now other-supervisor@foo.timer", out)
+        self.assertNotIn("camp-x", out)
+
+    def test_non_terminal_tick_still_advances_and_writes(self):
+        self.write_state(sup._blank_state(self.plan))
+        rc, out = self.run_main()
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith("LAUNCHED stage=one attempt=1/2"), out)
+        self.assertNotIn("systemctl", out)
+        self.assertEqual(self.launched, [("one", 1)])
+        self.assertNotEqual(self.state_path.stat().st_mtime, self.OLD)
+        saved = json.loads(self.state_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["stages"]["one"]["attempts"], 1)
+        self.assertEqual(saved["stages"]["one"]["last_pid"], 4242)
+
+        (self.root / "one.done").write_text("x", encoding="utf-8")
+        rc, out = self.run_main()
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith("LAUNCHED stage=two attempt=1/2"), out)
+        saved = json.loads(self.state_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["stages"]["two"]["attempts"], 1)
+
+    def test_busy_tick_still_refreshes_state(self):
+        sup.trainer_is_alive = lambda pattern: True
+        self.write_state(sup._blank_state(self.plan))
+        rc, out = self.run_main()
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith("BUSY"), out)
+        self.assertNotEqual(self.state_path.stat().st_mtime, self.OLD)
+
+    def test_first_completion_is_recorded_once_then_goes_quiet(self):
+        (self.root / "one.done").write_text("x", encoding="utf-8")
+        (self.root / "two.done").write_text("x", encoding="utf-8")
+        self.write_state(sup._blank_state(self.plan))
+        rc, out = self.run_main()
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith("COMPLETE"), out)
+        self.assertIn("systemctl --user disable --now", out)
+        saved = json.loads(self.state_path.read_text(encoding="utf-8"))
+        self.assertTrue(saved["complete"], "the transition must be persisted")
+        self.assertIn("campaign complete", saved["history"][-1]["event"])
+
+        os.utime(self.state_path, (self.OLD, self.OLD))
+        os.utime(self.lock_path, (self.OLD, self.OLD))
+        before = self.state_path.read_bytes()
+        rc, out = self.run_main()
+        self.assertEqual(rc, 0)
+        self.assert_untouched(before)
+
+    def test_attempt_cap_halt_is_recorded_once_then_goes_quiet(self):
+        st = sup._blank_state(self.plan)
+        st["stages"]["one"] = {"attempts": 2, "launched_utc": None, "last_pid": 1}
+        self.write_state(st)
+        rc, out = self.run_main()
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith("HALT stage one"), out)
+        self.assertIn("systemctl --user disable --now", out)
+        saved = json.loads(self.state_path.read_text(encoding="utf-8"))
+        self.assertTrue(saved["halted"], "the halt must be persisted")
+
+        os.utime(self.state_path, (self.OLD, self.OLD))
+        os.utime(self.lock_path, (self.OLD, self.OLD))
+        before = self.state_path.read_bytes()
+        rc, out = self.run_main()
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith("HALTED"), out)
+        self.assert_untouched(before)
+        self.assertEqual(self.launched, [])
+
+    def test_extending_a_completed_plan_resumes_the_campaign(self):
+        # `complete` is a record, not a latch: operators append stages to a
+        # finished plan, and the next tick must launch the new stage.
+        (self.root / "one.done").write_text("x", encoding="utf-8")
+        (self.root / "two.done").write_text("x", encoding="utf-8")
+        st = sup._blank_state(self.plan)
+        st["complete"] = True
+        self.write_state(st)
+        self.plan["stages"].append(
+            {"name": "three", "success": "three.done", "launch": "true"}
+        )
+        self.plan_path.write_text(json.dumps(self.plan), encoding="utf-8")
+        rc, out = self.run_main()
+        self.assertEqual(rc, 0)
+        self.assertTrue(out.startswith("LAUNCHED stage=three"), out)
+        self.assertEqual(self.launched, [("three", 1)])
+        self.assertNotEqual(self.state_path.stat().st_mtime, self.OLD)
 
 
 if __name__ == "__main__":

@@ -268,6 +268,109 @@ class LadderStageTests(unittest.TestCase):
                 self.assertIn("NUM_FROZEN_BANKS must be an integer in 1..8",
                               result.stdout, bad)
 
+    def test_horizon_knobs_are_validated_before_a_pool_is_built_and_exported(self):
+        source = STAGE.read_text(encoding="utf-8")
+        for knob in ("LADDER_GAMMA", "LADDER_GAE_LAMBDA"):
+            self.assertIn(f'[ -z "${{{knob}:-}}" ] || export {knob}', source)
+        base = {"RUNG": "0", "RESET_PCT": "0", "SEED": "42", "STAMP": "t"}
+        with tempfile.TemporaryDirectory() as tmp:
+            for knob in ("LADDER_GAMMA", "LADDER_GAE_LAMBDA"):
+                for bad in ("1", "0", "0.000", ".99", "0.99x", "nan", "0.9999999"):
+                    result = run({"C": tmp, **base, knob: bad})
+                    self.assertNotEqual(result.returncode, 0, (knob, bad))
+                    self.assertIn(
+                        f"{knob} must be a decimal in (0,1) with at most six decimals",
+                        result.stdout, (knob, bad))
+                    self.assertNotIn("drift check failed", result.stdout, (knob, bad))
+            # A declared horizon clears the gate and stops later, at the drift
+            # check this synthetic checkout cannot pass.
+            result = run({"C": tmp, **base, "LADDER_GAMMA": "0.999",
+                          "LADDER_GAE_LAMBDA": "0.95"})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("must be a decimal in (0,1)", result.stdout)
+            self.assertIn("drift check failed", result.stdout)
+
+    def test_replay_ratio_is_validated_before_a_pool_is_built_and_exported(self):
+        from tools.test_ladder_knobs import (BAD_REPLAY_RATIO_VALUES,
+                                             GOOD_REPLAY_RATIO_VALUES,
+                                             TRUNCATING_REPLAY_RATIO_VALUES)
+        source = STAGE.read_text(encoding="utf-8")
+        self.assertIn('[ -z "${LADDER_REPLAY_RATIO:-}" ] || export LADDER_REPLAY_RATIO',
+                      source)
+        base = {"RUNG": "0", "RESET_PCT": "0", "SEED": "42", "STAMP": "t"}
+        with tempfile.TemporaryDirectory() as tmp:
+            for bad in BAD_REPLAY_RATIO_VALUES:
+                result = run({"C": tmp, **base, "LADDER_REPLAY_RATIO": bad})
+                self.assertNotEqual(result.returncode, 0, bad)
+                self.assertIn("LADDER_REPLAY_RATIO must be a decimal in (0,4] with "
+                              "at most three decimals", result.stdout, bad)
+                self.assertNotIn("drift check failed", result.stdout, bad)
+            for bad in TRUNCATING_REPLAY_RATIO_VALUES:
+                result = run({"C": tmp, **base, "LADDER_REPLAY_RATIO": bad})
+                self.assertNotEqual(result.returncode, 0, bad)
+                self.assertIn(f"LADDER_REPLAY_RATIO={bad} does not give a whole "
+                              f"number of minibatches per epoch ({bad} x 131072 / "
+                              "16384)", result.stdout, bad)
+                self.assertNotIn("drift check failed", result.stdout, bad)
+            # An exact ratio clears the gate and stops later, at the drift check
+            # this synthetic checkout cannot pass.
+            for good, _ in GOOD_REPLAY_RATIO_VALUES:
+                result = run({"C": tmp, **base, "LADDER_REPLAY_RATIO": good})
+                self.assertNotEqual(result.returncode, 0, good)
+                self.assertNotIn("LADDER_REPLAY_RATIO", result.stdout, good)
+                self.assertIn("drift check failed", result.stdout, good)
+
+    def test_stage_batch_contract_matches_the_screen(self):
+        # The stage counts gradient steps against the screen's fixed batch and
+        # minibatch; a contract change there must fail here, not mislabel.
+        def assigned(text, name):
+            match = re.search(rf"^{name}=([0-9]+)$", text, re.MULTILINE)
+            self.assertIsNotNone(match, name)
+            return int(match.group(1))
+        stage = STAGE.read_text(encoding="utf-8")
+        screen = (ROOT / "tools/run_reward_screen.sh").read_text(encoding="utf-8")
+        self.assertEqual(assigned(stage, "SCREEN_BATCH"),
+                         assigned(screen, "TOTAL_AGENTS") * assigned(screen, "HORIZON"))
+        self.assertEqual(assigned(stage, "SCREEN_MINIBATCH"),
+                         assigned(screen, "MINIBATCH_SIZE"))
+
+    def test_stage_banner_names_the_gradient_steps_per_epoch(self):
+        from tools.test_ladder_knobs import GOOD_REPLAY_RATIO_VALUES
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tools").mkdir()
+            (root / "tools/install_puffer_env.sh").write_text("#!/bin/bash\nexit 0\n")
+            # The stage execs the rung launcher last; this stub reports what
+            # the stage exported to it.
+            (root / "tools/launch_ladder_rung.sh").write_text(
+                "#!/bin/bash\n"
+                "printf 'rung launcher saw LADDER_REPLAY_RATIO=%s\\n' "
+                "\"${LADDER_REPLAY_RATIO-unset}\"\n")
+            warm = root / "warm.bin"
+            warm.write_bytes(b"w")
+            (root / "warm.bin.lineage.json").write_text("{}")
+            pool = root / "prev" / "pool"
+            pool.mkdir(parents=True)
+            (pool / "league_seeds.json").write_text("{}")
+            (root / "prev/POOL_IDENTITY.env").write_text(
+                "EXPECTED_POOL_HASH=" + "d" * 64 + "\n")
+            base = {"C": tmp, "RUNG": "0", "RESET_PCT": "0", "SEED": "42",
+                    "WARM": str(warm), "PREV_POOL": str(pool)}
+            for value, steps in GOOD_REPLAY_RATIO_VALUES:
+                result = run({**base, "STAMP": f"rr-{value}",
+                              "LADDER_REPLAY_RATIO": value})
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertIn(f"  update replay_ratio={value} "
+                              f"gradient_steps_per_epoch={steps} "
+                              "(batch 131072 / minibatch 16384)\n",
+                              result.stdout, value)
+                self.assertIn(f"rung launcher saw LADDER_REPLAY_RATIO={value}\n",
+                              result.stdout, value)
+            result = run({**base, "STAMP": "plain"})
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertNotIn("update replay_ratio", result.stdout)
+            self.assertIn("rung launcher saw LADDER_REPLAY_RATIO=unset\n", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
