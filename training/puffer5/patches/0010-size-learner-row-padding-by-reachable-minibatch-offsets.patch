@@ -1,0 +1,61 @@
+# 0010: size learner-row padding by reachable minibatch offsets
+diff --git a/src/pufferl.cu b/src/pufferl.cu
+index 4c565f55..8afa03f5 100644
+--- a/src/pufferl.cu
++++ b/src/pufferl.cu
+@@ -2074,7 +2074,17 @@ PuffeRL* create_pufferl(Ini* ini, TrainContext* ctx) {
+         int primary = vec->policy_layout[1] - vec->policy_layout[0];
+         int mb_segs = hypers.minibatch_size / hypers.horizon;
+         int eligible = num_buffers * primary;
+-        int total_rows = eligible + puf_train_pad_rows(eligible, mb_segs);
++        int batch_rows = hypers.total_agents * hypers.horizon;
++        int total_minibatches = hypers.replay_ratio * batch_rows / hypers.minibatch_size;
++        int total_rows = eligible + puf_train_pad_rows(eligible, mb_segs, total_minibatches);
++        // The gather kernels index with int; refuse layouts they cannot address.
++        long gather_elems = (long)total_rows * hypers.horizon
++            * (OBS_SIZE > act_n ? OBS_SIZE : act_n);
++        if (gather_elems > 2147483647L) {
++            fprintf(stderr, "create_pufferl: training gather of %ld elements exceeds "
++                "int indexing\n", gather_elems);
++            exit(1);
++        }
+         if (primary <= 0 || total_rows > total_agents) {
+             fprintf(stderr,
+                 "create_pufferl: %d learner rows per buffer (+%d pad) do not fit "
+diff --git a/src/train_rows.h b/src/train_rows.h
+index cc20de0d..7af4201b 100644
+--- a/src/train_rows.h
++++ b/src/train_rows.h
+@@ -9,15 +9,28 @@
+ // gradient.
+ //
+ // Minibatches stay contiguous row slices [mb*mb_segs, +mb_segs) of the
+-// gathered buffer. When the eligible count is not a multiple of mb_segs the
+-// map wraps into a pad region of mb_segs rows, so every slice is in bounds.
++// gathered buffer. Slices that run past the eligible count read a pad region
++// where the map wraps around to the first learner rows; the pad is sized to
++// the furthest reachable slice end, so every slice is in bounds.
+ // The start row rotates by total_minibatches*mb_segs each epoch, so with
+ // replay_ratio < 1 every learner row is still visited (upstream always
+ // trained rows [0, rr*total) and never the rest).
+ #pragma once
+ 
+-static inline int puf_train_pad_rows(int eligible, int mb_segs) {
+-    return (eligible % mb_segs) ? mb_segs : 0;
++// Rows past the eligible count that the minibatch slices
++// [(mb*mb_segs) % eligible, +mb_segs) actually reach, mb in [0, total_minibatches).
++static inline int puf_train_pad_rows(int eligible, int mb_segs, int total_minibatches) {
++    if (eligible <= 0) {
++        return 0;
++    }
++    long pad = 0;
++    for (long mb = 0; mb < total_minibatches; ++mb) {
++        long end = (mb * mb_segs) % eligible + mb_segs;
++        if (end - eligible > pad) {
++            pad = end - eligible;
++        }
++    }
++    return (int)pad;
+ }
+ 
+ static inline int puf_train_eligible_row(int k, int primary_per_buf, int agents_per_buf) {
