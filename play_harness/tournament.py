@@ -1,9 +1,16 @@
-"""Policy-vs-policy tournament runner: both seats are trained checkpoints.
+"""Tournament runner: trained checkpoints and the engine's scripted bots.
 
-Each seat is a PolicySeat stepped on EVERY env c_step (native evaluation-mode
-recurrence), with fresh recurrent state and a fresh sampling generator per
-match. Rosters are procgen as in training (random teams, training skill-up
-settings), fixed by the engine seed.
+Each checkpoint seat is a PolicySeat stepped on EVERY env c_step (native
+evaluation-mode recurrence), with fresh recurrent state and a fresh sampling
+generator per match. Rosters are procgen as in training (random teams, training
+skill-up settings), fixed by the engine seed.
+
+Scripted bots (--bot NAME=contact|offense) are the env's own scripted opponents
+(scripted_opponent_type 0 / 1). On the bot's turn the shim runs c_step through
+its scripted_opponent branch, so the pick is bbe_contact_bot_pick or
+bbe_offense_bot_pick on the live match, never a Python reimplementation. A bot
+seat has no recurrent state and no sampling; the manifest records the bot kind
+and the sha256 of its source files.
 
 Schedule. A pair (A, B) plays game index i twice with the same engine seed
 seed0 + i: leg "A_home" (A HOME, B AWAY), then leg "B_home" (B HOME, A AWAY).
@@ -50,25 +57,111 @@ class IntegrityError(RuntimeError):
     pass
 
 
+BOT_KINDS = tuple(E.BOT_TYPES)
+BOT_SOURCES = ("puffer/bloodbowl/contact_bot.h", "puffer/bloodbowl/offense_bot.h",
+               "play_harness/native/bbplay.c")
+SCRIPTED_MODE = "scripted"
+
+
 def sampling_seed(engine_seed, side):
     """Per-side torch sampling seed; identical for both legs of a game."""
     return (int(engine_seed) * 1_000_003 + 17 + int(side)) % (1 << 62)
 
 
+class ScriptedBot:
+    """A tournament player driven by the engine's scripted bot, not a policy."""
+
+    def __init__(self, kind):
+        if kind not in E.BOT_TYPES:
+            raise ValueError(f"unknown bot {kind!r}; expected one of {sorted(E.BOT_TYPES)}")
+        self.kind = kind
+        self.bot_type = E.BOT_TYPES[kind]
+
+    def __repr__(self):
+        return f"ScriptedBot({self.kind!r})"
+
+
+class BotSeat:
+    """Seat for a ScriptedBot, stepped on every c_step like a PolicySeat.
+
+    It holds no recurrent state and draws no random numbers. `forwards` counts
+    step() calls so the runner's one-call-per-engine-step contract holds for
+    both seats; on the bot's turn the runner applies the engine bot's pick with
+    Engine.step_scripted.
+    """
+
+    scripted = True
+    mode = SCRIPTED_MODE
+    temperature = None
+
+    def __init__(self, bot, seat, seed=0):
+        if not isinstance(bot, ScriptedBot):
+            raise TypeError("BotSeat needs a ScriptedBot")
+        if seat not in (0, 1):
+            raise ValueError("seat must be 0 (HOME) or 1 (AWAY)")
+        self.policy = bot
+        self.seat = seat
+        self.seed = int(seed)
+        self.forwards = 0
+        self.decisions = 0
+
+    def reset_match(self):
+        self.forwards = 0
+        self.decisions = 0
+
+    def step(self, obs, support, deciding):
+        self.forwards += 1
+        if deciding:
+            self.decisions += 1
+            return {"tuple": None, "logprob": 0.0, "value": None, "logits": None}
+        packed = list(support)
+        if len(packed) != 1 or E.unpack_tuple(packed[0]) != NONE_TUPLE:
+            raise AssertionError("waiting row must carry the singleton NONE support")
+        return {"tuple": NONE_TUPLE, "logprob": 0.0, "value": None, "logits": None}
+
+
+def bot_identity(kind, root=E.ROOT):
+    """Manifest identity of a scripted bot: kind, env type, pick function, source hashes."""
+    if kind not in E.BOT_TYPES:
+        raise ValueError(f"unknown bot {kind!r}")
+    sources = {}
+    for rel in BOT_SOURCES:
+        with open(os.path.join(root, rel), "rb") as f:
+            sources[rel] = hashlib.sha256(f.read()).hexdigest()
+    return {"kind": kind, "scripted_opponent_type": E.BOT_TYPES[kind],
+            "pick_function": E.BOT_PICK_FUNCTIONS[kind], "source_sha256": sources}
+
+
+def library_sha256(path=None):
+    path = path or os.environ.get("BBPLAY_LIB", E.DEFAULT_LIB)
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
 def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
                max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
                max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0)):
-    """One natural match between two policies. Returns (record, seats).
+    """One natural match between two players. Returns (record, seats).
 
-    modes / temperatures are (HOME, AWAY); modes defaults to `mode` for both.
-    Raises IntegrityError on any violation of the tournament contract.
+    A player is a policy (seated through seat_factory) or a ScriptedBot (seated
+    as a BotSeat). modes / temperatures are (HOME, AWAY); modes defaults to
+    `mode` for both, and bot seats ignore both. Raises IntegrityError on any
+    violation of the tournament contract.
     """
     modes = tuple(modes) if modes is not None else (mode, mode)
     temperatures = tuple(float(t) for t in temperatures)
-    seats = (seat_factory(home_policy, 0, mode=modes[0], seed=sampling_seed(engine_seed, 0),
-                          temperature=temperatures[0]),
-             seat_factory(away_policy, 1, mode=modes[1], seed=sampling_seed(engine_seed, 1),
-                          temperature=temperatures[1]))
+
+    def seat_for(policy, side):
+        seed = sampling_seed(engine_seed, side)
+        if isinstance(policy, ScriptedBot):
+            return BotSeat(policy, side, seed=seed)
+        return seat_factory(policy, side, mode=modes[side], seed=seed,
+                            temperature=temperatures[side])
+
+    seats = (seat_for(home_policy, 0), seat_for(away_policy, 1))
+    bots = tuple(s.policy if getattr(s, "scripted", False) else None for s in seats)
     for seat in seats:
         seat.reset_match()
     eng = E.Engine(engine_seed, episode=episode, max_decisions=max_decisions, lib=lib)
@@ -84,7 +177,8 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
             team = eng.decision_team
             if team not in (0, 1):
                 raise IntegrityError(f"decision team {team} at step {c_steps}")
-            outs = [seats[s].step(eng.obs(s), eng.joint_support(s), s == team)
+            outs = [seats[s].step(None if bots[s] else eng.obs(s), eng.joint_support(s),
+                                  s == team)
                     for s in (0, 1)]
             c_steps += 1
             for s in (0, 1):
@@ -93,12 +187,21 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
                                          f"over {c_steps} engine steps")
             if tuple(outs[1 - team]["tuple"]) != NONE_TUPLE:
                 raise IntegrityError(f"waiting seat {1 - team} emitted {outs[1 - team]['tuple']}")
-            tup = tuple(int(v) for v in outs[team]["tuple"])
-            if eng.tuple_index(*tup) < 0:
-                raise IntegrityError(f"seat {team} tuple {tup} outside exact support")
-            logprob[team] += float(outs[team]["logprob"])
-            trail.update(struct.pack("<Biii", team, *tup))
-            rc = eng.step(*tup)
+            if bots[team] is not None:
+                idx = eng.scripted_bot_index(bots[team].bot_type)
+                if idx < 0:
+                    raise IntegrityError(f"{bots[team].kind} bot found no pick at step "
+                                         f"{c_steps}: rc={idx}")
+                tup = eng.legal()[idx].tuple
+                trail.update(struct.pack("<Biii", team, *tup))
+                rc = eng.step_scripted(bots[team].bot_type, team)
+            else:
+                tup = tuple(int(v) for v in outs[team]["tuple"])
+                if eng.tuple_index(*tup) < 0:
+                    raise IntegrityError(f"seat {team} tuple {tup} outside exact support")
+                logprob[team] += float(outs[team]["logprob"])
+                trail.update(struct.pack("<Biii", team, *tup))
+                rc = eng.step(*tup)
             if rc == E.STEP_TERMINAL:
                 break
             if rc < 0:
@@ -119,10 +222,13 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
             raise IntegrityError(f"engine applied {counters['steps']} steps, runner {c_steps}")
         if counters["decisions_at_terminal"] >= max_decisions:
             raise IntegrityError("decision budget reached at the terminal step")
+        modes = tuple(s.mode for s in seats)
+        temperatures = tuple(s.temperature for s in seats)
         record = {
             "engine_seed": int(engine_seed), "episode": int(episode),
             "mode": modes[0] if modes[0] == modes[1] else "mixed",
             "modes": list(modes), "temperatures": list(temperatures),
+            "bots": [b.kind if b else None for b in bots],
             "sampling_seeds": [seats[0].seed, seats[1].seed],
             "team_ids": [int(final.team_id[0]), int(final.team_id[1])],
             "teams": [eng.team_display(final.team_id[0]), eng.team_display(final.team_id[1])],
@@ -219,16 +325,28 @@ def legacy_manifest_specs(old):
         old["players"] = {n: {"mode": old.get("mode"), "temperature": 1.0} for n in names}
     if "pairs" not in old:
         old["pairs"] = [[a, b, old.get("games_per_pair")] for a, b in itertools.combinations(names, 2)]
+    old.setdefault("bots", {})
     return old
 
 
-def player_specs(names, mode, player_modes=None, temperatures=None):
-    player_modes, temperatures = player_modes or {}, temperatures or {}
-    unknown = (set(player_modes) | set(temperatures)) - set(names)
+def player_specs(names, mode, player_modes=None, temperatures=None, bots=None):
+    """Per-player specs. Checkpoints get {mode, temperature}; bots get {bot: kind}
+    and refuse mode or temperature overrides."""
+    player_modes, temperatures, bots = player_modes or {}, temperatures or {}, bots or {}
+    unknown = (set(player_modes) | set(temperatures) | set(bots)) - set(names)
     if unknown:
-        raise ValueError(f"mode/temperature for unknown players {sorted(unknown)}")
+        raise ValueError(f"mode/temperature/bot for unknown players {sorted(unknown)}")
+    tuned_bots = (set(player_modes) | set(temperatures)) & set(bots)
+    if tuned_bots:
+        raise ValueError(f"scripted bots take no mode or temperature: {sorted(tuned_bots)}")
     specs = {}
     for name in names:
+        if name in bots:
+            if bots[name] not in E.BOT_TYPES:
+                raise ValueError(f"unknown bot {bots[name]!r} for {name}; "
+                                 f"expected one of {sorted(E.BOT_TYPES)}")
+            specs[name] = {"bot": bots[name]}
+            continue
         m = player_modes.get(name, mode)
         if m not in ("sample", "argmax"):
             raise ValueError(f"unknown mode {m!r} for {name}")
@@ -256,7 +374,7 @@ def check_record(rec):
 _W = {}
 
 
-def _init_worker(checkpoints, kernel, mode, seed0, specs=None):
+def _init_worker(checkpoints, kernel, mode, seed0, specs=None, bots=None):
     os.environ["OMP_NUM_THREADS"] = "1"
     import torch
     torch.set_num_threads(1)
@@ -269,6 +387,7 @@ def _init_worker(checkpoints, kernel, mode, seed0, specs=None):
     for path in set(checkpoints.values()):
         loaded[path] = load_checkpoint(path, kernel=kernel)[0]
     _W["policies"] = {name: loaded[path] for name, path in checkpoints.items()}
+    _W["policies"].update({name: ScriptedBot(kind) for name, kind in (bots or {}).items()})
     _W["mode"], _W["seed0"], _W["specs"] = mode, seed0, specs
 
 
@@ -285,6 +404,8 @@ def _run_task(task):
 
 def discover_checkpoints(directory=DEFAULT_CHECKPOINT_DIR):
     out = {}
+    if not os.path.isdir(directory):
+        return out
     for name in sorted(os.listdir(directory)):
         path = os.path.join(directory, name, CHECKPOINT_BLOB)
         if os.path.exists(path) and os.path.exists(path + ".lineage.json"):
@@ -305,6 +426,9 @@ def main(argv=None):
     ap.add_argument("--checkpoint", action="append", default=[], metavar="NAME=BLOB",
                     help="repeatable; default every chain directory under "
                          ".play-artifacts/checkpoints")
+    ap.add_argument("--bot", action="append", default=[], metavar="NAME=KIND",
+                    help="repeatable; seat an engine scripted bot as player NAME, "
+                         f"KIND one of {', '.join(BOT_KINDS)}")
     ap.add_argument("--games-per-pair", type=int, default=None,
                     help="even; split evenly between the two legs (default for --pair)")
     ap.add_argument("--pair", action="append", default=[], metavar="A,B[,N]",
@@ -331,14 +455,21 @@ def main(argv=None):
         checkpoints = dict(item.split("=", 1) for item in args.checkpoint)
     else:
         checkpoints = discover_checkpoints()
-    names = list(checkpoints)
+    try:
+        bots = parse_assignments(args.bot)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    clash = set(bots) & set(checkpoints)
+    if clash:
+        raise SystemExit(f"names used by both a checkpoint and a bot: {sorted(clash)}")
+    names = list(checkpoints) + list(bots)
     if len(names) < 2:
-        raise SystemExit("need at least two checkpoints")
+        raise SystemExit("need at least two players (checkpoints or bots)")
     try:
         pairs = [parse_pair(p) for p in args.pair] or None
         specs = player_specs(names, args.mode,
                              parse_assignments(args.player_mode),
-                             parse_assignments(args.temperature, float))
+                             parse_assignments(args.temperature, float), bots=bots)
         tasks = schedule(names, args.games_per_pair, args.seed0, pairs=pairs)
     except ValueError as exc:
         raise SystemExit(str(exc))
@@ -360,7 +491,12 @@ def main(argv=None):
                             "producer": lineage.get("producer"),
                             "compatibility": lineage.get("compatibility")}
     import torch
+    bot_ids = {name: bot_identity(kind) for name, kind in bots.items()}
+    if bots:
+        E.load_library()             # build a stale shim before hashing it
     manifest = {"schema": MANIFEST_SCHEMA, "checkpoints": provenance,
+                "bots": bot_ids,
+                "bot_library_sha256": library_sha256() if bots else None,
                 "games_per_pair": args.games_per_pair, "seed0": args.seed0,
                 "mode": args.mode, "players": specs,
                 "pairs": [[a, b, n] for (a, b), n in pair_sizes.items()],
@@ -374,8 +510,8 @@ def main(argv=None):
     if os.path.exists(manifest_path):
         with open(manifest_path) as f:
             old = legacy_manifest_specs(json.load(f))
-        for key in ("checkpoints", "games_per_pair", "seed0", "mode", "players", "pairs",
-                    "kernel"):
+        for key in ("checkpoints", "bots", "games_per_pair", "seed0", "mode", "players",
+                    "pairs", "kernel"):
             if old.get(key) != manifest[key]:
                 raise SystemExit(f"existing manifest differs on {key}; use a new --out-dir")
     with open(manifest_path, "w") as f:
@@ -398,7 +534,7 @@ def main(argv=None):
     abort = None
     with open(games_path, "a") as out, ctx.Pool(
             args.workers, initializer=_init_worker,
-            initargs=(checkpoints, args.kernel, args.mode, args.seed0, specs)) as pool:
+            initargs=(checkpoints, args.kernel, args.mode, args.seed0, specs, bots)) as pool:
         for rec in pool.imap_unordered(_run_task, pending, chunksize=1):
             problems = [rec["error"]] if "error" in rec else check_record(rec)
             if problems:
