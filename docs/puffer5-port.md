@@ -219,3 +219,23 @@ policy's slice:
 
 **Build.** `nvcc` 12.4, `-arch=sm_75`, `--float`, 4 threads: the trainer builds
 and links, and the `--cpu` binary builds. Neither has run on the GPU yet.
+
+## GPU benchmark (rig RTX 2070, 2026-09-15)
+
+`tools/puffer5/bench_queue.sh`, run r3 (`/home/rache/bbpuffer5/bench-r3/SUMMARY.json`). All
+three probes train chain 30's layout from chain 30's checkpoint at replay ratio 1.0: 2048
+agents, 4 frozen banks x 0.12, contact bot at tag 4. Each probe gets a 90-150 s warmup and a
+120 s window.
+
+| Probe | SPS (window) | vs 4.0 | Rollout ms/epoch | GPU forward ms | Train ms | Env ms | Peak VRAM |
+|---|---|---|---|---|---|---|---|
+| 4.0 fork (`ref40_rr1`) | 90,579 | 1.00x | 811 | 607 | 610 | 179 | 5,630 MiB |
+| 5.0, `base.async=0` | 88,867 | 0.98x | 908 | 427 | 564 | 180 | 5,400 MiB |
+| 5.0, `base.async=1` | 94,471 | 1.04x | 1,384 | 686 | 597 | 190 | 7,154 MiB |
+
+**PufferLib 5.0 is not a throughput upgrade for this workload.** The synchronous path is
+within 2% of 4.0. It spends less time in the policy forward, but the rollout total is
+higher. The stale async actor buys 4%, but it changes the algorithm (actions come from a
+stale policy) and uses 7.2 of 8 GB VRAM. The Train phase and env stepping are the same in
+both trainers. Milestone 2 is not worth building for speed; any 5.0 case would have to rest
+on other features.
