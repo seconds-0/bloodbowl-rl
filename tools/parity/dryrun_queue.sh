@@ -120,6 +120,18 @@ rc=$?
 ok=0; [ ! -e "$S/dry-gpu.lock.log" ] && ok=1
 record G_no_marker_abort 3 "$rc" "$ok" "$(tail -1 "$S/queue.log" | cut -d' ' -f2-)"
 
+# J. Publication failure: RESULT_COMPLETE.json cannot be written (its temporary
+#    path is a directory). The queue must not report done, and must release.
+S=$BASE/J_publication_failure; mkdir -p "$S"; seed_scenario "$S"
+mkdir -p "$S/RESULT_COMPLETE.json.tmp"
+env $(gate_open_env "$S") bash "$Q" > "$S.out" 2>&1
+rc=$?
+ok=0
+[ "$(lock_lines 'released(exit 8)' "$S/dry-gpu.lock.log")" = 1 ] \
+    && [ "$(lock_lines 'released(exit 0)' "$S/dry-gpu.lock.log")" = 0 ] \
+    && [ ! -f "$S/RESULT_COMPLETE.json" ] && ! grep -q QUEUE-PARITY-DONE "$S.out" && ok=1
+record J_publication_failure 8 "$rc" "$ok" "$(grep 'publication failed' "$S/queue.log" | tail -1 | cut -d' ' -f2-)"
+
 # H. Overrides are refused outside DRY_RUN; a dry run may not take the shared lock.
 DRY_RUN=0 OUT=$BASE/H_override bash "$Q" > "$BASE/H_override.out" 2>&1
 rc=$?
