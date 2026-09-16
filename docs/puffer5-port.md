@@ -218,7 +218,7 @@ policy's slice:
 | 1 bank x 0.10 | 0 failures |
 
 **Build.** `nvcc` 12.4, `-arch=sm_75`, `--float`, 4 threads: the trainer builds
-and links, and the `--cpu` binary builds. Neither has run on the GPU yet.
+and links, and the `--cpu` binary builds. The trainer runs on the GPU once every CUDA library comes from the venv; see the GPU benchmark below.
 
 ## GPU benchmark (rig RTX 2070, 2026-09-15)
 
