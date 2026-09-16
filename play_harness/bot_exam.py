@@ -227,6 +227,23 @@ def agreement(bench_mean, bench_se, bench_n, exam_mean, exam_n):
             "within_noise": abs(diff) <= 1.96 * se}
 
 
+# ---- resume ------------------------------------------------------------------------
+# A resume reuses cached games, so every setting that changes a game must match.
+# library_sha256 is the compiled engine and bots: the bot source hashes do not cover
+# bloodbowl.h, the engine helpers or the compiler flags.
+RESUME_KEYS = ("checkpoint", "bot", "bot_side", "exam_seed", "envs", "eval_episodes",
+               "horizon", "episode_offset", "mode", "kernel", "max_decisions",
+               "library_sha256")
+
+
+def resume_conflict(old, new):
+    """First manifest key on which a run directory's existing manifest differs, or None."""
+    for key in RESUME_KEYS:
+        if old.get(key) != new.get(key):
+            return key
+    return None
+
+
 # ---- games ------------------------------------------------------------------------
 _W = {}
 
@@ -322,10 +339,10 @@ def main(argv=None):
     if os.path.exists(manifest_path):
         with open(manifest_path) as f:
             old = json.load(f)
-        for key in ("checkpoint", "bot", "bot_side", "exam_seed", "envs", "eval_episodes",
-                    "horizon", "episode_offset", "mode", "kernel", "max_decisions"):
-            if old.get(key) != manifest[key]:
-                raise SystemExit(f"existing manifest differs on {key}; use a new --out-dir")
+        key = resume_conflict(old, manifest)
+        if key is not None:
+            raise SystemExit(f"existing manifest differs on {key} "
+                             f"({old.get(key)!r} vs {manifest[key]!r}); use a new --out-dir")
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=1)
 

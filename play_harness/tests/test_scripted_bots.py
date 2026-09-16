@@ -502,3 +502,63 @@ def test_bot_exam_cli_selects_resumes_and_refuses_changes(tmp_path, monkeypatch)
     assert json.load(open(out / "summary.json"))["games_played"] == 0      # resume replays nothing
     with pytest.raises(SystemExit):
         X.main([a if a != "42" else "43" for a in args])
+    # a library-only change: same settings, another compiled engine
+    manifest_text = (out / "manifest.json").read_text()
+    games_text = (out / "games.jsonl").read_text()
+    monkeypatch.setattr(T, "library_sha256", lambda path=None: "0" * 64)
+    with pytest.raises(SystemExit, match="library_sha256"):
+        X.main(args)
+    assert (out / "manifest.json").read_text() == manifest_text      # hash not overwritten
+    assert (out / "games.jsonl").read_text() == games_text           # no games reused or added
+
+
+def test_bot_exam_resume_refuses_a_library_only_change():
+    base = {k: f"value-of-{k}" for k in X.RESUME_KEYS}
+    assert "library_sha256" in X.RESUME_KEYS
+    assert X.resume_conflict(base, dict(base)) is None
+    assert X.resume_conflict(base, {**base, "library_sha256": "other"}) == "library_sha256"
+    missing = {k: v for k, v in base.items() if k != "library_sha256"}
+    assert X.resume_conflict(missing, base) == "library_sha256"
+    assert X.resume_conflict(base, {**base, "workers": 3, "harness_git_head": "x"}) is None
+
+
+def test_cli_bot_run_refuses_a_different_compiled_engine(tmp_path, monkeypatch):
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    monkeypatch.setattr(T, "discover_checkpoints", lambda *a, **k: {})
+    out = tmp_path / "bots"
+    args = ["--bot", "con=contact", "--bot", "off=offense", "--games-per-pair", "2",
+            "--workers", "1", "--seed0", "818", "--out-dir", str(out)]
+    assert T.main(args) == 0
+    manifest_text = (out / "manifest.json").read_text()
+    games_text = (out / "games.jsonl").read_text()
+    real = T.library_sha256
+    monkeypatch.setattr(T, "library_sha256", lambda path=None: "0" * 64)
+    with pytest.raises(SystemExit, match="bot_library_sha256"):
+        T.main(args)
+    assert (out / "manifest.json").read_text() == manifest_text      # hash not overwritten
+    assert (out / "games.jsonl").read_text() == games_text
+    monkeypatch.setattr(T, "library_sha256", real)
+    assert T.main(args) == 0                                         # the same build resumes
+
+
+@pytest.mark.skipif(not os.path.exists(CHAIN25), reason="chain 25 checkpoint not present")
+@pytest.mark.parametrize("dropped", [
+    ("bots", "bot_library_sha256"),                          # c32 shape: specs, no bot keys
+    ("players", "pairs", "bots", "bot_library_sha256"),      # rr6 shape: no specs either
+])
+def test_cli_checkpoint_only_legacy_manifest_still_resumes(tmp_path, monkeypatch, dropped):
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    out = tmp_path / "run"
+    args = ["--checkpoint", f"c25a={CHAIN25}", "--checkpoint", f"c25b={CHAIN25}",
+            "--games-per-pair", "2", "--workers", "1", "--seed0", "4646", "--max-tasks", "0",
+            "--out-dir", str(out)]
+    assert T.main(args) == 0
+    manifest = json.load(open(out / "manifest.json"))
+    assert manifest["bots"] == {} and manifest["bot_library_sha256"] is None
+    legacy = {k: v for k, v in manifest.items() if k not in dropped}
+    json.dump(legacy, open(out / "manifest.json", "w"))
+    assert T.main(args) == 0
+    # checkpoint-only runs do not pin the bot library, so a rebuilt shim still resumes
+    json.dump(legacy, open(out / "manifest.json", "w"))
+    monkeypatch.setattr(T, "library_sha256", lambda path=None: "0" * 64)
+    assert T.main(args) == 0

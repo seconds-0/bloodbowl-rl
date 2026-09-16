@@ -343,6 +343,7 @@ def legacy_manifest_specs(old):
     if "pairs" not in old:
         old["pairs"] = [[a, b, old.get("games_per_pair")] for a, b in itertools.combinations(names, 2)]
     old.setdefault("bots", {})
+    old.setdefault("bot_library_sha256", None)
     return old
 
 
@@ -527,10 +528,14 @@ def main(argv=None):
     if os.path.exists(manifest_path):
         with open(manifest_path) as f:
             old = legacy_manifest_specs(json.load(f))
-        for key in ("checkpoints", "bots", "games_per_pair", "seed0", "mode", "players",
-                    "pairs", "kernel"):
+        # bot_library_sha256 is the compiled shim a bot seat runs; the bot sources do not
+        # cover bloodbowl.h, the engine helpers or the compiler flags, so a resume on a
+        # different build would mix opponents. Checkpoint-only runs record None.
+        for key in ("checkpoints", "bots", "bot_library_sha256", "games_per_pair", "seed0",
+                    "mode", "players", "pairs", "kernel"):
             if old.get(key) != manifest[key]:
-                raise SystemExit(f"existing manifest differs on {key}; use a new --out-dir")
+                raise SystemExit(f"existing manifest differs on {key} "
+                                 f"({old.get(key)!r} vs {manifest[key]!r}); use a new --out-dir")
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=1)
 
