@@ -1386,3 +1386,54 @@ Every gamma 0.999 chain beats both 0.995 chains, taking 64.6-82.5% of decisive g
 - The floor rests on three replicate pairs, only one at gamma 0.999. Chain 32 (chain 30 at seed 44) will measure chain 30's own recipe seed spread and decide replay ratio 1.0.
 - Torch-vs-native parity is unverified.
 - There are still no held-out opponents.
+
+**D401 - CHAIN 32 REPLICATES CHAIN 30 AT TRAINING SEED 44: REPLAY RATIO 1.0 BEATS CHAIN 25 BY +95 DECISIVE-ELO HEAD TO HEAD AND LIFTS BOTH CONTACT CELLS OVER ITS SEED-44 COMPARATOR, SO REPLAY RATIO 1.0 BECOMES THE RECIPE; CHAIN 33 TESTS REPLAY RATIO 2.0 (2026-09-15 18:30 PDT).** Chain 32 (`runs/ladder-d0-r0chain32-rr1-s44-20260915`, unit `r0chain32-rr1-s44`) is chain 30's recipe at training seed 44: warm chain 9 marker, pool identity d67d527b, `r0_poss_half`, gamma 0.999 / lambda 0.95, replay ratio 1.0. It finished its 3B at about 17:41 PDT, and the GPU lock released with exit 0. It ran 85-90K SPS with the Train phase at 606-615 ms and VRAM 6.4/8 GB, with zero error episodes and zero illegal fraction on every polled panel. Checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789485255604/0000002999975936.bin` (sha 342f0469). All six exam cells exited rc=0 with 2002-2056 games each.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.574 / 0.450 | 0.539 / 0.460 | 0.564 / 0.360 |
+| 43 | 0.605 / 0.454 | 0.562 / 0.445 | 0.578 / 0.373 |
+| Two-exam-seed mean | **0.5895 / 0.452** | **0.5505 / 0.4525** | **0.571 / 0.3665** |
+
+**Exam scoring.**
+- **Against chain 26** (chain 25's recipe at the same training seed 44, replay ratio 0.25: 0.5515, 0.4975, 0.5655), champion deltas are **+0.038, +0.053 and +0.0055**.
+  - contact AWAY: +0.035 and +0.041 per exam seed
+  - contact HOME: +0.050 and +0.056
+  - offense AWAY: -0.003 and +0.014
+
+  This is D396's positive reading at seed 44. At seed 42, chain 30 read flat against chain 25 (D397), so the exam gives different readings of the replay-ratio effect at the two training seeds.
+- **Against chain 30** (0.5705, 0.5305, 0.586), champion deltas are +0.019, +0.020 and -0.015. Offense AWAY is -0.017 and -0.013 per exam seed, inside the D399 veto line, so the veto does not fire.
+- **Conceded rises** against both comparators. The bots score 0.452, 0.4525 and 0.3665 against chain 32, compared with 0.419, 0.4015 and 0.324 against chain 26 and 0.3895, 0.384 and 0.342 against chain 30. D277 does not score conceded, but chain 32 trades more touchdowns both ways.
+
+**Head-to-head tournament.** Play harness `feat/play-harness-20260913` at 2f99400, D400 conditions: sampling policies, every-step recurrence, random rosters that stay with the side, and sides swapped per seed. It played 6,400 games, 3,200 per pair on seed block 20300000, in 26.8 min on 4 Mac CPU workers. All 6,400 games ended naturally with every integrity counter zero and one forward per engine decision per seat.
+
+| Pair | W / D / L | Decisive share [95% seed-cluster] | Decisive Elo [95%] | Score rate [95%] | Draw-inclusive Elo [95%] |
+|---|---|---|---|---|---|
+| chain 32 vs chain 25 | 1314 / 1127 / 759 | 0.634 [0.615, 0.654] | **+95.3** [+81.6, +110.5] | 0.587 [0.575, 0.600] | +60.9 [+52.5, +70.2] |
+| chain 32 vs chain 30 | 1099 / 1095 / 1006 | 0.522 [0.501, 0.540] | **+15.4** [+1.0, +28.2] | 0.515 [0.501, 0.527] | +10.1 [+0.7, +18.7] |
+
+- **Leg correlation.** Chain 32's score has a centred leg correlation of -0.217, in line with D400's -0.207.
+- **Chain 32 does not beat chain 30 by sampling more greedily.** In their games chain 32's mean log-probability per decision is -0.1770 against chain 30's -0.1484, so chain 32 is the less sharp policy. That rules out average sharpness, not every sampling-shape or state-distribution effect, and D400's argmax and temperature controls covered chain 30 vs chain 25, not chain 32.
+- **Roster classes.** Chain 32's edge over chain 25 is positive on every class and larger on agile rosters. The class-specific gap model gives agile +203 [+147, +271], bash +80 [+50, +114], hybrid +195 [+143, +258] and stunty +57 [+7, +112], so agile minus bash is +123 [+51, +201]. Against chain 30 the same contrast is +62 [-4, +124]. Unlike chain 30's result in D400, chain 32's gain over chain 25 depends on roster class in size, though not in sign.
+
+**Verdicts.**
+1. **Chain 30's head-to-head gain replicates at a second training seed.** Chain 32 beats chain 25 by +95.3, against chain 30's +106.3 (D400). Both replay-ratio-1.0 chains sit about +100 decisive-Elo above chain 25.
+2. **Replay ratio 1.0 becomes the ladder recipe,** as D399 ruling 2 required. On the exam the replicate is seed-matched: chain 32 beats chain 26 on both contact cells. Head to head it replicates against a common anchor: two independently trained replay-ratio-1.0 checkpoints both beat chain 25 by about +100. The seed-matched tournament contrast (chain 32 vs chain 26) was not played; it joins chain 33's panel, and it must not be derived by adding pairwise gaps, because D400 showed this family is not transitive. Replay ratio 1.0 costs about 30% SPS, or 1.43x wall time per rung.
+3. **A fourth replicate pair joins the floor,** the first at replay ratio 1.0: chain 32 vs chain 30 is +15.4 [+1.0, +28.2]. The floor now reads +14.2, +39.9, -15.7 and +15.4.
+4. **Chain 30 stays the warm start.** Chain 32 leads it by less than the floor, and its offense AWAY is 0.015 lower.
+
+**Next, pre-registered before its exam and tournament: chain 33, the replay-ratio dose-response** (`runs/ladder-d0-r0chain33-rr2-20260915`, unit `r0chain33-rr2`). It is chain 30's exact recipe (warm chain 9 marker, seed 42, 3B, pool identity d67d527b, `r0_poss_half`, gamma 0.999 / lambda 0.95) with `LADDER_REPLAY_RATIO=2.0`: 16 Muon steps per 131K-step epoch instead of 8. The paired comparator is chain 30.
+- **Gate part 1, exam veto:** offense AWAY down more than 0.02 against chain 30 on the mean and on both exam seeds.
+- **Gate part 2, tournament:** chain 33 against chain 30, chain 32 and chain 25, with 3,200 games per pair on seed block 20400000 under D400 conditions. The same run adds chain 32 vs chain 26 (3,200 games), which completes D401's seed-matched contrast. The offense bot joins the panel as a held-out anchor if its harness seat first reproduces the exam cells.
+The readings are applied in this order, and the first that matches is the result:
+1. **Negative:** the veto fires, or chain 33's 95% interval against chain 30 lies entirely below zero.
+2. **Positive:** chain 33 beats chain 30 by more than +40 decisive-Elo with its 95% interval above zero, and beats chain 32 with its interval above zero. A seed replicate follows before any recipe change.
+3. **Flat:** chain 33's decisive-Elo against chain 30 lies within +/-40.
+4. **Inconclusive:** anything else, for example more than +40 over chain 30 without a clear win over chain 32.
+
+Neither a flat nor an inconclusive reading changes the recipe; replay ratio 1.0 stays, because 2.0 costs more wall time. The +40 cutoff is a screening threshold for funding a replicate, taken from the largest replicate-pair gap (+39.9 [+26.1, +53.6]). It is not a statistical bound on training-seed variation. At 3,200 games per pair the minimum detectable effect against zero is about 19 Elo (SE about 6.8), but a true gap of exactly +40 clears a point-estimate cutoff of +40 only about half the time, and about +46 is needed for 80%.
+
+Caveats named in advance:
+- The learner phase roughly doubles again (about 606 ms to about 1.2 s per epoch), so expect about 60K SPS and about 14 h for 3B.
+- More gradient steps on the same rollouts raise policy drift per epoch. KL and clipfrac are diagnostics, not kill signals.
+- This is one training seed.

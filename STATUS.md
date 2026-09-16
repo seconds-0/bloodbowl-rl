@@ -35,6 +35,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-15 10:55 (D400): chain 30's gain survives every control.** In a 21,600-game follow-up, chain 30's +106 decisive-Elo gap over chain 25 is about four standard deviations above the training-seed floor (replicate pairs move 14-40 Elo). It is unchanged with argmax play (+106) and against a sharpness-matched chain 25 (+109), and it is not roster-dependent. The warm start stands.
 
+**Update 2026-09-15 18:30 (D401): replay ratio 1.0 replicates and becomes the recipe.** Chain 32, chain 30's recipe at training seed 44, beats chain 25 by +95 decisive-Elo head to head (chain 30: +106). On the exam it lifts both contact cells over its seed-44 comparator, chain 26 (+0.038, +0.053), and the offense veto does not fire. Chain 32 vs chain 30 is +15.4, a fourth replicate pair inside the floor. Chain 30 stays the warm start. Chain 33 tests replay ratio 2.0 against chain 30 under the two-part gate.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
