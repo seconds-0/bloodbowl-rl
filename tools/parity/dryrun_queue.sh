@@ -35,23 +35,29 @@ seed_scenario() {   # reuse A's shim build and verified checkpoint copy
     [ -f "$PRE/c30.bin" ] && cp "$PRE/c30.bin" "$1/"
 }
 
-# B. Gate opens only after the marker appears AND a consumer exits; the queue
-#    waits for a lock holder, records, and releases.
-S=$BASE/B_gate_lock_success; mkdir -p "$S"; seed_scenario "$S"
+# B. Chain 34's real ordering: the exam waiter is active, then writes the marker
+#    and exits, while an exam process lingers. The gate opens only after the
+#    marker AND no consumer; the queue then waits for a lock holder, records,
+#    and releases.
+S=$BASE/B_gate_lock_success; mkdir -p "$S/units"; seed_scenario "$S"
 : > "$S/examlog"
-bash -c 'exec -a parity-dry-consumer sleep 6' &
+echo inactive > "$S/units/parity-dry-train.service"
+echo active > "$S/units/parity-dry-waiter.service"
+bash -c 'exec -a parity-dry-consumer sleep 7' &
 CONS=$!
-( sleep 3; echo EXAMS_DONE_C34_BOTH_SEEDS >> "$S/examlog" ) &
-( exec 8>>"$S/dry-gpu.lock"; flock 8; echo "$(date -u +%FT%TZ) holder acquired" >> "$S/dry-gpu.lock.log"; sleep 10; echo "$(date -u +%FT%TZ) holder released" >> "$S/dry-gpu.lock.log" ) &
+( sleep 3; echo EXAMS_DONE_C34_BOTH_SEEDS >> "$S/examlog"; echo inactive > "$S/units/parity-dry-waiter.service" ) &
+( exec 8>>"$S/dry-gpu.lock"; flock 8; echo "$(date -u +%FT%TZ) holder acquired" >> "$S/dry-gpu.lock.log"; sleep 11; echo "$(date -u +%FT%TZ) holder released" >> "$S/dry-gpu.lock.log" ) &
 HOLD=$!
 sleep 1
-DRY_RUN=1 OUT=$S EXAM_LOG=$S/examlog TRAIN_UNIT=parity-dry-absent-a.service \
-    WAIT_UNIT=parity-dry-absent-b.service CONSUMER_PATTERN='[p]arity-dry-consumer' PGREP_X= \
+DRY_RUN=1 OUT=$S EXAM_LOG=$S/examlog UNIT_STATE_DIR=$S/units TRAIN_UNIT=parity-dry-train.service \
+    WAIT_UNIT=parity-dry-waiter.service CONSUMER_PATTERN='[p]arity-dry-consumer' PGREP_X= \
     POLL_SEC=1 GATE_POLLS=60 bash "$Q" > "$S.out" 2>&1
 rc=$?
 wait "$CONS" "$HOLD" 2>/dev/null
 ok=0
-if grep -q "marker=1 consumers=\[[0-9]" "$S/queue.log" && [ -f "$S/RESULT_COMPLETE.json" ] \
+if grep -q "waiter=active marker=0" "$S/queue.log" \
+    && grep -q "waiter=inactive marker=1 consumers=\[[0-9]" "$S/queue.log" \
+    && [ -f "$S/RESULT_COMPLETE.json" ] \
     && [ "$(lock_lines 'acquired(lock=' "$S/dry-gpu.lock.log")" = 1 ] \
     && [ "$(lock_lines 'released(exit 0)' "$S/dry-gpu.lock.log")" = 1 ] \
     && awk '/holder released/{h=NR} /acquired\(lock=/{a=NR} END{exit !(h && a && a > h)}' "$S/dry-gpu.lock.log"; then
