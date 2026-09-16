@@ -1493,3 +1493,38 @@ Caveats named in advance:
 - A continuation changes three things at once: the warm checkpoint, the cumulative training budget (6B from the chain 9 marker), and the active opponent set (chain 9 becomes a learned opponent). The experiment tests continuation with this declared pool rotation, and a second seed would replicate the combined procedure, not isolate any one factor.
 - The offense-bot tournament games are within-harness held-out comparisons. Against chain 30 the bot scores 0.309 touchdowns per game on the harness vs 0.342 on the rig (difference -0.033 [-0.056, -0.009], `docs/play-harness/scripted-anchors-2026-09-15.md`). That offset is not shown to be constant across policies, so cross-backend equivalence is unresolved. The rig exam stays the registered veto, and the offense-bot tournament pairs are diagnostic.
 - This is one training seed.
+
+**D403 - CHAIN 33'S GATE TOURNAMENT: REPLAY RATIO 2.0 HAS A SMALL HEAD-TO-HEAD EDGE BELOW THE REPLICATE THRESHOLD AND SCORES LESS AGAINST THE HELD-OUT OFFENSE BOT, SO D402 STANDS; CHAIN 32 OVER CHAIN 26 (+120) COMPLETES THE SEED-MATCHED REPLAY-RATIO CONTRAST (2026-09-16 10:40 PDT).** This is the addendum D402 promised. Play harness `feat/play-harness-20260913` at 4137658, D400 conditions: sampling policies, every-step recurrence, random rosters that stay with the side, sides swapped per seed. The run used seed block 20400000 and played 19,200 games, 3,200 per pair, in 66.9 min on 4 Mac CPU workers. All 19,200 games ended naturally with every integrity counter zero. The offense bot plays through the engine's own C pick function (`--bot offense=offense`, scripted-anchor branch merged 2026-09-15).
+
+| Pair | W / D / L | Decisive share [95% seed-cluster] | Decisive Elo [95%] | Score rate [95%] | Draw-inclusive Elo [95%] |
+|---|---|---|---|---|---|
+| chain 33 vs chain 30 | 1114 / 1105 / 981 | 0.532 [0.513, 0.550] | **+22.1** [+8.7, +35.1] | 0.521 [0.508, 0.533] | +14.4 [+5.6, +23.1] |
+| chain 33 vs chain 32 | 1104 / 1108 / 988 | 0.528 [0.509, 0.547] | **+19.3** [+6.1, +33.1] | 0.518 [0.506, 0.531] | +12.6 [+4.0, +21.4] |
+| chain 33 vs chain 25 | 1528 / 1068 / 604 | 0.717 [0.699, 0.734] | +161.2 [+146.6, +176.4] | 0.644 [0.632, 0.656] | +103.3 [+94.2, +112.3] |
+| chain 32 vs chain 26 | 1376 / 1133 / 691 | 0.666 [0.647, 0.685] | **+119.7** [+105.3, +134.9] | 0.607 [0.595, 0.620] | +75.5 [+66.6, +84.7] |
+| chain 30 vs offense bot | 872 / 1788 / 540 | 0.618 [0.593, 0.644] | +83.2 [+65.2, +102.8] | 0.552 [0.541, 0.563] | +36.2 [+28.5, +44.3] |
+| chain 33 vs offense bot | 732 / 1978 / 490 | 0.599 [0.572, 0.625] | +69.7 [+50.1, +89.0] | 0.538 [0.527, 0.548] | +26.3 [+18.8, +33.4] |
+
+- **Touchdowns against the offense bot** (champion / bot per game): chain 30 0.369 / 0.269, chain 33 0.308 / 0.231. Draws are 1788 of 3200 for chain 30 and 1978 of 3200 for chain 33. These are harness games on random rosters with sides swapped, not exam conditions, so they do not compare numerically with the rig exam cells.
+- **Sharpness.** Mean log-probability per decision: chain 30 -0.1416, chain 32 -0.1721, chain 25 -0.1781, chain 26 -0.2020, chain 33 -0.2037. Chain 33 is the least sharp player in the field, in line with D402's higher final training entropy.
+- **Fit and correlation.** The Bradley-Terry misfit test gives p = 0.025 (seed-cluster Wald p = 0.014), so the field is again not one-dimensional. The centred leg correlation is -0.127.
+
+**Readings.**
+1. **D402's reading stands.** The veto fired, so under D401's ordering the reading was already negative. Even without the veto, +22.1 over chain 30 lies within +/-40, which is the flat reading, so no route through the registered rules promotes chain 33.
+2. **Replay ratio 2.0 has a small measured head-to-head edge, below the registered threshold.** Chain 33's +22.1 [+8.7, +35.1] over chain 30 and +19.3 [+6.1, +33.1] over chain 32 both exclude zero under the match-seed bootstrap. They fall below D401's +40 screening threshold for funding a replicate, and they are comparable in size to the replicate-pair gaps (+14.2, +39.9, -15.7, +15.4; D400, D401). That threshold is not a statistical bound on training-seed variation, so these results neither establish equivalence nor erase the measured edge.
+   **Against the held-out offense bot**, both pairs played the same 1,600 engine seeds (20400000-20401599) with matching rosters and sampling seeds, so a paired contrast is computable. Codex computed it by resampling engine seeds jointly, keeping both legs, with 2,000 replicates:
+
+   | Chain 33 minus chain 30, against the offense bot | Difference | Paired seed-bootstrap 95% |
+   |---|---|---|
+   | Draw-inclusive score rate | -0.014 | [-0.028, -0.0005] |
+   | Champion touchdowns per game | -0.061 | [-0.083, -0.039] |
+   | Bot touchdowns per game | -0.038 | [-0.061, -0.014] |
+   | Decisive win share | -0.019 | [-0.054, +0.015] |
+   | Decisive-Elo contrast | -13.5 | [-39.1, +10.8] |
+
+   With 100,000 replicates the score interval is [-0.028, -0.0003], and a normal approximation gives p about 0.044. The supported reading: a small, nominally significant draw-inclusive score reduction, clearly fewer touchdowns by both sides, and an inconclusive decisive-share difference. This agrees in direction with the exam veto. Effect sizes across the exam and the harness are measured under different conditions and are not compared. It is diagnostic evidence from one training seed and one scripted opponent.
+3. **Replay ratio 1.0 now has seed-matched head-to-head evidence at both training seeds.** At seed 42, chain 30 over chain 25 is +106.3 (D400). At seed 44, chain 32 over chain 26 is +119.7 [+105.3, +134.9]. This completes the contrast D401 said was missing, and verdict 2 of D401 no longer rests on a common-anchor argument.
+4. **The offense bot works as an anchor.** Both top-tier checkpoints beat it by +70 to +83 decisive-Elo with most games drawn, so it sits below the top tier but is not saturated. Within-harness comparisons against it are valid; cross-backend equivalence with the rig exam is still unresolved (D402 caveat, native parity job queued).
+5. **The exam and the tournament measure different things for chain 33.** The exam punishes chain 33's lower-scoring, higher-draw play, while head to head it holds a small edge over chain 30 that is below the replicate threshold. This is recorded, not acted on, and no gate rule changes here.
+
+**Rulings.** None change. Chain 30 stays the warm start, replay ratio 1.0 stays the recipe, and chain 34's registered gate is unchanged.
