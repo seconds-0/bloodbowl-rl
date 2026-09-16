@@ -63,9 +63,14 @@ BOT_SOURCES = ("puffer/bloodbowl/contact_bot.h", "puffer/bloodbowl/offense_bot.h
 SCRIPTED_MODE = "scripted"
 
 
-def sampling_seed(engine_seed, side):
-    """Per-side torch sampling seed; identical for both legs of a game."""
-    return (int(engine_seed) * 1_000_003 + 17 + int(side)) % (1 << 62)
+def sampling_seed(engine_seed, side, episode=0):
+    """Per-side torch sampling seed; identical for both legs of a game.
+
+    episode keys later matches on one engine seed (the exam's consecutive games
+    per env row); episode 0 gives the historical tournament seeds.
+    """
+    return (int(engine_seed) * 1_000_003 + 17 + int(side)
+            + int(episode) * 2_654_435_761) % (1 << 62)
 
 
 class ScriptedBot:
@@ -142,19 +147,27 @@ def library_sha256(path=None):
 
 def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
                max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
-               max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0)):
+               max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0),
+               step_limit=None, allow_decision_cap=False):
     """One natural match between two players. Returns (record, seats).
 
     A player is a policy (seated through seat_factory) or a ScriptedBot (seated
     as a BotSeat). modes / temperatures are (HOME, AWAY); modes defaults to
     `mode` for both, and bot seats ignore both. Raises IntegrityError on any
     violation of the tournament contract.
+
+    Bench-only options, never used by the tournament CLI:
+      step_limit          stop after this many c_steps without a terminal and
+                          return (None, seats): the match is still in progress;
+      allow_decision_cap  accept a match the env ended at max_decisions (the
+                          native env counts it as a finished game) and mark the
+                          record truncated instead of aborting.
     """
     modes = tuple(modes) if modes is not None else (mode, mode)
     temperatures = tuple(float(t) for t in temperatures)
 
     def seat_for(policy, side):
-        seed = sampling_seed(engine_seed, side)
+        seed = sampling_seed(engine_seed, side, episode)
         if isinstance(policy, ScriptedBot):
             return BotSeat(policy, side, seed=seed)
         return seat_factory(policy, side, mode=modes[side], seed=seed,
@@ -206,6 +219,8 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
                 break
             if rc < 0:
                 raise IntegrityError(f"engine refused seat {team} tuple {tup}: rc={rc}")
+            if step_limit is not None and c_steps >= step_limit:
+                return None, seats
             if c_steps >= max_c_steps:
                 raise IntegrityError(f"no terminal after {c_steps} steps")
         final = eng.final_match()
@@ -213,14 +228,15 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
         if final is None:
             raise IntegrityError("terminal step without a final match snapshot")
         natural = final.status == E.STATUS_MATCH_OVER
+        truncated = counters["decisions_at_terminal"] >= max_decisions
         integrity = {k: counters[k] for k in HARD_COUNTERS}
-        if not natural:
+        if not natural and not (allow_decision_cap and truncated):
             raise IntegrityError(f"match ended unnaturally: status={final.status}")
         if any(integrity.values()):
             raise IntegrityError(f"nonzero integrity counters: {integrity}")
         if counters["steps"] != c_steps:
             raise IntegrityError(f"engine applied {counters['steps']} steps, runner {c_steps}")
-        if counters["decisions_at_terminal"] >= max_decisions:
+        if truncated and not allow_decision_cap:
             raise IntegrityError("decision budget reached at the terminal step")
         modes = tuple(s.mode for s in seats)
         temperatures = tuple(s.temperature for s in seats)
@@ -233,7 +249,8 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
             "team_ids": [int(final.team_id[0]), int(final.team_id[1])],
             "teams": [eng.team_display(final.team_id[0]), eng.team_display(final.team_id[1])],
             "score": [int(final.score[0]), int(final.score[1])],
-            "natural": bool(natural), "final_status": int(final.status),
+            "natural": bool(natural), "truncated": bool(truncated),
+            "final_status": int(final.status),
             "half": int(final.half), "turns": [int(final.turn[0]), int(final.turn[1])],
             "c_steps": c_steps, "forwards": [seats[0].forwards, seats[1].forwards],
             "decisions": [seats[0].decisions, seats[1].decisions],

@@ -1,12 +1,16 @@
-"""Engine scripted bots: the shim's scripted step and bots as tournament players."""
+"""Engine scripted bots: the shim's scripted step, bots as tournament players, and
+the bot exam bench's selection and statistics."""
 import hashlib
 import json
+import math
 import os
 import random
+import statistics
 
 import pytest
 import torch
 
+from play_harness import bot_exam as X
 from play_harness import engine as E
 from play_harness import tournament as T
 from play_harness import tournament_stats as S
@@ -176,7 +180,7 @@ def test_policy_vs_bot_match_contract(policy, monkeypatch, kind, bot_side):
     assert len(made) == 1 and isinstance(seats[bot_side], T.BotSeat)
     ps = made[0]
     assert ps.seat == 1 - bot_side and seats[1 - bot_side] is ps
-    assert rec["natural"] and not any(rec["integrity"].values())
+    assert rec["natural"] and not rec["truncated"] and not any(rec["integrity"].values())
     assert rec["forwards"] == [rec["c_steps"]] * 2 and T.check_record(rec) == []
     assert len(ps.log) == rec["c_steps"]                        # policy stepped on every c_step
     waiting = [e for e in ps.log if not e["deciding"]]
@@ -218,6 +222,31 @@ def test_pair_game_swaps_the_bot_between_legs(policy):
     assert (b["home"], b["away"], b["bots"]) == ("off", "P", ["offense", None])
     assert (a["a_td"], a["b_td"]) == tuple(a["score"])
     assert (b["a_td"], b["b_td"]) == tuple(reversed(b["score"]))
+
+
+def test_sampling_seed_is_historical_at_episode_zero():
+    for seed, side in ((0, 0), (20260915, 1), (4242, 0)):
+        assert T.sampling_seed(seed, side) == (seed * 1_000_003 + 17 + side) % (1 << 62)
+        assert T.sampling_seed(seed, side, 0) == T.sampling_seed(seed, side)
+    assert len({T.sampling_seed(42, 1, k) for k in range(8)}) == 8
+
+
+def test_step_limit_returns_in_progress_and_is_prefix_consistent(policy):
+    full, _ = T.play_match(policy, T.ScriptedBot("offense"), 55)
+    n = full["c_steps"]
+    assert T.play_match(policy, T.ScriptedBot("offense"), 55, step_limit=n - 1)[0] is None
+    assert T.play_match(policy, T.ScriptedBot("offense"), 55, step_limit=5)[0] is None
+    capped, _ = T.play_match(policy, T.ScriptedBot("offense"), 55, step_limit=n)
+    assert _essential(capped) == _essential(full)
+
+
+def test_decision_cap_is_refused_unless_allowed(lib):
+    with pytest.raises(T.IntegrityError):
+        T.play_match(T.ScriptedBot("contact"), T.ScriptedBot("contact"), 12, lib=lib,
+                     max_decisions=60)
+    rec, _ = T.play_match(T.ScriptedBot("contact"), T.ScriptedBot("contact"), 12, lib=lib,
+                          max_decisions=60, allow_decision_cap=True)
+    assert rec["truncated"] and not rec["natural"] and rec["engine_decisions"] == 60
 
 
 def test_player_specs_with_bots():
@@ -306,3 +335,154 @@ def test_cli_checkpoint_against_bot(tmp_path, monkeypatch):
                 ["--player-mode", "off=argmax"], ["--bot", "x=cage"]):
         with pytest.raises(SystemExit):
             T.main(args + bad)
+
+
+# ---- bot exam selection ---------------------------------------------------------------
+def test_stop_step_is_the_first_epoch_reaching_the_count():
+    ends = [5, 70, 64, 130]
+    assert X.stop_step(ends, 1, 64) == 64
+    assert X.stop_step(ends, 2, 64) == 64
+    assert X.stop_step(ends, 3, 64) == 128
+    assert X.stop_step(ends, 4, 64) == 192
+    assert X.stop_step(ends, 5, 64) is None
+    with pytest.raises(ValueError):
+        X.stop_step(ends, 0, 64)
+
+
+def _length_fn(salt, lo, hi, multiple=1):
+    def f(i, k):
+        h = int(hashlib.sha256(f"{salt}|{i}|{k}".encode()).hexdigest(), 16)
+        return (lo + h % (hi - lo + 1)) * multiple
+    return f
+
+
+@pytest.mark.parametrize("n_envs,eval_episodes,horizon,lo,hi,multiple", [
+    (7, 11, 8, 3, 40, 1),
+    (16, 30, 64, 20, 200, 1),
+    (32, 40, 64, 1, 4, 64),            # every game ends exactly on an epoch boundary
+    (5, 3, 64, 400, 900, 1),           # the stop comes before any env finishes twice
+    (9, 50, 16, 5, 30, 1),             # several games per env
+])
+@pytest.mark.parametrize("salt", ["a", "b"])
+def test_selection_matches_a_brute_force_lockstep_simulation(n_envs, eval_episodes, horizon,
+                                                             lo, hi, multiple, salt):
+    f = _length_fn(salt, lo, hi, multiple)
+    ref_stop, ref_counted = X.lockstep_reference(f, n_envs, eval_episodes, horizon)
+    requested = {}
+
+    def play(requests):
+        out = []
+        for i, k, limit in requests:
+            assert all((i, j) in requested and requested[(i, j)] is not None for j in range(k))
+            length = f(i, k)
+            done = limit is None or length <= limit
+            requested[(i, k)] = length if done else None
+            out.append(length if done else None)
+        return out
+
+    sel = X.select_exam_games(play, n_envs, eval_episodes, horizon)
+    assert sel["stop_step"] == ref_stop
+    assert sel["counted"] == ref_counted
+    assert len(ref_counted) >= eval_episodes
+    for i, k, start, end in sel["games"]:
+        assert end - start == f(i, k)
+    # no env plays past a game still running at the stop step
+    for i in range(n_envs):
+        ks = sorted(k for (j, k) in requested if j == i)
+        assert ks == list(range(len(ks)))
+        assert all(requested[(i, k)] is not None for k in ks[:-1])
+
+
+def test_selection_refuses_a_player_that_breaks_its_contract():
+    with pytest.raises(RuntimeError):
+        X.select_exam_games(lambda reqs: [None] * len(reqs), 3, 2, 8)
+    with pytest.raises(RuntimeError):
+        X.select_exam_games(lambda reqs: [], 3, 2, 8)
+    with pytest.raises(RuntimeError):                  # a length beyond the limit it was given
+        X.select_exam_games(lambda reqs: [10 ** 6 if lim else 10 for _, _, lim in reqs], 3, 4, 8)
+
+
+def test_cluster_mean_matches_the_ratio_estimator():
+    rng = random.Random(4)
+    values = [rng.randint(0, 3) for _ in range(60)]
+    clusters = [rng.randint(0, 11) for _ in range(60)]
+    got = X.cluster_mean(values, clusters)
+    mean = sum(values) / len(values)
+    sums = {}
+    for v, c in zip(values, clusters):
+        sums.setdefault(c, []).append(v)
+    g = len(sums)
+    var = g / (g - 1) * sum((sum(v) - mean * len(v)) ** 2 for v in sums.values()) / len(values) ** 2
+    assert got["mean"] == pytest.approx(mean) and got["se"] == pytest.approx(math.sqrt(var))
+    assert got["clusters"] == g and got["n"] == 60
+    singles = X.cluster_mean(values, range(60))           # one game per env: the plain SE
+    assert singles["se"] == pytest.approx(statistics.stdev(values) / math.sqrt(60))
+    assert X.cluster_mean([1, 2], [0, 0])["se"] is None
+    assert X.cluster_mean([], [])["mean"] is None
+
+
+def test_cell_summary_counts_only_selected_games_from_the_champion_side():
+    recs = [{"env": 0, "counted": True, "score": [2, 1], "truncated": False},
+            {"env": 0, "counted": True, "score": [1, 1], "truncated": True},
+            {"env": 1, "counted": True, "score": [0, 3], "truncated": False},
+            {"env": 2, "counted": False, "score": [9, 0], "truncated": False}]
+    away_bot = X.cell_summary(recs, bot_side=1)
+    assert (away_bot["games"], away_bot["W"], away_bot["D"], away_bot["L"]) == (3, 1, 1, 1)
+    assert away_bot["champion_td_per_game"]["mean"] == pytest.approx(1.0)
+    assert away_bot["bot_td_per_game"]["mean"] == pytest.approx(5.0 / 3)
+    assert away_bot["champion_score"]["mean"] == pytest.approx(0.5)
+    assert away_bot["draw_rate"]["mean"] == pytest.approx(1.0 / 3)
+    assert away_bot["truncated_games"] == 1 and away_bot["envs_with_counted_games"] == 2
+    home_bot = X.cell_summary(recs, bot_side=0)
+    assert home_bot["champion_td_per_game"]["mean"] == pytest.approx(5.0 / 3)
+    assert (home_bot["W"], home_bot["L"]) == (1, 1)
+
+
+def test_agreement_scales_the_exam_se_by_game_count():
+    res = X.agreement(0.60, 0.02, 2000, 0.56, 2000)
+    assert res["se_diff"] == pytest.approx(0.02 * math.sqrt(2))
+    assert res["z"] == pytest.approx(0.04 / (0.02 * math.sqrt(2)))
+    assert res["within_noise"]
+    assert not X.agreement(0.66, 0.02, 2000, 0.56, 2000)["within_noise"]
+    assert X.agreement(0.5, 0.02, 4000, 0.5, 1000)["se_diff"] == pytest.approx(
+        math.sqrt(0.02 ** 2 + 0.04 ** 2))
+
+
+def test_play_exam_game_keys_env_and_episode(policy, lib):
+    bot = T.ScriptedBot("offense")
+    rec = X.play_exam_game(policy, bot, 1, exam_seed=42, env=3, k=1, limit=None,
+                           episode_offset=5, lib=lib)
+    assert (rec["env"], rec["k"], rec["engine_seed"], rec["episode"]) == (3, 1, 45, 6)
+    assert rec["bots"] == [None, "offense"] and rec["bot_side"] == 1
+    assert rec["sampling_seeds"] == [T.sampling_seed(45, 0, 6), T.sampling_seed(45, 1, 6)]
+    n = rec["c_steps"]
+    assert X.play_exam_game(policy, bot, 1, 42, 3, 1, n - 1, episode_offset=5, lib=lib) is None
+    again = X.play_exam_game(policy, bot, 1, 42, 3, 1, n, episode_offset=5, lib=lib)
+    assert _essential(again) == _essential(rec)
+    home = X.play_exam_game(policy, bot, 0, 42, 3, 1, None, episode_offset=5, lib=lib)
+    assert home["bots"] == ["offense", None] and home["team_ids"] == rec["team_ids"]
+
+
+@pytest.mark.skipif(not os.path.exists(CHAIN25), reason="chain 25 checkpoint not present")
+def test_bot_exam_cli_selects_resumes_and_refuses_changes(tmp_path, monkeypatch):
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    out = tmp_path / "exam"
+    args = ["--checkpoint", CHAIN25, "--bot", "offense", "--bot-side", "away",
+            "--exam-seed", "42", "--envs", "3", "--eval-episodes", "4", "--horizon", "64",
+            "--workers", "1", "--out-dir", str(out)]
+    assert X.main(args) == 0
+    summary = json.load(open(out / "summary.json"))
+    selected = [json.loads(line) for line in open(out / "selected.jsonl")]
+    counted = [s for s in selected if s["counted"]]
+    assert summary["games"] == len(counted) >= 4
+    assert summary["stop_step"] % 64 == 0
+    assert all(s["end_step"] <= summary["stop_step"] for s in counted)
+    assert all(s["end_step"] > summary["stop_step"] for s in selected if not s["counted"])
+    ends = sorted(s["end_step"] for s in selected)
+    assert summary["stop_step"] == X.stop_step(ends, 4, 64)
+    manifest = json.load(open(out / "manifest.json"))
+    assert manifest["bot"] == T.bot_identity("offense") and manifest["bot_side"] == "away"
+    assert X.main(args) == 0
+    assert json.load(open(out / "summary.json"))["games_played"] == 0      # resume replays nothing
+    with pytest.raises(SystemExit):
+        X.main([a if a != "42" else "43" for a in args])
