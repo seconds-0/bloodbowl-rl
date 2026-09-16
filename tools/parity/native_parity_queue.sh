@@ -61,7 +61,7 @@ if [ "$DRY_RUN" = 1 ]; then
     BACKEND=dry-run
 else
     for v in OUT LOCK EXAM_LOG TRAIN_UNIT WAIT_UNIT CONSUMER_PATTERN PGREP_X GATE_POLLS \
-             POLL_SEC LOCK_WAIT MAX_GPU_SEC DRY_STEPS RECORDER_EXTRA; do
+             POLL_SEC LOCK_WAIT MAX_GPU_SEC DRY_STEPS RECORDER_EXTRA UNIT_STATE_DIR; do
         if [ -n "${!v+x}" ]; then
             echo "QUEUE-ABORT $v may only be overridden with DRY_RUN=1" >&2
             exit 6
@@ -81,6 +81,7 @@ else
     BACKEND=native
 fi
 RECORDER_EXTRA=${RECORDER_EXTRA:-}
+UNIT_STATE_DIR=${UNIT_STATE_DIR:-}
 
 # Refuse any output path inside the live checkout, and a dry run on the real lock.
 live_real=$(realpath -m "$LIVE")
@@ -164,7 +165,14 @@ have_sha=$(sha256sum "$OUT/c30.bin" | cut -d' ' -f1)
 log "checkpoint copy verified $have_sha"
 
 # ------------------------------------------------------------- 1. wait gate
-unit_state() { systemctl --user is-active "$1" 2>/dev/null || true; }
+unit_state() {
+    # Dry runs may stand in a file for a unit's state (UNIT_STATE_DIR/<unit>).
+    if [ -n "$UNIT_STATE_DIR" ] && [ -f "$UNIT_STATE_DIR/$1" ]; then
+        cat "$UNIT_STATE_DIR/$1"
+        return
+    fi
+    systemctl --user is-active "$1" 2>/dev/null || true
+}
 gpu_consumers() {
     { pgrep -f "$CONSUMERS"
       [ -n "$PGREP_X" ] && pgrep -x "$PGREP_X"; } 2>/dev/null | sort -u | tr '\n' ' '
