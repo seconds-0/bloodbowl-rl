@@ -2,13 +2,16 @@
 headers, follow-up pairs, joined argmax flags, argmax tie-breaks, Secure the Ball odds."""
 import asyncio
 import json
+import os
 import random
 
 import numpy as np
+import pytest
 import torch
 from websockets.asyncio.client import connect
 
 from play_harness import engine as E
+from play_harness import game as G
 from play_harness.alternatives import conditional_argmax_row
 from play_harness.policy import select_joint
 
@@ -41,6 +44,11 @@ def _first_id(legal):
 
 
 def test_a_request_built_for_a_replaced_game_is_refused(tmp_path, best_policy):
+    # new_game resolves the default checkpoint; without it the server answers
+    # unknown_checkpoint and this test would only time out.
+    if not os.path.exists(G.DEFAULT_CHECKPOINT):
+        pytest.skip("chain 25 checkpoint not present")
+
     async def body(server):
         async with connect(f"ws://127.0.0.1:{server.port}/ws", max_size=None) as ws:
             await _until(ws, "hello")
@@ -73,6 +81,9 @@ def test_a_request_built_for_a_replaced_game_is_refused(tmp_path, best_policy):
 
 def test_publications_arrive_in_command_order(tmp_path, best_policy):
     """Commands sent back to back are dispatched and published one at a time."""
+    if not os.path.exists(G.DEFAULT_CHECKPOINT):
+        pytest.skip("chain 25 checkpoint not present")
+
     async def body(server):
         async with connect(f"ws://127.0.0.1:{server.port}/ws", max_size=None) as ws:
             await _until(ws, "hello")
