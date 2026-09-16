@@ -1,8 +1,8 @@
 """Regressions for the Phase B review: game identity, ordered publication, framing
 headers, follow-up pairs, joined argmax flags, argmax tie-breaks, Secure the Ball odds."""
 import asyncio
+import hashlib
 import json
-import os
 import random
 
 import numpy as np
@@ -11,7 +11,7 @@ import torch
 from websockets.asyncio.client import connect
 
 from play_harness import engine as E
-from play_harness import game as G
+from play_harness import policy as P
 from play_harness.alternatives import conditional_argmax_row
 from play_harness.policy import select_joint
 
@@ -43,19 +43,45 @@ def _first_id(legal):
     return legal["compact"]["SETUP_PLACE"][0][0]
 
 
-def test_a_request_built_for_a_replaced_game_is_refused(tmp_path, best_policy):
-    # new_game resolves the default checkpoint; without it the server answers
-    # unknown_checkpoint and this test would only time out.
-    if not os.path.exists(G.DEFAULT_CHECKPOINT):
-        pytest.skip("chain 25 checkpoint not present")
+@pytest.fixture
+def synthetic_catalog(tmp_path):
+    """A checkpoint catalog holding one lineage-valid synthetic blob.
+
+    new_game checks the requested checkpoint against the server's catalog before
+    it calls the policy loader, so these protocol tests need a catalog entry but
+    not real weights: the injected loader supplies the policy and the blob is
+    never loaded.
+    """
+    root = tmp_path / "catalog"
+    blob = root / "synthetic" / "0000000000000001.bin"
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"synthetic checkpoint for protocol tests; never loaded")
+    lineage = {"checkpoint": {"sha256": hashlib.sha256(blob.read_bytes()).hexdigest()},
+               "compatibility": {"observation_abi": P.OBS_ABI, "observation_version": 6,
+                                 "action_abi": P.ACTION_ABI, "policy_hidden_size": P.HIDDEN,
+                                 "policy_num_layers": P.LAYERS}}
+    (blob.parent / (blob.name + ".lineage.json")).write_text(json.dumps(lineage))
+    return {"checkpoint_dirs": [str(root)], "options": {**GAME_OPTIONS, "checkpoint": str(blob)}}
+
+
+def test_synthetic_catalog_passes_the_server_checkpoint_check(synthetic_catalog):
+    from play_harness import game as G
+    entries = G.list_checkpoints(synthetic_catalog["checkpoint_dirs"])
+    assert [e["ok"] for e in entries] == [True]
+    opts = G.normalize_options(synthetic_catalog["options"], checkpoints=entries)
+    assert opts["checkpoint"] == synthetic_catalog["options"]["checkpoint"]
+
+
+def test_a_request_built_for_a_replaced_game_is_refused(tmp_path, best_policy, synthetic_catalog):
+    options = synthetic_catalog["options"]
 
     async def body(server):
         async with connect(f"ws://127.0.0.1:{server.port}/ws", max_size=None) as ws:
             await _until(ws, "hello")
-            await ws.send(json.dumps({"v": 1, "t": "new_game", "options": GAME_OPTIONS, "rid": 1}))
+            await ws.send(json.dumps({"v": 1, "t": "new_game", "options": options, "rid": 1}))
             first, _ = await _until(ws, "state")
             gid_a = first["snapshot"]["header"]["game_id"]
-            await ws.send(json.dumps({"v": 1, "t": "new_game", "options": GAME_OPTIONS, "rid": 2}))
+            await ws.send(json.dumps({"v": 1, "t": "new_game", "options": options, "rid": 2}))
             second, _ = await _until(ws, "state")
             gid_b = second["snapshot"]["header"]["game_id"]
             assert gid_a != gid_b
@@ -76,18 +102,18 @@ def test_a_request_built_for_a_replaced_game_is_refused(tmp_path, best_policy):
                                       "action_id": _first_id(legal)}))
             ack, _ = await _until(ws, "ack")
             assert ack["state_version"] > legal["state_version"]
-    _run(_serve(tmp_path, best_policy, body))
+    _run(_serve(tmp_path, best_policy, body,
+                checkpoint_dirs=synthetic_catalog["checkpoint_dirs"]))
 
 
-def test_publications_arrive_in_command_order(tmp_path, best_policy):
+def test_publications_arrive_in_command_order(tmp_path, best_policy, synthetic_catalog):
     """Commands sent back to back are dispatched and published one at a time."""
-    if not os.path.exists(G.DEFAULT_CHECKPOINT):
-        pytest.skip("chain 25 checkpoint not present")
+    options = synthetic_catalog["options"]
 
     async def body(server):
         async with connect(f"ws://127.0.0.1:{server.port}/ws", max_size=None) as ws:
             await _until(ws, "hello")
-            await ws.send(json.dumps({"v": 1, "t": "new_game", "options": GAME_OPTIONS}))
+            await ws.send(json.dumps({"v": 1, "t": "new_game", "options": options}))
             state, _ = await _until(ws, "state")
             rng = random.Random(3)
             versions = [state["snapshot"]["state"]["state_version"]]
@@ -112,7 +138,8 @@ def test_publications_arrive_in_command_order(tmp_path, best_policy):
                 assert resync["snapshot"]["state"]["state_version"] == \
                     state["snapshot"]["state"]["state_version"]
             assert versions == sorted(versions) and len(versions) > 10
-    _run(_serve(tmp_path, best_policy, body))
+    _run(_serve(tmp_path, best_policy, body,
+                checkpoint_dirs=synthetic_catalog["checkpoint_dirs"]))
 
 
 def test_http_responses_forbid_framing_and_sniffing(tmp_path, best_policy):
