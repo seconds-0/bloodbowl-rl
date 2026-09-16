@@ -10,7 +10,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "4")
 
 import torch  # noqa: E402
 
-torch.set_num_threads(4)
+torch.set_num_threads(int(os.environ["OMP_NUM_THREADS"]))
 
 CHAIN25 = os.environ.get(
     "BBPLAY_CHECKPOINT",
