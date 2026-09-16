@@ -29,7 +29,14 @@ the native log does.
 What cannot be matched: the exam's eval games start after a 91-epoch training
 phase, so each env's episode index (and so its roster and dice draws) depends
 on training-phase game lengths; the bench uses episode_offset + k instead, the
-same procgen distribution but different draws. The champion samples with
+same procgen distribution but different draws.
+
+Consecutive exam seeds share env seeds: env i on seed 43 is env i + 1 on seed
+42. On the rig the training phase shifts each env's episodes and curand draws
+differently, so the two exam seeds are different draws. Here nothing does, so
+a second exam seed at the same episode_offset replays the first one shifted by
+one env. Give every exam seed its own --episode-offset (the 2026-09-15 chain 30
+bench used 0 for seed 42 and 1000 for seed 43). The champion samples with
 torch, not curand. eval_episodes is not recorded in the repo; 2000 is inferred
 from the exam's cell sizes (2027-2058 games, one epoch of overshoot).
 
@@ -275,7 +282,9 @@ def main(argv=None):
     ap.add_argument("--envs", type=int, default=EXAM_ENVS)
     ap.add_argument("--eval-episodes", type=int, default=EXAM_EVAL_EPISODES)
     ap.add_argument("--horizon", type=int, default=EXAM_HORIZON)
-    ap.add_argument("--episode-offset", type=int, default=0)
+    ap.add_argument("--episode-offset", type=int, default=0,
+                    help="first episode index per env; use a distinct offset per exam seed, "
+                         "because exam seed s + 1 env i is exam seed s env i + 1")
     ap.add_argument("--mode", default="sample", choices=["sample", "argmax"])
     ap.add_argument("--kernel", default="native", choices=["native", "torch"])
     ap.add_argument("--workers", type=int, default=T.MAX_WORKERS)

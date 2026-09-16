@@ -463,6 +463,22 @@ def test_play_exam_game_keys_env_and_episode(policy, lib):
     assert home["bots"] == ["offense", None] and home["team_ids"] == rec["team_ids"]
 
 
+def test_consecutive_exam_seeds_share_env_seeds_unless_the_episodes_differ(policy, lib):
+    """The trap behind the first seed 43 bench: exam seed s + 1 env i is exam seed s
+    env i + 1 at the same episode offset, so it is not a second draw."""
+    bot = T.ScriptedBot("offense")
+    shifted = X.play_exam_game(policy, bot, 1, exam_seed=43, env=0, k=0, limit=None, lib=lib)
+    base = X.play_exam_game(policy, bot, 1, exam_seed=42, env=1, k=0, limit=None, lib=lib)
+    drop = ("env", "seconds", "pid")
+    assert {k: v for k, v in shifted.items() if k not in drop} == \
+        {k: v for k, v in base.items() if k not in drop}
+    offset = X.play_exam_game(policy, bot, 1, exam_seed=43, env=0, k=0, limit=None,
+                              episode_offset=1000, lib=lib)
+    assert offset["episode"] == 1000 and offset["engine_seed"] == 43
+    assert offset["sampling_seeds"] != shifted["sampling_seeds"]
+    assert offset["action_trail_sha256"] != shifted["action_trail_sha256"]
+
+
 @pytest.mark.skipif(not os.path.exists(CHAIN25), reason="chain 25 checkpoint not present")
 def test_bot_exam_cli_selects_resumes_and_refuses_changes(tmp_path, monkeypatch):
     monkeypatch.setenv("OMP_NUM_THREADS", "1")
