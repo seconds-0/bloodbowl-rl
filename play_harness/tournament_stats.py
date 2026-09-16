@@ -504,10 +504,14 @@ def power_games_per_pair(mde_elo, decisive_frac, design_effect=1.0, share=0.5, a
 # ---- sharpness ------------------------------------------------------------------
 def sharpness(games):
     """Mean per-decision log-probability of the chosen actions, per player
-    (sum of logprob over sum of decisions, under the distribution each seat used)."""
+    (sum of logprob over sum of decisions, under the distribution each seat used).
+    Scripted bot seats sample nothing and are left out."""
     tot = defaultdict(lambda: [0.0, 0])
     for g in games:
+        modes = g.get("modes") or [None, None]
         for side, name in ((0, g["home"]), (1, g["away"])):
+            if modes[side] == "scripted":
+                continue
             tot[name][0] += g["logprob_sum"][side]
             tot[name][1] += g["decisions"][side]
     return {n: {"mean_logprob": s / d, "decisions": int(d)} for n, (s, d) in tot.items() if d}

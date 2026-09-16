@@ -9,6 +9,7 @@ import torch
 
 from play_harness import engine as E
 from play_harness import tournament as T
+from play_harness import tournament_stats as S
 from play_harness.policy import PolicySeat, random_policy
 
 from .conftest import CHAIN25, ROOT
@@ -247,6 +248,17 @@ def test_legacy_manifest_gains_empty_bots():
     old = {"checkpoints": {"a": {}, "b": {}}, "mode": "sample", "games_per_pair": 2}
     assert T.legacy_manifest_specs(old)["bots"] == {}
     assert T.legacy_manifest_specs({**old, "bots": {"x": 1}})["bots"] == {"x": 1}
+
+
+def test_sharpness_leaves_out_scripted_seats():
+    games = [{"home": "p", "away": "bot", "logprob_sum": [-10.0, 0.0], "decisions": [50, 40],
+              "modes": ["sample", "scripted"]},
+             {"home": "bot", "away": "p", "logprob_sum": [0.0, -6.0], "decisions": [30, 30],
+              "modes": ["scripted", "sample"]},
+             {"home": "p", "away": "q", "logprob_sum": [-1.0, -2.0], "decisions": [10, 10]}]
+    sharp = S.sharpness(games)
+    assert set(sharp) == {"p", "q"}
+    assert sharp["p"] == {"mean_logprob": -17.0 / 90, "decisions": 90}
 
 
 def test_cli_bot_only_run_resumes_and_refuses_a_new_bot(tmp_path, monkeypatch):
