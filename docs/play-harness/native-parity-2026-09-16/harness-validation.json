@@ -2,12 +2,15 @@
  "acceptance": {
   "consistency_violations": 0,
   "env_obs_mismatch_steps": 0,
-  "joint_tv_max": 0.001,
-  "joint_tv_mean": 2e-06,
+  "forward_joint_tv_max": 0.001,
+  "forward_joint_tv_mean": 2e-06,
   "logit_step0_max_abs_diff": 0.001,
   "logprob_max_abs_diff": 0.001,
   "masked_head_argmax_agreement_min": 0.999,
   "masked_head_prob_max_abs_diff": 0.001,
+  "masks_vs_support_mismatch_steps": 0,
+  "sampler_joint_tv_max": 0.001,
+  "sampler_joint_tv_mean": 2e-05,
   "value_max_abs_diff": 0.001
  },
  "checkpoint_sha256": "41ecd998b45613f7cb5e3b7a92b85811473abadc9f099f4baa9f307b42a6dc0b",
@@ -19,6 +22,9 @@
    "checkpoint_sha256": "41ecd998b45613f7cb5e3b7a92b85811473abadc9f099f4baa9f307b42a6dc0b",
    "consistency": {
     "details": [],
+    "masks_vs_support_mismatch_steps": 0,
+    "native_vs_shim_support_mismatch_steps": null,
+    "recorded_logprob_vs_native_fp32_sampler_max_abs": 3.631284926086664e-06,
     "recorded_logprob_vs_recorded_logits_max_abs": 1.9450460631009747e-07,
     "recorded_probs_vs_recorded_logits_max_abs": 2.970420487358183e-08,
     "steps": 500,
@@ -39,21 +45,21 @@
     "native": {
      "deciding_steps": 250,
      "first_step_logit_abs_diff_over_tolerance": null,
+     "forward_head_tv_max": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "forward_head_tv_mean": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "forward_joint_tv_max": 0.0,
+     "forward_joint_tv_mean": 0.0,
+     "forward_joint_tv_p99": 0.0,
+     "forward_joint_tv_sum": 0.0,
      "head_prob_max_abs_diff": 0.0,
-     "head_tv_max": [
-      0.0,
-      0.0,
-      0.0
-     ],
-     "head_tv_mean": [
-      0.0,
-      0.0,
-      0.0
-     ],
-     "joint_tv_max": 0.0,
-     "joint_tv_mean": 0.0,
-     "joint_tv_p99": 0.0,
-     "joint_tv_sum": 0.0,
      "logit_abs_diff_by_step": {
       "0": 0.0,
       "1": 0.0,
@@ -77,6 +83,20 @@
      "masked_head_prob_max_abs_diff": 0.0,
      "recorded_logit_abs_max": 1705.892333984375,
      "reset_steps": 4,
+     "sampler_head_tv_max": [
+      5.566407307476193e-07,
+      9.53674316460953e-07,
+      3.6954879760366215e-06
+     ],
+     "sampler_head_tv_mean": [
+      1.3667722063372619e-08,
+      5.3222324306393525e-08,
+      2.0554211484690623e-07
+     ],
+     "sampler_joint_tv_max": 3.6954879760366215e-06,
+     "sampler_joint_tv_mean": 2.6351803015200914e-07,
+     "sampler_joint_tv_p99": 3.1954897280533836e-06,
+     "sampler_joint_tv_sum": 6.587950753800228e-05,
      "state_resets_applied": 4,
      "steps": 500,
      "unmasked_head_argmax_agreement": [
@@ -90,21 +110,21 @@
     "torch": {
      "deciding_steps": 250,
      "first_step_logit_abs_diff_over_tolerance": null,
-     "head_prob_max_abs_diff": 1.3601852978384343e-06,
-     "head_tv_max": [
+     "forward_head_tv_max": [
       4.813329959873731e-12,
       1.245825364393346e-10,
       2.6422371113321205e-08
      ],
-     "head_tv_mean": [
+     "forward_head_tv_mean": [
       1.9253319839494923e-14,
       4.983301739217021e-13,
       1.0570111614122173e-10
      ],
-     "joint_tv_max": 2.6422371113321205e-08,
-     "joint_tv_mean": 1.0621869974267136e-10,
-     "joint_tv_p99": 3.1963728472664355e-12,
-     "joint_tv_sum": 2.655467493566784e-08,
+     "forward_joint_tv_max": 2.6422371113321205e-08,
+     "forward_joint_tv_mean": 1.0621869974267136e-10,
+     "forward_joint_tv_p99": 3.1963728472664355e-12,
+     "forward_joint_tv_sum": 2.655467493566784e-08,
+     "head_prob_max_abs_diff": 1.3601852978384343e-06,
      "logit_abs_diff_by_step": {
       "0": 0.0,
       "1": 1.1920928955078125e-07,
@@ -128,6 +148,20 @@
      "masked_head_prob_max_abs_diff": 2.6422371064097755e-08,
      "recorded_logit_abs_max": 1705.892333984375,
      "reset_steps": 4,
+     "sampler_head_tv_max": [
+      5.566407307476193e-07,
+      9.53674316460953e-07,
+      3.7083363406384704e-06
+     ],
+     "sampler_head_tv_mean": [
+      1.366774116274978e-08,
+      5.322251350214799e-08,
+      2.0559351587080437e-07
+     ],
+     "sampler_joint_tv_max": 3.7083363406384704e-06,
+     "sampler_joint_tv_mean": 2.635696388241383e-07,
+     "sampler_joint_tv_p99": 3.1954897280533836e-06,
+     "sampler_joint_tv_sum": 6.589240970603457e-05,
      "state_resets_applied": 4,
      "steps": 500,
      "unmasked_head_argmax_agreement": [
@@ -143,6 +177,7 @@
    "path": "hv-md150-s43-row0",
    "policy_row": 0,
    "precision_bytes": 4,
+   "support_source": "shim",
    "terminal_steps": 3,
    "trace": {
     "base_seed": 43,
@@ -158,6 +193,9 @@
    "checkpoint_sha256": "41ecd998b45613f7cb5e3b7a92b85811473abadc9f099f4baa9f307b42a6dc0b",
    "consistency": {
     "details": [],
+    "masks_vs_support_mismatch_steps": 0,
+    "native_vs_shim_support_mismatch_steps": null,
+    "recorded_logprob_vs_native_fp32_sampler_max_abs": 5.364403477869928e-06,
     "recorded_logprob_vs_recorded_logits_max_abs": 2.4143027999024014e-07,
     "recorded_probs_vs_recorded_logits_max_abs": 2.9783611243949792e-08,
     "steps": 500,
@@ -178,21 +216,21 @@
     "native": {
      "deciding_steps": 250,
      "first_step_logit_abs_diff_over_tolerance": null,
+     "forward_head_tv_max": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "forward_head_tv_mean": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "forward_joint_tv_max": 0.0,
+     "forward_joint_tv_mean": 0.0,
+     "forward_joint_tv_p99": 0.0,
+     "forward_joint_tv_sum": 0.0,
      "head_prob_max_abs_diff": 0.0,
-     "head_tv_max": [
-      0.0,
-      0.0,
-      0.0
-     ],
-     "head_tv_mean": [
-      0.0,
-      0.0,
-      0.0
-     ],
-     "joint_tv_max": 0.0,
-     "joint_tv_mean": 0.0,
-     "joint_tv_p99": 0.0,
-     "joint_tv_sum": 0.0,
      "logit_abs_diff_by_step": {
       "0": 0.0,
       "1": 0.0,
@@ -216,6 +254,20 @@
      "masked_head_prob_max_abs_diff": 0.0,
      "recorded_logit_abs_max": 1564.79931640625,
      "reset_steps": 4,
+     "sampler_head_tv_max": [
+      1.6518257100050105e-06,
+      3.635883331281481e-06,
+      1.990204962454539e-06
+     ],
+     "sampler_head_tv_mean": [
+      1.4500319762968558e-08,
+      9.442872646668433e-08,
+      1.0832858728229484e-07
+     ],
+     "sampler_joint_tv_max": 3.6358833313095664e-06,
+     "sampler_joint_tv_mean": 2.0859070316805054e-07,
+     "sampler_joint_tv_p99": 2.727966569919162e-06,
+     "sampler_joint_tv_sum": 5.2147675792012635e-05,
      "state_resets_applied": 4,
      "steps": 500,
      "unmasked_head_argmax_agreement": [
@@ -229,21 +281,21 @@
     "torch": {
      "deciding_steps": 250,
      "first_step_logit_abs_diff_over_tolerance": null,
-     "head_prob_max_abs_diff": 3.720360397807543e-06,
-     "head_tv_max": [
+     "forward_head_tv_max": [
       2.2669523797460234e-39,
       1.124497130285845e-09,
       9.038474818186146e-13
      ],
-     "head_tv_mean": [
+     "forward_head_tv_mean": [
       9.067809518984094e-42,
       4.878725067243105e-12,
       5.984467281110919e-15
      ],
-     "joint_tv_max": 1.124525792572681e-09,
-     "joint_tv_mean": 4.884700994239179e-12,
-     "joint_tv_p99": 5.548833853559031e-13,
-     "joint_tv_sum": 1.2211752485597946e-09,
+     "forward_joint_tv_max": 1.124525792572681e-09,
+     "forward_joint_tv_mean": 4.884700994239179e-12,
+     "forward_joint_tv_p99": 5.548833853559031e-13,
+     "forward_joint_tv_sum": 1.2211752485597946e-09,
+     "head_prob_max_abs_diff": 3.720360397807543e-06,
      "logit_abs_diff_by_step": {
       "0": 0.0,
       "1": 0.0,
@@ -267,6 +319,20 @@
      "masked_head_prob_max_abs_diff": 1.1244970510304597e-09,
      "recorded_logit_abs_max": 1564.79931640625,
      "reset_steps": 4,
+     "sampler_head_tv_max": [
+      1.6518257100050105e-06,
+      3.635883331281481e-06,
+      1.990204962454539e-06
+     ],
+     "sampler_head_tv_mean": [
+      1.4500319762968558e-08,
+      9.443259686519614e-08,
+      1.0832858721874478e-07
+     ],
+     "sampler_joint_tv_max": 3.6358833313095664e-06,
+     "sampler_joint_tv_mean": 2.0859233728052116e-07,
+     "sampler_joint_tv_p99": 2.727966569919162e-06,
+     "sampler_joint_tv_sum": 5.214808432013029e-05,
      "state_resets_applied": 4,
      "steps": 500,
      "unmasked_head_argmax_agreement": [
@@ -282,6 +348,7 @@
    "path": "hv-md150-s43-row1",
    "policy_row": 1,
    "precision_bytes": 4,
+   "support_source": "shim",
    "terminal_steps": 3,
    "trace": {
     "base_seed": 43,
@@ -297,6 +364,9 @@
    "checkpoint_sha256": "41ecd998b45613f7cb5e3b7a92b85811473abadc9f099f4baa9f307b42a6dc0b",
    "consistency": {
     "details": [],
+    "masks_vs_support_mismatch_steps": 0,
+    "native_vs_shim_support_mismatch_steps": null,
+    "recorded_logprob_vs_native_fp32_sampler_max_abs": 9.4209099188447e-06,
     "recorded_logprob_vs_recorded_logits_max_abs": 2.3597156051380352e-07,
     "recorded_probs_vs_recorded_logits_max_abs": 2.9748955854280723e-08,
     "steps": 1000,
@@ -317,21 +387,21 @@
     "native": {
      "deciding_steps": 437,
      "first_step_logit_abs_diff_over_tolerance": null,
+     "forward_head_tv_max": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "forward_head_tv_mean": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "forward_joint_tv_max": 0.0,
+     "forward_joint_tv_mean": 0.0,
+     "forward_joint_tv_p99": 0.0,
+     "forward_joint_tv_sum": 0.0,
      "head_prob_max_abs_diff": 0.0,
-     "head_tv_max": [
-      0.0,
-      0.0,
-      0.0
-     ],
-     "head_tv_mean": [
-      0.0,
-      0.0,
-      0.0
-     ],
-     "joint_tv_max": 0.0,
-     "joint_tv_mean": 0.0,
-     "joint_tv_p99": 0.0,
-     "joint_tv_sum": 0.0,
      "logit_abs_diff_by_step": {
       "0": 0.0,
       "1": 0.0,
@@ -355,6 +425,20 @@
      "masked_head_prob_max_abs_diff": 0.0,
      "recorded_logit_abs_max": 1954.71142578125,
      "reset_steps": 2,
+     "sampler_head_tv_max": [
+      1.2419729706963277e-06,
+      2.6055488877724804e-06,
+      9.417533874531343e-06
+     ],
+     "sampler_head_tv_mean": [
+      1.831172885853863e-08,
+      5.225900582633768e-08,
+      1.9205417022572725e-07
+     ],
+     "sampler_joint_tv_max": 9.417533874531343e-06,
+     "sampler_joint_tv_mean": 2.5199054964112554e-07,
+     "sampler_joint_tv_p99": 3.0235007261001128e-06,
+     "sampler_joint_tv_sum": 0.00011011987019317185,
      "state_resets_applied": 2,
      "steps": 1000,
      "unmasked_head_argmax_agreement": [
@@ -368,21 +452,21 @@
     "torch": {
      "deciding_steps": 437,
      "first_step_logit_abs_diff_over_tolerance": null,
-     "head_prob_max_abs_diff": 3.7578358147438706e-07,
-     "head_tv_max": [
+     "forward_head_tv_max": [
       2.060996170480541e-11,
       4.475452965146415e-09,
       2.093699283620297e-07
      ],
-     "head_tv_mean": [
+     "forward_head_tv_mean": [
       4.716238376526099e-14,
       1.02413274763311e-11,
       4.830716847012409e-10
      ],
-     "joint_tv_max": 2.093699283726885e-07,
-     "joint_tv_mean": 4.933601674540482e-10,
-     "joint_tv_p99": 3.5299302194021474e-14,
-     "joint_tv_sum": 2.1559839317741904e-07,
+     "forward_joint_tv_max": 2.093699283726885e-07,
+     "forward_joint_tv_mean": 4.933601674540482e-10,
+     "forward_joint_tv_p99": 3.5299302194021474e-14,
+     "forward_joint_tv_sum": 2.1559839317741904e-07,
+     "head_prob_max_abs_diff": 3.7578358147438706e-07,
      "logit_abs_diff_by_step": {
       "0": 0.0,
       "1": 0.0,
@@ -406,6 +490,20 @@
      "masked_head_prob_max_abs_diff": 2.093699282834649e-07,
      "recorded_logit_abs_max": 1954.71142578125,
      "reset_steps": 2,
+     "sampler_head_tv_max": [
+      1.2419729706963277e-06,
+      2.6055488877724804e-06,
+      9.417533874531343e-06
+     ],
+     "sampler_head_tv_mean": [
+      1.8311828753081158e-08,
+      5.226220200591321e-08,
+      1.92098288824634e-07
+     ],
+     "sampler_joint_tv_max": 9.417533874531343e-06,
+     "sampler_joint_tv_mean": 2.5241984580514553e-07,
+     "sampler_joint_tv_p99": 3.0235007261001128e-06,
+     "sampler_joint_tv_sum": 0.0001103074726168486,
      "state_resets_applied": 2,
      "steps": 1000,
      "unmasked_head_argmax_agreement": [
@@ -421,6 +519,7 @@
    "path": "hv-md4096-s42-row0",
    "policy_row": 0,
    "precision_bytes": 4,
+   "support_source": "shim",
    "terminal_steps": 1,
    "trace": {
     "base_seed": 42,
@@ -436,6 +535,9 @@
    "checkpoint_sha256": "41ecd998b45613f7cb5e3b7a92b85811473abadc9f099f4baa9f307b42a6dc0b",
    "consistency": {
     "details": [],
+    "masks_vs_support_mismatch_steps": 0,
+    "native_vs_shim_support_mismatch_steps": null,
+    "recorded_logprob_vs_native_fp32_sampler_max_abs": 1.1101263226009905e-05,
     "recorded_logprob_vs_recorded_logits_max_abs": 1.7889948522586963e-07,
     "recorded_probs_vs_recorded_logits_max_abs": 2.9800916401256927e-08,
     "steps": 1000,
@@ -456,21 +558,21 @@
     "native": {
      "deciding_steps": 563,
      "first_step_logit_abs_diff_over_tolerance": null,
+     "forward_head_tv_max": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "forward_head_tv_mean": [
+      0.0,
+      0.0,
+      0.0
+     ],
+     "forward_joint_tv_max": 0.0,
+     "forward_joint_tv_mean": 0.0,
+     "forward_joint_tv_p99": 0.0,
+     "forward_joint_tv_sum": 0.0,
      "head_prob_max_abs_diff": 0.0,
-     "head_tv_max": [
-      0.0,
-      0.0,
-      0.0
-     ],
-     "head_tv_mean": [
-      0.0,
-      0.0,
-      0.0
-     ],
-     "joint_tv_max": 0.0,
-     "joint_tv_mean": 0.0,
-     "joint_tv_p99": 0.0,
-     "joint_tv_sum": 0.0,
      "logit_abs_diff_by_step": {
       "0": 0.0,
       "1": 0.0,
@@ -494,6 +596,20 @@
      "masked_head_prob_max_abs_diff": 0.0,
      "recorded_logit_abs_max": 1366.227783203125,
      "reset_steps": 2,
+     "sampler_head_tv_max": [
+      7.271344673023208e-06,
+      2.291059754701196e-06,
+      3.1649309316712834e-06
+     ],
+     "sampler_head_tv_mean": [
+      3.138428548244152e-08,
+      6.423499212910848e-08,
+      1.0746492954658262e-07
+     ],
+     "sampler_joint_tv_max": 7.271344673023208e-06,
+     "sampler_joint_tv_mean": 1.9202408905509322e-07,
+     "sampler_joint_tv_p99": 1.9833591487334704e-06,
+     "sampler_joint_tv_sum": 0.00010810956213801748,
      "state_resets_applied": 2,
      "steps": 1000,
      "unmasked_head_argmax_agreement": [
@@ -507,21 +623,21 @@
     "torch": {
      "deciding_steps": 563,
      "first_step_logit_abs_diff_over_tolerance": null,
-     "head_prob_max_abs_diff": 1.5377811284356113e-06,
-     "head_tv_max": [
+     "forward_head_tv_max": [
       1.0812867980158902e-07,
       1.1520464178410083e-07,
       8.441363193103367e-08
      ],
-     "head_tv_mean": [
+     "forward_head_tv_mean": [
       2.024684736677907e-10,
       4.2271420988958857e-10,
       1.5035207503609828e-10
      ],
-     "joint_tv_max": 1.1520464178410082e-07,
-     "joint_tv_mean": 7.704560599709708e-10,
-     "joint_tv_p99": 2.0652110424134622e-09,
-     "joint_tv_sum": 4.3376676176365653e-07,
+     "forward_joint_tv_max": 1.1520464178410082e-07,
+     "forward_joint_tv_mean": 7.704560599709708e-10,
+     "forward_joint_tv_p99": 2.0652110424134622e-09,
+     "forward_joint_tv_sum": 4.3376676176365653e-07,
+     "head_prob_max_abs_diff": 1.5377811284356113e-06,
      "logit_abs_diff_by_step": {
       "0": 4.76837158203125e-07,
       "1": 0.0,
@@ -545,6 +661,20 @@
      "masked_head_prob_max_abs_diff": 1.1520464171521638e-07,
      "recorded_logit_abs_max": 1366.227783203125,
      "reset_steps": 2,
+     "sampler_head_tv_max": [
+      7.271344673023208e-06,
+      2.291059754701196e-06,
+      3.1649309316712834e-06
+     ],
+     "sampler_head_tv_mean": [
+      3.1592198600034824e-08,
+      6.45400296095351e-08,
+      1.076011367370512e-07
+     ],
+     "sampler_joint_tv_max": 7.271344673023208e-06,
+     "sampler_joint_tv_mean": 1.9267479412437116e-07,
+     "sampler_joint_tv_p99": 1.9833591487334704e-06,
+     "sampler_joint_tv_sum": 0.00010847590909202096,
      "state_resets_applied": 2,
      "steps": 1000,
      "unmasked_head_argmax_agreement": [
@@ -560,6 +690,7 @@
    "path": "hv-md4096-s42-row1",
    "policy_row": 1,
    "precision_bytes": 4,
+   "support_source": "shim",
    "terminal_steps": 1,
    "trace": {
     "base_seed": 42,
@@ -576,20 +707,20 @@
    "deciding_steps": 1500,
    "first_step_logit_abs_diff_over_tolerance": null,
    "fixtures": 4,
+   "forward_head_tv_max": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "forward_head_tv_mean": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "forward_joint_tv_max": 0.0,
+   "forward_joint_tv_mean": 0.0,
+   "forward_joint_tv_p99": 0.0,
    "head_prob_max_abs_diff": 0.0,
-   "head_tv_max": [
-    0.0,
-    0.0,
-    0.0
-   ],
-   "head_tv_mean": [
-    0.0,
-    0.0,
-    0.0
-   ],
-   "joint_tv_max": 0.0,
-   "joint_tv_mean": 0.0,
-   "joint_tv_p99": 0.0,
    "logit_max_abs_diff": 0.0,
    "logit_max_rel_diff": 0.0,
    "logit_mean_abs_diff": 0.0,
@@ -604,8 +735,20 @@
    "masked_head_prob_max_abs_diff": 0.0,
    "recorded_logit_abs_max": 1954.71142578125,
    "reset_steps": 12,
+   "sampler_head_tv_max": [
+    7.271344673023208e-06,
+    3.635883331281481e-06,
+    9.417533874531343e-06
+   ],
+   "sampler_head_tv_mean": [
+    2.18090591295875e-08,
+    6.39428325387114e-08,
+    1.485987355037794e-07
+   ],
+   "sampler_joint_tv_max": 9.417533874531343e-06,
+   "sampler_joint_tv_mean": 2.241710771074695e-07,
+   "sampler_joint_tv_p99": 3.1954897280533836e-06,
    "steps": 3000,
-   "td_per_game_bound": 0.0,
    "unmasked_head_argmax_agreement": [
     1.0,
     1.0,
@@ -617,12 +760,15 @@
     "checks": {
      "consistency_violations": true,
      "env_obs_mismatch_steps": true,
-     "joint_tv_max": true,
-     "joint_tv_mean": true,
+     "forward_joint_tv_max": true,
+     "forward_joint_tv_mean": true,
      "logit_step0_max_abs_diff": true,
      "logprob_max_abs_diff": true,
      "masked_head_argmax_agreement_min": true,
      "masked_head_prob_max_abs_diff": true,
+     "masks_vs_support_mismatch_steps": true,
+     "sampler_joint_tv_max": true,
+     "sampler_joint_tv_mean": true,
      "value_max_abs_diff": true
     },
     "pass": true
@@ -632,20 +778,20 @@
    "deciding_steps": 1500,
    "first_step_logit_abs_diff_over_tolerance": null,
    "fixtures": 4,
-   "head_prob_max_abs_diff": 3.720360397807543e-06,
-   "head_tv_max": [
+   "forward_head_tv_max": [
     1.0812867980158902e-07,
     1.1520464178410083e-07,
     2.093699283620297e-07
    ],
-   "head_tv_mean": [
+   "forward_head_tv_mean": [
     7.60101159777543e-11,
     1.6253854939019084e-10,
     2.1478487974126088e-10
    ],
-   "joint_tv_max": 2.093699283726885e-07,
-   "joint_tv_mean": 4.514273367502021e-10,
-   "joint_tv_p99": 2.0652110424134622e-09,
+   "forward_joint_tv_max": 2.093699283726885e-07,
+   "forward_joint_tv_mean": 4.514273367502021e-10,
+   "forward_joint_tv_p99": 2.0652110424134622e-09,
+   "head_prob_max_abs_diff": 3.720360397807543e-06,
    "logit_max_abs_diff": 6.103515625e-05,
    "logit_max_rel_diff": 1.52587890625e-05,
    "logit_mean_abs_diff": 2.8249364822303133e-08,
@@ -660,8 +806,20 @@
    "masked_head_prob_max_abs_diff": 2.093699282834649e-07,
    "recorded_logit_abs_max": 1954.71142578125,
    "reset_steps": 12,
+   "sampler_head_tv_max": [
+    7.271344673023208e-06,
+    3.635883331281481e-06,
+    9.417533874531343e-06
+   ],
+   "sampler_head_tv_mean": [
+    2.1887128138897102e-08,
+    6.405893102572559e-08,
+    1.4867127864780812e-07
+   ],
+   "sampler_joint_tv_max": 9.417533874531343e-06,
+   "sampler_joint_tv_mean": 2.2454925049002295e-07,
+   "sampler_joint_tv_p99": 3.1954897280533836e-06,
    "steps": 3000,
-   "td_per_game_bound": 8.315291542938723e-07,
    "unmasked_head_argmax_agreement": [
     1.0,
     1.0,
@@ -673,19 +831,23 @@
     "checks": {
      "consistency_violations": true,
      "env_obs_mismatch_steps": true,
-     "joint_tv_max": true,
-     "joint_tv_mean": true,
+     "forward_joint_tv_max": true,
+     "forward_joint_tv_mean": true,
      "logit_step0_max_abs_diff": true,
      "logprob_max_abs_diff": true,
      "masked_head_argmax_agreement_min": true,
      "masked_head_prob_max_abs_diff": true,
+     "masks_vs_support_mismatch_steps": true,
+     "sampler_joint_tv_max": true,
+     "sampler_joint_tv_mean": true,
      "value_max_abs_diff": true
     },
     "pass": true
    }
   }
  },
+ "masks_vs_support_mismatch_steps": 0,
  "native_vs_torch_logit_max_abs_diff": 6.103515625e-05,
- "schema": "bbplay-parity-compare-v1",
+ "schema": "bbplay-parity-compare-v2",
  "torch_version": "2.14.0"
 }
