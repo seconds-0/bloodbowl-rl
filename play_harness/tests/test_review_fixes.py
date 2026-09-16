@@ -188,6 +188,10 @@ def _took_argmax(s, step):
 
 
 def test_joined_views_mark_argmax_only_when_both_decisions_were_argmax(best_policy, tmp_path):
+    if best_policy[1].get("random_policy"):
+        # Joined views come from a policy ACTIVATE followed by its DECLARE; the random
+        # fallback policy produces none, so the floor below needs trained weights.
+        pytest.skip("needs a trained policy (set BBPLAY_CHECKPOINT)")
     checked = off_argmax_activations = 0
     for seed in (23, 24):
         gc = _controller(best_policy, tmp_path / str(seed), seed=seed, mode="sample")
