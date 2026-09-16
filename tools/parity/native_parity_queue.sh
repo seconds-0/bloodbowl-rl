@@ -32,10 +32,11 @@ NV=$LIVE/vendor/PufferLib/.venv/lib/python3.11/site-packages/nvidia
 # The rig's system cuBLAS 12.4 leaves a WSL process with no CUDA device; resolve
 # every CUDA library from the venv the 4.0 trainer uses.
 NATIVE_LD_LIBRARY_PATH=$NV/cuda_runtime/lib:$NV/cublas/lib:$NV/curand/lib:$NV/cusolver/lib:$NV/cusparse/lib:$NV/nvjitlink/lib:$NV/nccl/lib:$NV/cudnn/lib
-SRC=$PARITY/src
+# The source tree this script was installed in (src, src-v2, ...).
+SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 CKPT_LIVE=$LIVE/vendor/PufferLib/checkpoints/bloodbowl/1789413829676/0000002999975936.bin
 EXPECT_SHA=41ecd998b45613f7cb5e3b7a92b85811473abadc9f099f4baa9f307b42a6dc0b
-LOCK_TAG=bloodbowl-rl:parity-native-20260916
+LOCK_TAG=bloodbowl-rl:parity-native-20260916-v2
 EXAM_MARKER=EXAMS_DONE_C34_BOTH_SEEDS
 REAL_LOCK=/home/rache/kt-e2e/kt-gpu.lock
 REAL_EXAM_LOG=/home/rache/exam_c34.log
@@ -254,16 +255,18 @@ for spec in "${RUNS[@]}"; do
 done
 
 # ------------------------------------------------------------- 4. summary
-release_lock 0
-"$LIVE_PY" - "$OUT" "$DRY_RUN" "$0" "${RUNS[@]}" <<'PY' | tee -a "$QLOG"
+# Publication is part of success: the job reports done only once
+# RESULT_COMPLETE.json exists, and the lock is released after that check (a
+# publication failure releases through the EXIT trap with its own code).
+"$LIVE_PY" - "$OUT" "$DRY_RUN" "$0" "$SRC" "${RUNS[@]}" <<'PY' | tee -a "$QLOG"
 import hashlib, json, os, sys, time
-out, dry, script, *runs = sys.argv[1:]
+out, dry, script, src, *runs = sys.argv[1:]
 def sha(p):
     return hashlib.sha256(open(p, "rb").read()).hexdigest()
 doc = {"schema": "bbplay-native-parity-queue-v1", "dry_run": dry == "1",
        "finished_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
        "queue_script_sha256": sha(script), "runs": {}}
-src_commit = "/home/rache/bbparity/src/SOURCE_COMMIT"
+src_commit = os.path.join(src, "SOURCE_COMMIT")
 doc["source_commit"] = open(src_commit).read().strip() if os.path.exists(src_commit) else None
 for spec in runs:
     name = spec.split()[0]
@@ -280,5 +283,9 @@ with open(tmp, "w") as f:
 os.replace(tmp, os.path.join(out, "RESULT_COMPLETE.json"))
 print(json.dumps(doc["runs"], sort_keys=True))
 PY
+summary_rc=${PIPESTATUS[0]}
+[ "$summary_rc" = 0 ] || fail 8 "result publication failed rc=$summary_rc; no RESULT_COMPLETE.json"
+[ -f "$OUT/RESULT_COMPLETE.json" ] || fail 8 "RESULT_COMPLETE.json missing after publication"
+release_lock 0
 log "QUEUE-PARITY-DONE result=$OUT/RESULT_COMPLETE.json"
 echo QUEUE-PARITY-DONE
