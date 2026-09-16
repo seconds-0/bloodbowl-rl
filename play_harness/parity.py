@@ -39,16 +39,33 @@ optional
   terminal        uint8  (T,)      terminal flag delivered with obs t (the
                                    previous c_step ended a match)
   support         uint32 (N,)      packed joint support of this row, all steps
-                                   concatenated (t | arg << 10 | sq << 20)
+                                   concatenated (t | arg << 10 | sq << 20).
+                                   Rig fixtures take it from the lockstep shim:
+                                   the native vec's support buffer is not
+                                   reachable from Python (see fixture_consistency)
   support_offsets int64  (T+1,)    support[offsets[t]:offsets[t+1]] is step t
+  native_support, native_support_offsets
+                  uint32, int64    the same layout read from a mirror vec built by
+                                   the native extension itself (_C.create_vec),
+                                   seeded like the recorded envs and stepped with
+                                   the native actions; present only when that
+                                   capture stayed aligned for the whole trace.
+                                   The comparator prefers it over `support`
   masked_logits   f32    (T, 454)  logits with -inf outside masks
   probs           f32    (T, 454)  per-head softmax under masks (float64 math)
+
+Two distribution families are compared (compare_logits):
+  forward_*  both sides' logits normalized with the same float64 softmax:
+             isolates the forward pass (layout, kernels, recurrence)
+  sampler_*  the native sampler's fp32 arithmetic (native_fp32_head) on the
+             recorded native logits against the harness sampler's torch fp32
+             arithmetic (harness_fp32_head) on the harness logits: what each
+             backend actually samples from
 """
 from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sys
 
@@ -64,23 +81,24 @@ HEAD_BOUNDS = ((0, E.ACT_SIZES[0]),
 
 REQUIRED = ("obs", "reset", "deciding", "masks", "actions", "logprob", "value", "env_tuple")
 
-# Proposed acceptance thresholds for torch-vs-native parity (see
-# docs/play-harness/native-parity-2026-09-16.md for the reasons). Exact items
-# are integrity checks; the probability items bound what can move outcomes.
+# Screening tolerances for torch-vs-native parity, proposed before any rig data
+# (docs/play-harness/native-parity-2026-09-16.md). Passing them shows close
+# agreement on the recorded states; it is not an outcome-level bound.
 ACCEPTANCE = {
-    "env_obs_mismatch_steps": 0,          # byte-identical observations
-    "consistency_violations": 0,          # masks, support, waiting rows, resets
-    "joint_tv_max": 1e-3,                 # worst single decision
-    "joint_tv_mean": 2e-6,                # expected per-decision divergence
+    "env_obs_mismatch_steps": 0,             # byte-identical observations
+    "consistency_violations": 0,             # masks, support, waiting rows, resets
+    "masks_vs_support_mismatch_steps": 0,    # native masks vs shim support
+    "forward_joint_tv_max": 1e-3,
+    "forward_joint_tv_mean": 2e-6,
+    "sampler_joint_tv_max": 1e-3,
+    "sampler_joint_tv_mean": 2e-5,
     "masked_head_prob_max_abs_diff": 1e-3,
     "masked_head_argmax_agreement_min": 0.999,
     "logprob_max_abs_diff": 1e-3,
     "value_max_abs_diff": 1e-3,
     "logit_step0_max_abs_diff": 1e-3,
 }
-# Range of one side's touchdowns in a game used by the outcome bound
-# (sum over decisions of TV bounds the trajectory TV distance).
-TD_RANGE_PER_GAME = 6.0
+FLT_MAX_CLAMP = np.float32(3.4028e+38)
 
 
 # ----------------------------------------------------------------- format
@@ -104,18 +122,20 @@ def validate_arrays(arrays, where="fixture"):
               "masks": (t, E.MASK_SIZE), "actions": (t, 3), "logprob": (t,),
               "value": (t,), "env_tuple": (t, 3), "logits": (t, E.MASK_SIZE),
               "terminal": (t,), "support_offsets": (t + 1,),
+              "native_support_offsets": (t + 1,),
               "masked_logits": (t, E.MASK_SIZE), "probs": (t, E.MASK_SIZE)}
     for key, shape in shapes.items():
         if key in arrays and arrays[key].shape != shape:
             raise ValueError(f"{where}: {key} shape {arrays[key].shape}, expected {shape}")
     if arrays["obs"].dtype != np.uint8:
         raise ValueError(f"{where}: obs dtype {arrays['obs'].dtype}, expected uint8")
-    if ("support" in arrays) != ("support_offsets" in arrays):
-        raise ValueError(f"{where}: support and support_offsets must appear together")
-    if "support" in arrays:
-        off = arrays["support_offsets"]
-        if off[0] != 0 or off[-1] != arrays["support"].shape[0] or np.any(np.diff(off) < 1):
-            raise ValueError(f"{where}: support_offsets are not a monotone cover of support")
+    for name in ("support", "native_support"):
+        if (name in arrays) != (f"{name}_offsets" in arrays):
+            raise ValueError(f"{where}: {name} and {name}_offsets must appear together")
+        if name in arrays:
+            off = arrays[f"{name}_offsets"]
+            if off[0] != 0 or off[-1] != arrays[name].shape[0] or np.any(np.diff(off) < 1):
+                raise ValueError(f"{where}: {name}_offsets are not a monotone cover of {name}")
     return t
 
 
@@ -156,9 +176,53 @@ def pack_support(rows):
     return flat, offsets
 
 
-def support_at(arrays, t):
-    off = arrays["support_offsets"]
-    return arrays["support"][off[t]:off[t + 1]]
+def support_at(arrays, t, name="support"):
+    off = arrays[f"{name}_offsets"]
+    return arrays[name][off[t]:off[t + 1]]
+
+
+def comparison_support_at(arrays, t):
+    """Support used for joint distributions: the native mirror's when recorded."""
+    return support_at(arrays, t, "native_support" if "native_support" in arrays else "support")
+
+
+def check_native_suite(root, runs, envs=(0, 1, 2, 3), rows=(0, 1)):
+    """Completeness of a queued native recording (tools/parity/native_parity_queue.sh).
+
+    Requires RESULT_COMPLETE.json (not a dry run) listing exactly `runs`, every
+    run's RUN.json, and exactly the fixtures <run>/<run>-env<e>-row<r> with a
+    native-cuda backend. Returns a list of problems (empty when complete)."""
+    problems = []
+    done = os.path.join(root, "RESULT_COMPLETE.json")
+    if not os.path.isfile(done):
+        return [f"missing {done}"]
+    with open(done) as f:
+        doc = json.load(f)
+    if doc.get("dry_run") is not False:
+        problems.append(f"RESULT_COMPLETE.json dry_run={doc.get('dry_run')!r}")
+    if set(doc.get("runs", {})) != set(runs):
+        problems.append(f"runs {sorted(doc.get('runs', {}))} != expected {sorted(runs)}")
+    expected = {os.path.join(root, r, f"{r}-env{e}-row{w}")
+                for r in runs for e in envs for w in rows}
+    for run in runs:
+        if not os.path.isfile(os.path.join(root, run, "RUN.json")):
+            problems.append(f"missing {run}/RUN.json")
+        entry = doc.get("runs", {}).get(run, {})
+        if entry.get("fixtures") != len(envs) * len(rows):
+            problems.append(f"{run}: {entry.get('fixtures')} fixtures in RESULT_COMPLETE.json")
+        if entry.get("consistency_violations", 1) != 0:
+            problems.append(f"{run}: consistency_violations={entry.get('consistency_violations')}")
+    found = set(find_fixtures(root)) if os.path.isdir(root) else set()
+    for path in sorted(expected - found):
+        problems.append(f"missing fixture {os.path.relpath(path, root)}")
+    for path in sorted(found - expected):
+        problems.append(f"unexpected fixture {os.path.relpath(path, root)}")
+    for path in sorted(expected & found):
+        with open(os.path.join(path, "manifest.json")) as f:
+            backend = json.load(f).get("backend", "")
+        if not str(backend).startswith("native-cuda"):
+            problems.append(f"{os.path.relpath(path, root)}: backend {backend!r}")
+    return problems
 
 
 # ------------------------------------------------------------------- math
@@ -201,6 +265,96 @@ def head_probs(logits, masks=None):
     return np.concatenate(out, axis=-1)
 
 
+def float64_head(x, mask):
+    """Common float64 normalization of one head (forward-parity family)."""
+    return np.exp(masked_log_softmax(x, mask))
+
+
+def _safe_logits32(x):
+    x = np.asarray(x, dtype=np.float32).reshape(-1).copy()
+    x[np.isnan(x)] = np.float32(0.0)
+    x[np.isposinf(x)] = FLT_MAX_CLAMP
+    x[np.isneginf(x)] = -FLT_MAX_CLAMP
+    return x
+
+
+def native_fp32_head(x, mask):
+    """The native sampler's per-head arithmetic, in IEEE fp32.
+
+    Transliterates the discrete branch of sample_logits (vendor/PufferLib
+    src/pufferlib.cu with training/puffer_exact_joint_actions.patch):
+    safe_logit clamps; a running max/sum_exp log-sum-exp over enabled actions in
+    index order; prob = expf(l - logsumexp); cumulative sum; the first enabled a
+    with u < cumsum is sampled, and when rounding leaves cumsum below u the last
+    enabled action is taken. For u ~ U(0, 1] the effective distribution is
+    p_a = clip(cum_a) - clip(cum_prev), plus the remainder 1 - clip(cum_last)
+    on the last enabled action.
+
+    Returns (effective probabilities float64 over the head, logsumexp f32,
+    fp32 per-action probabilities over the head). numpy's float32 exp/log may
+    differ from CUDA libdevice expf/logf by a unit in the last place."""
+    m = np.asarray(mask, dtype=bool).reshape(-1)
+    idx = np.nonzero(m)[0]
+    if idx.size == 0:
+        raise ValueError("native_fp32_head: empty mask")
+    vals = _safe_logits32(x)[idx]
+    max_val = np.float32(-np.inf)
+    sum_exp = np.float32(0.0)
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        for l in vals:
+            if l > max_val:
+                sum_exp = np.float32(sum_exp * np.exp(np.float32(max_val - l)))
+                max_val = l
+            sum_exp = np.float32(sum_exp + np.exp(np.float32(l - max_val)))
+        lse = np.float32(max_val + np.log(sum_exp))
+        p32 = np.exp((vals - lse).astype(np.float32)).astype(np.float32)
+    cum = np.add.accumulate(p32, dtype=np.float32)
+    clipped = np.clip(cum.astype(np.float64), 0.0, 1.0)
+    eff = np.diff(np.concatenate(([0.0], clipped)))
+    eff[-1] += 1.0 - clipped[-1]
+    out = np.zeros(m.shape[0], dtype=np.float64)
+    out[idx] = eff
+    probs32 = np.zeros(m.shape[0], dtype=np.float32)
+    probs32[idx] = p32
+    return out, lse, probs32
+
+
+def native_fp32_sample_head(x, mask, u):
+    """Native per-head selection for a uniform draw u: (index, fp32 log-prob)."""
+    m = np.asarray(mask, dtype=bool).reshape(-1)
+    idx = np.nonzero(m)[0]
+    _, lse, probs32 = native_fp32_head(x, m)
+    cum = np.add.accumulate(probs32[idx], dtype=np.float32)
+    hit = np.nonzero(np.float32(u) < cum)[0]
+    a = int(idx[hit[0]]) if hit.size else int(idx[-1])
+    return a, float(np.float32(_safe_logits32(x)[a] - lse))
+
+
+def native_fp32_logprob(logits, masks, action):
+    """Joint log-probability the native sampler writes (fp32 per head, summed in fp32)."""
+    heads = split_heads(np.asarray(logits, dtype=np.float32).reshape(-1))
+    total = np.float32(0.0)
+    for h in range(3):
+        _, lse, _ = native_fp32_head(heads[h], masks[h])
+        total = np.float32(total + np.float32(_safe_logits32(heads[h])[int(action[h])] - lse))
+    return float(total)
+
+
+def harness_fp32_head(x, mask):
+    """The harness sampler's arithmetic: torch float32 log_softmax over the masked
+    head, exp, and torch.multinomial's normalization by the sum."""
+    import torch
+    m = torch.from_numpy(np.asarray(mask, dtype=bool).reshape(-1))
+    t = torch.from_numpy(np.asarray(x, dtype=np.float32).reshape(-1).copy())
+    p = torch.log_softmax(t.masked_fill(~m, float("-inf")), dim=-1).exp().numpy()
+    p = p.astype(np.float64)
+    return p / p.sum()
+
+
+HEAD_FUNCTIONS = {"float64": float64_head, "native_fp32": lambda x, m: native_fp32_head(x, m)[0],
+                  "harness_fp32": harness_fp32_head}
+
+
 def per_head_tv(p, q):
     """Total-variation distance per head between two 454-column head-prob rows.
     Returns (..., 3)."""
@@ -232,37 +386,38 @@ def conditional_masks(support, tup):
 _conditional_masks = conditional_masks  # historical name
 
 
-def joint_distribution(logits, support):
-    """Exact joint probability of every distinct tuple in the packed support
-    under sequential sampling (type, arg | type, square | type,arg), float64.
-    Returns (unique packed tuples, probabilities)."""
+def joint_distribution(logits, support, head="float64"):
+    """Probability of every distinct tuple in the packed support under sequential
+    sampling (type, arg | type, square | type,arg), with per-head arithmetic
+    `head` ("float64", "native_fp32" or "harness_fp32").
+    Returns (unique packed tuples, probabilities float64)."""
+    fn = HEAD_FUNCTIONS[head]
     uniq = np.unique(np.asarray(support, dtype=np.int64).reshape(-1))
     t, a, s = unpack_support(uniq)
-    heads = split_heads(np.asarray(logits, dtype=np.float64).reshape(-1))
+    heads = split_heads(np.asarray(logits).reshape(-1))
     probs = np.ones(uniq.shape[0], dtype=np.float64)
-    # head 0 over the distinct types
     m0 = np.zeros(E.ACT_SIZES[0], dtype=bool)
     m0[t] = True
-    lp0 = masked_log_softmax(heads[0], m0)
-    probs *= np.exp(lp0[t])
+    p0 = fn(heads[0], m0)
+    probs *= p0[t]
     for ty in np.unique(t):
         rows = t == ty
         m1 = np.zeros(E.ACT_SIZES[1], dtype=bool)
         m1[a[rows]] = True
-        lp1 = masked_log_softmax(heads[1], m1)
-        probs[rows] *= np.exp(lp1[a[rows]])
+        p1 = fn(heads[1], m1)
+        probs[rows] *= p1[a[rows]]
         for ar in np.unique(a[rows]):
             rows2 = rows & (a == ar)
             m2 = np.zeros(E.ACT_SIZES[2], dtype=bool)
             m2[s[rows2]] = True
-            lp2 = masked_log_softmax(heads[2], m2)
-            probs[rows2] *= np.exp(lp2[s[rows2]])
+            p2 = fn(heads[2], m2)
+            probs[rows2] *= p2[s[rows2]]
     return uniq, probs
 
 
-def joint_tv(logits_a, logits_b, support):
-    _, pa = joint_distribution(logits_a, support)
-    _, pb = joint_distribution(logits_b, support)
+def joint_tv(logits_a, logits_b, support, head_a="float64", head_b="float64"):
+    _, pa = joint_distribution(logits_a, support, head_a)
+    _, pb = joint_distribution(logits_b, support, head_b)
     return 0.5 * float(np.abs(pa - pb).sum())
 
 
@@ -294,9 +449,21 @@ def fixture_consistency(arrays):
     Exact: waiting rows carry the singleton NONE support and tuple; recorded
     actions lie in the support; masks equal the support conditioned on the
     recorded tuple; step 0 resets; reset equals (t == 0 or terminal).
+
+    On rig fixtures `masks` are the NATIVE sampler's rewritten masks and
+    `support` comes from the shim, so masks_vs_support_mismatch_steps is the
+    native-vs-shim support check that is observable from Python: the full type
+    set (head 0), the arg set of the sampled type and the square set of the
+    sampled (type, arg). When `native_support` (the native extension's mirror
+    vec) is recorded, native_vs_shim_support_mismatch_steps compares the complete
+    packed support of every step, unsampled branches included. Without it,
+    unsampled branches are assumed equal because both sides compile the same env
+    TU and the observation bytes agree.
     """
     t_steps = arrays["obs"].shape[0]
-    out = {"steps": int(t_steps), "violations": 0, "details": []}
+    out = {"steps": int(t_steps), "violations": 0, "details": [],
+           "masks_vs_support_mismatch_steps": 0,
+           "native_vs_shim_support_mismatch_steps": 0 if "native_support" in arrays else None}
 
     def bad(kind, t):
         out["violations"] += 1
@@ -323,14 +490,25 @@ def fixture_consistency(arrays):
                 continue
             want = np.concatenate(conditional_masks(sup, act)).astype(np.uint8)
             if not np.array_equal(want, arrays["masks"][t].astype(np.uint8)):
+                out["masks_vs_support_mismatch_steps"] += 1
                 bad("masks_differ_from_support", t)
-    if "logits" in arrays:
-        lp_diff = 0.0
+    if "native_support" in arrays and "support" in arrays:
         for t in range(t_steps):
-            lp = joint_logprob(arrays["logits"][t], split_masks(arrays["masks"][t]),
-                               arrays["actions"][t])
+            native = np.sort(support_at(arrays, t, "native_support").astype(np.int64))
+            shim = np.sort(support_at(arrays, t).astype(np.int64))
+            if not np.array_equal(native, shim):
+                out["native_vs_shim_support_mismatch_steps"] += 1
+                bad("native_support_differs_from_shim", t)
+    if "logits" in arrays:
+        lp_diff, lp32_diff = 0.0, 0.0
+        for t in range(t_steps):
+            masks = split_masks(arrays["masks"][t])
+            lp = joint_logprob(arrays["logits"][t], masks, arrays["actions"][t])
             lp_diff = max(lp_diff, abs(lp - float(arrays["logprob"][t])))
+            lp32 = native_fp32_logprob(arrays["logits"][t], masks, arrays["actions"][t])
+            lp32_diff = max(lp32_diff, abs(lp32 - float(arrays["logprob"][t])))
         out["recorded_logprob_vs_recorded_logits_max_abs"] = lp_diff
+        out["recorded_logprob_vs_native_fp32_sampler_max_abs"] = lp32_diff
     if "probs" in arrays and "logits" in arrays:
         want = head_probs(arrays["logits"], arrays["masks"])
         out["recorded_probs_vs_recorded_logits_max_abs"] = float(
@@ -443,9 +621,44 @@ def replay_policy(policy, arrays):
     return logits_all, value_all, resets
 
 
-def compare_logits(arrays, logits, value, tolerance=1e-4):
+def _head_rows(logits, masks, fn):
+    """(T, 454) per-head probabilities under the recorded masks with head arithmetic fn."""
+    out = np.zeros((logits.shape[0], E.MASK_SIZE), dtype=np.float64)
+    for t in range(logits.shape[0]):
+        for a, b in HEAD_BOUNDS:
+            out[t, a:b] = fn(logits[t, a:b], masks[t, a:b].astype(bool))
+    return out
+
+
+def native_sampler_tables(arrays):
+    """Native fp32 sampler distributions of the recorded logits, computed once per
+    fixture: per-head rows under the recorded masks and joint over the support."""
+    ref = arrays["logits"]
+    deciding = np.nonzero(arrays["deciding"].astype(bool))[0]
+    heads = np.zeros((ref.shape[0], E.MASK_SIZE), dtype=np.float64)
+    for t in deciding:
+        for a, b in HEAD_BOUNDS:
+            heads[t, a:b] = native_fp32_head(ref[t, a:b], arrays["masks"][t, a:b].astype(bool))[0]
+    joint = {}
+    if "support" in arrays or "native_support" in arrays:
+        for t in deciding:
+            joint[int(t)] = joint_distribution(ref[t], comparison_support_at(arrays, t),
+                                               "native_fp32")[1]
+    return {"heads": heads, "joint": joint}
+
+
+def _tv_summary(prefix, values):
+    values = np.asarray(values, dtype=np.float64)
+    return {f"{prefix}_max": float(values.max()) if values.size else 0.0,
+            f"{prefix}_mean": float(values.mean()) if values.size else 0.0,
+            f"{prefix}_p99": float(np.quantile(values, 0.99)) if values.size else 0.0,
+            f"{prefix}_sum": float(values.sum())}
+
+
+def compare_logits(arrays, logits, value, tolerance=1e-4, native_tables=None):
     """Metrics of harness (logits, value) against a recorded fixture. The keys of
-    the 5.0 logit-parity table come first; distribution metrics follow."""
+    the 5.0 logit-parity table come first; distribution metrics follow in the two
+    families of the module docstring (forward_* and sampler_*)."""
     ref = arrays["logits"].astype(np.float64)
     got = np.asarray(logits, dtype=np.float64)
     t_steps = ref.shape[0]
@@ -459,6 +672,7 @@ def compare_logits(arrays, logits, value, tolerance=1e-4):
     pm_ref = head_probs(ref, masks)
     pm_got = head_probs(got, masks)
     deciding = arrays["deciding"].astype(bool)
+    dec_idx = np.nonzero(deciding)[0]
     am_ref, am_got = head_argmax(ref), head_argmax(got)
     amm_ref, amm_got = head_argmax(ref, masks), head_argmax(got, masks)
     tv = per_head_tv(pm_ref, pm_got)
@@ -487,18 +701,29 @@ def compare_logits(arrays, logits, value, tolerance=1e-4):
         "masked_head_argmax_agreement": [
             float((a[deciding] == b[deciding]).mean()) if deciding.any() else 1.0
             for a, b in zip(amm_ref, amm_got)],
-        "head_tv_max": [float(tv[deciding, h].max()) if deciding.any() else 0.0
-                        for h in range(3)],
-        "head_tv_mean": [float(tv[deciding, h].mean()) if deciding.any() else 0.0
-                         for h in range(3)],
+        "forward_head_tv_max": [float(tv[deciding, h].max()) if deciding.any() else 0.0
+                                for h in range(3)],
+        "forward_head_tv_mean": [float(tv[deciding, h].mean()) if deciding.any() else 0.0
+                                 for h in range(3)],
     }
-    if "support" in arrays:
-        jtv = np.array([joint_tv(ref[t], got[t], support_at(arrays, t))
-                        for t in np.nonzero(deciding)[0]], dtype=np.float64)
-        out["joint_tv_max"] = float(jtv.max()) if jtv.size else 0.0
-        out["joint_tv_mean"] = float(jtv.mean()) if jtv.size else 0.0
-        out["joint_tv_p99"] = float(np.quantile(jtv, 0.99)) if jtv.size else 0.0
-        out["joint_tv_sum"] = float(jtv.sum())
+    if native_tables is None:
+        native_tables = native_sampler_tables(arrays)
+    harness_heads = _head_rows(np.asarray(logits, dtype=np.float32), masks, harness_fp32_head)
+    stv = per_head_tv(native_tables["heads"], harness_heads)
+    out["sampler_head_tv_max"] = [float(stv[dec_idx, h].max()) if dec_idx.size else 0.0
+                                  for h in range(3)]
+    out["sampler_head_tv_mean"] = [float(stv[dec_idx, h].mean()) if dec_idx.size else 0.0
+                                   for h in range(3)]
+    if "support" in arrays or "native_support" in arrays:
+        ftv, sjtv = [], []
+        for t in dec_idx:
+            sup = comparison_support_at(arrays, t)
+            ftv.append(joint_tv(ref[t], got[t], sup))
+            _, ph = joint_distribution(np.asarray(logits[t], dtype=np.float32), sup,
+                                       "harness_fp32")
+            sjtv.append(0.5 * float(np.abs(native_tables["joint"][int(t)] - ph).sum()))
+        out.update(_tv_summary("forward_joint_tv", ftv))
+        out.update(_tv_summary("sampler_joint_tv", sjtv))
     return out
 
 
@@ -512,39 +737,38 @@ def aggregate(entries):
            "reset_steps": sum(e["reset_steps"] for e in entries)}
     for key in ("logit_step0_max_abs_diff", "logit_max_abs_diff", "logit_max_rel_diff",
                 "head_prob_max_abs_diff", "value_max_abs_diff", "masked_head_prob_max_abs_diff",
-                "logprob_max_abs_diff", "joint_tv_max", "joint_tv_p99", "recorded_logit_abs_max"):
+                "logprob_max_abs_diff", "forward_joint_tv_max", "forward_joint_tv_p99",
+                "sampler_joint_tv_max", "sampler_joint_tv_p99", "recorded_logit_abs_max"):
         vals = [e[key] for e in entries if key in e]
         if vals:
             agg[key] = max(vals)
     for key in ("logit_mean_abs_diff", "value_mean_abs_diff", "logprob_mean_abs_diff"):
         agg[key] = sum(e[key] * e["steps"] for e in entries) / max(1, agg["steps"])
-    for key in ("unmasked_head_argmax_agreement",):
-        agg[key] = [min(e[key][h] for e in entries) for h in range(3)]
+    agg["unmasked_head_argmax_agreement"] = [min(e["unmasked_head_argmax_agreement"][h]
+                                                 for e in entries) for h in range(3)]
     agg["masked_head_argmax_agreement"] = [min(e["masked_head_argmax_agreement"][h]
                                                for e in entries) for h in range(3)]
-    agg["head_tv_max"] = [max(e["head_tv_max"][h] for e in entries) for h in range(3)]
-    agg["head_tv_mean"] = [
-        sum(e["head_tv_mean"][h] * e["deciding_steps"] for e in entries)
-        / max(1, agg["deciding_steps"]) for h in range(3)]
-    if all("joint_tv_sum" in e for e in entries):
-        agg["joint_tv_mean"] = sum(e["joint_tv_sum"] for e in entries) / max(1, agg["deciding_steps"])
+    for fam in ("forward_head_tv", "sampler_head_tv"):
+        agg[f"{fam}_max"] = [max(e[f"{fam}_max"][h] for e in entries) for h in range(3)]
+        agg[f"{fam}_mean"] = [
+            sum(e[f"{fam}_mean"][h] * e["deciding_steps"] for e in entries)
+            / max(1, agg["deciding_steps"]) for h in range(3)]
+    for fam in ("forward_joint_tv", "sampler_joint_tv"):
+        if all(f"{fam}_sum" in e for e in entries):
+            agg[f"{fam}_mean"] = sum(e[f"{fam}_sum"] for e in entries) / max(1, agg["deciding_steps"])
     firsts = [e["first_step_logit_abs_diff_over_tolerance"] for e in entries
               if e["first_step_logit_abs_diff_over_tolerance"] is not None]
     agg["first_step_logit_abs_diff_over_tolerance"] = min(firsts) if firsts else None
     return agg
 
 
-def outcome_bound(joint_tv_mean, decisions_per_game):
-    """Upper bound on |TD per game difference| for one side from a per-decision
-    mean joint TV: trajectory TV <= sum of per-decision TVs, and one side's TDs
-    lie in [0, TD_RANGE_PER_GAME]."""
-    return TD_RANGE_PER_GAME * decisions_per_game * joint_tv_mean
-
-
-def verdict(agg, consistency_violations, env_mismatches, thresholds=ACCEPTANCE):
+def verdict(agg, consistency_violations, env_mismatches, masks_vs_support_mismatch_steps=0,
+            thresholds=ACCEPTANCE):
     checks = {
         "env_obs_mismatch_steps": env_mismatches <= thresholds["env_obs_mismatch_steps"],
         "consistency_violations": consistency_violations <= thresholds["consistency_violations"],
+        "masks_vs_support_mismatch_steps":
+            masks_vs_support_mismatch_steps <= thresholds["masks_vs_support_mismatch_steps"],
         "masked_head_prob_max_abs_diff":
             agg["masked_head_prob_max_abs_diff"] <= thresholds["masked_head_prob_max_abs_diff"],
         "masked_head_argmax_agreement_min":
@@ -555,47 +779,54 @@ def verdict(agg, consistency_violations, env_mismatches, thresholds=ACCEPTANCE):
         "logit_step0_max_abs_diff":
             agg["logit_step0_max_abs_diff"] <= thresholds["logit_step0_max_abs_diff"],
     }
-    if "joint_tv_max" in agg:
-        checks["joint_tv_max"] = agg["joint_tv_max"] <= thresholds["joint_tv_max"]
-        checks["joint_tv_mean"] = agg["joint_tv_mean"] <= thresholds["joint_tv_mean"]
+    for fam in ("forward_joint_tv", "sampler_joint_tv"):
+        if f"{fam}_max" in agg:
+            checks[f"{fam}_max"] = agg[f"{fam}_max"] <= thresholds[f"{fam}_max"]
+            checks[f"{fam}_mean"] = agg[f"{fam}_mean"] <= thresholds[f"{fam}_mean"]
     return {"pass": all(checks.values()), "checks": checks}
 
 
 def compare_fixtures(fixture_paths, policies, check_env=True, tolerance=1e-4):
     """Compare every fixture against every harness kernel. policies maps a kernel
     name to a loaded MinGRUPolicy. Returns the result document."""
-    result = {"schema": "bbplay-parity-compare-v1", "fixtures": [], "kernels": {},
+    result = {"schema": "bbplay-parity-compare-v2", "fixtures": [], "kernels": {},
               "acceptance": dict(ACCEPTANCE)}
     per_kernel = {name: [] for name in policies}
     env_mismatches = 0
     violations = 0
+    mask_mismatches = 0
     gaps = []
+    root = (os.path.dirname(fixture_paths[0]) if len(fixture_paths) == 1
+            else os.path.commonpath(fixture_paths))
     for path in fixture_paths:
         manifest, arrays = load_fixture(path)
         if "logits" not in arrays:
             raise ValueError(f"{path}: fixture has no logits; cannot compare distributions")
-        entry = {"path": os.path.relpath(path, os.path.dirname(fixture_paths[0])
-                                         if len(fixture_paths) == 1 else
-                                         os.path.commonpath(fixture_paths)),
+        entry = {"path": os.path.relpath(path, root),
                  "backend": manifest.get("backend"), "policy_row": manifest["policy_row"],
                  "env": manifest["env"], "trace": manifest.get("trace"),
                  "checkpoint_sha256": manifest.get("checkpoint_sha256"),
                  "precision_bytes": manifest.get("precision_bytes"),
                  "terminal_steps": int(arrays["terminal"].astype(bool)[1:].sum())
                  if "terminal" in arrays else None,
+                 "support_source": "native-mirror" if "native_support" in arrays
+                 else ("shim" if "support" in arrays else None),
                  "kernels": {}}
         cons = fixture_consistency(arrays)
         entry["consistency"] = cons
         violations += cons["violations"]
+        mask_mismatches += cons["masks_vs_support_mismatch_steps"]
         if check_env:
             first = check_env_parity(manifest, arrays)
             entry["env_first_mismatch_step"] = first
             env_mismatches += 0 if first is None else 1
+        tables = native_sampler_tables(arrays)
         kernel_logits = {}
         for name, policy in policies.items():
             logits, value, resets = replay_policy(policy, arrays)
             kernel_logits[name] = logits
-            metrics = compare_logits(arrays, logits, value, tolerance=tolerance)
+            metrics = compare_logits(arrays, logits, value, tolerance=tolerance,
+                                     native_tables=tables)
             metrics["state_resets_applied"] = resets
             entry["kernels"][name] = metrics
             per_kernel[name].append(metrics)
@@ -607,13 +838,11 @@ def compare_fixtures(fixture_paths, policies, check_env=True, tolerance=1e-4):
         result["fixtures"].append(entry)
     for name, entries in per_kernel.items():
         agg = aggregate(entries)
-        agg["verdict"] = verdict(agg, violations, env_mismatches)
-        decisions_per_game = 307.0
-        if "joint_tv_mean" in agg:
-            agg["td_per_game_bound"] = outcome_bound(agg["joint_tv_mean"], decisions_per_game)
+        agg["verdict"] = verdict(agg, violations, env_mismatches, mask_mismatches)
         result["kernels"][name] = agg
     result["env_mismatch_fixtures"] = env_mismatches
     result["consistency_violations"] = violations
+    result["masks_vs_support_mismatch_steps"] = mask_mismatches
     if gaps:
         result["native_vs_torch_logit_max_abs_diff"] = max(gaps)
     return result
@@ -754,8 +983,10 @@ def _fmt(v):
 TABLE_KEYS = ("logit_step0_max_abs_diff", "logit_max_abs_diff", "head_prob_max_abs_diff",
               "value_max_abs_diff", "unmasked_head_argmax_agreement",
               "masked_head_prob_max_abs_diff", "masked_head_argmax_agreement",
-              "logprob_max_abs_diff", "head_tv_max", "head_tv_mean",
-              "joint_tv_max", "joint_tv_mean", "joint_tv_p99", "td_per_game_bound")
+              "logprob_max_abs_diff", "forward_head_tv_max", "forward_head_tv_mean",
+              "forward_joint_tv_max", "forward_joint_tv_mean", "forward_joint_tv_p99",
+              "sampler_head_tv_max", "sampler_head_tv_mean",
+              "sampler_joint_tv_max", "sampler_joint_tv_mean", "sampler_joint_tv_p99")
 
 
 def summary_table(result):
@@ -834,6 +1065,7 @@ def main(argv=None):
     print(summary_table(result))
     print(f"fixtures={len(paths)} env_mismatch_fixtures={result['env_mismatch_fixtures']} "
           f"consistency_violations={result['consistency_violations']} "
+          f"masks_vs_support_mismatch_steps={result['masks_vs_support_mismatch_steps']} "
           f"native_vs_torch_logit_max_abs_diff="
           f"{_fmt(result.get('native_vs_torch_logit_max_abs_diff'))}")
     return 0 if all(v["verdict"]["pass"] for v in result["kernels"].values()) else 1
