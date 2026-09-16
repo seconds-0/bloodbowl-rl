@@ -1437,3 +1437,59 @@ Caveats named in advance:
 - The learner phase roughly doubles again (about 606 ms to about 1.2 s per epoch), so expect about 60K SPS and about 14 h for 3B.
 - More gradient steps on the same rollouts raise policy drift per epoch. KL and clipfrac are diagnostics, not kill signals.
 - This is one training seed.
+
+**D402 - CHAIN 33 READS NEGATIVE: REPLAY RATIO 2.0 CUTS CHAMPION TOUCHDOWNS BY 0.08-0.13 IN EVERY EXAM CELL AGAINST CHAIN 30 AND THE OFFENSE VETO FIRES, SO REPLAY RATIO 1.0 STAYS THE RECIPE; CHAIN 34 CONTINUES FROM CHAIN 30 (2026-09-16 09:25 PDT).** Chain 33 (`runs/ladder-d0-r0chain33-rr2-20260915`, unit `r0chain33-rr2`) is chain 30's recipe with replay ratio 2.0: 16 Muon steps per 131K-step epoch. It finished its 3B at 07:53 PDT, and the GPU lock released with exit 0. It ran 61.6-65K SPS with the Train phase at about 1.2 s per epoch (59% of epoch time), VRAM 6.4/8 GB and integrity counters zero on every polled panel. Checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789522512617/0000002999975936.bin` (sha 6c0cfbbe); in-run eval tds 1.521. All six exam cells exited rc=0 with 2004-2050 games each.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.477 / 0.372 | 0.405 / 0.361 | 0.486 / 0.273 |
+| 43 | 0.500 / 0.375 | 0.402 / 0.387 | 0.494 / 0.270 |
+| Two-exam-seed mean | **0.4885 / 0.3735** | **0.4035 / 0.374** | **0.490 / 0.2715** |
+
+**Scoring against chain 30 (0.5705, 0.5305, 0.586).** Champion deltas are **-0.082, -0.127 and -0.096**.
+- contact AWAY: -0.087 and -0.077 per exam seed
+- contact HOME: -0.133 and -0.121
+- offense AWAY: -0.095 and -0.097
+
+Offense AWAY is down more than 0.02 on the mean and on both exam seeds, so **the D399 veto fires, and under D401's ordered readings this is the negative reading.** Replay ratio 1.0 stays the recipe.
+
+**What changed** (READ from the exam and the final training panels).
+- **Both sides score less.** The bots' touchdowns also fall against chain 30 (-0.016, -0.010, -0.0705), and draw rates rise to 0.46-0.52 per cell (chain 30 offense AWAY seed 42: 0.417). Champion score (win rate plus half the draw rate) on offense AWAY at exam seed 42 is 0.603, against chain 30's 0.614: -0.011, compared with -0.095 in touchdowns. Chain 33 scores 0.609 at seed 43, but chain 30's seed-43 score was not recorded, so seed 42 is the only matched comparison. D399's rule scores touchdowns, and that rule is applied as written.
+- **Final training panel against chain 30:**
+  - entropy 0.106 vs 0.077
+  - tds 1.521 vs 1.616
+  - pickup_attempts 4.804 vs 5.001
+  - blocks_vs_carrier 1.988 vs 2.350
+  - possession_rate 0.382 vs 0.378
+- **The in-run trajectory dipped and did not fully recover.** In-run eval tds fell to 1.035 at 1.1B and ended at 1.521.
+- **Final KL and clipfrac are small** (0.002 and 0.001). These endpoint diagnostics do not rule out earlier instability or cumulative drift, and they do not identify the cause of the regression. Chain 33 has higher final training entropy and scores fewer touchdowns on the bot exam.
+
+**The dose-response.** Replay ratio 1.0 remains the supported recipe. Two independently trained replay-ratio-1.0 checkpoints both beat the common chain-25 anchor by about +100 decisive-Elo (D400, D401), while the seed-matched tournament contrast (chain 32 vs chain 26) is still pending. Replay ratio 2.0 fails the registered exam veto at one training seed. Those are different measurements, so these results do not locate an optimum in replay ratio.
+
+**The pre-registered tournament still runs** (Mac CPU, seed block 20400000, 3,200 games per pair). It plays chain 33 against chains 30, 32 and 25, chain 32 against chain 26 (D401's missing seed-matched contrast), and both chain 33 and chain 30 against the offense bot, the first held-out anchor games. It cannot change chain 33's reading, which the veto has already decided. Its results will be recorded as an addendum.
+
+**Rulings.**
+1. Chain 33 is rejected as a warm start and as a pool bank.
+2. Replay ratio 1.0 stays the recipe. Chain 30 stays the warm start.
+
+**Next, pre-registered before its exam and tournament: chain 34, a continuation from chain 30** (`runs/ladder-d0-r0chain34-cont30-rr1-20260916`, unit `r0chain34-cont30-rr1`, launched 09:25 PDT). It is chain 30's recipe (gamma 0.999 / lambda 0.95, replay ratio 1.0, 4 banks x 0.12, contact bot at tag 4, LR 2.8e-4, `r0_poss_half`, seed 42) warm-started from chain 30's marker for another 3B.
+- **Pool** (identity ff4c0552, built by `tools/ladder_stage.sh` as chain 27's was from chain 25). The pool keeps the kickoff anchor, retains the newest two eligible non-anchor banks, and appends chain 30 as bank 3, where the contact bot's seat override replaces it. The learned opponents are banks 0-2: the kickoff anchor, `rung0warm2` and the chain 9 marker. In pool d67d527b the chain 9 marker sat under the contact-bot override (D399), so rotation makes chain 9 an active learned opponent for the first time.
+- **Verification.** SCREEN PLAN VERIFIED with manifest e72e8f0f and drift check 3ed6899e.
+- **The question.** Chain 27 continued chain 25 and reached the top tier head to head, but traded offense-bot scoring for contact-bot scoring (D394). Chain 34 asks whether continuing the replay-ratio-1.0 frontier climbs further without that trade.
+
+The comparator is chain 30 (the parent). Following D399, chain 34 is never scored against its parent alone.
+- **Gate part 1, exam veto:** offense AWAY down more than 0.02 against chain 30 on the mean and on both exam seeds.
+- **Gate part 2, tournament:** chain 34 against chains 30, 27, 32 and 25 and the offense bot, 3,200 games per pair on seed block 20600000, under D400 conditions.
+
+The readings are applied in this order, and the first that matches is the result:
+1. **Negative:** the veto fires, or chain 34's 95% interval against chain 30 lies entirely below zero.
+2. **Positive:** chain 34 beats chain 30 by more than +40 decisive-Elo with its 95% interval above zero, and beats chain 27 with its interval above zero. Chain 34 becomes the warm start. A second continuation seed follows before any claim that continuation itself helps.
+3. **Flat:** chain 34's decisive-Elo against chain 30 lies within +/-40. Chain 30 stays the warm start.
+4. **Inconclusive:** anything else. Chain 30 stays the warm start.
+
+The +40 cutoff is D401's screening threshold, not a statistical bound on training-seed variation.
+
+Caveats named in advance:
+- A continuation changes three things at once: the warm checkpoint, the cumulative training budget (6B from the chain 9 marker), and the active opponent set (chain 9 becomes a learned opponent). The experiment tests continuation with this declared pool rotation, and a second seed would replicate the combined procedure, not isolate any one factor.
+- The offense-bot tournament games are within-harness held-out comparisons. Against chain 30 the bot scores 0.309 touchdowns per game on the harness vs 0.342 on the rig (difference -0.033 [-0.056, -0.009], `docs/play-harness/scripted-anchors-2026-09-15.md`). That offset is not shown to be constant across policies, so cross-backend equivalence is unresolved. The rig exam stays the registered veto, and the offense-bot tournament pairs are diagnostic.
+- This is one training seed.

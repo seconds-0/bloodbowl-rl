@@ -37,6 +37,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-15 18:30 (D401): replay ratio 1.0 replicates and becomes the recipe.** Chain 32, chain 30's recipe at training seed 44, beats chain 25 by +95 decisive-Elo head to head (chain 30: +106). On the exam it lifts both contact cells over its seed-44 comparator, chain 26 (+0.038, +0.053), and the offense veto does not fire. Chain 32 vs chain 30 is +15.4, a fourth replicate pair inside the floor. Chain 30 stays the warm start. Chain 33 tests replay ratio 2.0 against chain 30 under the two-part gate.
 
+**Update 2026-09-16 09:25 (D402): replay ratio 2.0 is negative.** Chain 33 loses 0.08-0.13 champion touchdowns per exam cell against chain 30, and the offense veto fires on both seeds. Both sides score less and draws rise. Replay ratio 1.0 stays the recipe, and chain 30 stays the warm start. Chain 34 continues chain 30 for another 3B at replay ratio 1.0, gated against a panel of chains 30, 27, 32 and 25 and the offense bot.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
