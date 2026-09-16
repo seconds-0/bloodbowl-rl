@@ -30,7 +30,11 @@ REF40=${REF40:-/home/rache/bbpuffer5/ref40}
 REF40_PUFFER=$REF40/vendor/PufferLib
 REF40_C=$REF40_PUFFER/pufferlib/_C.cpython-311-x86_64-linux-gnu.so
 P5=${P5:-/home/rache/bbpuffer5/PufferLib5}
-NCCL_LIB=$LIVE/vendor/PufferLib/.venv/lib/python3.11/site-packages/nvidia/nccl/lib
+NV=${NV:-$LIVE/vendor/PufferLib/.venv/lib/python3.11/site-packages/nvidia}
+NCCL_LIB=$NV/nccl/lib
+# The rig's system cuBLAS 12.4 leaves a WSL process with no CUDA device, so the
+# 5.0 binary must resolve every CUDA library from the venv the 4.0 trainer uses.
+P5_LD_LIBRARY_PATH=$NV/cuda_runtime/lib:$NV/cublas/lib:$NV/cusolver/lib:$NV/curand/lib:$NV/cusparse/lib:$NV/nvjitlink/lib:$NCCL_LIB
 POOL=$BENCH/pool_c30
 WARM=$BENCH/c30.bin
 PROBE_PY=$BENCH/bench_probe.py
@@ -176,7 +180,30 @@ python3 "$PROBE_PY" preflight --out "$OUT/preflight.json" --nvidia-smi "$NVSMI" 
     --extra "warmup_p5=$WARMUP_P5" --extra "window=$WINDOW" \
     --extra "cool_below=$COOL_BELOW" --extra "kill_temp=$KILL_TEMP" \
     --extra "omp_num_threads=${OMP_NUM_THREADS:-}" --extra "nccl_lib=$NCCL_LIB" \
+    --extra "p5_ld_library_path=$P5_LD_LIBRARY_PATH" \
     >> "$QLOG" 2>&1 || log "preflight recorder failed (continuing)"
+
+p5_libs_check() {
+    local resolved bad
+    if ! resolved=$(LD_LIBRARY_PATH="$P5_LD_LIBRARY_PATH" ldd "$P5/puffer" 2>&1); then
+        log "p5 libs: ldd failed: $(echo $resolved)"
+        return 1
+    fi
+    bad=$(printf '%s\n' "$resolved" | awk -v nv="$NV/" '
+        /not found/ { print $1 " => not found"; next }
+        /libcudart|libcublas|libcusolver|libcurand|libcusparse|libnvJitLink|libnccl/ {
+            if (index($3, nv) != 1) print $1 " => " $3
+        }')
+    if [ -n "$bad" ]; then
+        log "p5 libs outside $NV: $(echo $bad)"
+        return 1
+    fi
+    log "p5 libs: every CUDA library resolves under $NV"
+}
+if [ "$DRY_RUN" != 1 ] && ! p5_libs_check; then
+    log "QUEUE-ABORT the 5.0 binary would load CUDA libraries from outside the venv"
+    exit 7
+fi
 
 # ---------------------------------------------------------------- 4. probes
 REF40_ARGS=()
@@ -274,7 +301,7 @@ probe_p5() {  # name async rr
             python3 "$PROBE_PY" fake-trainer --kind p5 --duration 10
     else
         run_probe "$name" p5 "$WARMUP_P5" "$P5" \
-            "CUDA_VISIBLE_DEVICES=0" "LD_LIBRARY_PATH=$NCCL_LIB:${LD_LIBRARY_PATH:-}" -- \
+            "CUDA_VISIBLE_DEVICES=0" "LD_LIBRARY_PATH=$P5_LD_LIBRARY_PATH" -- \
             ./puffer train "--base.async=$async" \
             "--base.checkpoint_dir=$OUT/ckpt-$name" "--base.log_dir=$OUT/logs-$name" \
             --base.eval_episodes=0 --base.checkpoint_interval=1000000 \

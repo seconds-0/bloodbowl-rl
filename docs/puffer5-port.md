@@ -33,9 +33,18 @@ bash tools/install_puffer5_env.sh /home/rache/bbpuffer5/PufferLib5
 cd /home/rache/bbpuffer5/PufferLib5
 PATH=<venv with nvidia-nccl>/bin:$PATH NVCC_THREADS=4 NVCC_ARCH=sm_75 \
     nice -n 19 ./build.sh bloodbowl --float
-LD_LIBRARY_PATH=<nccl lib> ./puffer train --base.load_model_path=... \
-    --selfplay.league_preseed=<pool dir>
+NV=<live venv>/lib/python3.11/site-packages/nvidia
+LD_LIBRARY_PATH=$NV/cuda_runtime/lib:$NV/cublas/lib:$NV/cusolver/lib:$NV/curand/lib:$NV/cusparse/lib:$NV/nvjitlink/lib:$NV/nccl/lib \
+    ./puffer train --base.load_model_path=... --selfplay.league_preseed=<pool dir>
 ```
+
+Every CUDA library has to resolve from the venv, not from `/usr/lib`. Loading the
+rig's system `libcublasLt.so.12` (12.4.5.8) leaves the process without a device
+under the WSL 13.02 driver: every CUDA call returns 100, "no CUDA-capable device
+is detected". The trainer does not check `cudaHostAlloc`, so it then segfaults
+in `create_pufferl`. The first benchmark run (2026-09-15) lost both 5.0 probes
+this way. The venv libraries (runtime 12.8) work, and `tools/puffer5/bench_queue.sh`
+aborts before any probe if `ldd` resolves a CUDA library outside the venv.
 
 ## Patch series
 
