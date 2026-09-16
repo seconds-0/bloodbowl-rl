@@ -438,12 +438,15 @@ def test_cell_summary_counts_only_selected_games_from_the_champion_side():
     assert (home_bot["W"], home_bot["L"]) == (1, 1)
 
 
-def test_agreement_scales_the_exam_se_by_game_count():
+def test_agreement_reports_a_difference_interval_not_equivalence():
     res = X.agreement(0.60, 0.02, 2000, 0.56, 2000)
-    assert res["se_diff"] == pytest.approx(0.02 * math.sqrt(2))
-    assert res["z"] == pytest.approx(0.04 / (0.02 * math.sqrt(2)))
-    assert res["within_noise"]
-    assert not X.agreement(0.66, 0.02, 2000, 0.56, 2000)["within_noise"]
+    se = 0.02 * math.sqrt(2)
+    assert res["se_diff"] == pytest.approx(se)
+    assert res["z"] == pytest.approx(0.04 / se)
+    assert res["diff_ci95"] == pytest.approx([0.04 - 1.96 * se, 0.04 + 1.96 * se])
+    assert not res["difference_detected"] and "within_noise" not in res
+    assert X.agreement(0.66, 0.02, 2000, 0.56, 2000)["difference_detected"]
+    assert X.agreement(0.46, 0.02, 2000, 0.56, 2000)["difference_detected"]
     assert X.agreement(0.5, 0.02, 4000, 0.5, 1000)["se_diff"] == pytest.approx(
         math.sqrt(0.02 ** 2 + 0.04 ** 2))
 

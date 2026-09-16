@@ -218,13 +218,21 @@ def cell_summary(records, bot_side):
 
 
 def agreement(bench_mean, bench_se, bench_n, exam_mean, exam_n):
-    """z of bench minus exam. The exam's own SE is taken as the bench SE scaled to
-    the exam's game count (the exam log carries no per-game spread)."""
+    """Bench minus exam: the difference, an approximate 95% interval and z.
+
+    The exam log carries no per-game spread, so the exam's SE is approximated as
+    the bench SE scaled to the exam's game count, and the exam's own seed
+    covariance is ignored. `difference_detected` says the interval excludes 0
+    under that approximation. This is a difference test, not an equivalence
+    test: a False value does not show the two are close, only that this sample
+    did not detect a gap; read the interval for the offsets it still allows.
+    """
     exam_se = bench_se * math.sqrt(bench_n / exam_n)
     se = math.sqrt(bench_se ** 2 + exam_se ** 2)
     diff = bench_mean - exam_mean
     return {"diff": diff, "se_diff": se, "z": diff / se if se else None,
-            "within_noise": abs(diff) <= 1.96 * se}
+            "diff_ci95": [diff - 1.96 * se, diff + 1.96 * se],
+            "difference_detected": abs(diff) > 1.96 * se}
 
 
 # ---- resume ------------------------------------------------------------------------
