@@ -18,16 +18,28 @@ Actions come from the native sampler itself (curand, exact-joint-v1). The
 recorder does not choose actions; it records what the native side chose, and
 the Mac comparator replays those observations and tuples into the harness.
 
-For every recorded env the recorder steps a CPU bbplay shim (the same env TU)
-in lockstep. Its observations must equal the native rows byte for byte, which
-is also how the packed joint support is recorded: the vec's support buffer is
-not exposed to Python, and the shim reproduces it once observations agree.
+Joint support. The trainer's own vec support buffer is not reachable from
+Python (create_pufferl's PuffeRL exposes no vec). Two sources are recorded:
+
+  support         the bbplay shim (the same env TU built with cc) stepped in
+                  lockstep; its observations must equal the native rows byte
+                  for byte at every step, and the native rewritten masks must
+                  equal its support conditioned on the native tuple
+  native_support  best effort: a mirror vec built by the native extension
+                  itself (_C.create_vec, CPU buffers, 8 agents, one buffer),
+                  seeded like the recorded envs, aligned by its reset count,
+                  stepped with the native actions, and read through
+                  joint_actions_ptr at the forward boundary. It is kept only if
+                  its observations stayed equal to the native rows for the whole
+                  trace; any failure is recorded in RUN.json and never aborts
+                  the recording
 
 Backends:
   native   the live _C through tools/puffer_cuda_runtime.py (D225 init order)
-  dry-run  CPU stand-in: bbplay engines as the env and seeded numpy logits
-           sampled with the native algorithm; exercises lockstep and writer
-           code with no CUDA import at all
+  dry-run  CPU stand-in: bbplay engines as the env, seeded numpy logits sampled
+           with the native fp32 algorithm (parity.native_fp32_sample_head), and
+           a bbplay-backed mirror with the create_vec pointer interface;
+           exercises lockstep, mirror and writer code with no CUDA import
 
 Output (refuses to reuse a directory that holds RUN.json):
   <out>/RUN.json                          provenance and per-fixture summary
@@ -41,6 +53,8 @@ import sys
 sys.dont_write_bytecode = True  # never drop __pycache__ into the live checkout
 
 import argparse  # noqa: E402
+import copy  # noqa: E402
+import ctypes  # noqa: E402
 import hashlib  # noqa: E402
 import importlib.util  # noqa: E402
 import json  # noqa: E402
@@ -63,6 +77,7 @@ from play_harness import parity as P  # noqa: E402
 CUDA_LIB_NAMES = ("libcudart.so", "libcublas.so", "libcublasLt.so", "libcurand.so",
                   "libnccl.so", "libcudnn.so", "libnvJitLink.so")
 EPISODE_CANDIDATES = range(0, 8)
+MIRROR_MAX_RESETS = 7
 
 
 def sha256_file(path):
@@ -96,6 +111,117 @@ def loaded_cuda_libraries():
     except OSError:
         pass
     return sorted(libs)
+
+
+# ------------------------------------------------------------ support mirror
+class VecMirror:
+    """Reads a vec-like object through the _C.VecEnv pointer interface:
+    obs_ptr, terminals_ptr, joint_actions_ptr, joint_action_offsets_ptr,
+    joint_action_counts_ptr, joint_action_capacity, total_agents, obs_elem_size,
+    reset(), cpu_step(actions_ptr)."""
+
+    def __init__(self, vec):
+        self.vec = vec
+        self.n = int(vec.total_agents)
+        elem = int(vec.obs_elem_size)
+        if elem != 1:
+            raise RecorderFailure("mirror", f"obs_elem_size {elem}, expected uint8 observations")
+        self.actions = np.zeros((self.n, 3), dtype=np.float32)
+
+    def _view(self, ptr, ctype, count):
+        return np.ctypeslib.as_array((ctype * count).from_address(int(ptr)))
+
+    def obs(self):
+        return self._view(self.vec.obs_ptr, ctypes.c_uint8, self.n * E.OBS_SIZE) \
+            .reshape(self.n, E.OBS_SIZE)
+
+    def terminals(self):
+        return self._view(self.vec.terminals_ptr, ctypes.c_float, self.n)
+
+    def support(self, row):
+        offsets = self._view(self.vec.joint_action_offsets_ptr, ctypes.c_int, self.n)
+        counts = self._view(self.vec.joint_action_counts_ptr, ctypes.c_int, self.n)
+        cap = int(self.vec.joint_action_capacity)
+        off, cnt = int(offsets[row]), int(counts[row])
+        if cnt < 1 or off < 0 or off + cnt > cap:
+            raise RecorderFailure("mirror", f"row {row}: offset {off} count {cnt} capacity {cap}")
+        return self._view(self.vec.joint_actions_ptr, ctypes.c_uint32, cap)[off:off + cnt].copy()
+
+    def reset(self):
+        self.vec.reset()
+
+    def step(self, actions):
+        self.actions[:] = actions
+        self.vec.cpu_step(int(self.actions.ctypes.data))
+
+
+class FakeVec:
+    """Dry-run stand-in for _C.VecEnv(gpu=0) built on bbplay engines, with numpy
+    buffers behind the same pointer attributes. Starts one reset behind a
+    dry-run backend env (create_static_vec resets once, create_pufferl twice)."""
+
+    def __init__(self, seed, envs, max_decisions, corrupt_support_step=None):
+        self.seed, self.envs, self.md = seed, envs, max_decisions
+        self.total_agents = 2 * envs
+        self.obs_elem_size = 1
+        self.cap = self.total_agents * E.load_library().bbp_legal_max()
+        self.joint_action_capacity = self.cap
+        self._obs = np.zeros((self.total_agents, E.OBS_SIZE), dtype=np.uint8)
+        self._term = np.zeros(self.total_agents, dtype=np.float32)
+        self._joint = np.zeros(self.cap, dtype=np.uint32)
+        self._off = np.zeros(self.total_agents, dtype=np.int32)
+        self._cnt = np.zeros(self.total_agents, dtype=np.int32)
+        self.obs_ptr = self._obs.ctypes.data
+        self.terminals_ptr = self._term.ctypes.data
+        self.joint_actions_ptr = self._joint.ctypes.data
+        self.joint_action_offsets_ptr = self._off.ctypes.data
+        self.joint_action_counts_ptr = self._cnt.ctypes.data
+        self.episodes = [0] * envs
+        self.engines = [E.Engine(seed + e, episode=0, max_decisions=max_decisions)
+                        for e in range(envs)]
+        self.corrupt_support_step = corrupt_support_step
+        self.steps = 0
+        self._pack()
+
+    def _pack(self):
+        cursor = 0
+        for e, eng in enumerate(self.engines):
+            for r in (0, 1):
+                row = 2 * e + r
+                self._obs[row] = eng.obs(r)
+                sup = eng.joint_support(r)
+                self._joint[cursor:cursor + sup.shape[0]] = sup
+                self._off[row], self._cnt[row] = cursor, sup.shape[0]
+                cursor += sup.shape[0]
+        if self.corrupt_support_step is not None and self.steps == self.corrupt_support_step:
+            self._joint[self._off[0]] ^= 1 << 20  # flip a square bit of row 0's first tuple
+
+    def reset(self):
+        for e in range(self.envs):
+            self.episodes[e] += 1
+            self.engines[e].close()
+            self.engines[e] = E.Engine(self.seed + e, episode=self.episodes[e],
+                                       max_decisions=self.md)
+        self._term[:] = 0.0
+        self._pack()
+
+    def cpu_step(self, ptr):
+        acts = np.ctypeslib.as_array((ctypes.c_float * (self.total_agents * 3)).from_address(ptr)) \
+            .reshape(self.total_agents, 3)
+        self._term[:] = 0.0
+        for e, eng in enumerate(self.engines):
+            decider = eng.decision_team
+            rc = eng.step(*[int(v) for v in acts[2 * e + decider]])
+            if rc < 0:
+                raise RuntimeError(f"fake vec env {e} refused rc={rc}")
+            if rc == E.STEP_TERMINAL:
+                self._term[2 * e] = self._term[2 * e + 1] = 1.0
+                eng.close()
+                self.episodes[e] += 1
+                self.engines[e] = E.Engine(self.seed + e, episode=self.episodes[e],
+                                           max_decisions=self.md)
+        self.steps += 1
+        self._pack()
 
 
 # ------------------------------------------------------------------ backends
@@ -172,6 +298,7 @@ class NativeBackend:
                 got = got[k]
             if got != value:
                 raise RecorderFailure("config", f"{'.'.join(path)}={got!r}, expected {value!r}")
+        self.args = args
         self.provenance["overrides"] = overrides
         self.provenance["effective"] = {
             "base": {k: args[k] for k in ("seed", "cudagraphs", "reset_state", "profile")},
@@ -188,6 +315,14 @@ class NativeBackend:
         outside = [p for p in libs if not p.startswith(os.path.realpath(nv) + os.sep)]
         if outside:
             raise RecorderFailure("cuda-libraries", f"loaded outside {nv}: {outside}")
+
+    def make_mirror(self, envs):
+        """_C.create_vec on CPU buffers (gpu=0) with the recorded envs' seeds."""
+        margs = copy.deepcopy(self.args)
+        margs["vec"]["total_agents"] = 2 * envs
+        margs["vec"]["num_buffers"] = 1
+        margs["vec"]["num_threads"] = 1
+        return self._C.create_vec(margs, 0)
 
     def _tensor(self, snap, name, cols):
         t = snap["tensors"][name]
@@ -240,8 +375,9 @@ class NativeBackend:
 
 
 class DryRunBackend:
-    """CPU stand-in with the native sampler's algorithm (float32 inverse CDF over
-    the exact support conditioned on earlier heads). No CUDA, no pufferlib."""
+    """CPU stand-in with the native sampler's fp32 algorithm
+    (parity.native_fp32_sample_head over the support conditioned on earlier
+    heads). No CUDA, no pufferlib."""
     kind = "dry-run-numpy"
 
     def __init__(self, a):
@@ -251,6 +387,12 @@ class DryRunBackend:
         self.t = 0
         self.provenance = {"module_sha256": None, "precision_bytes": 4,
                            "note": "dry run: numpy logits, bbplay engines as the env"}
+
+    def make_mirror(self, envs):
+        if self.a.dry_mirror_fail:
+            raise RuntimeError("injected mirror construction failure")
+        return FakeVec(self.a.seed, envs, self.a.max_decisions,
+                       corrupt_support_step=self.a.dry_corrupt_support_step)
 
     def _engine(self, e):
         return E.Engine(self.a.seed + e, episode=self.episodes[e],
@@ -264,14 +406,8 @@ class DryRunBackend:
         for h, (lo, hi) in enumerate(P.HEAD_BOUNDS):
             m = np.zeros(hi - lo, dtype=bool)
             m[values[h][prefix]] = True
-            x = logits[lo:hi].astype(np.float32)
-            mx = x[m].max()
-            lse = mx + np.log(np.exp(x[m] - mx).sum(dtype=np.float32))
-            probs = np.where(m, np.exp(x - lse), 0.0).astype(np.float32)
-            cum = np.cumsum(probs, dtype=np.float32)
-            idx = np.nonzero(m & (u[h] < cum))[0]
-            a = int(idx[0]) if idx.size else int(np.nonzero(m)[0][-1])
-            total += x[a] - lse
+            a, lp = P.native_fp32_sample_head(logits[lo:hi], m, u[h])
+            total = np.float32(total + np.float32(lp))
             tup.append(a)
             masks.append(m)
             prefix &= values[h] == a
@@ -318,6 +454,11 @@ class DryRunBackend:
 
 
 # ------------------------------------------------------------------ lockstep
+def _mirror_obs_equal(mirror, data, envs):
+    mobs = mirror.obs()
+    return all(np.array_equal(mobs[2 * e + r], data[e]["obs"][r]) for e in envs for r in (0, 1))
+
+
 def record(a, backend):
     envs = [int(v) for v in a.envs.split(",")]
     base_env = {"home_team": -1, "away_team": -1, "skillup_max_players": 4,
@@ -326,11 +467,46 @@ def record(a, backend):
     shims, episodes, first_episode, expect_terminal = {}, {}, {}, {}
     matches = {e: 1 for e in envs}
     rows = {(e, r): {k: [] for k in ("obs", "reset", "terminal", "deciding", "masks", "actions",
-                                     "logprob", "value", "env_tuple", "logits", "support")}
+                                     "logprob", "value", "env_tuple", "logits", "support",
+                                     "native_support")}
             for e in envs for r in (0, 1)}
+    mirror, mirror_status = None, {"available": False}
+    if envs != list(range(len(envs))):
+        mirror_status["error"] = f"envs {envs} are not 0..k; the mirror covers contiguous envs"
+    else:
+        try:
+            mirror = VecMirror(backend.make_mirror(len(envs)))
+            mirror_status = {"available": True, "resets_to_align": None}
+        except Exception as exc:  # best effort: never aborts the recording
+            mirror_status["error"] = f"construction: {type(exc).__name__}: {exc}"
     t_start = time.time()
     for t in range(a.steps):
         data = backend.step(envs)
+        if mirror is not None:
+            try:
+                if t == 0:
+                    for k in range(MIRROR_MAX_RESETS + 1):
+                        if _mirror_obs_equal(mirror, data, envs):
+                            mirror_status["resets_to_align"] = k
+                            break
+                        mirror.reset()
+                    else:
+                        raise RecorderFailure("mirror", "no reset count aligns step 0")
+                elif not _mirror_obs_equal(mirror, data, envs):
+                    raise RecorderFailure("mirror", f"observations diverged at step {t}")
+                mterm = mirror.terminals()
+                if t > 0:
+                    for e in envs:
+                        if bool(mterm[2 * e]) != bool(data[e]["terminal"][0]):
+                            raise RecorderFailure("mirror", f"env {e} terminal differs at step {t}")
+                for e in envs:
+                    for r in (0, 1):
+                        rows[(e, r)]["native_support"].append(mirror.support(2 * e + r))
+            except Exception as exc:
+                mirror_status = {"available": False, "error": f"step {t}: {exc}",
+                                 "resets_to_align": mirror_status.get("resets_to_align")}
+                mirror = None
+                log(f"native support mirror dropped: {mirror_status['error']}")
         for e in envs:
             d = data[e]
             if t == 0:
@@ -388,15 +564,26 @@ def record(a, backend):
                 episodes[e] += 1
                 matches[e] += 1
                 shims[e] = E.Engine(a.seed + e, episode=episodes[e], max_decisions=a.max_decisions)
+        if mirror is not None:
+            try:
+                mirror.step(np.concatenate([data[e]["actions"] for e in envs]).astype(np.float32))
+            except Exception as exc:
+                mirror_status = {"available": False, "error": f"step {t} cpu_step: {exc}",
+                                 "resets_to_align": mirror_status.get("resets_to_align")}
+                mirror = None
+                log(f"native support mirror dropped: {mirror_status['error']}")
         if (t + 1) % 100 == 0 or t + 1 == a.steps:
             log(f"step {t + 1}/{a.steps} ({(time.time() - t_start) / (t + 1) * 1e3:.1f} ms/step) "
-                f"matches={[matches[e] for e in envs]}")
+                f"matches={[matches[e] for e in envs]} native_support={mirror is not None}")
     elapsed = time.time() - t_start
     fixtures = []
     violations = 0
     for (e, r), rec in rows.items():
-        arrays = {k: np.stack(v) for k, v in rec.items() if k != "support"}
+        arrays = {k: np.stack(v) for k, v in rec.items() if k not in ("support", "native_support")}
         arrays["support"], arrays["support_offsets"] = P.pack_support(rec["support"])
+        if mirror_status["available"]:
+            arrays["native_support"], arrays["native_support_offsets"] = \
+                P.pack_support(rec["native_support"])
         arrays["masked_logits"] = np.where(arrays["masks"].astype(bool), arrays["logits"],
                                            -np.inf).astype(np.float32)
         arrays["probs"] = P.head_probs(arrays["logits"], arrays["masks"]).astype(np.float32)
@@ -417,6 +604,9 @@ def record(a, backend):
                       "steps": a.steps, "matches": matches[e],
                       "total_agents": a.total_agents, "num_buffers": a.num_buffers,
                       "rows": [2 * e, 2 * e + 1]},
+            "support_sources": {"support": "bbplay shim in lockstep",
+                                "native_support": "native extension mirror vec (_C.create_vec)"
+                                if mirror_status["available"] else None},
             "consistency": cons,
         }
         out_dir = os.path.join(a.out, f"{a.trace}-env{e}-row{r}")
@@ -426,9 +616,13 @@ def record(a, backend):
                          "terminal_steps": int(arrays["terminal"][1:].sum()),
                          "deciding_steps": int(arrays["deciding"].sum()),
                          "consistency_violations": cons["violations"],
-                         "recorded_logprob_vs_recorded_logits_max_abs":
-                             cons.get("recorded_logprob_vs_recorded_logits_max_abs")})
+                         "masks_vs_support_mismatch_steps": cons["masks_vs_support_mismatch_steps"],
+                         "native_vs_shim_support_mismatch_steps":
+                             cons["native_vs_shim_support_mismatch_steps"],
+                         "recorded_logprob_vs_native_fp32_sampler_max_abs":
+                             cons.get("recorded_logprob_vs_native_fp32_sampler_max_abs")})
     return {"fixtures": fixtures, "consistency_violations": violations,
+            "native_support_capture": mirror_status,
             "record_seconds": elapsed, "ms_per_step": elapsed / max(1, a.steps) * 1e3,
             "episodes_first": {str(e): first_episode[e] for e in envs}}
 
@@ -450,6 +644,8 @@ def main(argv=None):
     ap.add_argument("--num-threads", type=int, default=4)
     ap.add_argument("--fail-at-step", type=int, default=None, help="dry-run only")
     ap.add_argument("--dry-step-sleep", type=float, default=0.0, help="dry-run only")
+    ap.add_argument("--dry-mirror-fail", action="store_true", help="dry-run only")
+    ap.add_argument("--dry-corrupt-support-step", type=int, default=None, help="dry-run only")
     a = ap.parse_args(argv)
 
     live_real = os.path.realpath(a.live) + os.sep
@@ -463,8 +659,10 @@ def main(argv=None):
     if os.path.isdir(a.out) and os.listdir(a.out):
         print(f"refusing to write into a non-empty directory: {a.out}", file=sys.stderr)
         return 2
-    if a.backend == "native" and (a.fail_at_step is not None or a.dry_step_sleep):
-        print("--fail-at-step and --dry-step-sleep are dry-run only", file=sys.stderr)
+    if a.backend == "native" and (a.fail_at_step is not None or a.dry_step_sleep
+                                  or a.dry_mirror_fail or a.dry_corrupt_support_step is not None):
+        print("--fail-at-step, --dry-step-sleep and --dry-mirror-* are dry-run only",
+              file=sys.stderr)
         return 2
     if any(2 * int(e) + 1 >= a.total_agents // a.num_buffers for e in a.envs.split(",")):
         print("recorded envs must lie in the first buffer", file=sys.stderr)
@@ -476,7 +674,7 @@ def main(argv=None):
     a.checkpoint_sha256 = digest
     os.makedirs(a.out, exist_ok=True)
     run = {
-        "schema": "bbplay-native-parity-run-v1",
+        "schema": "bbplay-native-parity-run-v2",
         "argv": sys.argv if argv is None else ["record_native.py"] + list(argv),
         "backend": a.backend, "host": socket.gethostname(), "platform": platform.platform(),
         "python": sys.version, "numpy": np.__version__,
@@ -517,7 +715,8 @@ def main(argv=None):
     with open(os.path.join(a.out, "RUN.json"), "w") as f:
         json.dump(run, f, indent=1, sort_keys=True, default=str)
     log(f"RECORDER-DONE fixtures={len(run['fixtures'])} "
-        f"consistency_violations={run['consistency_violations']} out={a.out}")
+        f"consistency_violations={run['consistency_violations']} "
+        f"native_support={run['native_support_capture']} out={a.out}")
     return 4 if run["consistency_violations"] else 0
 
 
