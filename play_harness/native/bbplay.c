@@ -16,15 +16,21 @@
 //     state is rebuilt by re-applying the terminal action to a pre-step copy.
 #include "bloodbowl.h"
 
-#define BBP_ABI_VERSION 3
+#define BBP_ABI_VERSION 4
 
-// Return codes for bbp_step.
+// Return codes for bbp_step and bbp_step_scripted.
 #define BBP_STEP_OK 0
 #define BBP_STEP_TERMINAL 1
 #define BBP_STEP_REJECTED -1      // tuple outside exact joint support
 #define BBP_STEP_NO_DECISION -2   // env is not waiting on a decision
 #define BBP_STEP_COLLISION -3     // two distinct engine actions share the tuple
 #define BBP_STEP_OVER -4          // session already reached a terminal step
+#define BBP_STEP_NOT_BOT_TURN -5  // scripted step while the other coach decides
+#define BBP_STEP_BAD_BOT -6       // unknown scripted bot type
+
+// Scripted bot types, the env's scripted_opponent_type values (bloodbowl.ini).
+#define BBP_BOT_CONTACT 0         // bbe_contact_bot_pick (contact_bot.h)
+#define BBP_BOT_OFFENSE 1         // bbe_offense_bot_pick (offense_bot.h)
 
 typedef struct {
     Bloodbowl env;
@@ -231,37 +237,30 @@ int bbp_tuple_index(bbp_session* s, int t, int arg, int sq) {
     return collision ? -3 : idx;
 }
 
-// Apply the deciding coach's tuple through the real c_step. Never aborts on
-// bad input: the tuple is validated against exact support first.
-int bbp_step(bbp_session* s, int t, int arg, int sq) {
-    Bloodbowl* env = &s->env;
-    if (s->terminal) return BBP_STEP_OVER;
-    if (env->match.status != BB_STATUS_DECISION || env->n_legal <= 0) {
-        return BBP_STEP_NO_DECISION;
-    }
-    int collision = 0;
-    int idx = bbp_find_tuple(s, t, arg, sq, &collision);
-    if (collision) {
-        s->collisions++;
-        return BBP_STEP_COLLISION;
-    }
-    if (idx < 0) {
-        s->rejected++;
-        return BBP_STEP_REJECTED;
-    }
-    int agent = env->match.decision_team;
-    bb_action act = env->legal[idx];
-    bb_match pre = env->match;
-    bb_rng pre_rng = env->rng;
-    int pre_decisions = env->decisions;
+static void bbp_clear_action_rows(Bloodbowl* env) {
     for (int a = 0; a < BBE_AGENTS; a++) {
         env->action_ptr[a][0] = (float)BB_A_NONE;
         env->action_ptr[a][1] = 32.0f;
         env->action_ptr[a][2] = 390.0f;
     }
-    env->action_ptr[agent][0] = (float)t;
-    env->action_ptr[agent][1] = (float)arg;
-    env->action_ptr[agent][2] = (float)sq;
+}
+
+// The engine's own scripted pick, exactly as c_step dispatches it for
+// scripted_opponent_type. The caller has checked the decision and the type.
+static bb_action bbp_bot_pick(Bloodbowl* env, int bot_type) {
+    return bot_type == BBP_BOT_OFFENSE
+               ? bbe_offense_bot_pick(&env->match, env->legal, env->n_legal)
+               : bbe_contact_bot_pick(&env->match, env->legal, env->n_legal);
+}
+
+// Run the real c_step with the action rows already written, then rebuild the
+// natural final state if the step was terminal. act is the engine action c_step
+// applies, agent the deciding coach.
+static int bbp_run_c_step(bbp_session* s, bb_action act, int agent) {
+    Bloodbowl* env = &s->env;
+    bb_match pre = env->match;
+    bb_rng pre_rng = env->rng;
+    int pre_decisions = env->decisions;
     s->pre_stall = env->ep_stall;
     c_step(env);
     s->steps++;
@@ -295,6 +294,62 @@ int bbp_step(bbp_session* s, int t, int arg, int sq) {
         return BBP_STEP_TERMINAL;
     }
     return BBP_STEP_OK;
+}
+
+// Apply the deciding coach's tuple through the real c_step. Never aborts on
+// bad input: the tuple is validated against exact support first.
+int bbp_step(bbp_session* s, int t, int arg, int sq) {
+    Bloodbowl* env = &s->env;
+    if (s->terminal) return BBP_STEP_OVER;
+    if (env->match.status != BB_STATUS_DECISION || env->n_legal <= 0) {
+        return BBP_STEP_NO_DECISION;
+    }
+    int collision = 0;
+    int idx = bbp_find_tuple(s, t, arg, sq, &collision);
+    if (collision) {
+        s->collisions++;
+        return BBP_STEP_COLLISION;
+    }
+    if (idx < 0) {
+        s->rejected++;
+        return BBP_STEP_REJECTED;
+    }
+    int agent = env->match.decision_team;
+    bb_action act = env->legal[idx];
+    bbp_clear_action_rows(env);
+    env->action_ptr[agent][0] = (float)t;
+    env->action_ptr[agent][1] = (float)arg;
+    env->action_ptr[agent][2] = (float)sq;
+    return bbp_run_c_step(s, act, agent);
+}
+
+// Let the engine's scripted bot decide for `team` through c_step's own
+// scripted_opponent branch: the env carries scripted_opponent = 1 with this
+// type and team for the one step (bank tag 0, the frozen-eval setting), then
+// the fields go back to the bbp_create values. Both action rows hold the NONE
+// tuple, which that branch never reads.
+int bbp_step_scripted(bbp_session* s, int bot_type, int team) {
+    Bloodbowl* env = &s->env;
+    if (s->terminal) return BBP_STEP_OVER;
+    if (bot_type != BBP_BOT_CONTACT && bot_type != BBP_BOT_OFFENSE) {
+        return BBP_STEP_BAD_BOT;
+    }
+    if (env->match.status != BB_STATUS_DECISION || env->n_legal <= 0) {
+        return BBP_STEP_NO_DECISION;
+    }
+    int agent = env->match.decision_team;
+    if (agent != team) return BBP_STEP_NOT_BOT_TURN;
+    bb_action act = bbp_bot_pick(env, bot_type);
+    bbp_clear_action_rows(env);
+    env->scripted_opponent = 1;
+    env->scripted_opponent_type = bot_type;
+    env->scripted_opponent_team = team;
+    env->scripted_bank_tag = 0;
+    int rc = bbp_run_c_step(s, act, agent);
+    env->scripted_opponent = 0;
+    env->scripted_opponent_type = 0;
+    env->scripted_opponent_team = 1;
+    return rc;
 }
 
 // Legal actions after applying a tuple on a scratch copy of the session.
@@ -374,15 +429,23 @@ uint64_t bbp_state_digest(bbp_session* s) {
     return h;
 }
 
-// Scripted drivers. Both return an index into bbp_legal, or -1.
-int bbp_contact_bot_index(bbp_session* s) {
+// Scripted drivers. Index into bbp_legal of the bot's pick for the deciding
+// coach: -1 not at a decision, -2 unknown bot type, -3 pick not in the list.
+int bbp_scripted_bot_index(bbp_session* s, int bot_type) {
     Bloodbowl* env = &s->env;
+    if (bot_type != BBP_BOT_CONTACT && bot_type != BBP_BOT_OFFENSE) return -2;
     if (env->match.status != BB_STATUS_DECISION || env->n_legal <= 0) return -1;
-    bb_action a = bbe_contact_bot_pick(&env->match, env->legal, env->n_legal);
+    bb_action a = bbp_bot_pick(env, bot_type);
     for (int i = 0; i < env->n_legal; i++) {
         if (bb_action_eq(env->legal[i], a)) return i;
     }
-    return -1;
+    return -3;
+}
+
+// Contact bot index, or -1.
+int bbp_contact_bot_index(bbp_session* s) {
+    int i = bbp_scripted_bot_index(s, BBP_BOT_CONTACT);
+    return i < 0 ? -1 : i;
 }
 
 // ---- UI annotations (read-only probes over engine helpers) -----------------

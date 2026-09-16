@@ -19,7 +19,7 @@ BUILD_SCRIPT = os.path.join(ROOT, "play_harness", "native", "build.sh")
 LIB_EXT = "dylib" if sys.platform == "darwin" else "so"
 DEFAULT_LIB = os.path.join(ROOT, "build", "play_harness", f"libbbplay.{LIB_EXT}")
 
-ABI_VERSION = 3
+ABI_VERSION = 4
 OBS_SIZE = 2782
 OBS_VERSION = 6
 MASK_SIZE = 454
@@ -36,6 +36,13 @@ STEP_REJECTED = -1
 STEP_NO_DECISION = -2
 STEP_COLLISION = -3
 STEP_OVER = -4
+STEP_NOT_BOT_TURN = -5
+STEP_BAD_BOT = -6
+
+# The env's scripted_opponent_type values (puffer/config/bloodbowl.ini) and the
+# engine pick function each one dispatches to in c_step.
+BOT_TYPES = {"contact": 0, "offense": 1}
+BOT_PICK_FUNCTIONS = {"contact": "bbe_contact_bot_pick", "offense": "bbe_offense_bot_pick"}
 
 STATUS_RUNNING = 0
 STATUS_DECISION = 1
@@ -218,6 +225,8 @@ def load_library(path=None, build_if_missing=True):
         "bbp_last_rewards": ([c_p, ctypes.POINTER(ctypes.c_float)], None),
         "bbp_state_digest": ([c_p], ctypes.c_uint64),
         "bbp_contact_bot_index": ([c_p], ctypes.c_int),
+        "bbp_scripted_bot_index": ([c_p, ctypes.c_int], ctypes.c_int),
+        "bbp_step_scripted": ([c_p, ctypes.c_int, ctypes.c_int], ctypes.c_int),
         "bbp_step_success": ([c_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                               ctypes.c_int, ctypes.POINTER(ctypes.c_int32),
                               ctypes.POINTER(ctypes.c_float)], None),
@@ -402,6 +411,14 @@ class Engine:
 
     def contact_bot_index(self):
         return self.lib.bbp_contact_bot_index(self._ptr)
+
+    def scripted_bot_index(self, bot_type):
+        """Index into legal() of the engine bot's pick: -1 no decision, -2 bad type."""
+        return self.lib.bbp_scripted_bot_index(self._ptr, int(bot_type))
+
+    def step_scripted(self, bot_type, team):
+        """Let the engine bot decide for `team` through c_step's scripted branch."""
+        return self.lib.bbp_step_scripted(self._ptr, int(bot_type), int(team))
 
     # ---- annotations -----------------------------------------------------
     def step_success(self, slot, x, y, is_blitz, act_kind=-1):
