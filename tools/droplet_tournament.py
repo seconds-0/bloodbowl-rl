@@ -54,6 +54,7 @@ IMAGE = "ubuntu-24-04-x64"          # python 3.12.3, the Mac harness venv's vers
 TORCH_VERSION = "2.14.0"            # the Mac harness venv's torch; installed CPU-only
 NUMPY_VERSION = "2.5.3"
 TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
+MAX_GAMES_PER_WORKER = 256          # play_harness.tournament.MAX_GAMES_PER_WORKER
 REMOTE_ROOT = "/srv/bb"
 REMOTE_SRC = REMOTE_ROOT + "/src"
 REMOTE_RUN = REMOTE_ROOT + "/run"
@@ -1010,6 +1011,9 @@ def cmd_run(args):
     pairs = plan_pairs([parse_pair(p) for p in args.pair], set(checkpoints) | set(bots),
                        args.games_per_pair)
     tasks = expected_tasks(pairs)
+    if not 1 <= args.games_per_worker <= MAX_GAMES_PER_WORKER:   # before anything is created
+        raise RunnerError(f"--games-per-worker must be in 1..{MAX_GAMES_PER_WORKER}, "
+                          f"got {args.games_per_worker}")
     checkpoints = {n: os.path.abspath(os.path.expanduser(p)) for n, p in checkpoints.items()}
     for n, p in checkpoints.items():
         for path in (p, p + ".lineage.json"):

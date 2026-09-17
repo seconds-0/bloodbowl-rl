@@ -114,6 +114,18 @@ def test_tournament_argv_adds_games_per_worker_only_when_batched():
     assert build_run_args([]).games_per_worker == 1
 
 
+def test_games_per_worker_is_refused_before_anything_is_created():
+    """cmd_run must stop on a bad value before it reads the token or calls the API; the
+    no-network fixture fails the test if it gets that far."""
+    from play_harness import tournament as T
+    assert D.MAX_GAMES_PER_WORKER == T.MAX_GAMES_PER_WORKER
+    for bad in ("0", "-1", "257"):
+        args = build_run_args(["--games-per-worker", bad, "--bot", "c=contact", "--bot",
+                               "o=offense", "--pair", "c,o,2"])
+        with pytest.raises(D.RunnerError, match="games-per-worker"):
+            D.cmd_run(args)
+
+
 def build_run_args(extra):
     return D.build_parser().parse_args(["run", "--name", "n", "--seed0", "1", *extra])
 
