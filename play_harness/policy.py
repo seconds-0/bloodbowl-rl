@@ -312,8 +312,17 @@ class PolicySeat:
     def step(self, obs, support, deciding):
         logits, value, self.state = self.policy.forward_eval(
             torch.from_numpy(np.asarray(obs, dtype=np.uint8)).reshape(1, -1), self.state)
+        action, logprob = self.decide(logits[0], support, deciding)
+        return {"tuple": action, "logprob": logprob, "value": float(value[0]),
+                "logits": logits[0].numpy().astype(np.float32, copy=True)}
+
+    def decide(self, logits, support, deciding):
+        """Count one forward and select from this seat's own logits row.
+
+        Shared by step() and batched_forward() callers, so a batched game samples
+        with the same code and the same per-seat generator as an unbatched one.
+        """
         self.forwards += 1
-        logits = logits[0]
         if deciding:
             action, logprob, _ = select_joint(logits, support, self.mode, self.generator,
                                               temperature=self.temperature)
@@ -323,5 +332,29 @@ class PolicySeat:
             if packed.size != 1 or E.unpack_tuple(packed[0]) != NONE_TUPLE:
                 raise AssertionError("waiting row must carry the singleton NONE support")
             action, logprob = NONE_TUPLE, 0.0
-        return {"tuple": action, "logprob": logprob, "value": float(value[0]),
-                "logits": logits.numpy().astype(np.float32, copy=True)}
+        return action, logprob
+
+
+def batched_forward(policy, seats, obs_rows):
+    """ONE forward for every seat of `policy`; returns the logits, one row per seat.
+
+    Each seat keeps its own (layers, 1, hidden) state. The rows are concatenated
+    for the call and handed back as per-seat copies, so no state outlives its seat:
+    a new game's seats start from initial_state() whatever ran in that batch row
+    before. Rows never mix inside forward_eval (every op is row-wise), so a seat's
+    logits depend on the rest of the batch only through float rounding in the
+    matrix products.
+    """
+    if not seats or len(seats) != len(obs_rows):
+        raise ValueError("batched_forward needs one observation per seat")
+    if any(s.policy is not policy for s in seats):
+        raise ValueError("every seat in a batch must hold the batch's policy")
+    if len({id(s) for s in seats}) != len(seats):
+        raise ValueError("a seat may appear once per batch")
+    obs = torch.from_numpy(np.stack([np.asarray(o, dtype=np.uint8).reshape(-1)
+                                     for o in obs_rows]))
+    state = torch.cat([s.state for s in seats], dim=1)
+    logits, _, new_state = policy.forward_eval(obs, state)
+    for row, seat in enumerate(seats):
+        seat.state = new_state[:, row:row + 1].clone()
+    return logits
