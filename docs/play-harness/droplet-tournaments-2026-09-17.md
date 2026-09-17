@@ -10,9 +10,9 @@ gate run?
    torch, syncs a pinned commit and only the named checkpoints, builds the shim,
    runs the tournament and the stats under nohup, copies the results back,
    verifies them by sha256 and against the manifest, destroys the droplet and
-   prints the cost. It ran seven times today. Success, a failing job and a Ctrl-C
-   in the middle of the install all ended with the droplet and its ssh key
-   verified gone.
+   prints the cost. It ran nine times today. Success, a failing job, a Ctrl-C in
+   the middle of the install and a Ctrl-C in the middle of the tournament all
+   ended with the droplet and its ssh key verified gone.
 2. **The account cannot create a 16 to 32 vCPU CPU-optimized droplet.** The
    largest CPU-optimized size it offers is `c-4`. The largest non-GPU size is
    `s-8vcpu-16gb-amd`: 8 shared vCPUs, 16 GB, $0.16667 per hour. That is the
@@ -24,9 +24,9 @@ gate run?
    about 77 minutes split by pair over four droplets ($0.77).** The split is
    sound and has a verified `merge` step. Both commands for the chain 35 gate
    are at the end.
-5. **Cross-machine runs agree in distribution, not always game by game.** The 200
-   game slice of the chain 34 reference matched the Mac in every game. Over
-   2,400 games, 2,399 matched and one took different actions.
+5. **Cross-machine runs are not guaranteed to match game by game.** The 200 game
+   slice of the chain 34 reference matched the Mac in every game. Over 2,400
+   games, 2,399 matched and one took different actions.
 
 ## Size and price
 
@@ -117,20 +117,23 @@ leg).
 - The one game that differs is chain34 v chain30, game index 20, leg `A_home`
   (engine seed 20600020). It ran 476 engine steps on the droplet and 494 on the
   Mac, and ended 0-0 on both.
-- The cause is float rounding. `logprob_sum` (rounded to 4 places) differs from
-  the Mac in 1,797 of the 2,400 games even when every action is the same, by at
-  most 0.0014. Now and then that difference crosses a sampling boundary and a
-  game takes another path.
+- The likely cause is float rounding. `logprob_sum` (rounded to 4 places)
+  differs from the Mac in 1,797 of the 2,400 games even when every action is the
+  same, by at most 0.0014. A difference that size can cross a sampling boundary
+  and send a game down another path. The diverging step itself was not traced.
 - `final_digest` matched in the diverged game too, so it is a weak test. Use
   `action_trail_sha256`.
-- Outcome distributions agree. Against the reference's full 3,200 games per
-  pair, the score-rate z values are -0.07 (chain27), -0.61 (chain30) and -0.37
-  (offense).
+- Outcomes: 2,399 of the 2,400 droplet games are the Mac's games, action for
+  action, and the diverged game has the same score. So W/D/L and TD totals are
+  identical to the reference's same games for every pair. `compare` also prints
+  a z against the reference's full 3,200 games per pair (-0.07 chain27, -0.61
+  chain30, -0.37 offense). That z is descriptive only: it treats games as
+  independent and the samples overlap.
 
-**Cross-machine runs agree in distribution, not game by game.** Expect about 1
-game in 2,000 to differ between the Mac and a droplet. Nothing here tries to
-force bit equality. Whether two droplets of the same CPU model match each other
-in every game was not tested.
+**Cross-machine runs agree in distribution, not game by game.** The observed rate
+is 1 diverged game in 2,400 (none in the 200 game slice); one event does not pin
+the true rate down. Nothing here tries to force bit equality. Whether two droplets
+of the same CPU model match each other in every game was not tested.
 
 Every droplet built a byte-identical shim from the pinned commit (sha256
 `f22b4b6211e1...`, AMD and Intel alike), which is what lets `merge` require one
@@ -166,15 +169,27 @@ tools/droplet_tournament.py merge --out ALL/main --shard S1/main --shard S2/main
   `tournament.log` and `droplet_run.json` (size, price, timings, steal, cost).
   The manifest's `harness_git_head` is the pinned commit, read on the droplet
   from a `SOURCE_COMMIT` file.
-- **Verification.** Every copied file must match the droplet's `SHA256SUMS`. The
-  manifest must name the pinned commit, the local checkpoint hashes, the seed
-  block, the pairs and the task count. `COMPLETE.json` must say complete, the game
-  count must equal the request, and every integrity counter must be zero. The
-  results move from `main.partial` to `main` only after all of that passes.
+- **Verification.** Every copied file, `machine.json` included, must match the
+  droplet's `SHA256SUMS`. The manifest must name the pinned commit, the local
+  checkpoint hashes, the requested bots, the seed block, the pairs and the task
+  count. `COMPLETE.json` must say complete. The games must be exactly the
+  schedule: every pair's indices, both legs, once each, on engine seed
+  seed0 + index. Every integrity counter must be zero. The results move from
+  `main.partial` to `main` only after all of that passes.
 - **Teardown.** A `finally` block plus SIGINT, SIGTERM and SIGHUP handlers
   destroy the droplet and the key on every exit path and wait for HTTP 404 on
-  both. Signals are ignored during teardown. A failed run first copies whatever
-  logs it can reach into `main.failed`.
+  both. Signals are ignored during teardown, no log or disk error can skip it,
+  and API calls retry through network errors, 429 and 5xx for about 10 minutes.
+  The create request is never repeated. A failed run first copies whatever logs
+  it can reach into `main.failed`.
+- **Lost create answer.** A marker is written before the create request. If the
+  droplet id never reaches local state, teardown and `destroy --name` look for
+  a droplet with the tag, the run's exact name and a creation time after the
+  marker, and destroy it. Proven live by deleting the recorded id of a kept run.
+- **One process per name.** A lock in the state directory stops a second `run`
+  or `destroy` on the same name. To stop a live run, send it SIGINT.
+- **Timeouts.** Every ssh and scp call has one, so a hung connection cannot bill
+  without limit.
 - **Spend guards.** `--max-hours` (default 4) gives up and destroys the droplet.
   A tournament log silent for `--stale-seconds` (default 900) with no exit file
   is a failure. Liveness is the log's age, not its text.
@@ -211,8 +226,9 @@ it correctly showed the sibling droplet that was still working.
 | `c34-slice-a` | determinism slice, first full lifecycle | $0.015 |
 | `bench-c4`, `bench-s8` | kept boxes for the worker-scaling benchmark, then `destroy` | $0.021, $0.028 |
 | `c34-tp-ckpt`, `c34-tp-bot` | throughput, two droplets at once, then `merge` | $0.055, $0.040 |
-| `trap-fail`, `trap-sigint` | failing job and Ctrl-C teardown | $0.010, $0.010 |
-| **total** | | **$0.18** |
+| `trap-fail`, `trap-sigint` | failing job and Ctrl-C during the install | $0.010, $0.010 |
+| `trap-sigint2`, `adopt-test` | after the review fixes: Ctrl-C during the tournament; a kept run destroyed through the lost-create path | $0.010, $0.010 |
+| **total** | | **$0.20** |
 
 ## Chain 35 gate tournament
 
@@ -236,20 +252,22 @@ with `bash`.
 run() { name=$1; shift
   caffeinate -i tools/droplet_tournament.py run --name "$name" --seed0 20700000 \
       --out-root "$OUT" --max-hours 3 "$@" > "/tmp/$name.log" 2>&1 & }
-run c35-gate-20260917-s1 --checkpoint chain35=$CHAIN35_BLOB --checkpoint chain30=$CK/chain30/$B \
+run c35-gate-20260917-s1 --checkpoint "chain35=$CHAIN35_BLOB" --checkpoint "chain30=$CK/chain30/$B" \
     --bot offense=offense --pair chain35,chain30,3200 --pair chain30,offense,3200
-run c35-gate-20260917-s2 --checkpoint chain35=$CHAIN35_BLOB --checkpoint chain34=$CK/chain34/$B \
+run c35-gate-20260917-s2 --checkpoint "chain35=$CHAIN35_BLOB" --checkpoint "chain34=$CK/chain34/$B" \
     --bot offense=offense --pair chain35,chain34,3200 --pair chain34,offense,3200
-run c35-gate-20260917-s3 --checkpoint chain35=$CHAIN35_BLOB --checkpoint chain27=$CK/chain27/$B \
+run c35-gate-20260917-s3 --checkpoint "chain35=$CHAIN35_BLOB" --checkpoint "chain27=$CK/chain27/$B" \
     --bot offense=offense --pair chain35,chain27,3200 --pair chain35,offense,3200
-run c35-gate-20260917-s4 --checkpoint chain35=$CHAIN35_BLOB --checkpoint chain32=$CK/chain32/$B \
+run c35-gate-20260917-s4 --checkpoint "chain35=$CHAIN35_BLOB" --checkpoint "chain32=$CK/chain32/$B" \
     --pair chain35,chain32,3200
 wait
-tools/droplet_tournament.py merge --out $OUT/c35-gate-20260917/main \
-    --shard $OUT/c35-gate-20260917-s1/main --shard $OUT/c35-gate-20260917-s2/main \
-    --shard $OUT/c35-gate-20260917-s3/main --shard $OUT/c35-gate-20260917-s4/main
+tail -n 3 /tmp/c35-gate-20260917-s?.log          # each must end with "results in ..."
+tools/droplet_tournament.py merge --out "$OUT/c35-gate-20260917/main" \
+    --shard "$OUT/c35-gate-20260917-s1/main" --shard "$OUT/c35-gate-20260917-s2/main" \
+    --shard "$OUT/c35-gate-20260917-s3/main" --shard "$OUT/c35-gate-20260917-s4/main"
 OMP_NUM_THREADS=1 ~/Code/bb-play-harness/.venv/bin/python -m play_harness.tournament_stats \
-    --run-dir $OUT/c35-gate-20260917/main --json $OUT/c35-gate-20260917/main/report.json
+    --run-dir "$OUT/c35-gate-20260917/main" --json "$OUT/c35-gate-20260917/main/report.json" \
+    > "$OUT/c35-gate-20260917/main/report.txt"
 tools/droplet_tournament.py status
 ```
 
@@ -262,26 +280,32 @@ today). Each shard also carries its own `report.json` for its pairs.
 
 ```bash
 caffeinate -i tools/droplet_tournament.py run --name c35-gate-20260917 \
-    --checkpoint chain35=$CHAIN35_BLOB \
-    --checkpoint chain30=$CK/chain30/$B --checkpoint chain34=$CK/chain34/$B \
-    --checkpoint chain27=$CK/chain27/$B --checkpoint chain32=$CK/chain32/$B \
+    --checkpoint "chain35=$CHAIN35_BLOB" \
+    --checkpoint "chain30=$CK/chain30/$B" --checkpoint "chain34=$CK/chain34/$B" \
+    --checkpoint "chain27=$CK/chain27/$B" --checkpoint "chain32=$CK/chain32/$B" \
     --bot offense=offense \
     --pair chain35,chain30,3200 --pair chain35,chain34,3200 --pair chain35,chain27,3200 \
     --pair chain35,chain32,3200 --pair chain35,offense,3200 \
     --pair chain34,offense,3200 --pair chain30,offense,3200 \
-    --seed0 20700000 --out-root $OUT --max-hours 6
+    --seed0 20700000 --out-root "$OUT" --max-hours 6
 ```
 
 `--max-hours 6` matters: the default of 4 would stop this run before it ends.
 
 ## Tests
 
-`play_harness/tests/test_droplet_tournament.py`, 60 tests, 0.1 s. A fixture makes
+`play_harness/tests/test_droplet_tournament.py`, 75 tests, 0.1 s. A fixture makes
 any `urlopen` or `subprocess.run` call fail the test, so nothing can reach the
-network. They cover argument building (including a parse by the real tournament
-CLI), the droplet-side scripts, size and price checks, cost and estimate math,
-sha256 and manifest verification, the run comparison, the merge refusals, the
-destroy guards and the droplet-limit blocker.
+network; the API retry tests swap in a fake `urlopen`. They cover argument
+building (including a parse by the real tournament CLI and a match against the
+real scheduler), the droplet-side scripts, size and price checks, cost and
+estimate math, sha256, manifest and schedule verification, the run comparison,
+the merge refusals, the destroy and adoption guards, the per-name lock, the API
+retry rules and the droplet-limit blocker.
+
+An independent review (Codex, 2026-09-17) found three leak paths and several
+verification gaps in the first version. All are fixed in commit 87df578 and the
+lifecycle was proven live again afterwards.
 
 ## Limits
 
