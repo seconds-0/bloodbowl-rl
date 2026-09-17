@@ -428,6 +428,60 @@ def test_cli_manifest_without_the_key_counts_as_one(tmp_path, monkeypatch):
     assert T.main(base) == 0                                       # the old run resumes at 1
 
 
+def test_a_failing_worker_reports_and_the_run_stops():
+    import multiprocessing as mp
+    tasks = [("x", "o", i, leg) for i in range(2) for leg in T.LEGS]
+    initargs = ({"x": "/nope/missing.bin"}, "native", "sample", 1, None, {"o": "offense"})
+    with T._batched_records(mp.get_context("spawn"), 2, initargs, tasks, 2) as records:
+        first = next(iter(records))
+    assert "error" in first and "missing.bin" in first["error"]
+
+
+class _DeadProcess:
+    pid, exitcode = 4242, -9
+
+    def __init__(self, **kw):
+        pass
+
+    def start(self):
+        pass
+
+    def is_alive(self):
+        return False
+
+    def terminate(self):
+        raise AssertionError("a dead process is not terminated")
+
+    def join(self, timeout=None):
+        pass
+
+
+class _SilentQueue:
+    def put(self, item):
+        pass
+
+    def get(self, timeout=None):
+        raise T.queue.Empty
+
+    def cancel_join_thread(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class _DeadContext:
+    Process, Queue = _DeadProcess, _SilentQueue
+
+
+def test_a_worker_killed_without_a_report_aborts_the_run():
+    tasks = [("c", "o", 0, leg) for leg in T.LEGS]
+    with T._batched_records(_DeadContext, 1, (), tasks, 2, poll_seconds=0.01) as records:
+        got = list(records)
+    assert len(got) == 1 and "exited without a report" in got[0]["error"]
+    assert "2 games outstanding" in got[0]["error"]
+
+
 @pytest.mark.skipif(not os.path.exists(CHAIN25), reason="chain 25 checkpoint not present")
 def test_cli_batched_checkpoint_games(tmp_path, monkeypatch):
     monkeypatch.setenv("OMP_NUM_THREADS", "1")

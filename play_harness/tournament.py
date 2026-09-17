@@ -714,15 +714,22 @@ def _batched_records(ctx, workers, initargs, pending, games_per_worker, poll_sec
     def records():
         outstanding = {task_key(*t) for t in pending}
         finished_workers = 0
+        checked = time.time()
         while finished_workers < len(procs):
             try:
                 rec = result_q.get(timeout=poll_seconds)
             except queue.Empty:
+                rec = None
+            if rec is None or time.time() - checked >= poll_seconds:
+                # A worker killed from outside (the OOM killer, a signal) reports nothing.
+                # Its games would never arrive, so stop now, not after the others finish.
+                checked = time.time()
                 dead = [p.pid for p in procs if p.exitcode not in (None, 0)]
-                if dead or not any(p.is_alive() for p in procs):
+                if dead or (rec is None and not any(p.is_alive() for p in procs)):
                     yield {"error": f"worker process(es) {dead or 'all'} exited without a "
                                     f"report ({len(outstanding)} games outstanding)", "task": []}
                     return
+            if rec is None:
                 continue
             if "worker_done" in rec:
                 finished_workers += 1
