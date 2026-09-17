@@ -296,7 +296,7 @@ def test_compare_runs_reports_bit_identity():
     ref = [game(index=i, leg=leg, digest=f"d{i}{leg}", trail=f"t{i}{leg}")
            for i in range(3) for leg in ("A_home", "B_home")]
     report = D.compare_runs([dict(g) for g in ref[:4]], ref)
-    assert report["verdict"] == "bit-identical"
+    assert report["verdict"].startswith("every game took the same actions")
     assert report["counts"]["exact"] == report["counts"]["matched_keys"] == 4
     assert report["pairs"]["a,b"]["reference_full"]["games"] == 6
     assert not any(report["integrity"].values())
@@ -309,7 +309,7 @@ def test_compare_runs_counts_digest_and_trail_separately():
            game(index=2, digest="DIFF", trail="DIFF", result="L", a_td=0, b_td=2),
            game(index=9, digest="x", trail="y")]
     c = D.compare_runs(run, ref)["counts"]
-    assert D.compare_runs(run, ref)["verdict"] == "not bit-identical"
+    assert D.compare_runs(run, ref)["verdict"] == "3 of 4 games differ from the reference"
     assert (c["matched_keys"], c["missing_in_reference"]) == (3, 1)
     assert (c["final_digest_equal"], c["action_trail_equal"], c["exact"]) == (2, 1, 1)
     assert c["score_equal"] == 2 and c["rosters_equal"] == 3 and c["seeds_equal"] == 3
@@ -338,7 +338,7 @@ def test_compare_runs_keys_on_pair_index_and_leg():
 
 
 def test_compare_runs_an_unmatched_run_is_never_called_identical():
-    assert D.compare_runs([game(index=5)], [game(index=0)])["verdict"] == "not bit-identical"
+    assert D.compare_runs([game(index=5)], [game(index=0)])["verdict"].startswith("1 of 1 games differ")
 
 
 def test_compare_runs_distribution_and_z():

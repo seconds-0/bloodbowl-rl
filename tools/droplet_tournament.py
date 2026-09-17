@@ -440,8 +440,9 @@ def compare_runs(games, ref_games):
     labels = {tuple(g["pair"]) for g in games}
     pooled_run = _summary(games)
     pooled_full = _summary([r for r in ref_games if tuple(r["pair"]) in labels])
-    verdict = ("bit-identical" if matched and counts["exact"] == len(games)
-               else "not bit-identical")
+    verdict = ("every game took the same actions to the same final state"
+               if matched and counts["exact"] == len(games) else
+               f"{len(games) - counts['exact']} of {len(games)} games differ from the reference")
     counts["diverged_games"] = len(matched) - counts["action_trail_equal"]
     counts["max_logprob_sum_drift_same_actions"] = drift
     return {"verdict": verdict, "counts": counts, "pairs": pairs,
