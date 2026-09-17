@@ -1,0 +1,209 @@
+{
+ "schema": "bbplay-parity-compare-v2",
+ "checkpoint_sha256": "41ecd998b45613f7cb5e3b7a92b85811473abadc9f099f4baa9f307b42a6dc0b",
+ "torch_version": "2.14.0",
+ "consistency_violations": 0,
+ "env_mismatch_fixtures": 0,
+ "masks_vs_support_mismatch_steps": 0,
+ "native_vs_torch_logit_max_abs_diff": 0.0001220703125,
+ "acceptance": {
+  "consistency_violations": 0,
+  "env_obs_mismatch_steps": 0,
+  "forward_joint_tv_max": 0.001,
+  "forward_joint_tv_mean": 2e-06,
+  "logit_step0_max_abs_diff": 0.001,
+  "logprob_max_abs_diff": 0.001,
+  "masked_head_argmax_agreement_min": 0.999,
+  "masked_head_prob_max_abs_diff": 0.001,
+  "masks_vs_support_mismatch_steps": 0,
+  "sampler_joint_tv_max": 0.001,
+  "sampler_joint_tv_mean": 2e-05,
+  "value_max_abs_diff": 0.001
+ },
+ "kernels": {
+  "native": {
+   "deciding_steps": 6400,
+   "first_step_logit_abs_diff_over_tolerance": 4,
+   "fixtures": 16,
+   "forward_head_tv_max": [
+    4.5411481855911484e-05,
+    2.5710132516855002e-05,
+    4.616242891189448e-05
+   ],
+   "forward_head_tv_mean": [
+    1.6830001677786934e-07,
+    1.731821304338779e-07,
+    2.0794610535566152e-07
+   ],
+   "forward_joint_tv_max": 4.616242891189448e-05,
+   "forward_joint_tv_mean": 5.26773469748988e-07,
+   "forward_joint_tv_p99": 1.4429244589820721e-05,
+   "head_prob_max_abs_diff": 0.0002450521508778891,
+   "logit_max_abs_diff": 0.023345947265625,
+   "logit_max_rel_diff": 0.0024385452270507812,
+   "logit_mean_abs_diff": 6.354588248134501e-05,
+   "logit_step0_max_abs_diff": 3.647804260253906e-05,
+   "logprob_max_abs_diff": 0.00015101947971363217,
+   "logprob_mean_abs_diff": 6.327651152034187e-07,
+   "masked_head_argmax_agreement": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "masked_head_prob_max_abs_diff": 4.616242891192224e-05,
+   "recorded_logit_abs_max": 2641.51904296875,
+   "reset_steps": 48,
+   "sampler_head_tv_max": [
+    4.5369387031812813e-05,
+    2.6113584350995583e-05,
+    4.7713518142700195e-05
+   ],
+   "sampler_head_tv_mean": [
+    1.819107258911902e-07,
+    2.227138258682257e-07,
+    3.175782034227885e-07
+   ],
+   "sampler_joint_tv_max": 4.7713518142700195e-05,
+   "sampler_joint_tv_mean": 6.891669843646585e-07,
+   "sampler_joint_tv_p99": 1.4447121448033105e-05,
+   "steps": 12800,
+   "unmasked_head_argmax_agreement": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "value_max_abs_diff": 1.0728836059570312e-05,
+   "value_mean_abs_diff": 7.081011062837206e-07,
+   "verdict": {
+    "checks": {
+     "consistency_violations": true,
+     "env_obs_mismatch_steps": true,
+     "forward_joint_tv_max": true,
+     "forward_joint_tv_mean": true,
+     "logit_step0_max_abs_diff": true,
+     "logprob_max_abs_diff": true,
+     "masked_head_argmax_agreement_min": true,
+     "masked_head_prob_max_abs_diff": true,
+     "masks_vs_support_mismatch_steps": true,
+     "sampler_joint_tv_max": true,
+     "sampler_joint_tv_mean": true,
+     "value_max_abs_diff": true
+    },
+    "pass": true
+   }
+  },
+  "torch": {
+   "deciding_steps": 6400,
+   "first_step_logit_abs_diff_over_tolerance": 4,
+   "fixtures": 16,
+   "forward_head_tv_max": [
+    4.543838354773011e-05,
+    2.5710132516855002e-05,
+    4.616242891189448e-05
+   ],
+   "forward_head_tv_mean": [
+    1.6832203192544495e-07,
+    1.7332731508065493e-07,
+    2.0745807120253854e-07
+   ],
+   "forward_joint_tv_max": 4.616242891189448e-05,
+   "forward_joint_tv_mean": 5.264388710080233e-07,
+   "forward_joint_tv_p99": 1.4453252380227613e-05,
+   "head_prob_max_abs_diff": 0.0002450521508778891,
+   "logit_max_abs_diff": 0.023345947265625,
+   "logit_max_rel_diff": 0.0024385452270507812,
+   "logit_mean_abs_diff": 6.354548529765666e-05,
+   "logit_step0_max_abs_diff": 3.647804260253906e-05,
+   "logprob_max_abs_diff": 0.00015101947971363217,
+   "logprob_mean_abs_diff": 6.322986753700948e-07,
+   "masked_head_argmax_agreement": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "masked_head_prob_max_abs_diff": 4.616242891192224e-05,
+   "recorded_logit_abs_max": 2641.51904296875,
+   "reset_steps": 48,
+   "sampler_head_tv_max": [
+    4.538893699645996e-05,
+    2.6113584350995583e-05,
+    4.7713518142700195e-05
+   ],
+   "sampler_head_tv_mean": [
+    1.8192932258751697e-07,
+    2.2285591986013326e-07,
+    3.170603197874984e-07
+   ],
+   "sampler_joint_tv_max": 4.7713518142700195e-05,
+   "sampler_joint_tv_mean": 6.888024288721895e-07,
+   "sampler_joint_tv_p99": 1.446417479220975e-05,
+   "steps": 12800,
+   "unmasked_head_argmax_agreement": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "value_max_abs_diff": 1.0728836059570312e-05,
+   "value_mean_abs_diff": 7.080644354573451e-07,
+   "verdict": {
+    "checks": {
+     "consistency_violations": true,
+     "env_obs_mismatch_steps": true,
+     "forward_joint_tv_max": true,
+     "forward_joint_tv_mean": true,
+     "logit_step0_max_abs_diff": true,
+     "logprob_max_abs_diff": true,
+     "masked_head_argmax_agreement_min": true,
+     "masked_head_prob_max_abs_diff": true,
+     "masks_vs_support_mismatch_steps": true,
+     "sampler_joint_tv_max": true,
+     "sampler_joint_tv_mean": true,
+     "value_max_abs_diff": true
+    },
+    "pass": true
+   }
+  }
+ },
+ "fixture_count": 16,
+ "runs": {
+  "md150_s43": {
+   "consistency_violations": 0,
+   "native_support_capture": {
+    "available": true,
+    "resets_to_align": 1
+   }
+  },
+  "md4096_s42": {
+   "consistency_violations": 0,
+   "native_support_capture": {
+    "available": true,
+    "resets_to_align": 1
+   }
+  }
+ },
+ "queue_result": {
+  "dry_run": false,
+  "finished_utc": "2026-09-17T01:56:53Z",
+  "queue_script_sha256": "c8c3e368b96a9e50da5638e7133677bbdbca678b79a95e3148eda3e670ce69de",
+  "runs": {
+   "md150_s43": {
+    "backend": "native",
+    "consistency_violations": 0,
+    "fixtures": 8,
+    "module_sha256": "d63498f6e49f1c0713cd55390e3df54e3ba43c7d11b6d8c2d1dfc081c75eee69",
+    "ms_per_step": 58.14112186431885,
+    "terminal_steps": 24
+   },
+   "md4096_s42": {
+    "backend": "native",
+    "consistency_violations": 0,
+    "fixtures": 8,
+    "module_sha256": "d63498f6e49f1c0713cd55390e3df54e3ba43c7d11b6d8c2d1dfc081c75eee69",
+    "ms_per_step": 60.44588565826416,
+    "terminal_steps": 8
+   }
+  },
+  "schema": "bbplay-native-parity-queue-v1",
+  "source_commit": "cac260fa14dce1d6879a679ae35db417fe4c55bd"
+ }
+}

@@ -11,9 +11,10 @@ per game on the harness and 0.342 on the rig exam, a difference of -0.033
 
 - The comparator is built and validated on the Mac.
 - The rig recorder is built and passed a CPU dry run.
-- The GPU recording is queued behind chain 34's exam, so no native numbers exist
-  yet.
-- The screening tolerances below were fixed before any rig data exists.
+- The GPU recording ran on the rig on 2026-09-17 at 01:55-01:57 UTC, after chain 34's exam, and
+  released the lock with exit 0.
+- **Every screening tolerance passes** for both harness kernels (see "Native results").
+- The screening tolerances below were fixed before any rig data existed.
 
 Branch `feat/harness-native-parity-20260916`. The code lives in
 `play_harness/parity.py`, `tools/parity/record_native.py`,
@@ -466,6 +467,44 @@ How to read each outcome:
 - The fp32 sampler reproduction uses numpy's float32 `exp`/`log`, which may
   differ from libdevice by a unit in the last place, and treats `curand_uniform`
   as continuous.
+
+## Native results (rig RTX 2070, 2026-09-17 UTC)
+
+**Recording.** Unit `parity-native-20260916-v2`, sources at `cac260f`, took `kt-gpu.lock` at 01:55:05Z once chain
+34's exam released it, and released it at 01:56:53Z (exit 0, `RESULT_COMPLETE.json`).
+- Runs: `md4096_s42` (1,000 steps, 8 terminal steps) and `md150_s43` (600 steps, 24 terminal steps).
+- Coverage: envs 0-3, both seats, 16 fixtures.
+- Module sha `d63498f6`, the training module.
+- Recorder consistency violations: 0 in both runs.
+- Mirror support capture available in both runs (`resets_to_align=1`).
+
+**Comparison.** `python -m play_harness.parity compare` against chain 30 (sha `41ecd998`), with torch 2.14.0 on the Mac.
+Across the 16 fixtures: 0 env mismatches, 0 consistency violations and 0 native-mask-vs-support mismatch steps.
+
+| Metric | Tolerance | Harness torch kernel | Harness native kernel |
+|---|---|---|---|
+| `logit_step0_max_abs_diff` | <= 1e-3 | 3.65e-5 | 3.65e-5 |
+| `masked_head_prob_max_abs_diff` | <= 1e-3 | 4.62e-5 | 4.62e-5 |
+| `masked_head_argmax_agreement` | >= 0.999 | 1, 1, 1 | 1, 1, 1 |
+| `logprob_max_abs_diff` | <= 1e-3 | 1.51e-4 | 1.51e-4 |
+| `value_max_abs_diff` | <= 1e-3 | 1.07e-5 | 1.07e-5 |
+| `forward_joint_tv_max` | <= 1e-3 | 4.62e-5 | 4.62e-5 |
+| `forward_joint_tv_mean` | <= 2e-6 | 5.26e-7 | 5.27e-7 |
+| `sampler_joint_tv_max` | <= 1e-3 | 4.77e-5 | 4.77e-5 |
+| `sampler_joint_tv_mean` | <= 2e-5 | 6.89e-7 | 6.89e-7 |
+| verdict | | **PASS** | **PASS** |
+
+Not gated: all-step raw logits differ by up to 0.0233 (recurrence roundoff at logits near |1e3|), and unmasked head
+probabilities by up to 2.45e-4. The rig-parity tests on these fixtures pass (`test_parity_fixture.py`: 3 passed). The
+compact summary is committed as `native-parity-2026-09-16/native-compare-summary.json`; the full `COMPARE.json` and
+fixtures stay under `.play-artifacts/parity/native-20260916` (gitignored).
+
+**Reading.** On the recorded self-play states, the harness forward and sampler reproduce the rig's native CUDA action
+distributions for chain 30 closely, and the two harness kernels are indistinguishable from each other here. Forward and
+sampler numerics become an unlikely explanation for the offense-bot offset (-0.033 TD per game), though not an excluded
+one: the traces are self-play, not games against the offense bot. The remaining candidates are the ones listed under
+"How to read each outcome": the bot bench's seeds and state distribution, the exam seeds sharing env seeds, the exam's
+lr-1e-12 train phase, and states against the bot that self-play does not visit.
 
 ## Review changes (Codex, 2026-09-16)
 
