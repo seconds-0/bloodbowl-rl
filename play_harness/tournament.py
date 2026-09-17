@@ -45,7 +45,8 @@ from .policy import NONE_TUPLE, PolicySeat, check_temperature, load_checkpoint
 SCHEMA = "bbplay-tournament-game-v1"
 MANIFEST_SCHEMA = "bbplay-tournament-v1"
 MAX_DECISIONS = 4096
-MAX_WORKERS = 4
+MAX_WORKERS = 4                  # default cap: protects a shared workstation
+MAX_WORKERS_ENV = "BBPLAY_MAX_WORKERS"
 HARD_COUNTERS = ("illegal", "projection_collision", "error_episodes",
                  "rejected_submissions", "precheck_collisions")
 LEGS = ("A_home", "B_home")
@@ -431,6 +432,25 @@ def discover_checkpoints(directory=DEFAULT_CHECKPOINT_DIR):
     return out
 
 
+def worker_cap(environ=None):
+    """Largest accepted --workers: MAX_WORKERS unless BBPLAY_MAX_WORKERS raises it.
+
+    Every game is single-threaded, so a dedicated tournament box (see
+    tools/droplet_tournament.py) sets the variable to its core count. Worker
+    count never changes a game: sampling seeds are keyed by (engine seed, side).
+    """
+    raw = (os.environ if environ is None else environ).get(MAX_WORKERS_ENV)
+    if raw is None or raw == "":
+        return MAX_WORKERS
+    try:
+        cap = int(raw)
+    except ValueError:
+        raise ValueError(f"{MAX_WORKERS_ENV} must be a positive integer, got {raw!r}")
+    if cap < 1:
+        raise ValueError(f"{MAX_WORKERS_ENV} must be a positive integer, got {raw!r}")
+    return cap
+
+
 def _git_head():
     try:
         return subprocess.run(["git", "-C", E.ROOT, "rev-parse", "HEAD"], check=True,
@@ -465,8 +485,13 @@ def main(argv=None):
                     help="pilot: play only the first K scheduled tasks")
     ap.add_argument("--out-dir", required=True)
     args = ap.parse_args(argv)
-    if not 1 <= args.workers <= MAX_WORKERS:
-        raise SystemExit(f"--workers must be 1..{MAX_WORKERS}")
+    try:
+        cap = worker_cap()
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+    if not 1 <= args.workers <= cap:
+        raise SystemExit(f"--workers must be 1..{cap} (raise the cap on a dedicated "
+                         f"box with {MAX_WORKERS_ENV})")
     if os.environ.get("OMP_NUM_THREADS") != "1":
         raise SystemExit("set OMP_NUM_THREADS=1 (one thread per worker)")
     if args.checkpoint:
