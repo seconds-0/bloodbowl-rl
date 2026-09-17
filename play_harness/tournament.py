@@ -47,6 +47,7 @@ MANIFEST_SCHEMA = "bbplay-tournament-v1"
 MAX_DECISIONS = 4096
 MAX_WORKERS = 4                  # default cap: protects a shared workstation
 MAX_WORKERS_ENV = "BBPLAY_MAX_WORKERS"
+SOURCE_COMMIT_FILE = "SOURCE_COMMIT"
 HARD_COUNTERS = ("illegal", "projection_collision", "error_episodes",
                  "rejected_submissions", "precheck_collisions")
 LEGS = ("A_home", "B_home")
@@ -451,11 +452,18 @@ def worker_cap(environ=None):
     return cap
 
 
-def _git_head():
+def _git_head(root=None):
+    """HEAD of the checkout, else the SOURCE_COMMIT file a git-archive sync leaves."""
+    root = root or E.ROOT
     try:
-        return subprocess.run(["git", "-C", E.ROOT, "rev-parse", "HEAD"], check=True,
+        return subprocess.run(["git", "-C", root, "rev-parse", "HEAD"], check=True,
                               capture_output=True, text=True).stdout.strip()
     except Exception:
+        pass
+    try:
+        with open(os.path.join(root, SOURCE_COMMIT_FILE)) as f:
+            return f.read().strip() or None
+    except OSError:
         return None
 
 
