@@ -232,17 +232,23 @@ it correctly showed the sibling droplet that was still working.
 
 ## Chain 35 gate tournament
 
+The journal's D406 runs this gate at 32 games per worker, so every command below passes
+`--games-per-worker 32` and pins the harness commit. The runner's defaults (unbatched, `HEAD`) are
+not the registered gate. After the merge, `tools/gate_acceptance.py` holds the run to the registered
+plan: `merge` only checks shards against each other, so a launch that omits a whole pair still merges.
+
 Set the blob path first. Its `.lineage.json` sidecar must sit beside it.
 
 ```bash
-cd ~/Code/bb-harness-droplet
+cd ~/Code/bb-play-harness
+COMMIT=$(git rev-parse HEAD)                       # freeze it once; every shard and the acceptance check use it
 CHAIN35_BLOB=FILL_IN_THE_CHAIN35_CHECKPOINT_PATH   # .../chain35/0000002999975936.bin
 CK=~/Code/bb-play-harness/.play-artifacts/checkpoints
 B=0000002999975936.bin
 OUT=~/Code/bb-play-harness/.play-artifacts/tournaments
 ```
 
-### Option A: four droplets, about 77 minutes, about $0.77 (recommended)
+### Option A: four droplets, about 17 minutes at 32 games per worker, about $0.17 (recommended)
 
 Needs four free droplet slots; `run` stops with a `BLOCKER` line if there is none.
 Each shard is its own process with its own teardown. Save as a file and run it
@@ -251,6 +257,7 @@ with `bash`.
 ```bash
 run() { name=$1; shift
   caffeinate -i tools/droplet_tournament.py run --name "$name" --seed0 20700000 \
+      --games-per-worker 32 --commit "$COMMIT" \
       --out-root "$OUT" --max-hours 3 "$@" > "/tmp/$name.log" 2>&1 & }
 run c35-gate-20260917-s1 --checkpoint "chain35=$CHAIN35_BLOB" --checkpoint "chain30=$CK/chain30/$B" \
     --bot offense=offense --pair chain35,chain30,3200 --pair chain30,offense,3200
@@ -265,6 +272,15 @@ tail -n 3 /tmp/c35-gate-20260917-s?.log          # each must end with "results i
 tools/droplet_tournament.py merge --out "$OUT/c35-gate-20260917/main" \
     --shard "$OUT/c35-gate-20260917-s1/main" --shard "$OUT/c35-gate-20260917-s2/main" \
     --shard "$OUT/c35-gate-20260917-s3/main" --shard "$OUT/c35-gate-20260917-s4/main"
+sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
+tools/gate_acceptance.py --run-dir "$OUT/c35-gate-20260917/main" --seed0 20700000 \
+    --games-per-worker 32 --commit "$COMMIT" \
+    --pair chain35,chain30,3200 --pair chain35,chain34,3200 --pair chain35,chain27,3200 \
+    --pair chain35,chain32,3200 --pair chain35,offense,3200 \
+    --pair chain34,offense,3200 --pair chain30,offense,3200 \
+    --checkpoint "chain35=$(sha "$CHAIN35_BLOB")" --checkpoint "chain30=$(sha "$CK/chain30/$B")" \
+    --checkpoint "chain34=$(sha "$CK/chain34/$B")" --checkpoint "chain27=$(sha "$CK/chain27/$B")" \
+    --checkpoint "chain32=$(sha "$CK/chain32/$B")" || exit 1     # must print GATE-ACCEPTED
 OMP_NUM_THREADS=1 ~/Code/bb-play-harness/.venv/bin/python -m play_harness.tournament_stats \
     --run-dir "$OUT/c35-gate-20260917/main" --json "$OUT/c35-gate-20260917/main/report.json" \
     > "$OUT/c35-gate-20260917/main/report.txt"
@@ -276,7 +292,7 @@ compiled shim, that give a shared player a different checkpoint, or that overlap
 in pairs. The final stats pass is one process on the Mac (2.6 s for 2,400 games
 today). Each shard also carries its own `report.json` for its pairs.
 
-### Option B: one droplet, about 4.4 hours, about $0.73
+### Option B: one droplet, about 48 minutes at 32 games per worker, about $0.13
 
 ```bash
 caffeinate -i tools/droplet_tournament.py run --name c35-gate-20260917 \
@@ -287,10 +303,11 @@ caffeinate -i tools/droplet_tournament.py run --name c35-gate-20260917 \
     --pair chain35,chain30,3200 --pair chain35,chain34,3200 --pair chain35,chain27,3200 \
     --pair chain35,chain32,3200 --pair chain35,offense,3200 \
     --pair chain34,offense,3200 --pair chain30,offense,3200 \
-    --seed0 20700000 --out-root "$OUT" --max-hours 6
+    --seed0 20700000 --games-per-worker 32 --commit "$COMMIT" --out-root "$OUT" --max-hours 6
 ```
 
-`--max-hours 6` matters: the default of 4 would stop this run before it ends.
+Run the same `tools/gate_acceptance.py` command against `$OUT/c35-gate-20260917/main` afterwards.
+Unbatched, this run takes about 4.4 hours, which is why `--max-hours 6` is set.
 
 ## Tests
 
