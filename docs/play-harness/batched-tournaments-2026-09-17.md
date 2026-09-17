@@ -18,8 +18,8 @@ code path with the old results.
 3. **The one game that differs is the same game every time**: engine seed
    20600020, chain34 v chain30, leg `A_home`. It is also the single game that
    differed between the Mac and a droplet in the cross-machine check. One of its
-   sampling draws lands inside a probability gap of 5 in a million, so any change
-   in float rounding flips it. It was traced; see "The game that flips".
+   sampling draws lands inside a probability gap of 5 in a million, so a change
+   in float rounding can flip it (N = 2, 4 and 8 round differently too and did not). It was traced; see "The game that flips".
 4. **A 22,400 game gate would take about 48 minutes on one droplet (about
    $0.13)** at N = 32, against 4.4 hours and $0.73 unbatched, or
    about 17 minutes on four droplets (about $0.17).
@@ -82,9 +82,12 @@ the Mac.
   round differently from a batch-1 product**, by about 1 part in a million of the
   logits. A sampled action changes only when a draw falls inside the sliver of
   probability that the rounding moved.
-- Therefore N = 1 and N > 1 agree in distribution and in nearly every game, but
-  not by guarantee in every game. This is the same kind of difference as running
-  on another machine, and about the same size (1 game in 2,400 there).
+- Therefore N = 1 and N > 1 are not guaranteed to match game by game, and their
+  per-decision probabilities differ by parts in a million, so they are not the
+  identical sampler either. What was observed: on these checkpoints, seeds and
+  sample-mode temperature 1 runs, every score and every W/D/L and TD total
+  matched, and all but one checkpoint game took identical actions. This is the
+  same kind of difference as running on another machine (1 game in 2,400 there).
 - The manifest records `games_per_worker`. A resume refuses a run whose value
   differs, the same way it refuses a changed compiled library, because the two
   settings are slightly different samplers. A manifest without the key was played
@@ -97,8 +100,11 @@ the Mac.
 ## Measured agreement (droplet, same machine, same seeds)
 
 `s-8vcpu-16gb-amd`, 8 workers, torch 2.14.0+cpu, seed0 20600000. The N = 1 runs
-went through the full runner (`bf-ckpt-n1`, `bf-bot-n1`). The other N ran on the
-same two droplets afterwards. Every run passed the runner's schedule check (each
+went through the full runner (`bf-ckpt-n1`, `bf-bot-n1`) at commit `3ce0274`. The
+other N ran on the same two droplets afterwards at commit `1c21ff9`, which differs
+only in the batched workers' queue handling and the runner's argument check: no
+change to the N = 1 path, the forward or the sampler. Both builds gave the same
+shim (sha256 `f22b4b6211e1...`). Every run passed the runner's schedule check (each
 scheduled game exactly once, on the right engine seed).
 
 Checkpoint pairs: chain34 v chain30 and chain34 v chain27, 600 games each.
@@ -147,9 +153,9 @@ support are identical in both runs. The logits differ by at most 4.6e-4 on a
 largest logit of 440 (1 part in a million) and by 1.5e-5 on the two candidates.
 The arg head's probabilities are 0.617702 / 0.382288 alone and 0.617696 / 0.382293
 in the batch. The draw falls in the 5.4e-6 gap between them, so the seat picks
-arg 4 alone and arg 0 in the batch. The logit difference does not grow over the
-30 decisions before it (2.7e-5 to 1.0e-3, no trend), so rounding does not build
-up in the recurrent state.
+arg 4 alone and arg 0 in the batch. The logit difference shows no trend over the
+30 decisions before it (2.7e-5 to 1.0e-3). That is one trace of one game: it shows
+no build-up in the recurrent state there, not that build-up cannot happen.
 
 This game has two outcomes and rounding picks one: 494 engine steps (Mac N = 1,
 droplet N >= 16) or 476 (droplet N = 1, Mac N = 8 and 16). Both end 0-0.
@@ -167,7 +173,7 @@ drain at the end included. 8 workers, one game per task.
 | 8 | 4.30 | 2.8 | 5.77 | 3.2 |
 | 16 | 6.02 | 3.9 | 7.41 | 4.1 |
 | **32** | **7.74** | **5.0** | **8.68** | **4.7** |
-| 64 | 8.70 | 5.6 | 9.96 | 5.4 |
+| 64 | 8.70 | 5.6 | 9.96 | 5.5 |
 | 128 | 9.20 | 6.0 | not run | |
 
 The full-lifecycle run at N = 32 played its 3,200 mixed games (half checkpoint
@@ -214,8 +220,8 @@ N = 16. The differing game is seed 20600020 again.
 | machine | N | why |
 |---|---|---|
 | DigitalOcean `s-8vcpu-16gb-amd`, 8 workers | **32** | 5 times the unbatched rate. 256 games in flight is under a tenth of a 3,200 game shard, so the drain stays small. |
-| the same, one droplet playing 10,000 games or more | 64 | 12 to 15% more, and the drain no longer matters. |
-| Mac, 2 to 4 workers | 16 | 2.7 times in the spot check. Not tuned further because the Mac was in use. |
+| the same, one droplet playing 10,000 games or more | 64 | 12 to 15% more in the sweep. The drain should be a smaller share of a long run; no long N = 64 run was made. N = 128 was 6% faster again, so 64 is a compromise, not an optimum. |
+| Mac | 16 | 2.7 times in the spot check, which used 2 workers only. Provisional: not tuned further because the Mac was in use. |
 | any registered gate | **1** | The gate procedure is unchanged until the journal says otherwise. |
 
 ## What it means for a 22,400 game gate
@@ -232,10 +238,21 @@ droplet (create, install, sync, copy back, destroy).
 | four droplets, split by pair | 32 | slowest shard 6,400 / 8.73 = 12 min, plus overhead: **about 17 min** | **about $0.17** |
 | the Mac, 4 workers, unbatched, at load 47 | 1 | about 85 min | $0 |
 
-The N = 32 rows use the 8.73 games/s of the mixed full-lifecycle run, the longest
-batched run here and the closest in shape to a gate shard. The sweep's 1,200 game
-rates (7.74 and 8.68) give 51 minutes for one droplet. Shared hosts vary by about
-25% from droplet to droplet, so read all of these the same way. At N = 32 one droplet beats the four-droplet unbatched plan on wall time and
+These are budgets, not measurements of a gate. The N = 32 rows use the 8.73
+games/s of the mixed full-lifecycle run, the longest batched run here and the
+closest in shape to a gate shard. What that rate does not cover:
+
+- The measured mix was half checkpoint games and half bot games. The gate is 57%
+  checkpoint games, and those were the slower kind in the sweep. The sweep's own
+  rates (7.74 and 8.68) give 51 minutes for one droplet, not 48.
+- The mixed run held two distinct checkpoints. One droplet playing all seven pairs
+  holds five, so each worker makes up to five smaller forwards per step. That
+  case was not measured. A shard of one or two pairs is the measured case.
+- Every rate here is one run, on one droplet, with no repeats. The earlier droplet
+  doc saw the same job run at 1.28 and 1.65 games/s on two droplets (today: 1.54),
+  so read every number as plus or minus 25%.
+- The four-droplet cost assumes shards of 6,400, 6,400, 6,400 and 3,200 games and
+  that each droplet is destroyed when its own shard ends, which the runner does. At N = 32 one droplet beats the four-droplet unbatched plan on wall time and
 costs a fifth as much, which also leaves the account's droplet slots free.
 
 ## How to run
@@ -306,8 +323,12 @@ and tested.
 ## Limits
 
 - Agreement was measured on chain 34, 30 and 27 and the offense bot, at
-  temperature 1 in sample mode, on one CPU model. Another checkpoint will have
-  its own knife-edge games. Expect about one game in a thousand, not zero.
+  temperature 1 in sample mode, on one CPU model. The counts are 1 of 1,200
+  checkpoint games at each N from 16 up (the same game each time, so one event,
+  not four), 0 of 1,200 bot games, and 0 of 3,200 against the Mac reference. That
+  is too little to state a rate. Other checkpoints, temperatures and argmax were
+  covered by the structural tests only, not by a numeric agreement run. A game
+  that takes other actions can also end on another score; this one did not.
 - Throughput was measured on 1,200 game runs with one or two pairs per droplet.
   A worker that holds many pairs at once makes one forward per distinct
   checkpoint per step, so a full round robin on one droplet batches less well
