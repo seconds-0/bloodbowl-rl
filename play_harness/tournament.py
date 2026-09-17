@@ -23,30 +23,44 @@ Integrity. A game is accepted only when it ends naturally (MATCH_OVER), every
 hard counter is zero, and each seat made exactly one forward per engine step.
 Any violation aborts the whole run.
 
+Batching (--games-per-worker N, default 1). With N > 1 a worker keeps N games in
+flight and runs ONE forward per policy per step over every seat that holds that
+policy (BatchedGames). Each seat still owns its recurrent state and its sampling
+generator and selects with the same code, so a game depends on its batch only
+through float rounding in the matrix products: nearly every game takes the same
+actions as at N = 1, a few do not, and the two settings agree in distribution.
+N = 1 is the unbatched path, unchanged. The manifest records N and a resume
+refuses a different one. See docs/play-harness/batched-tournaments-2026-09-17.md.
+
   OMP_NUM_THREADS=1 .venv/bin/python -m play_harness.tournament \\
       --games-per-pair 400 --workers 4 --out-dir .play-artifacts/tournaments/<stamp>
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import itertools
 import json
 import os
 import platform
+import queue
 import struct
 import subprocess
 import sys
 import time
 
 from . import engine as E
-from .policy import NONE_TUPLE, PolicySeat, check_temperature, load_checkpoint
+from .policy import (NONE_TUPLE, PolicySeat, batched_forward, check_temperature,
+                     load_checkpoint)
 
 SCHEMA = "bbplay-tournament-game-v1"
 MANIFEST_SCHEMA = "bbplay-tournament-v1"
 MAX_DECISIONS = 4096
 MAX_WORKERS = 4                  # default cap: protects a shared workstation
 MAX_WORKERS_ENV = "BBPLAY_MAX_WORKERS"
+GAMES_PER_WORKER_ENV = "BBPLAY_GAMES_PER_WORKER"
+MAX_GAMES_PER_WORKER = 256
 SOURCE_COMMIT_FILE = "SOURCE_COMMIT"
 HARD_COUNTERS = ("illegal", "projection_collision", "error_episodes",
                  "rejected_submissions", "precheck_collisions")
@@ -320,6 +334,27 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
         match.close()
 
 
+def pair_seating(a, b, index, leg, seed0, mode="sample", specs=None):
+    """Who sits where in one leg: (home, away, engine seed, modes, temperatures)."""
+    if leg not in LEGS:
+        raise ValueError(f"unknown leg {leg!r}")
+    home, away = (a, b) if leg == "A_home" else (b, a)
+    seed = int(seed0) + int(index)
+    spec = lambda name: {"mode": mode, "temperature": 1.0, **((specs or {}).get(name) or {})}  # noqa: E731
+    return (home, away, seed, (spec(home)["mode"], spec(away)["mode"]),
+            (spec(home)["temperature"], spec(away)["temperature"]))
+
+
+def pair_record(a, b, index, leg, home, away, record):
+    """A match record from A's perspective."""
+    a_side = 0 if leg == "A_home" else 1
+    a_td, b_td = record["score"][a_side], record["score"][1 - a_side]
+    return {"schema": SCHEMA, "pair": [a, b], "game_index": int(index), "leg": leg,
+            "home": home, "away": away, "a_td": a_td, "b_td": b_td,
+            "result_a": "W" if a_td > b_td else ("D" if a_td == b_td else "L"),
+            **record}
+
+
 def pair_game(policies, a, b, index, leg, seed0, mode="sample", lib=None,
               seat_factory=PolicySeat, specs=None):
     """One leg of one game of pair (a, b), recorded from A's perspective.
@@ -327,21 +362,143 @@ def pair_game(policies, a, b, index, leg, seed0, mode="sample", lib=None,
     specs maps a player name to {"mode", "temperature"}; a missing name plays
     `mode` at temperature 1.
     """
-    if leg not in LEGS:
-        raise ValueError(f"unknown leg {leg!r}")
-    home, away = (a, b) if leg == "A_home" else (b, a)
-    seed = int(seed0) + int(index)
-    spec = lambda name: {"mode": mode, "temperature": 1.0, **((specs or {}).get(name) or {})}  # noqa: E731
+    home, away, seed, modes, temperatures = pair_seating(a, b, index, leg, seed0, mode, specs)
     record, _ = play_match(policies[home], policies[away], seed, lib=lib,
-                           seat_factory=seat_factory,
-                           modes=(spec(home)["mode"], spec(away)["mode"]),
-                           temperatures=(spec(home)["temperature"], spec(away)["temperature"]))
-    a_side = 0 if leg == "A_home" else 1
-    a_td, b_td = record["score"][a_side], record["score"][1 - a_side]
-    return {"schema": SCHEMA, "pair": [a, b], "game_index": int(index), "leg": leg,
-            "home": home, "away": away, "a_td": a_td, "b_td": b_td,
-            "result_a": "W" if a_td > b_td else ("D" if a_td == b_td else "L"),
-            **record}
+                           seat_factory=seat_factory, modes=modes, temperatures=temperatures)
+    return pair_record(a, b, index, leg, home, away, record)
+
+
+class _Slot:
+    __slots__ = ("task", "home", "away", "match", "team", "inputs")
+
+
+class BatchedGames:
+    """Up to `slots` pair games in flight, one forward per policy per step.
+
+    step() advances every game by one engine step:
+      1. each game reports its deciding team and both seats' (obs, support);
+      2. the policy seats are grouped by policy object and each group gets ONE
+         batched_forward, so a pair of two checkpoints costs two forwards per step
+         whatever the number of games, and a bot seat costs none;
+      3. every seat selects from its own logits row through PolicySeat.decide, with
+         its own generator, mode and temperature;
+      4. each game applies its action through the same Match checks as play_match.
+    A finished game leaves its slot and its record is returned. Nothing of it
+    survives: the recurrent state and the generator live on the seats, the seats
+    live on the Match, and add() builds a new Match with fresh seats. There is no
+    batch-shaped state buffer to reset, so a slot cannot leak state into the next
+    game. Seats must be PolicySeat-like (policy, state, decide).
+    """
+
+    def __init__(self, policies, seed0, slots, mode="sample", lib=None, specs=None,
+                 seat_factory=PolicySeat):
+        if int(slots) < 1:
+            raise ValueError("slots must be at least 1")
+        self.policies, self.seed0, self.slots = policies, seed0, int(slots)
+        self.mode, self.lib, self.specs, self.seat_factory = mode, lib, specs, seat_factory
+        self.games = []
+        self.current_task = None         # the task being handled, for error reports
+        self.forward_calls = 0
+        self.forward_rows = 0
+
+    @property
+    def active(self):
+        return len(self.games)
+
+    @property
+    def free(self):
+        return self.slots - len(self.games)
+
+    def add(self, task):
+        if not self.free:
+            raise RuntimeError("no free slot")
+        a, b, index, leg = task
+        if any(g.task == tuple(task) for g in self.games):
+            raise RuntimeError(f"task {task} is already in flight")
+        self.current_task = tuple(task)
+        home, away, seed, modes, temperatures = pair_seating(a, b, index, leg, self.seed0,
+                                                             self.mode, self.specs)
+        slot = _Slot()
+        slot.task, slot.home, slot.away = tuple(task), home, away
+        slot.match = Match(self.policies[home], self.policies[away], seed, lib=self.lib,
+                           seat_factory=self.seat_factory, modes=modes,
+                           temperatures=temperatures)
+        slot.team, slot.inputs = None, None
+        self.games.append(slot)
+        self.current_task = None
+        return slot
+
+    def step(self):
+        """Advance every game in flight by one engine step; return finished records."""
+        groups = {}                      # id(policy) -> (policy, seats, observations)
+        for slot in self.games:
+            self.current_task = slot.task
+            match = slot.match
+            slot.team = match.observe()
+            slot.inputs = [match.seat_inputs(s) for s in (0, 1)]
+            for s in (0, 1):
+                if match.bots[s] is None:
+                    seat = match.seats[s]
+                    group = groups.setdefault(id(seat.policy), (seat.policy, [], []))
+                    group[1].append(seat)
+                    group[2].append(slot.inputs[s][0])
+        self.current_task = None
+        logits_of = {}                   # id(seat) -> that seat's logits row
+        for policy, seats, observations in groups.values():
+            logits = batched_forward(policy, seats, observations)
+            self.forward_calls += 1
+            self.forward_rows += len(seats)
+            for row, seat in enumerate(seats):
+                logits_of[id(seat)] = logits[row]
+        finished, still = [], []
+        for slot in self.games:
+            self.current_task = slot.task
+            match, team = slot.match, slot.team
+            outs = []
+            for s in (0, 1):
+                seat, (_, support) = match.seats[s], slot.inputs[s]
+                if match.bots[s] is not None:
+                    outs.append(seat.step(None, support, s == team))
+                else:
+                    action, logprob = seat.decide(logits_of.pop(id(seat)), support, s == team)
+                    outs.append({"tuple": action, "logprob": logprob})
+            slot.inputs = None
+            if match.apply(team, outs):
+                try:
+                    record = match.record()
+                finally:
+                    match.close()
+                a, b, index, leg = slot.task
+                finished.append(pair_record(a, b, index, leg, slot.home, slot.away, record))
+            else:
+                match.check_step_budget()
+                still.append(slot)
+        self.current_task = None
+        if logits_of:
+            raise AssertionError("a forward row was not consumed by its seat")
+        self.games = still
+        return finished
+
+    def close(self):
+        for slot in self.games:
+            slot.match.close()
+        self.games = []
+
+
+def run_batched(policies, tasks, seed0, slots, mode="sample", lib=None, specs=None,
+                seat_factory=PolicySeat):
+    """Play `tasks` in one process with up to `slots` games in flight; yields records
+    as games finish. The queue-fed worker does the same with tasks from a pipe."""
+    runner = BatchedGames(policies, seed0, slots, mode=mode, lib=lib, specs=specs,
+                          seat_factory=seat_factory)
+    todo = list(tasks)[::-1]
+    try:
+        while todo or runner.active:
+            while todo and runner.free:
+                runner.add(todo.pop())
+            yield from runner.step()
+    finally:
+        runner.close()
 
 
 def schedule(names, games_per_pair, seed0, pairs=None):
@@ -400,6 +557,7 @@ def legacy_manifest_specs(old):
         old["pairs"] = [[a, b, old.get("games_per_pair")] for a, b in itertools.combinations(names, 2)]
     old.setdefault("bots", {})
     old.setdefault("bot_library_sha256", None)
+    old.setdefault("games_per_worker", 1)    # runs before batching played one game at a time
     return old
 
 
@@ -476,6 +634,141 @@ def _run_task(task):
         return {"error": f"{type(exc).__name__}: {exc}", "task": list(task)}
 
 
+@contextlib.contextmanager
+def _pool_records(ctx, workers, initargs, pending):
+    """N = 1: one game per worker at a time, the unbatched path."""
+    with ctx.Pool(workers, initializer=_init_worker, initargs=initargs) as pool:
+        yield pool.imap_unordered(_run_task, pending, chunksize=1)
+
+
+def _batched_worker(worker_id, task_q, result_q, initargs, slots):
+    """Worker process for N > 1: keep up to `slots` games in flight.
+
+    Free slots are refilled from the task queue before every step. The worker
+    blocks on the queue only when it has no game to step. A None task means the
+    schedule is exhausted: finish the games in flight, report, exit.
+    """
+    runner = None
+    try:
+        _init_worker(*initargs)
+        runner = BatchedGames(_W["policies"], _W["seed0"], slots, mode=_W["mode"],
+                              lib=_W["lib"], specs=_W["specs"])
+        draining = False
+        while True:
+            while not draining and runner.free:
+                try:
+                    task = task_q.get(block=not runner.active)
+                except queue.Empty:
+                    break
+                if task is None:
+                    draining = True
+                else:
+                    runner.add(tuple(task))
+            if not runner.active:
+                if draining:
+                    break
+                continue
+            for rec in runner.step():
+                rec["pid"] = os.getpid()
+                result_q.put(rec)
+        result_q.put({"worker_done": worker_id, "forward_calls": runner.forward_calls,
+                      "forward_rows": runner.forward_rows})
+    except BaseException as exc:  # reported so the parent can abort every worker
+        task = getattr(runner, "current_task", None)
+        result_q.put({"error": f"{type(exc).__name__}: {exc}", "task": list(task or ())})
+    finally:
+        if runner is not None:
+            runner.close()
+
+
+def batch_slots(games_per_worker, pending, workers):
+    """Slots per worker: N, but no more than an even share of what is left to play,
+    so a short run does not pile into the first workers while the others idle."""
+    share = -(-int(pending) // max(1, int(workers)))
+    return max(1, min(int(games_per_worker), share))
+
+
+@contextlib.contextmanager
+def _batched_records(ctx, workers, initargs, pending, games_per_worker, poll_seconds=5.0):
+    """N > 1: records from `workers` processes that each batch several games.
+
+    Yields an iterator of records, {"error": ...} dicts included, in finish order.
+    A worker that dies without reporting becomes an error record. Leaving the
+    context stops every worker.
+    """
+    if not pending:
+        yield iter(())
+        return
+    workers = min(int(workers), len(pending))
+    slots = batch_slots(games_per_worker, len(pending), workers)
+    task_q, result_q = ctx.Queue(), ctx.Queue()
+    procs = [ctx.Process(target=_batched_worker, daemon=True,
+                         args=(i, task_q, result_q, initargs, slots)) for i in range(workers)]
+    for proc in procs:
+        proc.start()
+    for task in pending:
+        task_q.put(tuple(task))
+    for _ in procs:
+        task_q.put(None)
+
+    def records():
+        outstanding = {task_key(*t) for t in pending}
+        finished_workers = 0
+        while finished_workers < len(procs):
+            try:
+                rec = result_q.get(timeout=poll_seconds)
+            except queue.Empty:
+                dead = [p.pid for p in procs if p.exitcode not in (None, 0)]
+                if dead or not any(p.is_alive() for p in procs):
+                    yield {"error": f"worker process(es) {dead or 'all'} exited without a "
+                                    f"report ({len(outstanding)} games outstanding)", "task": []}
+                    return
+                continue
+            if "worker_done" in rec:
+                finished_workers += 1
+                continue
+            if "error" not in rec:
+                key = task_key(*rec["pair"], rec["game_index"], rec["leg"])
+                if key not in outstanding:
+                    yield {"error": f"game {key} was reported twice or never scheduled",
+                           "task": [*rec["pair"], rec["game_index"], rec["leg"]]}
+                    return
+                outstanding.discard(key)
+            yield rec
+        if outstanding:
+            yield {"error": f"workers finished with {len(outstanding)} games unplayed, e.g. "
+                            f"{sorted(outstanding)[0]}", "task": []}
+
+    try:
+        yield records()
+    finally:
+        for proc in procs:
+            if proc.is_alive():
+                proc.terminate()
+        for proc in procs:
+            proc.join(timeout=10)
+        for q in (task_q, result_q):
+            q.cancel_join_thread()
+            q.close()
+
+
+def games_per_worker_setting(value=None, environ=None):
+    """--games-per-worker, else BBPLAY_GAMES_PER_WORKER, else 1 (unbatched)."""
+    raw = value
+    if raw is None:
+        raw = (os.environ if environ is None else environ).get(GAMES_PER_WORKER_ENV)
+    if raw is None or raw == "":
+        return 1
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"games per worker must be an integer in 1..{MAX_GAMES_PER_WORKER}, "
+                         f"got {raw!r}")
+    if not 1 <= n <= MAX_GAMES_PER_WORKER:
+        raise ValueError(f"games per worker must be in 1..{MAX_GAMES_PER_WORKER}, got {raw!r}")
+    return n
+
+
 def discover_checkpoints(directory=DEFAULT_CHECKPOINT_DIR):
     out = {}
     if not os.path.isdir(directory):
@@ -543,6 +836,11 @@ def main(argv=None):
                     help="repeatable; per-player policy temperature (logits / T), default 1.0")
     ap.add_argument("--kernel", default="native", choices=["native", "torch"])
     ap.add_argument("--workers", type=int, default=MAX_WORKERS)
+    ap.add_argument("--games-per-worker", type=int, default=None, metavar="N",
+                    help="games each worker keeps in flight, sharing one batched forward "
+                         f"per policy per step (default ${GAMES_PER_WORKER_ENV}, else 1 = "
+                         "unbatched). N > 1 changes float rounding, so a few games take "
+                         "other actions than at N = 1; registered gates run at 1")
     ap.add_argument("--max-tasks", type=int, default=None,
                     help="pilot: play only the first K scheduled tasks")
     ap.add_argument("--out-dir", required=True)
@@ -554,6 +852,10 @@ def main(argv=None):
     if not 1 <= args.workers <= cap:
         raise SystemExit(f"--workers must be 1..{cap} (raise the cap on a dedicated "
                          f"box with {MAX_WORKERS_ENV})")
+    try:
+        games_per_worker = games_per_worker_setting(args.games_per_worker)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
     if os.environ.get("OMP_NUM_THREADS") != "1":
         raise SystemExit("set OMP_NUM_THREADS=1 (one thread per worker)")
     if args.checkpoint:
@@ -606,6 +908,7 @@ def main(argv=None):
                 "mode": args.mode, "players": specs,
                 "pairs": [[a, b, n] for (a, b), n in pair_sizes.items()],
                 "kernel": args.kernel, "workers": args.workers,
+                "games_per_worker": games_per_worker,
                 "omp_num_threads": 1, "max_decisions": MAX_DECISIONS,
                 "rosters": "procgen (home_team=away_team=-1), skillup 4/2/0.0",
                 "legs": list(LEGS), "sampling_seed": "keyed by (engine seed, side)",
@@ -618,8 +921,11 @@ def main(argv=None):
         # bot_library_sha256 is the compiled shim a bot seat runs; the bot sources do not
         # cover bloodbowl.h, the engine helpers or the compiler flags, so a resume on a
         # different build would mix opponents. Checkpoint-only runs record None.
+        # games_per_worker changes float rounding in the forward, so a resume at another
+        # value would mix two slightly different samplers in one run; a manifest without
+        # the key was played unbatched and counts as 1.
         for key in ("checkpoints", "bots", "bot_library_sha256", "games_per_pair", "seed0",
-                    "mode", "players", "pairs", "kernel"):
+                    "mode", "players", "pairs", "kernel", "games_per_worker"):
             if old.get(key) != manifest[key]:
                 raise SystemExit(f"existing manifest differs on {key} "
                                  f"({old.get(key)!r} vs {manifest[key]!r}); use a new --out-dir")
@@ -634,23 +940,28 @@ def main(argv=None):
                 done.add(task_key(*rec["pair"], rec["game_index"], rec["leg"]))
     pending = [t for t in tasks if task_key(*t) not in done]
     print(f"{len(tasks)} tasks, {len(done)} already recorded, {len(pending)} to play, "
-          f"{args.workers} workers", flush=True)
+          f"{args.workers} workers"
+          + (f", {games_per_worker} games per worker" if games_per_worker > 1 else ""),
+          flush=True)
 
     import multiprocessing as mp
     ctx = mp.get_context("spawn")
     t0 = time.time()
     played = 0
     abort = None
-    with open(games_path, "a") as out, ctx.Pool(
-            args.workers, initializer=_init_worker,
-            initargs=(checkpoints, args.kernel, args.mode, args.seed0, specs, bots)) as pool:
-        for rec in pool.imap_unordered(_run_task, pending, chunksize=1):
+    initargs = (checkpoints, args.kernel, args.mode, args.seed0, specs, bots)
+    if games_per_worker == 1:
+        source = _pool_records(ctx, args.workers, initargs, pending)
+    else:
+        source = _batched_records(ctx, args.workers, initargs, pending, games_per_worker)
+    with open(games_path, "a") as out, source as records:
+        for rec in records:
             problems = [rec["error"]] if "error" in rec else check_record(rec)
             if problems:
-                abort = {"task": rec.get("task") or [*rec["pair"], rec["game_index"], rec["leg"]],
+                abort = {"task": rec["task"] if "task" in rec
+                         else [*rec["pair"], rec["game_index"], rec["leg"]],
                          "problems": problems, "played": played}
-                pool.terminate()
-                break
+                break                    # leaving the context stops every worker
             out.write(json.dumps(rec, separators=(",", ":")) + "\n")
             out.flush()
             played += 1
