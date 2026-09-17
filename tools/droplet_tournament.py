@@ -835,7 +835,10 @@ def cmd_run(args):
         argv = tournament_argv(checkpoints, bots, pairs, args.seed0, workers,
                                extra=args.tournament_arg)
         remote.run(f"cat > {REMOTE_RUN}/job.sh", stdin_text=job_script(argv, workers, args.stats_reps))
-        remote.run(f"cd {REMOTE_RUN} && nohup setsid bash job.sh > job.log 2>&1 < /dev/null & disown; echo started")
+        # No `cd &&` in front: a backgrounded list runs in a subshell that keeps ssh's
+        # stdout open, and the launch would block until the tournament ends.
+        remote.run(f"nohup setsid bash {REMOTE_RUN}/job.sh > {REMOTE_RUN}/job.log 2>&1 "
+                   f"< /dev/null & echo started", timeout=60)
         t_launch = time.time()
         log(f"tournament launched under nohup ({t_launch - t_start:.0f} s after create)")
         rc = poll(remote, tasks, deadline, args.stale_seconds)
