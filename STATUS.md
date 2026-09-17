@@ -45,6 +45,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-17 10:45 (D405): chain 36 is queued.** A continuation from chain 34 starts on its own when chain 35's exam ends, so the GPU does not idle during the gate tournament. Its pool makes chain 30 an active learned opponent for the first time. Its gate adds a drift guard: offense AWAY may not fall more than 0.04 below chain 30.
 
+**Update 2026-09-17 13:20 (D406): gate tournaments leave the Mac and get about 5x faster.** A droplet runner (create, run, verify, destroy) and a batched policy forward (32 games per worker) are merged in the play harness. Batched games match unbatched ones on 3,200 of 3,200 action trails against the Mac reference, with rare roundoff divergences that never changed a score. Chain 35's 22,400-game gate is budgeted at about 17 minutes and $0.17 on four droplets.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

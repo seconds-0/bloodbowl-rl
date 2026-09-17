@@ -1648,3 +1648,27 @@ Caveats named in advance:
 - This is one training seed, and the opponent-set change is confounded with the continuation.
 - Chain 27 is a repeatedly used, lineage-connected benchmark, not an untouched external test.
 - The paired offense-bot contrast is diagnostic. The rig exam stays the registered veto.
+
+**D406 - GATE TOURNAMENTS MOVE TO DROPLETS AND TO A BATCHED POLICY FORWARD (32 GAMES PER WORKER), STARTING WITH CHAIN 35'S, DECIDED BEFORE ANY CHAIN 35 TOURNAMENT DATA EXISTS (2026-09-17 13:20 PDT).** This changes how gate tournaments are computed, not what they measure. D400's conditions are unchanged: sampling policies, every-step recurrence, random rosters that stay with the side, sides swapped per seed, per-game engine and sampling seeds derived from the seed block, and the same statistics code.
+
+**Droplet runner** (`tools/droplet_tournament.py`, harness `feat/play-harness-20260913` at 0bf9ce0; doc `docs/play-harness/droplet-tournaments-2026-09-17.md`). It creates one throwaway DigitalOcean droplet per run, syncs the harness at a pinned commit plus only the needed checkpoints, builds the shim there, runs the tournament, copies the records back with sha256 verification, and destroys the droplet on every exit path. A `merge` subcommand joins shards split by pair and refuses shards that differ in commit, seed block, torch version, compiled shim or games per worker, that overlap in pairs, or that miss a scheduled game.
+- **Size.** The account's largest usable size is `s-8vcpu-16gb-amd` (8 shared vCPUs, $0.167/h, sfo3).
+- **Cross-machine agreement.** Against the Mac reference for chain 34's gate (seed block 20600000), 2,399 of 2,400 droplet games had identical action trails. The one that differed had the same 0-0 result, and every integrity counter was zero. Cross-machine runs agree in distribution, not game by game. `action_trail_sha256` is the discriminating hash; `final_digest` matched even in the diverged game.
+- **Reviews and cost.** Codex reviewed the runner, and three droplet-leak paths were fixed. Build and test spend was $0.20, and the account leak check was clean afterwards.
+
+**Batched forward** (`--games-per-worker N`, default 1; doc `docs/play-harness/batched-tournaments-2026-09-17.md`). With N above 1 a worker keeps N games in flight and runs one batched forward per policy per step. Each game keeps its own recurrent state and its own sampling generator, and a refilled slot gets fresh seats, so a game's actions depend on its batch only through float roundoff in the logits (measured within 3e-5 relative).
+- **Agreement on one droplet, same seeds, against N=1:**
+  - checkpoint pairs: 1,200 of 1,200 games identical at N = 2, 4 and 8, and 1,199 of 1,200 at N = 16, 32, 64 and 128;
+  - bot pair: 1,200 of 1,200 at every N from 2 to 64;
+  - a full runner run at N=32: 3,200 of 3,200 action trails identical to the unbatched Mac reference.
+- **Outcomes.** Every score and every W/D/L count matched at every N, with integrity counters zero.
+- **The one differing game** is the same one each time (seed 20600020, chain 34 vs chain 30): a sampling draw lands in a 5.4e-6 probability gap while the logits differ by one part in a million. It ends 0-0 either way.
+- **Throughput on the droplet** (8 workers, checkpoint pairs): 1.54 games/s at N=1, 7.74 at N=32 and 8.70 at N=64. A mixed two-pair shard at N=32 ran at 8.73 games/s. N=1 after the refactor reproduces the chain 34 reference records field for field.
+- **Reviews and cost.** Codex reviewed the code (no state leakage, no RNG coupling, three lifecycle bugs fixed with tests) and the findings (every number reproduced, overclaims corrected). Validation spend was $0.34.
+- **Not covered:** argmax and non-unit temperatures have structural tests only, with no droplet agreement run. No gate currently uses them.
+
+**Ruling.** From chain 35's gate onward, gate tournaments run on droplets at 32 games per worker, split by pair across up to four droplets and merged with the verified merge. Every shard of one gate uses the same games-per-worker, which the merge enforces. Runs remain comparable in distribution with earlier unbatched Mac runs, and contrasts inside a gate are always computed within one run. The manifest records `games_per_worker`, the torch version and the compiled shim hash for every shard.
+
+**Why now.** Chain 35's gate is 22,400 games. Unbatched on four droplets it takes about 77 minutes; at N=32 it is budgeted at about 17 minutes and $0.17 (plus or minus 25%, single measurements). That shortens the window in which chain 36 runs from a default parent (D405), and it keeps tournament load off the owner's Mac, which reached load 47 on 14 cores on 2026-09-16.
+
+**What does not change.** Chain 35's registered pairs, seed block 20700000, 3,200 games per pair, D404's ordered readings and the rig exam veto.
