@@ -313,6 +313,17 @@ def test_compare_runs_counts_digest_and_trail_separately():
     assert (c["matched_keys"], c["missing_in_reference"]) == (3, 1)
     assert (c["final_digest_equal"], c["action_trail_equal"], c["exact"]) == (2, 1, 1)
     assert c["score_equal"] == 2 and c["rosters_equal"] == 3 and c["seeds_equal"] == 3
+    assert c["diverged_games"] == 2
+
+
+def test_compare_runs_measures_float_drift_only_over_same_action_games():
+    ref = [game(index=0, logprob_sum=[-10.0, -20.0]), game(index=1, logprob_sum=[-5.0, -6.0]),
+           game(index=2, logprob_sum=[-1.0, -1.0])]
+    run = [game(index=0, logprob_sum=[-10.0, -20.0]), game(index=1, logprob_sum=[-5.0004, -6.0]),
+           game(index=2, logprob_sum=[-9.0, -1.0], trail="DIVERGED")]
+    c = D.compare_runs(run, ref)["counts"]
+    assert c["logprob_sum_equal"] == 1 and c["diverged_games"] == 1
+    assert c["max_logprob_sum_drift_same_actions"] == pytest.approx(0.0004)
 
 
 def test_compare_runs_keys_on_pair_index_and_leg():

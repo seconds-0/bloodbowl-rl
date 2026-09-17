@@ -405,13 +405,18 @@ def compare_runs(games, ref_games):
     Games are matched on (pair, game_index, leg). `exact` counts games whose
     final_digest AND action_trail_sha256 both match. The distribution block sets
     this run beside the reference's same games and the reference's full pairs.
+    The action trail is the sharp test: a game that took other actions can still
+    end on the same final_digest. max_logprob_sum_drift_same_actions is the float
+    drift between machines over games that chose identical actions.
     """
     ref = {_key(g): g for g in ref_games}
     matched = [(g, ref[_key(g)]) for g in games if _key(g) in ref]
     counts = {"games": len(games), "matched_keys": len(matched),
               "missing_in_reference": len(games) - len(matched),
               "seeds_equal": 0, "rosters_equal": 0, "final_digest_equal": 0,
-              "action_trail_equal": 0, "exact": 0, "score_equal": 0}
+              "action_trail_equal": 0, "exact": 0, "score_equal": 0,
+              "logprob_sum_equal": 0}
+    drift = 0.0
     for g, r in matched:
         counts["seeds_equal"] += (g["engine_seed"] == r["engine_seed"]
                                   and g["sampling_seeds"] == r["sampling_seeds"])
@@ -422,6 +427,9 @@ def compare_runs(games, ref_games):
         counts["action_trail_equal"] += trail
         counts["exact"] += dig and trail
         counts["score_equal"] += g["score"] == r["score"]
+        counts["logprob_sum_equal"] += g.get("logprob_sum") == r.get("logprob_sum")
+        if trail and g.get("logprob_sum") and r.get("logprob_sum"):
+            drift = max(drift, *(abs(x - y) for x, y in zip(g["logprob_sum"], r["logprob_sum"])))
     pairs = {}
     for label in sorted({tuple(g["pair"]) for g in games}):
         mine = _summary([g for g in games if tuple(g["pair"]) == label])
@@ -434,6 +442,8 @@ def compare_runs(games, ref_games):
     pooled_full = _summary([r for r in ref_games if tuple(r["pair"]) in labels])
     verdict = ("bit-identical" if matched and counts["exact"] == len(games)
                else "not bit-identical")
+    counts["diverged_games"] = len(matched) - counts["action_trail_equal"]
+    counts["max_logprob_sum_drift_same_actions"] = drift
     return {"verdict": verdict, "counts": counts, "pairs": pairs,
             "pooled": {"run": pooled_run,
                        "reference_same_games": _summary([r for _, r in matched]),
@@ -449,9 +459,10 @@ MERGE_EQUAL_KEYS = ("schema", "seed0", "mode", "kernel", "max_decisions", "omp_n
 def merge_shards(shards):
     """One manifest and game list from shards that split a tournament by pair.
 
-    shards: [{"name", "manifest", "complete", "games", "machine"}]. Every game is a
-    pure function of (pair, engine seed, leg), and droplets of one image build a
-    byte-identical shim, so shards may run on different droplets. Refused unless
+    shards: [{"name", "manifest", "complete", "games", "machine"}]. A game depends
+    only on (pair, engine seed, leg), never on which other pairs share its run, and
+    droplets of one image build a byte-identical shim, so shards may run on
+    different droplets. Refused unless
     the shards share the commit, seed block, settings, torch and compiled shim,
     give shared players the same checkpoint and spec, and cover disjoint pairs.
     Returns (manifest, complete, games); raises RunnerError listing every problem.
@@ -1074,6 +1085,9 @@ def cmd_compare(args):
           f"seeds equal {c['seeds_equal']}, rosters equal {c['rosters_equal']}")
     print(f"final_digest equal {c['final_digest_equal']}, action_trail_sha256 equal "
           f"{c['action_trail_equal']}, both {c['exact']}, score equal {c['score_equal']}")
+    print(f"games that took different actions: {c['diverged_games']}; logprob_sum equal "
+          f"{c['logprob_sum_equal']}, largest drift over same-action games "
+          f"{c['max_logprob_sum_drift_same_actions']:.4g}")
     print(f"integrity: {report['integrity']}")
     rows = list(report["pairs"].items()) + [("POOLED", report["pooled"])]
     for label, row in rows:
