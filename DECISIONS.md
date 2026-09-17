@@ -1602,10 +1602,19 @@ Caveats named in advance:
 
 **D405 - CHAIN 36 IS PRE-REGISTERED AND QUEUED BEHIND CHAIN 35: A CONTINUATION FROM CHAIN 34 THAT STARTS WHEN CHAIN 35'S EXAM ENDS, WITH A DRIFT GUARD ON OFFENSE SCORING (2026-09-17 10:45 PDT).** D404 recorded about 15 idle GPU hours because a launch waited for a tournament verdict. Chain 35's gate tournament will take about an hour after its exam. So the next rung is staged now and starts on its own.
 
-**Which parent.** D404's rule picks chain 35 as the next parent only if the 95% interval for chain 35 minus chain 34 lies entirely above zero; otherwise chain 34. Chain 34 is therefore the default, and chain 36 starts from it without waiting. **Contingency:** if chain 35's tournament resolves chain 35 as the parent, chain 36 is stopped and discarded unscored, and a continuation from chain 35 replaces it. That costs about 1.5 GPU hours; waiting would cost the same 1.5 hours every time.
+**Amended 2026-09-17 10:55 PDT after a Codex review, before chain 36 started and before any chain 36 data existed.** The amendment restores D404's full parent rule, closes the queue handoff, moves the second positive comparator from chain 30 to chain 27, and states the exam thresholds as numbers.
+
+**Which parent.** Chain 36 starts speculatively from chain 34. D404's complete ordered readings are applied to chain 35. Chain 35 becomes the parent only if its reading is Replicated and the 95% seed-cluster decisive-Elo interval for chain 35 minus chain 34 has its lower endpoint strictly above zero. Otherwise chain 34 stays the parent after a valid completed verdict. Missing or invalid chain 35 evidence leaves chain 34 as the parent, and a chain 35 that never finished training has no checkpoint to continue from.
+- **No peeking.** The keep-or-discard decision and its timing depend only on chain 35's registered evidence, never on chain 36's training metrics, intermediate checkpoints or evaluations. Until the parent is resolved, chain 36 is monitored only for operational progress and hard integrity.
+- **If chain 35 is selected:** chain 36 and its exam waiter are cancelled. Its artifacts are kept for audit only, and it is excluded from scoring and from any future warm start or pool, whatever its apparent performance. The replacement continuation from chain 35 gets its own run identity, frozen manifest and pre-registered gate before it starts; this entry's gate is specific to a chain 34 parent.
+- **Cost.** A wrong default costs about 1.5 GPU hours; waiting would cost the same 1.5 hours every time. Chain 35's tournament runs on separate compute (a DigitalOcean droplet) while chain 36 trains.
 
 **Chain 36** (`runs/ladder-d0-r0chain36-cont34-rr1-20260917`, unit `r0chain36-cont34-rr1`, which runs `/home/rache/queue_c36.sh`). It is chain 30's recipe (gamma 0.999 / lambda 0.95, replay ratio 1.0, 4 banks x 0.12, contact bot at tag 4, LR 2.8e-4, `r0_poss_half`, seed 42) warm-started from chain 34's marker (sha 40d1b999) for another 3B.
-- **Queue.** The unit waits until `r0chain35-cont30-rr1-s44` and `exam-c35-waiter` are both inactive and no trainer or exam process is running. It then takes `kt-gpu.lock` (waiting up to 4 h) and runs the rung. If chain 35's units end without the exam marker it launches anyway, because its parent is chain 34. `exam-c36-waiter` is armed.
+- **Queue** (`/home/rache/queue_c36_v2.sh`, replacing the first version at 10:15 PDT). The unit waits until `r0chain35-cont30-rr1-s44` and `exam-c35-waiter` are both inactive and no trainer or exam process is running, then takes `kt-gpu.lock` (waiting up to 4 h) and revalidates under the held lock: no GPU consumer, and neither chain 35 unit active again. The exam waiter is a transient unit with no restart policy, stays active through its exam, and holds the lock for all of it.
+  - Exam marker present: chain 36 starts.
+  - Chain 35 finished training but the marker is missing: the queue runs chain 35's two-seed exam itself under the held lock first. If that fails, chain 36 does not start (exit 7), because its parent could not be resolved.
+  - Chain 35 never finished training: chain 36 starts, with chain 34 as parent.
+  - `exam-c36-waiter` is armed.
 - **Pool** (identity 51a19cff, built by `tools/ladder_stage.sh`). The rotation keeps the kickoff anchor, retains the chain 9 marker and chain 30, drops `rung0warm2`, and appends chain 34 as bank 3 under the contact-bot override. **Chain 30 becomes an active learned opponent for the first time**, so the opponent set is stronger than chain 34's.
 - **Verification.** SCREEN PLAN VERIFIED with manifest e13c6f26 and drift check 3ed6899e, run while chain 35 trained.
 
@@ -1613,19 +1622,29 @@ As D402 named for chain 34, this changes three things together: the warm checkpo
 
 **Why a drift guard.** Both continuations lost offense-bot touchdowns: chain 27 tripped the veto against chain 25 (D394), and chain 34 sits 0.021 below chain 30, clear of the veto by 0.002 on one seed (D404). A veto measured only against the parent lets the offense cell ratchet down 0.02 per rung. The guard pins a fixed reference.
 
-**Gate part 1, exam.** Either condition makes the reading negative:
+**Gate part 1, exam.** Rates are champion touchdowns per game in the offense AWAY cell at exam seeds 42 and 43, and the mean is their unweighted mean. The displayed three-decimal reference values are normative, and every inequality is strict. Either condition makes the reading negative:
 - **Parent veto:** offense AWAY down more than 0.02 against chain 34 (0.557, 0.573; mean 0.565) on the mean and on both exam seeds.
 - **Drift guard:** offense AWAY down more than 0.04 against chain 30 (0.581, 0.591; mean 0.586) on the mean and on both exam seeds.
+
+| A gate fires only if all three hold | Chain 36, exam seed 42 | Chain 36, exam seed 43 | Mean |
+|---|---|---|---|
+| Parent veto | < 0.537 | < 0.553 | < 0.545 |
+| Drift guard | < 0.541 | < 0.551 | < 0.546 |
+
+The 0.04 is a prospective design choice informed by chains 27 and 34. It is not applied retroactively to their verdicts. Passing the guard does not establish offense non-inferiority or cap the mean decline: one seed can fall far while the other prevents the conjunction.
 
 **Gate part 2, tournament.** Chain 36 against chains 34, 35, 30 and 27 and the offense bot, plus chain 34 against the offense bot on the same seeds so the held-out contrast is paired. 3,200 games per pair on seed block 20800000, D400 conditions, run off the Mac.
 
 The readings are applied in this order, and the first that matches is the result:
 1. **Negative:** the parent veto or the drift guard fires, or chain 36's 95% interval against chain 34 lies entirely below zero.
-2. **Positive:** chain 36 beats chain 34 by more than +40 decisive-Elo with its 95% interval above zero, and its interval against chain 30 lies above zero. Chain 36 becomes the warm start.
+2. **Positive:** chain 36 beats chain 34 by more than +40 decisive-Elo with its 95% interval strictly above zero, and its interval against chain 27 lies strictly above zero. Chain 36 becomes the warm start. Chain 27 carries the second condition because it is fixed, already in the panel and absent from chain 36's pool. Chain 30 is now a training opponent, so the chain 36 vs chain 30 pair is an in-pool retention diagnostic, not a transfer comparator.
 3. **Flat:** chain 36's decisive-Elo against chain 34 lies within +/-40, bounds included. Chain 34 stays the warm start, and a third continuation is not run on this recipe without a new idea.
-4. **Inconclusive:** anything else. Chain 34 stays the warm start.
+4. **Inconclusive:** anything else with valid completed evidence. Chain 34 stays the warm start.
+
+Missing or integrity-invalid evidence is not scored; it does not fall into "anything else".
 
 Caveats named in advance:
 - The +40 cutoff is D401's screening threshold, not a statistical bound on training-seed variation.
 - This is one training seed, and the opponent-set change is confounded with the continuation.
+- Chain 27 is a repeatedly used, lineage-connected benchmark, not an untouched external test.
 - The paired offense-bot contrast is diagnostic. The rig exam stays the registered veto.
