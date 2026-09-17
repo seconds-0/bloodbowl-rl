@@ -241,9 +241,11 @@ head -1 /proc/stat > {REMOTE_RUN}/cpu-before
 head -1 /proc/stat > {REMOTE_RUN}/cpu-after
 test -f {REMOTE_OUT}/COMPLETE.json || finish 3
 echo stats > {REMOTE_RUN}/STAGE
+date -u +%s > {REMOTE_RUN}/STATS_STARTED
 {REMOTE_PY} -m play_harness.tournament_stats --run-dir {REMOTE_OUT} --json {REMOTE_OUT}/report.json{reps} > {REMOTE_RUN}/report.txt 2>&1 || finish $?
 cp {REMOTE_RUN}/report.txt {REMOTE_RUN}/machine.json {REMOTE_OUT}/
 (cd {REMOTE_OUT} && sha256sum {names} report.txt machine.json > SHA256SUMS) || finish 4
+date -u +%s > {REMOTE_RUN}/STATS_DONE
 echo done > {REMOTE_RUN}/STAGE
 finish 0
 """
@@ -933,7 +935,7 @@ def cmd_run(args):
         os.makedirs(partial, exist_ok=True)
         for fname in RESULT_FILES + EXTRA_FILES:
             remote.get(f"{REMOTE_OUT}/{fname}", os.path.join(partial, fname))
-        for fname in ("tournament.log", "cpu-before", "cpu-after"):
+        for fname in ("tournament.log", "cpu-before", "cpu-after", "STATS_STARTED", "STATS_DONE"):
             remote.get(f"{REMOTE_RUN}/{fname}", os.path.join(partial, fname), check=False)
         with open(os.path.join(partial, "SHA256SUMS")) as f:
             sums = parse_sha256sums(f.read())
@@ -960,13 +962,20 @@ def cmd_run(args):
                 steal = cpu_steal_fraction(f1.read(), f2.read())
         except (OSError, ValueError):
             pass
+        stats_seconds = None
+        try:
+            with open(os.path.join(partial, "STATS_STARTED")) as f1, \
+                    open(os.path.join(partial, "STATS_DONE")) as f2:
+                stats_seconds = int(f2.read()) - int(f1.read())
+        except (OSError, ValueError):
+            pass
         result = {"schema": "bbplay-droplet-run-v1", "name": name, "droplet_id": droplet_id,
                   "size": args.size, "region": args.region, "price_hourly": price,
                   "vcpus": size["vcpus"], "workers": workers, "commit": commit,
                   "machine": machine, "tasks": tasks,
                   "games_per_second_wall": complete.get("games_per_second_wall"),
                   "tournament_wall_seconds": complete.get("wall_seconds"),
-                  "cpu_steal_fraction": steal,
+                  "cpu_steal_fraction": steal, "stats_seconds": stats_seconds,
                   "seconds": {"create_to_setup_done": round(t_setup - t_start, 1),
                               "setup_done_to_launch": round(t_launch - t_setup, 1),
                               "launch_to_done": round(t_done - t_launch, 1)},
