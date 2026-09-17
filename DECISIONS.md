@@ -1599,3 +1599,33 @@ The chain 35 vs chain 34 pair also joins the replicate-pair floor as its first c
 Caveats named in advance:
 - Chains 34 and 35 share a parent and a pool, so this replicates the continuation seed, not the whole chain 9 to chain 30 to continuation path.
 - The +40 cutoff is D401's screening threshold, not a statistical bound on training-seed variation.
+
+**D405 - CHAIN 36 IS PRE-REGISTERED AND QUEUED BEHIND CHAIN 35: A CONTINUATION FROM CHAIN 34 THAT STARTS WHEN CHAIN 35'S EXAM ENDS, WITH A DRIFT GUARD ON OFFENSE SCORING (2026-09-17 10:45 PDT).** D404 recorded about 15 idle GPU hours because a launch waited for a tournament verdict. Chain 35's gate tournament will take about an hour after its exam. So the next rung is staged now and starts on its own.
+
+**Which parent.** D404's rule picks chain 35 as the next parent only if the 95% interval for chain 35 minus chain 34 lies entirely above zero; otherwise chain 34. Chain 34 is therefore the default, and chain 36 starts from it without waiting. **Contingency:** if chain 35's tournament resolves chain 35 as the parent, chain 36 is stopped and discarded unscored, and a continuation from chain 35 replaces it. That costs about 1.5 GPU hours; waiting would cost the same 1.5 hours every time.
+
+**Chain 36** (`runs/ladder-d0-r0chain36-cont34-rr1-20260917`, unit `r0chain36-cont34-rr1`, which runs `/home/rache/queue_c36.sh`). It is chain 30's recipe (gamma 0.999 / lambda 0.95, replay ratio 1.0, 4 banks x 0.12, contact bot at tag 4, LR 2.8e-4, `r0_poss_half`, seed 42) warm-started from chain 34's marker (sha 40d1b999) for another 3B.
+- **Queue.** The unit waits until `r0chain35-cont30-rr1-s44` and `exam-c35-waiter` are both inactive and no trainer or exam process is running. It then takes `kt-gpu.lock` (waiting up to 4 h) and runs the rung. If chain 35's units end without the exam marker it launches anyway, because its parent is chain 34. `exam-c36-waiter` is armed.
+- **Pool** (identity 51a19cff, built by `tools/ladder_stage.sh`). The rotation keeps the kickoff anchor, retains the chain 9 marker and chain 30, drops `rung0warm2`, and appends chain 34 as bank 3 under the contact-bot override. **Chain 30 becomes an active learned opponent for the first time**, so the opponent set is stronger than chain 34's.
+- **Verification.** SCREEN PLAN VERIFIED with manifest e13c6f26 and drift check 3ed6899e, run while chain 35 trained.
+
+As D402 named for chain 34, this changes three things together: the warm checkpoint, the cumulative budget (9B from the chain 9 marker), and the active opponent set.
+
+**Why a drift guard.** Both continuations lost offense-bot touchdowns: chain 27 tripped the veto against chain 25 (D394), and chain 34 sits 0.021 below chain 30, clear of the veto by 0.002 on one seed (D404). A veto measured only against the parent lets the offense cell ratchet down 0.02 per rung. The guard pins a fixed reference.
+
+**Gate part 1, exam.** Either condition makes the reading negative:
+- **Parent veto:** offense AWAY down more than 0.02 against chain 34 (0.557, 0.573; mean 0.565) on the mean and on both exam seeds.
+- **Drift guard:** offense AWAY down more than 0.04 against chain 30 (0.581, 0.591; mean 0.586) on the mean and on both exam seeds.
+
+**Gate part 2, tournament.** Chain 36 against chains 34, 35, 30 and 27 and the offense bot, plus chain 34 against the offense bot on the same seeds so the held-out contrast is paired. 3,200 games per pair on seed block 20800000, D400 conditions, run off the Mac.
+
+The readings are applied in this order, and the first that matches is the result:
+1. **Negative:** the parent veto or the drift guard fires, or chain 36's 95% interval against chain 34 lies entirely below zero.
+2. **Positive:** chain 36 beats chain 34 by more than +40 decisive-Elo with its 95% interval above zero, and its interval against chain 30 lies above zero. Chain 36 becomes the warm start.
+3. **Flat:** chain 36's decisive-Elo against chain 34 lies within +/-40, bounds included. Chain 34 stays the warm start, and a third continuation is not run on this recipe without a new idea.
+4. **Inconclusive:** anything else. Chain 34 stays the warm start.
+
+Caveats named in advance:
+- The +40 cutoff is D401's screening threshold, not a statistical bound on training-seed variation.
+- This is one training seed, and the opponent-set change is confounded with the continuation.
+- The paired offense-bot contrast is diagnostic. The rig exam stays the registered veto.

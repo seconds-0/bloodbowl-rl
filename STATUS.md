@@ -43,6 +43,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-17 10:30 (D404): chain 34 is positive and becomes the warm start.** Continuing chain 30 for another 3B beats the parent by +53 decisive-Elo and chain 27 by +66 over 16,000 clean games. The offense veto stays clear by 0.002 on one exam seed, and every exam cell is slightly below chain 30, so the exam and the tournament disagree in sign again. Native CUDA parity passed its screen: the harness reproduces the rig's action distributions on recorded states (mean joint TV 5e-7). Chain 35 replicates the continuation at training seed 44. CPU tournaments now run off the Mac.
 
+**Update 2026-09-17 10:45 (D405): chain 36 is queued.** A continuation from chain 34 starts on its own when chain 35's exam ends, so the GPU does not idle during the gate tournament. Its pool makes chain 30 an active learned opponent for the first time. Its gate adds a drift guard: offense AWAY may not fall more than 0.04 below chain 30.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
