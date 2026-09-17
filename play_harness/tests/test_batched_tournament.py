@@ -482,6 +482,99 @@ def test_a_worker_killed_without_a_report_aborts_the_run():
     assert "2 games outstanding" in got[0]["error"]
 
 
+def _echo_worker(worker_id, task_q, result_q, initargs, slots):
+    """Stands in for _batched_worker: every task comes straight back as a record."""
+    while True:
+        task = task_q.get()
+        if task is None:
+            result_q.put({"worker_done": worker_id})
+            return
+        a, b, index, leg = task
+        result_q.put({"pair": [a, b], "game_index": index, "leg": leg})
+
+
+class _ThreadProcess:
+    started = []
+
+    def __init__(self, target=None, args=(), daemon=None):
+        import threading
+        self.thread = threading.Thread(target=target, args=args, daemon=True)
+        self.pid, self.terminated = id(self), False
+
+    def start(self):
+        self.thread.start()
+        _ThreadProcess.started.append(self)
+
+    @property
+    def exitcode(self):
+        return None if self.thread.is_alive() else 0
+
+    def is_alive(self):
+        return self.thread.is_alive()
+
+    def terminate(self):
+        self.terminated = True
+
+    def join(self, timeout=None):
+        pass
+
+
+class _SmallQueue(T.queue.Queue):
+    """A queue that fails the test, not blocks, when the parent overfills it."""
+    made = []
+
+    def __init__(self):
+        super().__init__(maxsize=_SmallQueue.capacity)
+        self.closed = False
+        _SmallQueue.made.append(self)
+
+    def put(self, item, block=True, timeout=None):
+        super().put(item, block=False)                   # queue.Full = the old deadlock
+
+    def cancel_join_thread(self):
+        pass
+
+    def close(self):
+        self.closed = True
+
+
+class _ThreadContext:
+    Process, Queue = _ThreadProcess, _SmallQueue
+
+
+def test_tasks_are_fed_in_a_window_not_all_at_once(monkeypatch):
+    """The whole schedule used to be queued before any result was read; past the OS
+    queue bound that blocks the parent for good (Codex review, 2026-09-17)."""
+    monkeypatch.setattr(T, "_batched_worker", _echo_worker)
+    _SmallQueue.capacity, _SmallQueue.made = 2 * 2 * 4 + 2, []   # the window plus sentinels
+    tasks = [("c", "o", i, leg) for i in range(2500) for leg in T.LEGS]
+    with T._batched_records(_ThreadContext, 2, (), tasks, 4) as records:
+        got = list(records)
+    assert len(got) == 5000 and not any("error" in r for r in got)
+    assert {T.task_key(*r["pair"], r["game_index"], r["leg"]) for r in got} == \
+        {T.task_key(*t) for t in tasks}
+    assert all(q.closed for q in _SmallQueue.made)
+
+
+def test_a_worker_that_fails_to_start_leaves_nothing_running(monkeypatch):
+    monkeypatch.setattr(T, "_batched_worker", _echo_worker)
+    _SmallQueue.capacity, _SmallQueue.made, _ThreadProcess.started = 64, [], []
+    real_start = _ThreadProcess.start
+
+    def flaky_start(self):
+        if _ThreadProcess.started:
+            raise OSError("cannot fork")
+        real_start(self)
+    monkeypatch.setattr(_ThreadProcess, "start", flaky_start)
+    tasks = [("c", "o", i, leg) for i in range(4) for leg in T.LEGS]
+    with pytest.raises(OSError):
+        with T._batched_records(_ThreadContext, 2, (), tasks, 2):
+            raise AssertionError("the context must not open")
+    assert len(_ThreadProcess.started) == 1 and _ThreadProcess.started[0].terminated
+    assert len(_SmallQueue.made) == 2 and all(q.closed for q in _SmallQueue.made)
+    _SmallQueue.made[0].put(None)                        # let the echo thread end
+
+
 @pytest.mark.skipif(not os.path.exists(CHAIN25), reason="chain 25 checkpoint not present")
 def test_cli_batched_checkpoint_games(tmp_path, monkeypatch):
     monkeypatch.setenv("OMP_NUM_THREADS", "1")

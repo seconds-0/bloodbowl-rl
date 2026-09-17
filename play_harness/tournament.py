@@ -688,31 +688,49 @@ def batch_slots(games_per_worker, pending, workers):
     return max(1, min(int(games_per_worker), share))
 
 
+MAX_TASK_WINDOW = 16_000             # a multiprocessing queue holds about 32,000 entries
+
+
 @contextlib.contextmanager
 def _batched_records(ctx, workers, initargs, pending, games_per_worker, poll_seconds=5.0):
     """N > 1: records from `workers` processes that each batch several games.
 
     Yields an iterator of records, {"error": ...} dicts included, in finish order.
     A worker that dies without reporting becomes an error record. Leaving the
-    context stops every worker.
+    context stops every worker, also when a worker failed to start.
+
+    Tasks are fed as results come back: at most `window` games are handed out and
+    not yet reported (twice what the workers hold in flight, so a free slot always
+    finds a queued task). A multiprocessing queue is bounded by the OS, so putting a
+    whole schedule in before reading any result can block the parent for good, with
+    the workers blocked on a full result queue or already dead.
     """
     if not pending:
         yield iter(())
         return
     workers = min(int(workers), len(pending))
     slots = batch_slots(games_per_worker, len(pending), workers)
-    task_q, result_q = ctx.Queue(), ctx.Queue()
-    procs = [ctx.Process(target=_batched_worker, daemon=True,
-                         args=(i, task_q, result_q, initargs, slots)) for i in range(workers)]
-    for proc in procs:
-        proc.start()
-    for task in pending:
-        task_q.put(tuple(task))
-    for _ in procs:
-        task_q.put(None)
+    window = max(workers, min(2 * workers * slots, MAX_TASK_WINDOW))
+    procs, queues = [], []
 
-    def records():
+    def records(task_q, result_q):
         outstanding = {task_key(*t) for t in pending}
+        todo = iter(pending)
+        state = {"submitted": 0, "reported": 0, "sentinels": False}
+
+        def feed():
+            while state["submitted"] - state["reported"] < window:
+                task = next(todo, None)
+                if task is None:
+                    if not state["sentinels"]:
+                        state["sentinels"] = True
+                        for _ in procs:
+                            task_q.put(None)
+                    return
+                task_q.put(tuple(task))
+                state["submitted"] += 1
+
+        feed()
         finished_workers = 0
         checked = time.time()
         while finished_workers < len(procs):
@@ -741,20 +759,29 @@ def _batched_records(ctx, workers, initargs, pending, games_per_worker, poll_sec
                            "task": [*rec["pair"], rec["game_index"], rec["leg"]]}
                     return
                 outstanding.discard(key)
+                state["reported"] += 1
+                feed()
             yield rec
         if outstanding:
             yield {"error": f"workers finished with {len(outstanding)} games unplayed, e.g. "
                             f"{sorted(outstanding)[0]}", "task": []}
 
     try:
-        yield records()
+        task_q, result_q = ctx.Queue(), ctx.Queue()
+        queues += [task_q, result_q]
+        for i in range(workers):
+            proc = ctx.Process(target=_batched_worker, daemon=True,
+                               args=(i, task_q, result_q, initargs, slots))
+            proc.start()
+            procs.append(proc)               # only started processes are cleaned up
+        yield records(task_q, result_q)
     finally:
         for proc in procs:
             if proc.is_alive():
                 proc.terminate()
         for proc in procs:
             proc.join(timeout=10)
-        for q in (task_q, result_q):
+        for q in queues:
             q.cancel_join_thread()
             q.close()
 
