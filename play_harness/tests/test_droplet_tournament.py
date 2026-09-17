@@ -420,3 +420,68 @@ def test_run_refuses_bad_requests_before_any_network_call(tmp_path):
     ]
     for extra in cases:
         assert D.main(base + extra) == 1, extra
+
+
+# ---- merging shards that split a tournament by pair -----------------------------------
+def shard(name, pairs, games, **manifest_over):
+    manifest = {"schema": "bbplay-tournament-v1", "seed0": 7, "mode": "sample", "kernel": "native",
+                "max_decisions": 4096, "omp_num_threads": 1, "rosters": "procgen", "legs": ["A_home", "B_home"],
+                "sampling_seed": "keyed", "harness_git_head": "c0ffee", "torch": "2.14.0+cpu",
+                "python": "3.12.3", "host": name, "workers": 8, "tasks": len(games),
+                "pairs": [list(p) for p in pairs], "bot_library_sha256": None, "bots": {},
+                "checkpoints": {"a": {"sha256": "ha", "path": "/srv/a"}},
+                "players": {"a": {"mode": "sample", "temperature": 1.0}}}
+    manifest.update(manifest_over)
+    return {"name": name, "manifest": manifest, "games": games, "games_sha256": "g" + name,
+            "complete": {"complete": True, "wall_seconds": 100.0 + len(games),
+                         "games_per_second_wall": 1.5},
+            "machine": {"library_sha256": "lib1", "cpu_model": "DO-Premium-AMD"}}
+
+
+def two_shards():
+    s1 = shard("s1", [("a", "b", 2)], [game(pair=("a", "b"), index=0, leg=leg) for leg in ("A_home", "B_home")])
+    s2 = shard("s2", [("a", "bot", 2)],
+               [game(pair=("a", "bot"), index=0, leg=leg) for leg in ("A_home", "B_home")],
+               bots={"bot": {"kind": "offense"}}, bot_library_sha256="lib1")
+    s1["manifest"]["checkpoints"]["b"] = {"sha256": "hb", "path": "/srv/b"}
+    return s1, s2
+
+
+def test_merge_joins_disjoint_shards_and_keeps_provenance():
+    manifest, complete, games = D.merge_shards(list(two_shards()))
+    assert len(games) == 4 and manifest["tasks"] == 4 and complete["played"] == 4
+    assert manifest["pairs"] == [["a", "b", 2], ["a", "bot", 2]]
+    assert set(manifest["checkpoints"]) == {"a", "b"} and set(manifest["bots"]) == {"bot"}
+    assert manifest["bot_library_sha256"] == "lib1" and manifest["harness_git_head"] == "c0ffee"
+    assert [m["name"] for m in manifest["merged_from"]] == ["s1", "s2"]
+    assert manifest["merged_from"][0]["games_sha256"] == "gs1"
+    assert complete["complete"] and complete["wall_seconds"] == 102.0
+    assert complete["shard_games_per_second_wall_sum"] == 3.0
+
+
+@pytest.mark.parametrize("mutate, needle", [
+    (lambda a, b: b["manifest"].update(harness_git_head="other"), "harness_git_head"),
+    (lambda a, b: b["manifest"].update(seed0=8), "seed0"),
+    (lambda a, b: b["manifest"].update(torch="2.13.0"), "torch"),
+    (lambda a, b: b["machine"].update(library_sha256="lib2"), "compiled shim"),
+    (lambda a, b: b.update(machine=None), "compiled shim"),
+    (lambda a, b: b["manifest"].update(bot_library_sha256="elsewhere"), "bot library"),
+    (lambda a, b: b["complete"].update(complete=False), "not complete"),
+    (lambda a, b: b["games"].pop(), "manifest says"),
+    (lambda a, b: b["manifest"]["checkpoints"]["a"].update(sha256="swapped"), "checkpoints[a]"),
+    (lambda a, b: b["manifest"]["players"]["a"].update(temperature=0.5), "players[a]"),
+    (lambda a, b: b["manifest"].update(pairs=[["b", "a", 2]]), "is also in s1"),
+    (lambda a, b: b["games"][0].update(pair=["a", "zz"]), "outside its manifest"),
+    (lambda a, b: b["games"][0]["integrity"].update(illegal=1), "integrity"),
+])
+def test_merge_refuses_shards_that_are_not_one_tournament(mutate, needle):
+    s1, s2 = two_shards()
+    mutate(s1, s2)
+    with pytest.raises(D.RunnerError) as err:
+        D.merge_shards([s1, s2])
+    assert needle in str(err.value), str(err.value)
+
+
+def test_merge_needs_two_shards():
+    with pytest.raises(D.RunnerError):
+        D.merge_shards([two_shards()[0]])

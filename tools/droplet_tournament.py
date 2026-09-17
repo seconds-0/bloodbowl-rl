@@ -11,6 +11,7 @@ every exit path (success, failure, Ctrl-C, SIGTERM) unless --keep is given.
   tools/droplet_tournament.py status            # leak check: every tagged droplet
   tools/droplet_tournament.py destroy --name c35-gate-20260917
   tools/droplet_tournament.py compare --run-dir NEW/main --ref-dir OLD/main
+  tools/droplet_tournament.py merge --out ALL/main --shard S1/main --shard S2/main
 
 What `run` does: price check, disposable ssh key, one tagged droplet, CPU-only
 torch, `git archive` of a pinned commit plus only the named checkpoints, shim
@@ -437,6 +438,88 @@ def compare_runs(games, ref_games):
                        "reference_full": pooled_full,
                        "z_vs_reference_full": _z(pooled_run, pooled_full)},
             "integrity": integrity_totals(games)}
+
+
+MERGE_EQUAL_KEYS = ("schema", "seed0", "mode", "kernel", "max_decisions", "omp_num_threads",
+                    "rosters", "legs", "sampling_seed", "harness_git_head", "torch", "python")
+
+
+def merge_shards(shards):
+    """One manifest and game list from shards that split a tournament by pair.
+
+    shards: [{"name", "manifest", "complete", "games", "machine"}]. Every game is a
+    pure function of (pair, engine seed, leg), and droplets of one image build a
+    byte-identical shim, so shards may run on different droplets. Refused unless
+    the shards share the commit, seed block, settings, torch and compiled shim,
+    give shared players the same checkpoint and spec, and cover disjoint pairs.
+    Returns (manifest, complete, games); raises RunnerError listing every problem.
+    """
+    if len(shards) < 2:
+        raise RunnerError("merge needs at least two shards")
+    problems = []
+    first = shards[0]
+    checkpoints, bots, players, pairs, games, seen_pairs = {}, {}, {}, [], [], {}
+    for shard in shards:
+        name, m = shard["name"], shard["manifest"]
+        for key in MERGE_EQUAL_KEYS:
+            if m.get(key) != first["manifest"].get(key):
+                problems.append(f"{name}: {key} {m.get(key)!r} != {first['name']}'s "
+                                f"{first['manifest'].get(key)!r}")
+        lib = (shard.get("machine") or {}).get("library_sha256")
+        if not lib or lib != (first.get("machine") or {}).get("library_sha256"):
+            problems.append(f"{name}: compiled shim {lib} differs from {first['name']}'s")
+        if m.get("bot_library_sha256") not in (None, lib):
+            problems.append(f"{name}: manifest bot library {m.get('bot_library_sha256')} "
+                            f"is not the recorded shim {lib}")
+        if not (shard.get("complete") or {}).get("complete"):
+            problems.append(f"{name}: not complete")
+        if len(shard["games"]) != m.get("tasks"):
+            problems.append(f"{name}: {len(shard['games'])} games, manifest says {m.get('tasks')}")
+        bad = {k: v for k, v in integrity_totals(shard["games"]).items() if v}
+        if bad:
+            problems.append(f"{name}: nonzero integrity counters {bad}")
+        for group, merged, ident in (("checkpoints", checkpoints, lambda v: v.get("sha256")),
+                                     ("bots", bots, lambda v: v), ("players", players, lambda v: v)):
+            for player, value in (m.get(group) or {}).items():
+                if player in merged and ident(merged[player]) != ident(value):
+                    problems.append(f"{name}: {group}[{player}] differs from an earlier shard")
+                merged.setdefault(player, value)
+        listed = set()
+        for a, b, n in m.get("pairs") or []:
+            key = frozenset((a, b))
+            if key in seen_pairs:
+                problems.append(f"{name}: pair {a},{b} is also in {seen_pairs[key]}")
+            seen_pairs[key] = name
+            listed.add((a, b))
+            pairs.append([a, b, n])
+        stray = {tuple(g["pair"]) for g in shard["games"]} - listed
+        if stray:
+            problems.append(f"{name}: games for pairs outside its manifest {sorted(stray)}")
+        games += shard["games"]
+    if len({_key(g) for g in games}) != len(games):
+        problems.append("duplicate (pair, game_index, leg) across shards")
+    if problems:
+        raise RunnerError("shards do not merge:\n  " + "\n  ".join(problems))
+    lib = first["machine"]["library_sha256"]
+    manifest = {key: first["manifest"].get(key) for key in MERGE_EQUAL_KEYS}
+    manifest.update({
+        "checkpoints": checkpoints, "bots": bots, "players": players, "pairs": pairs,
+        "bot_library_sha256": lib if bots else None, "library_sha256": lib,
+        "games_per_pair": None, "tasks": len(games), "host": "merged",
+        "workers": [s["manifest"].get("workers") for s in shards],
+        "merged_from": [{"name": s["name"], "host": s["manifest"].get("host"),
+                         "tasks": s["manifest"].get("tasks"),
+                         "pairs": s["manifest"].get("pairs"),
+                         "cpu_model": (s.get("machine") or {}).get("cpu_model"),
+                         "games_sha256": s.get("games_sha256"),
+                         "wall_seconds": (s.get("complete") or {}).get("wall_seconds"),
+                         "games_per_second_wall": (s.get("complete") or {}).get("games_per_second_wall")}
+                        for s in shards]})
+    walls = [(s.get("complete") or {}).get("wall_seconds") or 0.0 for s in shards]
+    rates = [(s.get("complete") or {}).get("games_per_second_wall") or 0.0 for s in shards]
+    complete = {"played": len(games), "complete": True, "shards": len(shards),
+                "wall_seconds": max(walls), "shard_games_per_second_wall_sum": round(sum(rates), 3)}
+    return manifest, complete, games
 
 
 def filter_tagged(droplets, tag=TAG):
@@ -981,6 +1064,43 @@ def cmd_compare(args):
     return 0
 
 
+def cmd_merge(args):
+    out_dir = os.path.abspath(args.out)
+    if os.path.exists(out_dir):
+        raise RunnerError(f"{out_dir} already exists")
+    shards = []
+    for d in args.shard:
+        d = os.path.abspath(d)
+        shard = {"name": os.path.basename(os.path.dirname(d)) if os.path.basename(d) == "main"
+                 else os.path.basename(d)}
+        with open(os.path.join(d, "SHA256SUMS")) as f:
+            problems = verify_files(d, parse_sha256sums(f.read()))
+        if problems:
+            raise RunnerError(f"{d} fails its own SHA256SUMS:\n  " + "\n  ".join(problems))
+        for key, fname in (("manifest", "manifest.json"), ("complete", "COMPLETE.json"),
+                           ("machine", "machine.json")):
+            with open(os.path.join(d, fname)) as f:
+                shard[key] = json.load(f)
+        with open(os.path.join(d, "games.jsonl")) as f:
+            shard["lines"] = [line for line in f if line.strip()]
+        shard["games"] = [json.loads(line) for line in shard["lines"]]
+        shard["games_sha256"] = sha256_file(os.path.join(d, "games.jsonl"))
+        shards.append(shard)
+    manifest, complete, games = merge_shards(shards)
+    os.makedirs(out_dir)
+    with open(os.path.join(out_dir, "games.jsonl"), "w") as f:
+        for shard in shards:
+            f.writelines(line if line.endswith("\n") else line + "\n" for line in shard["lines"])
+    for fname, payload in (("manifest.json", manifest), ("COMPLETE.json", complete)):
+        with open(os.path.join(out_dir, fname), "w") as f:
+            json.dump(payload, f, indent=1)
+    log(f"merged {len(shards)} shards, {len(games)} games, {len(manifest['pairs'])} pairs into "
+        f"{out_dir}")
+    print(f"next: OMP_NUM_THREADS=1 .venv/bin/python -m play_harness.tournament_stats "
+          f"--run-dir {out_dir} --json {out_dir}/report.json")
+    return 0
+
+
 def build_parser():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--env-file", default=DEFAULT_ENV_FILE,
@@ -1025,6 +1145,11 @@ def build_parser():
     compare.add_argument("--ref-dir", required=True)
     compare.add_argument("--json", default=None)
     compare.set_defaults(func=cmd_compare)
+    merge = sub.add_parser("merge", help="join runs that split one tournament by pair")
+    merge.add_argument("--out", required=True, help="new run directory, e.g. .../NAME/main")
+    merge.add_argument("--shard", action="append", required=True, metavar="RUN_DIR",
+                       help="repeatable; a verified run directory from `run`")
+    merge.set_defaults(func=cmd_merge)
     return ap
 
 
