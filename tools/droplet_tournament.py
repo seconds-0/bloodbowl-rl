@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import fcntl
 import hashlib
 import json
 import math
@@ -69,6 +70,9 @@ MIN_CHARGE = 0.01
 MAX_HOURLY_DEFAULT = 1.0
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 PLAYER_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+VERSION_RE = re.compile(r"^[0-9]+(\.[0-9]+){1,3}$")
+PROVENANCE_FILES = ("machine.json",)
+RETRY_STATUSES = (429, 500, 502, 503, 504)
 
 
 class RunnerError(RuntimeError):
@@ -181,6 +185,9 @@ def tournament_argv(checkpoints, bots, pairs, seed0, workers, out_dir=REMOTE_OUT
 
 def setup_script(torch=TORCH_VERSION, numpy=NUMPY_VERSION):
     """First-boot install: compiler, venv, CPU-only torch. Idempotent."""
+    for what, version in (("torch", torch), ("numpy", numpy)):
+        if not VERSION_RE.match(str(version)):            # the text lands in a shell script
+            raise RunnerError(f"--{what} must be a plain version like 2.14.0, got {version!r}")
     return f"""#!/bin/bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -323,7 +330,7 @@ def parse_sha256sums(text):
     return out
 
 
-def verify_files(directory, sums, required=RESULT_FILES):
+def verify_files(directory, sums, required=RESULT_FILES + PROVENANCE_FILES):
     """Problems with the copied files: missing from the list, absent, or wrong hash."""
     problems = [f"{name}: not listed in SHA256SUMS" for name in required if name not in sums]
     for name, want in sums.items():
@@ -337,10 +344,35 @@ def verify_files(directory, sums, required=RESULT_FILES):
     return problems
 
 
-def verify_run(manifest, complete, game_lines, commit, checkpoint_sha, pairs, seed0):
+def schedule_problems(games, pairs, seed0):
+    """Problems unless the games are exactly the schedule: every pair's indices
+    0..n/2-1, both legs, once each, on engine seed seed0 + index."""
+    want = {((a, b), i, leg) for a, b, n in pairs for i in range(int(n) // 2)
+            for leg in ("A_home", "B_home")}
+    got = [_key(g) for g in games]
+    problems = []
+    if len(set(got)) != len(got):
+        problems.append(f"{len(got) - len(set(got))} duplicate (pair, game_index, leg) records")
+    missing, extra = want - set(got), set(got) - want
+    if missing:
+        problems.append(f"{len(missing)} scheduled games missing, e.g. {sorted(missing)[0]}")
+    if extra:
+        problems.append(f"{len(extra)} games outside the schedule, e.g. {sorted(extra)[0]}")
+    bad_seed = [g for g in games if g.get("engine_seed") != int(seed0) + int(g["game_index"])]
+    if bad_seed:
+        problems.append(f"{len(bad_seed)} games on the wrong engine seed, e.g. "
+                        f"{_key(bad_seed[0])} on {bad_seed[0].get('engine_seed')}")
+    return problems
+
+
+def verify_run(manifest, complete, games, commit, checkpoint_sha, pairs, seed0, bots=None):
     """Problems that mean the copied run is not the tournament that was asked for."""
     problems = []
     tasks = expected_tasks(pairs)
+    game_lines = len(games)
+    got_bots = {n: (b or {}).get("kind") for n, b in (manifest.get("bots") or {}).items()}
+    if got_bots != dict(bots or {}):
+        problems.append(f"manifest bots {got_bots} != requested {dict(bots or {})}")
     if manifest.get("harness_git_head") != commit:
         problems.append(f"manifest commit {manifest.get('harness_git_head')} != pinned {commit}")
     got_sha = {n: c.get("sha256") for n, c in (manifest.get("checkpoints") or {}).items()}
@@ -357,7 +389,7 @@ def verify_run(manifest, complete, game_lines, commit, checkpoint_sha, pairs, se
         problems.append(f"COMPLETE.json does not say complete: {complete}")
     if game_lines != tasks:
         problems.append(f"games.jsonl has {game_lines} games, expected {tasks}")
-    return problems
+    return problems + schedule_problems(games, pairs, seed0)
 
 
 def integrity_totals(games):
@@ -392,11 +424,15 @@ def _summary(games):
 
 
 def _z(x, y):
-    """Welch z of the score-rate difference between two summaries."""
+    """Welch z of the score-rate difference between two summaries. Descriptive only:
+    it treats games as independent and ignores shared seeds and paired legs."""
     if not x.get("games") or not y.get("games"):
         return None
     se = math.sqrt(x["score_var"] / x["games"] + y["score_var"] / y["games"])
-    return (x["score_rate"] - y["score_rate"]) / se if se > 0 else 0.0
+    diff = x["score_rate"] - y["score_rate"]
+    if se > 0:
+        return diff / se
+    return 0.0 if diff == 0 else math.copysign(math.inf, diff)
 
 
 def compare_runs(games, ref_games):
@@ -498,17 +534,14 @@ def merge_shards(shards):
                 if player in merged and ident(merged[player]) != ident(value):
                     problems.append(f"{name}: {group}[{player}] differs from an earlier shard")
                 merged.setdefault(player, value)
-        listed = set()
         for a, b, n in m.get("pairs") or []:
             key = frozenset((a, b))
             if key in seen_pairs:
                 problems.append(f"{name}: pair {a},{b} is also in {seen_pairs[key]}")
             seen_pairs[key] = name
-            listed.add((a, b))
             pairs.append([a, b, n])
-        stray = {tuple(g["pair"]) for g in shard["games"]} - listed
-        if stray:
-            problems.append(f"{name}: games for pairs outside its manifest {sorted(stray)}")
+        problems += [f"{name}: {p}" for p in schedule_problems(
+            shard["games"], [tuple(p) for p in m.get("pairs") or []], m.get("seed0", 0))]
         games += shard["games"]
     if len({_key(g) for g in games}) != len(games):
         problems.append("duplicate (pair, game_index, leg) across shards")
@@ -543,6 +576,29 @@ def limit_refusal(existing, limit):
                 "Nothing was created. Do not delete another project's droplet to make room; "
                 "wait for a slot or ask the owner.")
     return None
+
+
+def compare_row(label, row):
+    run, same, full = row["run"], row["reference_same_games"], row["reference_full"]
+    text = (f"{label:24s} run W/D/L {run['W']}/{run['D']}/{run['L']} score "
+            f"{run['score_rate']:.3f} TD {run['a_td_per_game']:.2f}-{run['b_td_per_game']:.2f}")
+    if not full.get("games"):
+        return text + " | pair absent from the reference"
+    z = row["z_vs_reference_full"]
+    return (text + f" | same games in ref {same.get('W')}/{same.get('D')}/{same.get('L')} | "
+            f"full ref score {full['score_rate']:.3f} TD {full['a_td_per_game']:.2f}-"
+            f"{full['b_td_per_game']:.2f} (n={full['games']}) z={z:+.2f}")
+
+
+def adoptable(droplets, name, attempted_at, slack=120):
+    """Droplets an ambiguous create of `name` must have made: our tag, our exact
+    name, created no earlier than the attempt. Names are unique per locked run."""
+    out = []
+    for d in filter_tagged(droplets):
+        created = calendar.timegm(time.strptime(d["created_at"], "%Y-%m-%dT%H:%M:%SZ"))
+        if d.get("name") == droplet_name(name) and created >= int(attempted_at) - slack:
+            out.append(d)
+    return out
 
 
 def filter_tagged(droplets, tag=TAG):
@@ -598,7 +654,9 @@ class Api:
                 break
             except urllib.error.HTTPError as exc:
                 status, raw = exc.code, exc.read()
-                break
+                if status not in RETRY_STATUSES or attempt == attempts:
+                    break
+                time.sleep(self.retry_sleep)
             except OSError as exc:                         # URLError, timeouts, resets
                 if attempt == attempts:
                     raise RunnerError(f"{method} {path}: network error after {attempt} "
@@ -631,10 +689,17 @@ class Remote:
                      "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=8",
                      "-o", "LogLevel=ERROR"]
 
-    def run(self, command, check=True, timeout=None, stdin_text=None):
-        proc = subprocess.run(["ssh", *self.opts, f"root@{self.ip}", command],
-                              input=stdin_text, stdin=None if stdin_text is not None else subprocess.DEVNULL,
-                              capture_output=True, text=True, timeout=timeout)
+    def run(self, command, check=True, timeout=600, stdin_text=None):
+        """Every remote command has a timeout, so a hung ssh cannot bill forever."""
+        try:
+            proc = subprocess.run(["ssh", *self.opts, f"root@{self.ip}", command],
+                                  input=stdin_text,
+                                  stdin=None if stdin_text is not None else subprocess.DEVNULL,
+                                  capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if not check:
+                raise
+            raise RunnerError(f"remote command timed out after {timeout} s: {command[:80]}")
         if check and proc.returncode != 0:
             raise RunnerError(f"remote command failed ({proc.returncode}): {command[:80]}\n"
                               f"{proc.stdout[-2000:]}{proc.stderr[-2000:]}")
@@ -646,16 +711,22 @@ class Remote:
                         f"exit ${{PIPESTATUS[0]}}", stdin_text=text, timeout=timeout)
 
     def put(self, local, remote, timeout=1800):
-        proc = subprocess.run(["scp", "-q", *self.opts, local, f"root@{self.ip}:{remote}"],
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                              timeout=timeout)
+        try:
+            proc = subprocess.run(["scp", "-q", *self.opts, local, f"root@{self.ip}:{remote}"],
+                                  stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise RunnerError(f"scp timed out after {timeout} s: {remote}")
         if proc.returncode != 0:
             raise RunnerError(f"scp to droplet failed: {local}\n{proc.stderr[-1000:]}")
 
     def get(self, remote, local, check=True, timeout=1800):
-        proc = subprocess.run(["scp", "-q", *self.opts, f"root@{self.ip}:{remote}", local],
-                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                              timeout=timeout)
+        try:
+            proc = subprocess.run(["scp", "-q", *self.opts, f"root@{self.ip}:{remote}", local],
+                                  stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise RunnerError(f"scp timed out after {timeout} s: {remote}")
         if check and proc.returncode != 0:
             raise RunnerError(f"scp from droplet failed: {remote}\n{proc.stderr[-1000:]}")
         return proc.returncode == 0
@@ -683,6 +754,18 @@ class State:
         with open(self.path(key), "w") as f:
             f.write(str(value))
 
+    def lock(self):
+        """Exclusive per-name lock for a whole lifecycle; the handle must stay alive."""
+        os.makedirs(self.dir, mode=0o700, exist_ok=True)
+        handle = open(self.path("lock"), "w")
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            raise RunnerError(f"another droplet_tournament process holds {self.path('lock')}; "
+                              "to stop a live run send it SIGINT and it tears down")
+        return handle
+
     def clear(self, *keys):
         for key in keys:
             try:
@@ -692,7 +775,10 @@ class State:
 
 
 def log(msg):
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    try:
+        print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    except OSError:                                          # a closed pipe must not stop teardown
+        pass
 
 
 # ---- lifecycle --------------------------------------------------------------------
@@ -718,6 +804,7 @@ def create_key(api, state, name):
 def create_droplet(api, state, name, region, size, fingerprint):
     body = droplet_body(name, region, size, fingerprint)
     for attempt in range(1, 9):
+        state.write("create-attempted", int(time.time()))    # teardown reconciles from this
         status, payload = api.call("POST", "/droplets", body)
         if status in (200, 201, 202) and "droplet" in payload:
             droplet_id = payload["droplet"]["id"]
@@ -726,6 +813,8 @@ def create_droplet(api, state, name, region, size, fingerprint):
             log(f"created droplet {droplet_id} ({body['name']}, {size}, {region}, tag {TAG})")
             return droplet_id
         message = str(payload.get("message", ""))
+        if status == 422:
+            state.clear("create-attempted")                  # refused outright: nothing exists
         if "invalid key identifiers" not in message:       # a fresh key needs a few seconds
             raise RunnerError(f"droplet create failed: HTTP {status} {message}")
         log(f"ssh key not usable yet (attempt {attempt} of 8), retrying in 5 s")
@@ -761,7 +850,27 @@ def teardown(api, state, name):
     signal.signal(signal.SIGINT, signal.SIG_IGN)            # teardown must finish
     api.retries = max(api.retries, 120)                     # ride out a 10 minute outage
     droplet_id, key_id = state.read("droplet-id"), state.read("key-id")
+    attempted = state.read("create-attempted")
     ok = True
+    if not droplet_id and attempted:
+        # The create was sent but its id never reached state (timeout, signal, full disk).
+        # A droplet it made carries our tag and exact name; give the API time to list it.
+        found = []
+        for _ in range(7):
+            found = adoptable(api.get(f"/droplets?tag_name={TAG}&per_page=200")["droplets"],
+                              name, attempted)
+            if found:
+                break
+            time.sleep(10)
+        if len(found) > 1:
+            raise RunnerError(f"{len(found)} droplets named {droplet_name(name)}: "
+                              f"{[d['id'] for d in found]}; destroy them with `destroy --id`")
+        if found:
+            droplet_id = str(found[0]["id"])
+            state.write("droplet-id", droplet_id)
+            log(f"adopted droplet {droplet_id} from a create whose answer was lost")
+        else:
+            log("the unanswered create made no droplet")
     if droplet_id:
         status, payload = api.call("GET", f"/droplets/{droplet_id}")
         if status == 404:
@@ -775,10 +884,12 @@ def teardown(api, state, name):
             status, _ = api.call("DELETE", f"/droplets/{droplet_id}")
             log(f"delete droplet {droplet_id}: HTTP {status}")
         code = None
-        for _ in range(24):
+        for attempt in range(36):
             code, _ = api.call("GET", f"/droplets/{droplet_id}")
             if code == 404:
                 break
+            if attempt % 6 == 5:                             # still there: ask again
+                api.call("DELETE", f"/droplets/{droplet_id}")
             time.sleep(5)
         log(f"verify droplet {droplet_id}: HTTP {code} (404 = gone)")
         if code != 404:
@@ -801,7 +912,7 @@ def teardown(api, state, name):
         ok = ok and code == 404
     state.clear("key", "key.pub", "known_hosts", "ip")
     if ok:
-        state.clear("droplet-id", "key-id")
+        state.clear("droplet-id", "key-id", "create-attempted")
     return ok
 
 
@@ -899,9 +1010,10 @@ def cmd_run(args):
         raise RunnerError(f"{out_dir} already exists; pick a new --name")
 
     state = State(name)
-    if state.read("droplet-id"):
-        raise RunnerError(f"state already records droplet {state.read('droplet-id')} for {name}; "
-                          f"run `destroy --name {name}` first")
+    lock = state.lock()                                     # held until the process exits
+    if state.read("droplet-id") or state.read("create-attempted"):
+        raise RunnerError(f"state already records droplet {state.read('droplet-id')} or an "
+                          f"unresolved create for {name}; run `destroy --name {name}` first")
     api = Api(read_token(env_file=args.env_file))
     size = pick_size(api.get("/sizes?per_page=200")["sizes"], args.size, args.region,
                      args.max_hourly)
@@ -989,8 +1101,8 @@ def cmd_run(args):
             complete = json.load(f)
         with open(os.path.join(partial, "games.jsonl")) as f:
             games = [json.loads(line) for line in f if line.strip()]
-        problems += verify_run(manifest, complete, len(games), commit, checkpoint_sha, pairs,
-                               args.seed0)
+        problems += verify_run(manifest, complete, games, commit, checkpoint_sha, pairs,
+                               args.seed0, bots=bots)
         bad = {k: v for k, v in integrity_totals(games).items() if v}
         if bad:
             problems.append(f"nonzero integrity counters: {bad}")
@@ -1030,16 +1142,19 @@ def cmd_run(args):
     finally:
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, signal.SIG_IGN)               # teardown must finish
-        if failed and remote is not None:
-            fail_dir = out_dir + ".failed"
-            os.makedirs(fail_dir, exist_ok=True)
-            for fname in LOG_FILES + ("build.log", "EXIT", "STAGE"):
-                try:
-                    remote.get(f"{REMOTE_RUN}/{fname}", os.path.join(fail_dir, fname),
-                               check=False, timeout=120)
-                except Exception:
-                    pass
-            log(f"failure logs (what could be fetched) are in {fail_dir}")
+        try:                                                 # nothing here may stop teardown
+            if failed and remote is not None:
+                fail_dir = out_dir + ".failed"
+                os.makedirs(fail_dir, exist_ok=True)
+                for fname in LOG_FILES + ("build.log", "EXIT", "STAGE"):
+                    try:
+                        remote.get(f"{REMOTE_RUN}/{fname}", os.path.join(fail_dir, fname),
+                                   check=False, timeout=120)
+                    except Exception:
+                        pass
+                log(f"failure logs (what could be fetched) are in {fail_dir}")
+        except Exception:
+            pass
         if args.keep:
             log(f"--keep: droplet {state.read('droplet-id')} at {state.read('ip')} is STILL "
                 f"BILLING. ssh -i {state.path('key')} root@{state.read('ip')}; "
@@ -1048,9 +1163,12 @@ def cmd_run(args):
             try:
                 teardown(api, state, name)
             except BaseException:
-                print(f"TEARDOWN FAILED: droplet {state.read('droplet-id')} may STILL BE BILLING. "
-                      f"Run: tools/droplet_tournament.py destroy --name {name}",
-                      file=sys.stderr, flush=True)
+                try:
+                    print(f"TEARDOWN FAILED: droplet {state.read('droplet-id')} may STILL BE "
+                          f"BILLING. Run: tools/droplet_tournament.py destroy --name {name}",
+                          file=sys.stderr, flush=True)
+                except Exception:
+                    pass
                 raise
             if result is not None:
                 result["cost"] = float(state.read("cost") or 0.0)
@@ -1075,7 +1193,9 @@ def cmd_destroy(args):
     api = Api(read_token(env_file=args.env_file))
     if args.name:
         state = State(args.name)
-        if not state.read("droplet-id") and not state.read("key-id"):
+        lock = state.lock()                                 # noqa: F841 (held for the call)
+        if not (state.read("droplet-id") or state.read("key-id")
+                or state.read("create-attempted")):
             raise RunnerError(f"no recorded droplet or key for {args.name} in {state.dir}")
         teardown(api, state, args.name)
     else:
@@ -1118,13 +1238,7 @@ def cmd_compare(args):
     print(f"integrity: {report['integrity']}")
     rows = list(report["pairs"].items()) + [("POOLED", report["pooled"])]
     for label, row in rows:
-        run, same, full = row["run"], row["reference_same_games"], row["reference_full"]
-        z = row["z_vs_reference_full"]
-        print(f"{label:24s} run W/D/L {run['W']}/{run['D']}/{run['L']} score {run['score_rate']:.3f} "
-              f"TD {run['a_td_per_game']:.2f}-{run['b_td_per_game']:.2f} | same games in ref "
-              f"{same.get('W')}/{same.get('D')}/{same.get('L')} | full ref score "
-              f"{full['score_rate']:.3f} TD {full['a_td_per_game']:.2f}-{full['b_td_per_game']:.2f} "
-              f"(n={full['games']}) z={z:+.2f}")
+        print(compare_row(label, row))
     return 0
 
 

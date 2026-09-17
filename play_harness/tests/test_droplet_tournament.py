@@ -1,6 +1,7 @@
 """Pure-logic tests for tools/droplet_tournament.py. Nothing here touches the network:
 the autouse fixture makes any urlopen, ssh or scp call fail the test."""
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -241,8 +242,11 @@ def test_sha256sums_round_trip_and_reject_garbage(tmp_path):
 
 
 def test_verify_files_catches_a_corrupt_missing_or_unlisted_file(tmp_path):
-    sums = {name: write(tmp_path / name, name.encode()) for name in D.RESULT_FILES}
+    sums = {name: write(tmp_path / name, name.encode())
+            for name in D.RESULT_FILES + D.PROVENANCE_FILES}
     assert D.verify_files(str(tmp_path), sums) == []
+    no_machine = {k: v for k, v in sums.items() if k != "machine.json"}
+    assert "machine.json: not listed in SHA256SUMS" in D.verify_files(str(tmp_path), no_machine)
     write(tmp_path / "games.jsonl", b"truncated")
     os.remove(tmp_path / "report.json")
     problems = D.verify_files(str(tmp_path), sums)
@@ -262,9 +266,18 @@ def good_manifest():
             "checkpoints": {"a": {"sha256": "ha"}, "b": {"sha256": "hb"}}}
 
 
+def scheduled_games(pairs=PAIRS, seed0=7):
+    return [game(pair=(a, b), index=i, leg=leg, engine_seed=seed0 + i)
+            for a, b, n in pairs for i in range(n // 2) for leg in ("A_home", "B_home")]
+
+
+def good_manifest_with_bot():
+    return {**good_manifest(), "bots": {"bot": {"kind": "offense"}}}
+
+
 def test_verify_run_accepts_the_requested_tournament():
-    assert D.verify_run(good_manifest(), {"complete": True}, 6, "c0ffee",
-                        {"a": "ha", "b": "hb"}, PAIRS, 7) == []
+    assert D.verify_run(good_manifest_with_bot(), {"complete": True}, scheduled_games(), "c0ffee",
+                        {"a": "ha", "b": "hb"}, PAIRS, 7, bots={"bot": "offense"}) == []
 
 
 @pytest.mark.parametrize("mutate, lines, needle", [
@@ -276,19 +289,42 @@ def test_verify_run_accepts_the_requested_tournament():
     (lambda m: m.update(pairs=[["a", "b", 4]]), 6, "pairs"),
     (lambda m: m.update(tasks=5), 6, "tasks"),
     (lambda m: None, 5, "games.jsonl has 5"),
+    (lambda m: m.update(bots={"bot": {"kind": "contact"}}), 6, "bots"),
+    (lambda m: m.update(bots={}), 6, "bots"),
 ])
 def test_verify_run_flags_each_mismatch(mutate, lines, needle):
-    manifest = good_manifest()
+    manifest = good_manifest_with_bot()
     mutate(manifest)
-    problems = D.verify_run(manifest, {"complete": True}, lines, "c0ffee",
-                            {"a": "ha", "b": "hb"}, PAIRS, 7)
+    problems = D.verify_run(manifest, {"complete": True}, scheduled_games()[:lines], "c0ffee",
+                            {"a": "ha", "b": "hb"}, PAIRS, 7, bots={"bot": "offense"})
     assert any(needle in p for p in problems), problems
 
 
 def test_verify_run_needs_a_complete_marker():
-    problems = D.verify_run(good_manifest(), {"complete": False}, 6, "c0ffee",
-                            {"a": "ha", "b": "hb"}, PAIRS, 7)
+    problems = D.verify_run(good_manifest_with_bot(), {"complete": False}, scheduled_games(),
+                            "c0ffee", {"a": "ha", "b": "hb"}, PAIRS, 7, bots={"bot": "offense"})
     assert any("COMPLETE.json" in p for p in problems)
+
+
+def test_schedule_problems_accept_exactly_the_schedule():
+    assert D.schedule_problems(scheduled_games(), PAIRS, 7) == []
+    from play_harness import tournament as T
+    real = {((a, b), i, leg) for a, b, i, leg in
+            T.schedule(["a", "b", "bot"], None, 7, pairs=[("a", "b", 4), ("a", "bot", 2)])}
+    assert real == {D._key(g) for g in scheduled_games()}
+
+
+def test_schedule_problems_catch_the_right_count_of_the_wrong_games():
+    games = scheduled_games()
+    wrong_index = [dict(g, game_index=987, engine_seed=7 + 987) if g["pair"] == ["a", "bot"] else g
+                   for g in games]
+    problems = D.schedule_problems(wrong_index, PAIRS, 7)
+    assert any("missing" in p for p in problems) and any("outside the schedule" in p for p in problems)
+    wrong_seed = [dict(games[0], engine_seed=1)] + games[1:]
+    assert any("wrong engine seed" in p for p in D.schedule_problems(wrong_seed, PAIRS, 7))
+    assert any("duplicate" in p for p in D.schedule_problems(games + games[:1], PAIRS, 7))
+    one_leg = [g for g in games if not (g["pair"] == ["a", "bot"] and g["leg"] == "B_home")]
+    assert any("missing" in p for p in D.schedule_problems(one_leg, PAIRS, 7))
 
 
 # ---- determinism comparison ---------------------------------------------------------
@@ -450,9 +486,11 @@ def shard(name, pairs, games, **manifest_over):
 
 
 def two_shards():
-    s1 = shard("s1", [("a", "b", 2)], [game(pair=("a", "b"), index=0, leg=leg) for leg in ("A_home", "B_home")])
+    s1 = shard("s1", [("a", "b", 2)], [game(pair=("a", "b"), index=0, leg=leg, engine_seed=7)
+                                       for leg in ("A_home", "B_home")])
     s2 = shard("s2", [("a", "bot", 2)],
-               [game(pair=("a", "bot"), index=0, leg=leg) for leg in ("A_home", "B_home")],
+               [game(pair=("a", "bot"), index=0, leg=leg, engine_seed=7)
+                for leg in ("A_home", "B_home")],
                bots={"bot": {"kind": "offense"}}, bot_library_sha256="lib1")
     s1["manifest"]["checkpoints"]["b"] = {"sha256": "hb", "path": "/srv/b"}
     return s1, s2
@@ -482,7 +520,9 @@ def test_merge_joins_disjoint_shards_and_keeps_provenance():
     (lambda a, b: b["manifest"]["checkpoints"]["a"].update(sha256="swapped"), "checkpoints[a]"),
     (lambda a, b: b["manifest"]["players"]["a"].update(temperature=0.5), "players[a]"),
     (lambda a, b: b["manifest"].update(pairs=[["b", "a", 2]]), "is also in s1"),
-    (lambda a, b: b["games"][0].update(pair=["a", "zz"]), "outside its manifest"),
+    (lambda a, b: b["games"][0].update(pair=["a", "zz"]), "outside the schedule"),
+    (lambda a, b: [g.update(game_index=987, engine_seed=994) for g in b["games"]], "missing"),
+    (lambda a, b: b["games"][0].update(engine_seed=1), "wrong engine seed"),
     (lambda a, b: b["games"][0]["integrity"].update(illegal=1), "integrity"),
 ])
 def test_merge_refuses_shards_that_are_not_one_tournament(mutate, needle):
@@ -553,3 +593,68 @@ def test_api_gives_up_with_a_runner_error_and_no_token(monkeypatch):
     with pytest.raises(D.RunnerError) as err:
         D.Api("secret-token", retries=2).call("GET", "/account")
     assert len(calls) == 3 and "secret-token" not in str(err.value)
+
+
+# ---- review fixes: z, compare rendering, versions, adoption, lock ----------------------
+def test_z_is_not_zero_when_a_constant_run_disagrees_with_a_constant_reference():
+    wins = D._summary([game(index=i, result="W") for i in range(5)])
+    losses = D._summary([game(index=i, result="L") for i in range(5)])
+    assert D._z(wins, losses) == float("inf") and D._z(losses, wins) == float("-inf")
+    assert D._z(wins, wins) == 0.0 and D._z(wins, D._summary([])) is None
+
+
+def test_compare_row_renders_a_pair_the_reference_never_played():
+    report = D.compare_runs([game(pair=("a", "new"), index=0)], [game(pair=("a", "b"), index=0)])
+    assert "absent from the reference" in D.compare_row("a,new", report["pairs"]["a,new"])
+    assert "absent" in D.compare_row("POOLED", report["pooled"])
+    both = D.compare_runs([game(index=0), game(index=1, result="L")],
+                          [game(index=0), game(index=1, result="L")])
+    assert "z=+0.00" in D.compare_row("a,b", both["pairs"]["a,b"])
+
+
+def test_setup_script_refuses_versions_that_are_not_plain():
+    for bad in ("2.14.0; rm -rf /", "2.14.0 --pre", "$(id)", "", "latest"):
+        with pytest.raises(D.RunnerError):
+            D.setup_script(bad, "2.5.3")
+        with pytest.raises(D.RunnerError):
+            D.setup_script("2.14.0", bad)
+
+
+def test_adoptable_needs_our_tag_exact_name_and_a_creation_after_the_attempt():
+    import calendar
+    import time
+    at = calendar.timegm(time.strptime("2026-09-17T17:00:30Z", "%Y-%m-%dT%H:%M:%SZ"))
+    ours = droplet(id=7, name="bb-harness-c35", created_at="2026-09-17T17:00:31Z")
+    candidates = [ours,
+                  droplet(id=8, name="bb-harness-c35-s2", created_at="2026-09-17T17:00:31Z"),
+                  droplet(id=9, name="bb-harness-c35", created_at="2026-09-17T12:00:00Z"),
+                  droplet(id=10, name="bb-harness-c35", tags=["do-e2e"],
+                          created_at="2026-09-17T17:00:31Z"),
+                  droplet(id=11, name="serena", tags=["serena"], created_at="2026-09-17T17:00:31Z")]
+    assert [d["id"] for d in D.adoptable(candidates, "c35", at)] == [7]
+
+
+def test_a_second_process_cannot_take_the_same_run_name(tmp_path):
+    first = D.State("gate", root=str(tmp_path)).lock()
+    with pytest.raises(D.RunnerError):
+        D.State("gate", root=str(tmp_path)).lock()
+    other = D.State("gate-s2", root=str(tmp_path)).lock()
+    first.close()
+    other.close()
+    D.State("gate", root=str(tmp_path)).lock().close()
+
+
+def test_api_retries_a_rate_limit_on_delete_but_not_on_create(monkeypatch):
+    calls = []
+
+    def urlopen(req, timeout=None):
+        calls.append(req.get_method())
+        if len(calls) < 3:
+            raise D.urllib.error.HTTPError(req.full_url, 429, "slow down", {},
+                                           io.BytesIO(b'{"message": "limited"}'))
+        return FakeResponse({"ok": True})
+    monkeypatch.setattr(D.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(D.time, "sleep", lambda s: None)
+    assert D.Api("tok").call("DELETE", "/droplets/1")[0] == 200 and calls == ["DELETE"] * 3
+    calls.clear()
+    assert D.Api("tok").call("POST", "/droplets", {})[0] == 429 and calls == ["POST"]
