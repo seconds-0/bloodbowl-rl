@@ -485,3 +485,10 @@ def test_merge_refuses_shards_that_are_not_one_tournament(mutate, needle):
 def test_merge_needs_two_shards():
     with pytest.raises(D.RunnerError):
         D.merge_shards([two_shards()[0]])
+
+
+def test_a_full_account_is_a_blocker_not_a_reason_to_delete():
+    assert D.limit_refusal(5, 10) is None and D.limit_refusal(9, 10) is None
+    for existing in (10, 11):
+        message = D.limit_refusal(existing, 10)
+        assert message.startswith("BLOCKER") and "Do not delete" in message

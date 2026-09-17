@@ -524,6 +524,15 @@ def merge_shards(shards):
     return manifest, complete, games
 
 
+def limit_refusal(existing, limit):
+    """A blocker message when the account has no free droplet slot, else None."""
+    if existing >= limit:
+        return (f"BLOCKER: the account already runs {existing} of its {limit} droplets. "
+                "Nothing was created. Do not delete another project's droplet to make room; "
+                "wait for a slot or ask the owner.")
+    return None
+
+
 def filter_tagged(droplets, tag=TAG):
     return [d for d in droplets if tag in (d.get("tags") or [])]
 
@@ -873,7 +882,12 @@ def cmd_run(args):
         f"{tasks} games on {workers} workers; commit {commit[:12]}")
     log(f"spend guard: --max-hours {args.max_hours} caps this run at about "
         f"${cost(args.max_hours * 3600, price):.2f}")
-    others = api.tagged_droplets()
+    limit = int(api.get("/account")["account"]["droplet_limit"])
+    existing = api.get("/droplets?per_page=200")["droplets"]
+    refusal = limit_refusal(len(existing), limit)
+    if refusal:
+        raise RunnerError(refusal)
+    others = filter_tagged(existing)
     if others:
         log(f"note: {len(others)} droplet(s) already carry the {TAG} tag: "
             + ", ".join(f"{d['id']} {d['name']}" for d in others))
