@@ -147,6 +147,142 @@ def library_sha256(path=None):
         return hashlib.sha256(f.read()).hexdigest()
 
 
+class Match:
+    """One natural match in flight: the engine, both seats, the action trail and
+    every per-step contract check.
+
+    play_match drives one Match with a batch-1 forward per seat. The batched
+    worker (run_batched) drives several and shares each policy's forward between
+    them. Both go through the same observe / apply / record calls, so the
+    contract and the record cannot drift between the two paths. All state lives
+    on the instance; nothing is shared between two Matches.
+    """
+
+    def __init__(self, home_policy, away_policy, engine_seed, mode="sample", episode=0,
+                 max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
+                 max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0),
+                 allow_decision_cap=False):
+        modes = tuple(modes) if modes is not None else (mode, mode)
+        temperatures = tuple(float(t) for t in temperatures)
+
+        def seat_for(policy, side):
+            seed = sampling_seed(engine_seed, side, episode)
+            if isinstance(policy, ScriptedBot):
+                return BotSeat(policy, side, seed=seed)
+            return seat_factory(policy, side, mode=modes[side], seed=seed,
+                                temperature=temperatures[side])
+
+        self.engine_seed, self.episode = engine_seed, episode
+        self.max_decisions, self.max_c_steps = max_decisions, max_c_steps
+        self.allow_decision_cap = allow_decision_cap
+        self.seats = (seat_for(home_policy, 0), seat_for(away_policy, 1))
+        self.bots = tuple(s.policy if getattr(s, "scripted", False) else None
+                          for s in self.seats)
+        for seat in self.seats:
+            seat.reset_match()
+        self.eng = E.Engine(engine_seed, episode=episode, max_decisions=max_decisions, lib=lib)
+        self.t0 = time.time()
+        self.c_steps = 0
+        self.trail = hashlib.sha256()
+        self.logprob = [0.0, 0.0]
+
+    def close(self):
+        self.eng.close()
+
+    def observe(self):
+        """The deciding team, after checking the engine waits on a decision."""
+        eng = self.eng
+        if eng.status != E.STATUS_DECISION:
+            raise IntegrityError(f"engine not at a decision before step {self.c_steps}: "
+                                 f"status={eng.status}")
+        team = eng.decision_team
+        if team not in (0, 1):
+            raise IntegrityError(f"decision team {team} at step {self.c_steps}")
+        return team
+
+    def seat_inputs(self, side):
+        """(obs, support) for one seat's step; a bot seat takes no observation."""
+        return (None if self.bots[side] else self.eng.obs(side)), self.eng.joint_support(side)
+
+    def apply(self, team, outs):
+        """Check both seats' outputs, apply the decider's action. True at the terminal."""
+        eng, seats, bots = self.eng, self.seats, self.bots
+        self.c_steps += 1
+        c_steps = self.c_steps
+        for s in (0, 1):
+            if seats[s].forwards != c_steps:
+                raise IntegrityError(f"seat {s} made {seats[s].forwards} forwards "
+                                     f"over {c_steps} engine steps")
+        if tuple(outs[1 - team]["tuple"]) != NONE_TUPLE:
+            raise IntegrityError(f"waiting seat {1 - team} emitted {outs[1 - team]['tuple']}")
+        if bots[team] is not None:
+            idx = eng.scripted_bot_index(bots[team].bot_type)
+            if idx < 0:
+                raise IntegrityError(f"{bots[team].kind} bot found no pick at step "
+                                     f"{c_steps}: rc={idx}")
+            tup = eng.legal()[idx].tuple
+            self.trail.update(struct.pack("<Biii", team, *tup))
+            rc = eng.step_scripted(bots[team].bot_type, team)
+        else:
+            tup = tuple(int(v) for v in outs[team]["tuple"])
+            if eng.tuple_index(*tup) < 0:
+                raise IntegrityError(f"seat {team} tuple {tup} outside exact support")
+            self.logprob[team] += float(outs[team]["logprob"])
+            self.trail.update(struct.pack("<Biii", team, *tup))
+            rc = eng.step(*tup)
+        if rc == E.STEP_TERMINAL:
+            return True
+        if rc < 0:
+            raise IntegrityError(f"engine refused seat {team} tuple {tup}: rc={rc}")
+        return False
+
+    def check_step_budget(self):
+        if self.c_steps >= self.max_c_steps:
+            raise IntegrityError(f"no terminal after {self.c_steps} steps")
+
+    def record(self):
+        """The finished game's record; raises IntegrityError unless it is acceptable."""
+        eng, seats, bots, c_steps = self.eng, self.seats, self.bots, self.c_steps
+        max_decisions, allow_decision_cap = self.max_decisions, self.allow_decision_cap
+        logprob = self.logprob
+        final = eng.final_match()
+        counters = eng.counters()
+        if final is None:
+            raise IntegrityError("terminal step without a final match snapshot")
+        natural = final.status == E.STATUS_MATCH_OVER
+        truncated = counters["decisions_at_terminal"] >= max_decisions
+        integrity = {k: counters[k] for k in HARD_COUNTERS}
+        if not natural and not (allow_decision_cap and truncated):
+            raise IntegrityError(f"match ended unnaturally: status={final.status}")
+        if any(integrity.values()):
+            raise IntegrityError(f"nonzero integrity counters: {integrity}")
+        if counters["steps"] != c_steps:
+            raise IntegrityError(f"engine applied {counters['steps']} steps, runner {c_steps}")
+        if truncated and not allow_decision_cap:
+            raise IntegrityError("decision budget reached at the terminal step")
+        modes = tuple(s.mode for s in seats)
+        temperatures = tuple(s.temperature for s in seats)
+        return {
+            "engine_seed": int(self.engine_seed), "episode": int(self.episode),
+            "mode": modes[0] if modes[0] == modes[1] else "mixed",
+            "modes": list(modes), "temperatures": list(temperatures),
+            "bots": [b.kind if b else None for b in bots],
+            "sampling_seeds": [seats[0].seed, seats[1].seed],
+            "team_ids": [int(final.team_id[0]), int(final.team_id[1])],
+            "teams": [eng.team_display(final.team_id[0]), eng.team_display(final.team_id[1])],
+            "score": [int(final.score[0]), int(final.score[1])],
+            "natural": bool(natural), "truncated": bool(truncated),
+            "final_status": int(final.status),
+            "half": int(final.half), "turns": [int(final.turn[0]), int(final.turn[1])],
+            "c_steps": c_steps, "forwards": [seats[0].forwards, seats[1].forwards],
+            "decisions": [seats[0].decisions, seats[1].decisions],
+            "engine_decisions": counters["decisions_at_terminal"],
+            "logprob_sum": [round(logprob[0], 4), round(logprob[1], 4)],
+            "integrity": integrity, "action_trail_sha256": self.trail.hexdigest(),
+            "final_digest": f"{eng.digest():016x}", "seconds": round(time.time() - self.t0, 3),
+        }
+
+
 def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
                max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
                max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0),
@@ -165,105 +301,23 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
                           native env counts it as a finished game) and mark the
                           record truncated instead of aborting.
     """
-    modes = tuple(modes) if modes is not None else (mode, mode)
-    temperatures = tuple(float(t) for t in temperatures)
-
-    def seat_for(policy, side):
-        seed = sampling_seed(engine_seed, side, episode)
-        if isinstance(policy, ScriptedBot):
-            return BotSeat(policy, side, seed=seed)
-        return seat_factory(policy, side, mode=modes[side], seed=seed,
-                            temperature=temperatures[side])
-
-    seats = (seat_for(home_policy, 0), seat_for(away_policy, 1))
-    bots = tuple(s.policy if getattr(s, "scripted", False) else None for s in seats)
-    for seat in seats:
-        seat.reset_match()
-    eng = E.Engine(engine_seed, episode=episode, max_decisions=max_decisions, lib=lib)
-    t0 = time.time()
-    c_steps = 0
-    trail = hashlib.sha256()
-    logprob = [0.0, 0.0]
+    match = Match(home_policy, away_policy, engine_seed, mode=mode, episode=episode,
+                  max_decisions=max_decisions, lib=lib, seat_factory=seat_factory,
+                  max_c_steps=max_c_steps, modes=modes, temperatures=temperatures,
+                  allow_decision_cap=allow_decision_cap)
+    seats = match.seats
     try:
         while True:
-            if eng.status != E.STATUS_DECISION:
-                raise IntegrityError(f"engine not at a decision before step {c_steps}: "
-                                     f"status={eng.status}")
-            team = eng.decision_team
-            if team not in (0, 1):
-                raise IntegrityError(f"decision team {team} at step {c_steps}")
-            outs = [seats[s].step(None if bots[s] else eng.obs(s), eng.joint_support(s),
-                                  s == team)
-                    for s in (0, 1)]
-            c_steps += 1
-            for s in (0, 1):
-                if seats[s].forwards != c_steps:
-                    raise IntegrityError(f"seat {s} made {seats[s].forwards} forwards "
-                                         f"over {c_steps} engine steps")
-            if tuple(outs[1 - team]["tuple"]) != NONE_TUPLE:
-                raise IntegrityError(f"waiting seat {1 - team} emitted {outs[1 - team]['tuple']}")
-            if bots[team] is not None:
-                idx = eng.scripted_bot_index(bots[team].bot_type)
-                if idx < 0:
-                    raise IntegrityError(f"{bots[team].kind} bot found no pick at step "
-                                         f"{c_steps}: rc={idx}")
-                tup = eng.legal()[idx].tuple
-                trail.update(struct.pack("<Biii", team, *tup))
-                rc = eng.step_scripted(bots[team].bot_type, team)
-            else:
-                tup = tuple(int(v) for v in outs[team]["tuple"])
-                if eng.tuple_index(*tup) < 0:
-                    raise IntegrityError(f"seat {team} tuple {tup} outside exact support")
-                logprob[team] += float(outs[team]["logprob"])
-                trail.update(struct.pack("<Biii", team, *tup))
-                rc = eng.step(*tup)
-            if rc == E.STEP_TERMINAL:
+            team = match.observe()
+            outs = [seats[s].step(*match.seat_inputs(s), s == team) for s in (0, 1)]
+            if match.apply(team, outs):
                 break
-            if rc < 0:
-                raise IntegrityError(f"engine refused seat {team} tuple {tup}: rc={rc}")
-            if step_limit is not None and c_steps >= step_limit:
+            if step_limit is not None and match.c_steps >= step_limit:
                 return None, seats
-            if c_steps >= max_c_steps:
-                raise IntegrityError(f"no terminal after {c_steps} steps")
-        final = eng.final_match()
-        counters = eng.counters()
-        if final is None:
-            raise IntegrityError("terminal step without a final match snapshot")
-        natural = final.status == E.STATUS_MATCH_OVER
-        truncated = counters["decisions_at_terminal"] >= max_decisions
-        integrity = {k: counters[k] for k in HARD_COUNTERS}
-        if not natural and not (allow_decision_cap and truncated):
-            raise IntegrityError(f"match ended unnaturally: status={final.status}")
-        if any(integrity.values()):
-            raise IntegrityError(f"nonzero integrity counters: {integrity}")
-        if counters["steps"] != c_steps:
-            raise IntegrityError(f"engine applied {counters['steps']} steps, runner {c_steps}")
-        if truncated and not allow_decision_cap:
-            raise IntegrityError("decision budget reached at the terminal step")
-        modes = tuple(s.mode for s in seats)
-        temperatures = tuple(s.temperature for s in seats)
-        record = {
-            "engine_seed": int(engine_seed), "episode": int(episode),
-            "mode": modes[0] if modes[0] == modes[1] else "mixed",
-            "modes": list(modes), "temperatures": list(temperatures),
-            "bots": [b.kind if b else None for b in bots],
-            "sampling_seeds": [seats[0].seed, seats[1].seed],
-            "team_ids": [int(final.team_id[0]), int(final.team_id[1])],
-            "teams": [eng.team_display(final.team_id[0]), eng.team_display(final.team_id[1])],
-            "score": [int(final.score[0]), int(final.score[1])],
-            "natural": bool(natural), "truncated": bool(truncated),
-            "final_status": int(final.status),
-            "half": int(final.half), "turns": [int(final.turn[0]), int(final.turn[1])],
-            "c_steps": c_steps, "forwards": [seats[0].forwards, seats[1].forwards],
-            "decisions": [seats[0].decisions, seats[1].decisions],
-            "engine_decisions": counters["decisions_at_terminal"],
-            "logprob_sum": [round(logprob[0], 4), round(logprob[1], 4)],
-            "integrity": integrity, "action_trail_sha256": trail.hexdigest(),
-            "final_digest": f"{eng.digest():016x}", "seconds": round(time.time() - t0, 3),
-        }
-        return record, seats
+            match.check_step_budget()
+        return match.record(), seats
     finally:
-        eng.close()
+        match.close()
 
 
 def pair_game(policies, a, b, index, leg, seed0, mode="sample", lib=None,
