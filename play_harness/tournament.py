@@ -28,7 +28,7 @@ flight and runs ONE forward per policy per step over every seat that holds that
 policy (BatchedGames). Each seat still owns its recurrent state and its sampling
 generator and selects with the same code, so a game depends on its batch only
 through float rounding in the matrix products: nearly every game takes the same
-actions as at N = 1, a few do not, and the two settings agree in distribution.
+actions as at N = 1 and a rare knife-edge game does not (measured: 1 in 1,200).
 N = 1 is the unbatched path, unchanged. The manifest records N and a resume
 refuses a different one. See docs/play-harness/batched-tournaments-2026-09-17.md.
 
