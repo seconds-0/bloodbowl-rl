@@ -41,6 +41,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-16 10:40 (D403): chain 33's tournament confirms D402.** Head to head, replay ratio 2.0 holds a small edge over chain 30 (+22) and chain 32 (+19), below the +40 replicate threshold. Against the held-out offense bot it scores fewer touchdowns and a slightly lower score than chain 30 on the same seeds. Chain 32 over chain 26 is +120, so replay ratio 1.0 beats 0.25 on seed-matched pairs at both training seeds. Nothing changes: chain 30 stays the warm start and chain 34 keeps its gate.
 
+**Update 2026-09-17 10:30 (D404): chain 34 is positive and becomes the warm start.** Continuing chain 30 for another 3B beats the parent by +53 decisive-Elo and chain 27 by +66 over 16,000 clean games. The offense veto stays clear by 0.002 on one exam seed, and every exam cell is slightly below chain 30, so the exam and the tournament disagree in sign again. Native CUDA parity passed its screen: the harness reproduces the rig's action distributions on recorded states (mean joint TV 5e-7). Chain 35 replicates the continuation at training seed 44. CPU tournaments now run off the Mac.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

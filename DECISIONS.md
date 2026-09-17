@@ -1528,3 +1528,74 @@ Caveats named in advance:
 5. **The exam and the tournament measure different things for chain 33.** The exam punishes chain 33's lower-scoring, higher-draw play, while head to head it holds a small edge over chain 30 that is below the replicate threshold. This is recorded, not acted on, and no gate rule changes here.
 
 **Rulings.** None change. Chain 30 stays the warm start, replay ratio 1.0 stays the recipe, and chain 34's registered gate is unchanged.
+
+**D404 - CHAIN 34 READS POSITIVE: CONTINUING CHAIN 30 FOR ANOTHER 3B BEATS ITS PARENT BY +53 DECISIVE-ELO AND CHAIN 27 BY +66 WITH THE OFFENSE VETO CLEAR BY A NARROW MARGIN, SO CHAIN 34 BECOMES THE WARM START; NATIVE CUDA PARITY PASSES ITS SCREEN; CHAIN 35 REPLICATES THE CONTINUATION AT TRAINING SEED 44 (2026-09-17 10:30 PDT).** Chain 34 (`runs/ladder-d0-r0chain34-cont30-rr1-20260916`, unit `r0chain34-cont30-rr1`) is chain 30's recipe warm-started from chain 30's marker for another 3B (D402). It finished at 18:45 PDT on 2026-09-16, and the GPU lock released with exit 0. It ran 85-91K SPS with the Train phase at 605-614 ms, VRAM 6.4/8 GB and integrity counters zero on every polled panel. Checkpoint `vendor/PufferLib/checkpoints/bloodbowl/1789575232805/0000002999975936.bin` (sha 40d1b999); in-run eval tds 1.741, which is not evidence. All six exam cells exited rc=0 with 2018-2048 games each.
+
+| Exam seed | contact AWAY | contact HOME | offense AWAY |
+|---|---|---|---|
+| 42 | 0.556 / 0.388 | 0.527 / 0.401 | 0.557 / 0.342 |
+| 43 | 0.558 / 0.409 | 0.515 / 0.384 | 0.573 / 0.345 |
+| Two-exam-seed mean | **0.557 / 0.3985** | **0.521 / 0.3925** | **0.565 / 0.3435** |
+
+**Gate part 1, exam veto against chain 30 (0.5705, 0.5305, 0.586).** Champion deltas are **-0.0135, -0.0095 and -0.021**.
+- contact AWAY: -0.008 and -0.019 per exam seed
+- contact HOME: -0.011 and -0.008
+- offense AWAY: -0.024 and -0.018
+
+The veto needs offense AWAY down more than 0.02 on the mean and on both exam seeds. The mean (-0.021) and seed 42 (-0.024) cross the line; seed 43 (-0.018) does not. **The veto does not fire, by 0.002 on one seed.** Champion score on offense AWAY (win rate plus half the draw rate) is 0.604 and 0.608; chain 30 read 0.614 at seed 42, the only matched comparison. Every champion cell is slightly below chain 30, and none by more than the 0.02 floor on both seeds.
+
+**Gate part 2, tournament.** Play harness `feat/play-harness-20260913` at 4137658, D400 conditions, seed block 20600000. It played 16,000 games, 3,200 per pair, in 60.7 min on 4 Mac CPU workers (reniced to 20 partway through; priority does not change game content). All 16,000 games ended naturally with every integrity counter zero.
+
+| Pair | W / D / L | Decisive share [95% seed-cluster] | Decisive Elo [95%] | Score rate [95%] | Draw-inclusive Elo [95%] |
+|---|---|---|---|---|---|
+| chain 34 vs chain 30 | 1222 / 1076 / 902 | 0.575 [0.556, 0.593] | **+52.7** [+39.0, +65.7] | 0.550 [0.537, 0.562] | +34.9 [+25.8, +43.2] |
+| chain 34 vs chain 27 | 1219 / 1148 / 833 | 0.594 [0.576, 0.613] | **+66.1** [+52.9, +79.9] | 0.560 [0.548, 0.573] | +42.1 [+33.7, +50.7] |
+| chain 34 vs chain 32 | 1169 / 1071 / 960 | 0.549 [0.530, 0.568] | +34.2 [+21.2, +47.6] | 0.533 [0.520, 0.545] | +22.7 [+14.0, +31.5] |
+| chain 34 vs chain 25 | 1525 / 1066 / 609 | 0.715 [0.696, 0.731] | +159.5 [+144.3, +174.1] | 0.643 [0.631, 0.655] | +102.3 [+93.2, +111.0] |
+| chain 34 vs offense bot | 911 / 1788 / 501 | 0.645 [0.621, 0.671] | +103.9 [+85.4, +123.5] | 0.564 [0.553, 0.575] | +44.8 [+36.9, +52.5] |
+
+- **Touchdowns against the offense bot:** chain 34 scores 0.399 and concedes 0.270 per game. D403 recorded chain 30 at 0.369 / 0.269 and +83.2 decisive-Elo against the same bot, but on seed block 20400000, so that comparison is unpaired and descriptive only.
+- **Sharpness.** Mean log-probability per decision: chain 27 -0.1439, chain 30 -0.1499, chain 34 -0.1678, chain 32 -0.1796, chain 25 -0.1810. Chain 34 is less sharp than both chains it beats, so average sampling greed does not explain its edge. No argmax or temperature control was run for chain 34.
+- **Roster classes.** The class-specific gap model gives chain 34 over chain 30 agile +67 [+16, +123], bash +52 [+25, +79], hybrid +105 [+56, +158] and stunty +31 [-19, +82]; agile minus bash is +14 [-46, +79]. All four class point estimates are positive; no agile-versus-bash difference is resolved, and the stunty edge is uncertain. Against chain 32 the agile point estimate is negative (-47 [-99, +3], an interval that includes zero), while the agile-minus-bash difference is resolved at -101 [-164, -42].
+- **Fit and correlation.** The panel is a star around chain 34, so the Bradley-Terry misfit test has no degrees of freedom and is not reported. The centred leg correlation is -0.181.
+
+**Reading under D402's ordered rules.**
+1. Negative does not match: the veto does not fire, and the interval against chain 30 lies above zero.
+2. **Positive matches:** chain 34 beats chain 30 by +52.7, more than +40 with its 95% interval above zero, and beats chain 27 by +66.1 with its interval above zero.
+
+**Chain 34 becomes the warm start.** This is a warm-start decision, not a production promotion.
+
+**What the result does and does not show.**
+- The +52.7 over the parent is about two replicate-pair gaps (+14.2, +39.9, -15.7, +15.4; D400, D401). Its interval covers match noise only, from one training seed. D401 stated that a point-estimate cutoff of +40 is cleared about half the time by a true +40, so the positive reading is a screening result, not an established effect size.
+- Failure to trigger the offense veto is not evidence of offense non-inferiority. The mean offense AWAY decline (-0.021) exceeds 0.02, and acceptance rests on the registered conjunction with both exam seeds.
+- The exam and the tournament disagree in sign. Every exam champion cell is slightly below chain 30 (-0.01 to -0.02), while head to head chain 34 wins. D403 recorded the same split for chain 33. The exam measures touchdowns against two scripted bots, and the tournament measures decisive results against learned opponents. No gate rule changes here.
+- As D402 named in advance, the continuation changed the warm checkpoint, the cumulative budget and the active opponent set together.
+
+**Native CUDA parity (the D399/D400 open item).** The recorder ran on the rig after chain 34's exam (unit `parity-native-20260916-v2`, lock 01:55:05Z to 01:56:53Z on 2026-09-17, exit 0). It drove chain 30 (sha 41ecd998) through the live native module (sha d63498f6) in the exam's eval mode, one forward per rollout call, policy on both seats, and recorded 16 fixtures: 2 runs x 4 envs x 2 seats, with 8 and 24 terminal steps. The harness replayed the native side's sampled actions. Doc: `docs/play-harness/native-parity-2026-09-16.md` at 19d18b8, merged to `feat/play-harness-20260913`. Tolerances were fixed before any rig data existed.
+- Env observation mismatches, recorder consistency violations, and native-mask or mirror-support mismatches against shim support: all 0.
+- Forward joint total-variation distance: mean 5.3e-7 (tolerance 2e-6), max 4.6e-5 (tolerance 1e-3).
+- Native fp32 sampler against the harness sampler: mean 6.9e-7, max 4.8e-5.
+- Masked argmax agreement 1.0 on every head; step-0 logits within 3.7e-5; value within 1.1e-5; logprob within 1.5e-4.
+- Both harness kernels (torch and native) pass. Codex reproduced the table from `COMPARE.json` and found no P1 or P2.
+
+This is a passing screen on self-play states, not an outcome-level equivalence guarantee. It makes forward and sampler numerics an unlikely cause of the offense-bot offset (0.309 on the harness vs 0.342 on the rig, D402), and it does not exclude them. The remaining candidates are the bench's seeds and state distribution, the exam's shared env seeds, the exam's lr-1e-12 train phase, and states against the bot that self-play does not visit.
+
+**Operations.** From 2026-09-16 the CPU tournaments no longer run on the Mac (load 47 on 14 cores while the owner used the machine). They run on the rig when no trainer holds it, or on a throwaway DigitalOcean droplet while it trains. The rig sat idle from 18:57 PDT on 2026-09-16 to 10:01 PDT on 2026-09-17, about 15 hours, because the next launch was held for the tournament verdict and the session then stalled. Both next-run scripts should be staged before a verdict lands.
+
+**Next, pre-registered before its exam and tournament: chain 35, the second continuation seed** (`runs/ladder-d0-r0chain35-cont30-rr1-s44-20260917`, unit `r0chain35-cont30-rr1-s44`, launched 10:01 PDT). D402's positive branch required it. It is chain 34's exact procedure at training seed 44: warm start chain 30's marker, the same rotated pool (identity ff4c0552, rebuilt by `tools/ladder_stage.sh` and verified), gamma 0.999 / lambda 0.95, replay ratio 1.0, 3B. SCREEN PLAN VERIFIED with manifest 027fe60c and drift check 3ed6899e. Only the training seed differs from chain 34.
+
+The question is whether the continuation gain over chain 30 replicates at a second training seed.
+- **Gate part 1, exam veto:** offense AWAY down more than 0.02 against chain 30 on the mean and on both exam seeds.
+- **Gate part 2, tournament:** chain 35 against chains 30, 34, 27 and 32 and the offense bot, plus chain 34 against the offense bot and chain 30 against the offense bot on the same seeds, so the held-out contrasts are paired. 3,200 games per pair on seed block 20700000 under D400 conditions, run off the Mac.
+
+The readings are applied in this order, and the first that matches is the result:
+1. **Negative:** the veto fires, or chain 35's 95% interval against chain 30 lies entirely below zero.
+2. **Replicated:** chain 35 beats chain 30 by more than +40 decisive-Elo with its 95% interval above zero. Continuation from this parent under this procedure is then supported at two training seeds. "Replicated" drops D402's chain 27 condition on purpose: it answers only whether a second training seed reproduces the gain over the fixed parent, and it does not establish that chain 35 beats chain 27 or that continuation works across parents. The next rung continues from chain 35 only if the 95% seed-cluster decisive-Elo interval for chain 35 minus chain 34 lies entirely above zero; otherwise it continues from chain 34, including when that interval contains or touches zero.
+3. **Not replicated:** chain 35's decisive-Elo against chain 30 lies within +/-40. Chain 34 stays the warm start as a checkpoint, but continuation is not claimed as a method.
+4. **Inconclusive:** anything else. Chain 34 stays the warm start.
+
+The chain 35 vs chain 34 pair also joins the replicate-pair floor as its first continuation pair.
+
+Caveats named in advance:
+- Chains 34 and 35 share a parent and a pool, so this replicates the continuation seed, not the whole chain 9 to chain 30 to continuation path.
+- The +40 cutoff is D401's screening threshold, not a statistical bound on training-seed variation.
