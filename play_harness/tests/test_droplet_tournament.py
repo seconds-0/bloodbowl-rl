@@ -104,6 +104,31 @@ def test_tournament_argv_uses_droplet_paths_and_keeps_order():
     assert not any("/Users/" in a for a in argv)
 
 
+def test_tournament_argv_adds_games_per_worker_only_when_batched():
+    args = ({"x": f"/nope/{BLOB}"}, {"offense": "offense"}, [("x", "offense", 2)], 5, 8)
+    assert "--games-per-worker" not in D.tournament_argv(*args)
+    assert D.tournament_argv(*args) == D.tournament_argv(*args, games_per_worker=1)
+    argv = D.tournament_argv(*args, games_per_worker=16)
+    assert argv[argv.index("--games-per-worker") + 1] == "16"
+    assert build_run_args(["--games-per-worker", "16"]).games_per_worker == 16
+    assert build_run_args([]).games_per_worker == 1
+
+
+def build_run_args(extra):
+    return D.build_parser().parse_args(["run", "--name", "n", "--seed0", "1", *extra])
+
+
+def test_verify_run_checks_games_per_worker():
+    ok = dict(manifest=good_manifest_with_bot(), complete={"complete": True},
+              games=scheduled_games(), commit="c0ffee", checkpoint_sha={"a": "ha", "b": "hb"},
+              pairs=PAIRS, seed0=7, bots={"bot": "offense"})
+    assert D.verify_run(**ok) == []                                  # no key counts as 1
+    assert any("games_per_worker" in p for p in D.verify_run(**ok, games_per_worker=8))
+    ok["manifest"]["games_per_worker"] = 8
+    assert D.verify_run(**ok, games_per_worker=8) == []
+    assert any("games_per_worker" in p for p in D.verify_run(**ok))
+
+
 def test_tournament_argv_is_accepted_by_the_real_parser(tmp_path, monkeypatch):
     """The generated argv must parse; stop at the checkpoint load so nothing runs."""
     from play_harness import tournament as T
@@ -512,6 +537,9 @@ def test_merge_joins_disjoint_shards_and_keeps_provenance():
     (lambda a, b: b["manifest"].update(harness_git_head="other"), "harness_git_head"),
     (lambda a, b: b["manifest"].update(seed0=8), "seed0"),
     (lambda a, b: b["manifest"].update(torch="2.13.0"), "torch"),
+    (lambda a, b: b["manifest"].update(games_per_worker=8), "games_per_worker"),
+    (lambda a, b: (a["manifest"].update(games_per_worker=8),
+                   b["manifest"].update(games_per_worker=16)), "games_per_worker"),
     (lambda a, b: b["machine"].update(library_sha256="lib2"), "compiled shim"),
     (lambda a, b: b.update(machine=None), "compiled shim"),
     (lambda a, b: b["manifest"].update(bot_library_sha256="elsewhere"), "bot library"),
@@ -531,6 +559,15 @@ def test_merge_refuses_shards_that_are_not_one_tournament(mutate, needle):
     with pytest.raises(D.RunnerError) as err:
         D.merge_shards([s1, s2])
     assert needle in str(err.value), str(err.value)
+
+
+def test_merge_carries_games_per_worker_and_reads_a_missing_key_as_one():
+    s1, s2 = two_shards()
+    s1["manifest"]["games_per_worker"] = 1                           # s2 has no key
+    assert D.merge_shards([s1, s2])[0]["games_per_worker"] == 1
+    for s in (s1, s2):
+        s["manifest"]["games_per_worker"] = 16
+    assert D.merge_shards([s1, s2])[0]["games_per_worker"] == 16
 
 
 def test_merge_needs_two_shards():

@@ -169,8 +169,10 @@ def remote_checkpoint_path(name, local_path):
 
 
 def tournament_argv(checkpoints, bots, pairs, seed0, workers, out_dir=REMOTE_OUT,
-                    extra=()):
-    """argv after `python -m play_harness.tournament`, with droplet-side blob paths."""
+                    extra=(), games_per_worker=1):
+    """argv after `python -m play_harness.tournament`, with droplet-side blob paths.
+
+    games_per_worker 1 adds nothing, so an unbatched run's command line is unchanged."""
     argv = []
     for name, local in checkpoints.items():
         argv += ["--checkpoint", f"{name}={remote_checkpoint_path(name, local)}"]
@@ -180,6 +182,8 @@ def tournament_argv(checkpoints, bots, pairs, seed0, workers, out_dir=REMOTE_OUT
         argv += ["--pair", f"{a},{b},{n}"]
     argv += ["--seed0", str(int(seed0)), "--workers", str(int(workers)),
              "--out-dir", out_dir]
+    if int(games_per_worker) != 1:
+        argv += ["--games-per-worker", str(int(games_per_worker))]
     return argv + list(extra)
 
 
@@ -365,9 +369,19 @@ def schedule_problems(games, pairs, seed0):
     return problems
 
 
-def verify_run(manifest, complete, games, commit, checkpoint_sha, pairs, seed0, bots=None):
+def manifest_games_per_worker(manifest):
+    """A manifest written before batching existed was played one game per worker."""
+    value = manifest.get("games_per_worker")
+    return 1 if value is None else value
+
+
+def verify_run(manifest, complete, games, commit, checkpoint_sha, pairs, seed0, bots=None,
+               games_per_worker=1):
     """Problems that mean the copied run is not the tournament that was asked for."""
     problems = []
+    if manifest_games_per_worker(manifest) != int(games_per_worker):
+        problems.append(f"manifest games_per_worker {manifest.get('games_per_worker')} != "
+                        f"requested {games_per_worker}")
     tasks = expected_tasks(pairs)
     game_lines = len(games)
     got_bots = {n: (b or {}).get("kind") for n, b in (manifest.get("bots") or {}).items()}
@@ -515,6 +529,10 @@ def merge_shards(shards):
             if m.get(key) != first["manifest"].get(key):
                 problems.append(f"{name}: {key} {m.get(key)!r} != {first['name']}'s "
                                 f"{first['manifest'].get(key)!r}")
+        if manifest_games_per_worker(m) != manifest_games_per_worker(first["manifest"]):
+            problems.append(f"{name}: games_per_worker {manifest_games_per_worker(m)} != "
+                            f"{first['name']}'s {manifest_games_per_worker(first['manifest'])} "
+                            f"(batching changes float rounding, so the shards are not one sampler)")
         lib = (shard.get("machine") or {}).get("library_sha256")
         if not lib or lib != (first.get("machine") or {}).get("library_sha256"):
             problems.append(f"{name}: compiled shim {lib} differs from {first['name']}'s")
@@ -553,6 +571,7 @@ def merge_shards(shards):
         "checkpoints": checkpoints, "bots": bots, "players": players, "pairs": pairs,
         "bot_library_sha256": lib if bots else None, "library_sha256": lib,
         "games_per_pair": None, "tasks": len(games), "host": "merged",
+        "games_per_worker": manifest_games_per_worker(first["manifest"]),
         "workers": [s["manifest"].get("workers") for s in shards],
         "merged_from": [{"name": s["name"], "host": s["manifest"].get("host"),
                          "tasks": s["manifest"].get("tasks"),
@@ -1073,7 +1092,8 @@ def cmd_run(args):
             f"torch {machine['torch']}, library {machine['library_sha256'][:12]}")
 
         argv = tournament_argv(checkpoints, bots, pairs, args.seed0, workers,
-                               extra=args.tournament_arg)
+                               extra=args.tournament_arg,
+                               games_per_worker=args.games_per_worker)
         remote.run(f"cat > {REMOTE_RUN}/job.sh", stdin_text=job_script(argv, workers, args.stats_reps))
         # No `cd &&` in front: a backgrounded list runs in a subshell that keeps ssh's
         # stdout open, and the launch would block until the tournament ends.
@@ -1102,7 +1122,7 @@ def cmd_run(args):
         with open(os.path.join(partial, "games.jsonl")) as f:
             games = [json.loads(line) for line in f if line.strip()]
         problems += verify_run(manifest, complete, games, commit, checkpoint_sha, pairs,
-                               args.seed0, bots=bots)
+                               args.seed0, bots=bots, games_per_worker=args.games_per_worker)
         bad = {k: v for k, v in integrity_totals(games).items() if v}
         if bad:
             problems.append(f"nonzero integrity counters: {bad}")
@@ -1126,7 +1146,8 @@ def cmd_run(args):
             pass
         result = {"schema": "bbplay-droplet-run-v1", "name": name, "droplet_id": droplet_id,
                   "size": args.size, "region": args.region, "price_hourly": price,
-                  "vcpus": size["vcpus"], "workers": workers, "commit": commit,
+                  "vcpus": size["vcpus"], "workers": workers,
+                  "games_per_worker": args.games_per_worker, "commit": commit,
                   "machine": machine, "tasks": tasks,
                   "games_per_second_wall": complete.get("games_per_second_wall"),
                   "tournament_wall_seconds": complete.get("wall_seconds"),
@@ -1292,6 +1313,9 @@ def build_parser():
     run.add_argument("--games-per-pair", type=int, default=None)
     run.add_argument("--seed0", type=int, required=True)
     run.add_argument("--workers", type=int, default=None, help="default: the size's vCPU count")
+    run.add_argument("--games-per-worker", type=int, default=1, metavar="N",
+                     help="games each worker batches into one forward (default 1 = unbatched; "
+                          "registered gates run at 1)")
     run.add_argument("--size", default=DEFAULT_SIZE)
     run.add_argument("--region", default=DEFAULT_REGION)
     run.add_argument("--max-hourly", type=float, default=MAX_HOURLY_DEFAULT,
