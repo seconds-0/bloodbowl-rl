@@ -503,3 +503,53 @@ def test_a_full_account_is_a_blocker_not_a_reason_to_delete():
     for existing in (10, 11):
         message = D.limit_refusal(existing, 10)
         assert message.startswith("BLOCKER") and "Do not delete" in message
+
+
+# ---- API retries (urlopen is faked; nothing leaves the process) ------------------------
+class FakeResponse:
+    status = 200
+
+    def __init__(self, payload):
+        self._raw = json.dumps(payload).encode()
+
+    def read(self):
+        return self._raw
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def flaky_urlopen(monkeypatch, failures):
+    calls = []
+
+    def urlopen(req, timeout=None):
+        calls.append(req.get_method())
+        if len(calls) <= failures:
+            raise D.urllib.error.URLError("network down")
+        return FakeResponse({"ok": True})
+    monkeypatch.setattr(D.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(D.time, "sleep", lambda s: None)
+    return calls
+
+
+def test_api_retries_reads_and_deletes_through_an_outage(monkeypatch):
+    calls = flaky_urlopen(monkeypatch, failures=3)
+    assert D.Api("tok", retries=5).call("DELETE", "/droplets/1") == (200, {"ok": True})
+    assert calls == ["DELETE"] * 4
+
+
+def test_api_never_repeats_a_create(monkeypatch):
+    calls = flaky_urlopen(monkeypatch, failures=1)
+    with pytest.raises(D.RunnerError) as err:
+        D.Api("tok", retries=5).call("POST", "/droplets", {"name": "x"})
+    assert calls == ["POST"] and "tok" not in str(err.value)
+
+
+def test_api_gives_up_with_a_runner_error_and_no_token(monkeypatch):
+    calls = flaky_urlopen(monkeypatch, failures=99)
+    with pytest.raises(D.RunnerError) as err:
+        D.Api("secret-token", retries=2).call("GET", "/account")
+    assert len(calls) == 3 and "secret-token" not in str(err.value)

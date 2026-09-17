@@ -578,19 +578,32 @@ def describe_droplet(d, now=None):
 
 # ---- DigitalOcean API -----------------------------------------------------------
 class Api:
-    def __init__(self, token, base=API, timeout=30):
+    """retries: extra attempts after a network error, for GET and DELETE only. A POST
+    is never repeated, because a create that timed out may still have happened."""
+
+    def __init__(self, token, base=API, timeout=30, retries=5, retry_sleep=5.0):
         self._token, self.base, self.timeout = token, base, timeout
+        self.retries, self.retry_sleep = retries, retry_sleep
 
     def call(self, method, path, body=None):
         """(HTTP status, decoded body). Never raises on an HTTP error status."""
         data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(self.base + path, data=data, method=method, headers={
-            "Authorization": "Bearer " + self._token, "Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                status, raw = resp.status, resp.read()
-        except urllib.error.HTTPError as exc:
-            status, raw = exc.code, exc.read()
+        attempts = 1 + (self.retries if method in ("GET", "DELETE") else 0)
+        for attempt in range(1, attempts + 1):
+            req = urllib.request.Request(self.base + path, data=data, method=method, headers={
+                "Authorization": "Bearer " + self._token, "Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    status, raw = resp.status, resp.read()
+                break
+            except urllib.error.HTTPError as exc:
+                status, raw = exc.code, exc.read()
+                break
+            except OSError as exc:                         # URLError, timeouts, resets
+                if attempt == attempts:
+                    raise RunnerError(f"{method} {path}: network error after {attempt} "
+                                      f"attempt(s): {type(exc).__name__}")
+                time.sleep(self.retry_sleep)
         try:
             payload = json.loads(raw) if raw else {}
         except ValueError:
@@ -746,6 +759,7 @@ def wait_ssh(remote, timeout=300):
 def teardown(api, state, name):
     """Destroy the recorded droplet and key and verify both are gone. True when clean."""
     signal.signal(signal.SIGINT, signal.SIG_IGN)            # teardown must finish
+    api.retries = max(api.retries, 120)                     # ride out a 10 minute outage
     droplet_id, key_id = state.read("droplet-id"), state.read("key-id")
     ok = True
     if droplet_id:
@@ -819,7 +833,7 @@ def git(*args):
                           text=True).stdout.strip()
 
 
-def poll(remote, tasks, deadline, stale_seconds, interval=30):
+def poll(remote, tasks, deadline, stale_seconds, interval=30, lost_polls=60):
     """Wait for the detached job's EXIT file. Liveness is the log's mtime, not its text."""
     failures, last_report = 0, 0.0
     probe = (f"cat {REMOTE_RUN}/EXIT 2>/dev/null || echo -; cat {REMOTE_RUN}/STAGE 2>/dev/null || echo -; "
@@ -836,8 +850,11 @@ def poll(remote, tasks, deadline, stale_seconds, interval=30):
             lines = []
         if len(lines) < 4:
             failures += 1
-            if failures >= 10:
-                raise RunnerError("lost contact with the droplet for 10 polls in a row")
+            if failures == 1 or failures % 10 == 0:
+                log(f"no answer from the droplet ({failures} poll(s) in a row); the job "
+                    f"runs detached, still waiting")
+            if failures >= lost_polls:
+                raise RunnerError(f"lost contact with the droplet for {failures} polls in a row")
             time.sleep(interval)
             continue
         failures = 0
@@ -1028,13 +1045,22 @@ def cmd_run(args):
                 f"BILLING. ssh -i {state.path('key')} root@{state.read('ip')}; "
                 f"then: tools/droplet_tournament.py destroy --name {name}")
         else:
-            teardown(api, state, name)
+            try:
+                teardown(api, state, name)
+            except BaseException:
+                print(f"TEARDOWN FAILED: droplet {state.read('droplet-id')} may STILL BE BILLING. "
+                      f"Run: tools/droplet_tournament.py destroy --name {name}",
+                      file=sys.stderr, flush=True)
+                raise
             if result is not None:
                 result["cost"] = float(state.read("cost") or 0.0)
                 result["lifetime_seconds"] = round(time.time() - t_start, 1)
                 with open(os.path.join(out_dir, "droplet_run.json"), "w") as f:
                     json.dump(result, f, indent=1)
-            print_status(api)
+            try:
+                print_status(api)
+            except RunnerError as exc:
+                log(f"leak check could not run ({exc}); run `status` by hand")
     log(f"results in {out_dir}: {result['games_per_second_wall']} games/s wall on "
         f"{workers} workers, steal {result['cpu_steal_fraction']}")
     return 0
