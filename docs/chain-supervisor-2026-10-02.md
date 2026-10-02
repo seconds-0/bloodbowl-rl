@@ -25,7 +25,7 @@ Source of requirements: the launch-robustness review of 2026-10-02 (findings LP1
 | `PLAN_ONLY=1` | Preflight: plan pass and pool check, then stop. Takes no lock. |
 | `GPU_LOCK`, `GPU_LOCK_WAIT_SECONDS`, `GPU_SAMPLE_SECONDS` | Defaults `/home/rache/kt-e2e/kt-gpu.lock`, 600, 60. |
 
-Recipe variables go to `ladder_stage.sh` untouched, and the stage invents no default. It refuses to start (exit 2) unless these are non-empty: `RUNG RESET_PCT SEED STEPS LADDER_ARM FROZEN_BANK_PCT DEADLINE_HOURS NUM_THREADS`, and `PREV_COMPLETE` or both `WARM` and `PREV_POOL`. These must be set, and may be exported empty to take the screen's fixed value on purpose: `SCRIPTED_BANK_TAG SCRIPTED_BOT_TYPE LADDER_CHAIN_LR_SCALE LADDER_GAMMA LADDER_GAE_LAMBDA LADDER_REPLAY_RATIO`. Passed through when set: `POOL_KEEP POOL_ANCHOR NUM_FROZEN_BANKS LADDER_CHAIN_ENT_SCALE LADDER_PROFILE GRAFT_FROM_SOURCE_SHA256 GRAFT_FROM_PATCH_BUNDLE_SHA256 GRAFT_REASON PUFFER_SKIP_SCRIPTED_BANK_FORWARD BBE_DECIDING_ROW_TELEMETRY`.
+Recipe variables go to `ladder_stage.sh` untouched, and the stage invents no default. It refuses to start (exit 2) unless these are non-empty: `RUNG RESET_PCT SEED STEPS LADDER_ARM FROZEN_BANK_PCT DEADLINE_HOURS NUM_THREADS`, and `PREV_COMPLETE` or both `WARM` and `PREV_POOL`. These must be set, and may be exported empty to take the screen's fixed value on purpose: `SCRIPTED_BANK_TAG SCRIPTED_BOT_TYPE LADDER_CHAIN_LR_SCALE LADDER_CHAIN_ENT_SCALE LADDER_GAMMA LADDER_GAE_LAMBDA LADDER_REPLAY_RATIO`. Passed through when set: `POOL_KEEP POOL_ANCHOR NUM_FROZEN_BANKS LADDER_PROFILE GRAFT_FROM_SOURCE_SHA256 GRAFT_FROM_PATCH_BUNDLE_SHA256 GRAFT_REASON PUFFER_SKIP_SCRIPTED_BANK_FORWARD BBE_DECIDING_ROW_TELEMETRY`.
 
 The supervisor passes its whole environment to the stage (`campaign_supervisor.py` `launch_stage`), so the two build flags set in `chain-supervisor@.service` reach every drift check. Export them in the wrapper as well, so a manual run from an ssh shell sees them.
 
@@ -62,7 +62,7 @@ export RUNG=0 RESET_PCT=0 SEED=42 STEPS=3000000000
 export STAMP=<unique stamp for this stage>
 export PREV_COMPLETE=<parent run dir>/LADDER_RUNG_COMPLETE.json
 export LADDER_ARM=r0_poss_half SCRIPTED_BANK_TAG=4 SCRIPTED_BOT_TYPE=0
-export FROZEN_BANK_PCT=0.12 LADDER_CHAIN_LR_SCALE=1.0
+export FROZEN_BANK_PCT=0.12 LADDER_CHAIN_LR_SCALE=0.5 LADDER_CHAIN_ENT_SCALE=2.0
 export LADDER_GAMMA=0.999 LADDER_GAE_LAMBDA=0.95 LADDER_REPLAY_RATIO=1.0
 export DEADLINE_HOURS=16 NUM_THREADS=16
 export LADDER_PROFILE=graft GRAFT_REASON="<DECISIONS entry>"

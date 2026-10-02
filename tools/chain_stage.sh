@@ -41,10 +41,13 @@
 #   NUM_THREADS, and PREV_COMPLETE or both WARM and PREV_POOL
 # and unless these are set (export one empty to take the screen's fixed value
 # on purpose):
-#   SCRIPTED_BANK_TAG SCRIPTED_BOT_TYPE LADDER_CHAIN_LR_SCALE LADDER_GAMMA
-#   LADDER_GAE_LAMBDA LADDER_REPLAY_RATIO
+#   SCRIPTED_BANK_TAG SCRIPTED_BOT_TYPE LADDER_CHAIN_LR_SCALE
+#   LADDER_CHAIN_ENT_SCALE LADDER_GAMMA LADDER_GAE_LAMBDA LADDER_REPLAY_RATIO
+# (the launcher scales the entropy coefficient by both chain scales, so an LR
+# scale of 0.5 with the entropy scale forgotten trains at half the entropy
+# coefficient without any error).
 # Also passed through when set: POOL_KEEP POOL_ANCHOR NUM_FROZEN_BANKS
-#   LADDER_CHAIN_ENT_SCALE LADDER_PROFILE GRAFT_FROM_SOURCE_SHA256
+#   LADDER_PROFILE GRAFT_FROM_SOURCE_SHA256
 #   GRAFT_FROM_PATCH_BUNDLE_SHA256 GRAFT_REASON
 #   PUFFER_SKIP_SCRIPTED_BANK_FORWARD BBE_DECIDING_ROW_TELEMETRY
 #
@@ -74,7 +77,8 @@ for name in C STAMP EXAM_RULE RUNG RESET_PCT SEED STEPS LADDER_ARM \
   [ -n "${!name:-}" ] || MISSING+=("$name")
 done
 for name in SCRIPTED_BANK_TAG SCRIPTED_BOT_TYPE LADDER_CHAIN_LR_SCALE \
-            LADDER_GAMMA LADDER_GAE_LAMBDA LADDER_REPLAY_RATIO; do
+            LADDER_CHAIN_ENT_SCALE LADDER_GAMMA LADDER_GAE_LAMBDA \
+            LADDER_REPLAY_RATIO; do
   [ -n "${!name+set}" ] || MISSING+=("$name")
 done
 if [ -z "${PREV_COMPLETE:-}" ] && { [ -z "${WARM:-}" ] || [ -z "${PREV_POOL:-}" ]; }; then
@@ -335,6 +339,7 @@ run_plan_pass() {
 
 log "stage $STAMP run_dir $RUN_DIR"
 log "recipe: rung=$RUNG reset_pct=$RESET_PCT seed=$SEED steps=$STEPS arm=$LADDER_ARM profile=$LADDER_PROFILE_SEEN prev_complete=${PREV_COMPLETE:-} warm=${WARM:-}"
+log "recipe: lr_scale=$LADDER_CHAIN_LR_SCALE ent_scale=$LADDER_CHAIN_ENT_SCALE gamma=$LADDER_GAMMA gae_lambda=$LADDER_GAE_LAMBDA replay_ratio=$LADDER_REPLAY_RATIO frozen_bank_pct=$FROZEN_BANK_PCT bot_tag=$SCRIPTED_BANK_TAG bot_type=$SCRIPTED_BOT_TYPE"
 log "build flags: PUFFER_SKIP_SCRIPTED_BANK_FORWARD=${PUFFER_SKIP_SCRIPTED_BANK_FORWARD:-unset} BBE_DECIDING_ROW_TELEMETRY=${BBE_DECIDING_ROW_TELEMETRY:-unset}"
 log "exam: seeds=${SEED_LIST[*]} rule=$EXAM_RULE ${VERDICT_RULE_ARGS[*]:2}"
 

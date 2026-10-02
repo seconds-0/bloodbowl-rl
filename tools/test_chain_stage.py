@@ -26,20 +26,21 @@ REAL_TOOLS = ROOT / "tools"
 STAMP = "teststage-20261002"
 POOL_HASH = "5" * 64
 
-# The as-run chain 36 recipe (rig r0chain36.sh). The stage must hand every one
-# of these to ladder_stage.sh unchanged.
+# The as-run chain 36 recipe (rig r0chain36.sh) with D407's restart scales.
+# The stage must hand every one of these to ladder_stage.sh unchanged.
 RECIPE = {
     "RUNG": "0", "RESET_PCT": "0", "SEED": "42", "STAMP": STAMP,
     "STEPS": "3000000000", "LADDER_ARM": "r0_poss_half",
     "SCRIPTED_BANK_TAG": "4", "SCRIPTED_BOT_TYPE": "0",
-    "FROZEN_BANK_PCT": "0.12", "LADDER_CHAIN_LR_SCALE": "1.0",
+    "FROZEN_BANK_PCT": "0.12", "LADDER_CHAIN_LR_SCALE": "0.5",
+    "LADDER_CHAIN_ENT_SCALE": "2.0",
     "LADDER_GAMMA": "0.999", "LADDER_GAE_LAMBDA": "0.95",
     "LADDER_REPLAY_RATIO": "1.0", "DEADLINE_HOURS": "16", "NUM_THREADS": "16",
     "PREV_COMPLETE": "/prev/LADDER_RUNG_COMPLETE.json",
 }
 OPTIONAL = {
     "POOL_KEEP": "3", "POOL_ANCHOR": "/anchor.bin", "NUM_FROZEN_BANKS": "4",
-    "LADDER_CHAIN_ENT_SCALE": "1.0", "LADDER_PROFILE": "graft",
+    "LADDER_PROFILE": "graft",
     "GRAFT_FROM_SOURCE_SHA256": "a" * 64,
     "GRAFT_FROM_PATCH_BUNDLE_SHA256": "b" * 64,
     "GRAFT_REASON": "D407 long run, one rebuild",
@@ -573,7 +574,8 @@ class ChainStageTests(unittest.TestCase):
     def test_unset_recipe_knobs_fail_loudly_before_anything_runs(self):
         for key in ("C", "STAMP", "EXAM_RULE", "STEPS", "LADDER_ARM",
                     "FROZEN_BANK_PCT", "DEADLINE_HOURS", "NUM_THREADS",
-                    "LADDER_GAMMA", "LADDER_REPLAY_RATIO", "SCRIPTED_BANK_TAG"):
+                    "LADDER_GAMMA", "LADDER_REPLAY_RATIO", "SCRIPTED_BANK_TAG",
+                    "LADDER_CHAIN_LR_SCALE", "LADDER_CHAIN_ENT_SCALE"):
             result = self.stage(**{key: None})
             self.assertEqual(result.returncode, 2, f"{key}: {result.stdout}")
             self.assertRegex(result.stdout, rf"refusing to start; unset: .*\b{key}\b")
