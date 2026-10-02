@@ -1726,3 +1726,66 @@ This changes how gate tournaments are computed, not what they measure. Games per
 - **Tournaments compete with training for the rig's CPU.** A 15-worker gate running beside the trainer cost 19 to 22% of throughput tonight. Gates run on droplets when the account has room, and otherwise on the rig only when that cost is accepted and written down.
 
 **What this entry does not decide.** The chain 35 and chain 36 verdicts; the parent for any gate-accepted continuation; whether the entropy anneal, the pool composition, the replay arithmetic or the seed spacing should change. Each of those is a separate declared factor.
+
+
+**D407 amendment (2026-10-02, after a Codex review and two more rig checks; written while chain 37 was in its first minutes, before any arm result exists).** Codex read D407 and raised three P1 points. All three are accepted. Chain 37's recipe is unchanged by this amendment; what changes is the evidence, the wording of the gate, a third arm, and the rules for the speculative stages.
+
+1. **The identity evidence used the wrong warm start and opponents, so it was redone on chain 36 itself.** The 24-epoch screen ran from chain 36's final checkpoint with banks bootstrapped from the learner. The new check runs the long-run build with chain 36's exact trainer arguments, chain 34's checkpoint as the warm start and a copy of pool `51a19cff...` as the league preseed, for 382 epochs. Its saved weights are byte-identical to chain 36's own stored checkpoints at 131,072 steps (`45072dcb...`) and at 50,069,504 steps (`3ae88ff8...`). So the long-run build reproduces the control run for its first 50M steps, through the real pool and the graph capture. That is 1.7% of a rung, and it was driven by `tools/probe_train_identity.py`, not by the ladder launcher. **The build change is still a declared difference between each arm and its control.** The experimental contract freezes source and module, and an identity screen argues that the difference is inert; it does not remove it.
+2. **A disposable canary ran the whole launch path first.** 50M steps of chain 37's configuration through the supervisor, the stage script, the graft, acceptance, the six exam cells and the verdict: pass, all counters zero. It is never a warm start, a pool member or a result.
+3. **Chain 36 as a control.** Codex noted that D405 excludes chain 36 from scoring if chain 35 takes the parent role. Chain 35's gate was scored on 2026-10-02 (D408): it reads Replicated, and its interval over chain 34 includes zero, so chain 34 stays the parent and chain 36 is not excluded.
+4. **A third registered arm, chain 39** (`r0chain39-lr05-from30-s42-20261002`): warm chain 30, seed 42, pool `ff4c0552...`, restart scale 0.5 with entropy scale 2.0. **Control: chain 34**, the accepted warm start. Tournament seed block 21100000: chain 39 against chain 34, chain 30, chain 27 and the offense bot, plus chain 34 against the offense bot. The plan-only preflights for chains 38 and 39 both reproduced pool `ff4c0552...`, warm `41ecd998...` and learning rate 0.00014 with ent_coef 0.009, as chain 37's did for its inputs.
+5. **Gate wording, replacing D407's.** All intervals are 95% seed-cluster bootstrap intervals with strict endpoints.
+   - **Negative:** the offense veto fires, or the arm-minus-control decisive-Elo interval is entirely below zero.
+   - **Positive:** the arm-minus-control point estimate is above +40, that interval is entirely above zero, and the interval against chain 27 is entirely above zero.
+   - **Flat:** the arm-minus-control point estimate is between -40 and +40 inclusive and neither rule above applies.
+   - **Inconclusive:** anything else with complete, accepted evidence. Missing, unaccepted or integrity-invalid evidence is not a reading; the gate is rerun or the arm stays unread.
+   - **Offense veto:** offense AWAY champion touchdowns per game below the control's by more than 0.02 at exam seed 42 and at exam seed 43, computed on the displayed three-decimal values, which are normative. Controls (rig exam, 2,000-game cells, champion / bot touchdowns per game):
+
+     | Chain | Seed | contact AWAY | contact HOME | offense AWAY |
+     |---|---|---|---|---|
+     | 30 | 42 | 0.564 / 0.398 | 0.538 / 0.378 | 0.581 / 0.344 |
+     | 30 | 43 | 0.577 / 0.381 | 0.523 / 0.390 | 0.591 / 0.340 |
+     | 34 | 42 | 0.556 / 0.388 | 0.527 / 0.401 | 0.557 / 0.342 |
+     | 34 | 43 | 0.558 / 0.409 | 0.515 / 0.384 | 0.573 / 0.345 |
+     | 35 | 42 | 0.541 / 0.384 | 0.509 / 0.387 | 0.564 / 0.345 |
+     | 35 | 43 | 0.526 / 0.403 | 0.514 / 0.396 | 0.564 / 0.342 |
+     | 36 | 42 | 0.574 / 0.395 | 0.510 / 0.397 | 0.554 / 0.345 |
+     | 36 | 43 | 0.573 / 0.395 | 0.500 / 0.397 | 0.566 / 0.345 |
+   - **Ruling rule over three arms.** Restart scale 0.5 becomes the continuation recipe only if at least two arms read Positive and none reads Negative. It is closed if at least two read Negative. Anything else leaves scale 1.0 as the recipe and is reported as descriptive. This is a screening rule over three restart contexts (two parents, two seeds), not a confidence interval over training variability.
+   - **In-run diagnostic, sign corrected:** the scripted-bot bank score in the first 25M steps minus the worst 300M bin. Controls: about +0.035. Not a gate.
+6. **The speculative stages, restated so they do not contradict the ruling rule.** D407 said both that no arm's checkpoint becomes a warm start on one arm's reading and that stage three continues from chain 37. The first sentence governs accepted parents; the second was a speculative launch with no discard rule, which was a defect. Now:
+   - Stages one to three are the three arms (chains 37, 38, 39). They do not depend on each other.
+   - From stage four the supervisor continues from chain 37 at restart scale 0.5 (chains 40 to 45) **only as speculative rungs under a discard rule**, as chain 36 ran under D405. If the ruling rule does not make scale 0.5 the recipe, or chain 37 itself does not read Positive, every such rung is stopped and discarded: not scored, never a warm start, never a pool member. If both hold, chain 40 onward are ordinary continuations that still need their own gates before any of them is an accepted parent.
+   - Their on-rig guard is tighter than D405's: a speculative rung halts the chain if the two-seed mean of offense AWAY champion touchdowns is below 0.536. That is 0.05 below chain 30's 0.586 and about three standard errors below the 0.560 to 0.565 of chains 34 to 36. It bounds a collapse; it does not detect a head-to-head or defensive decline, and the exam has disagreed with the tournament in sign before.
+   - The intent is unchanged: these stages exist so the GPU does not idle, and they should be replaced by a registered plan once the arms' tournaments have read. Nothing enforces that replacement automatically. The earliest a speculative rung can start is about 26 hours after chain 37 started.
+7. **Citations tightened.** D259 and D271 scaled the learning rate and the entropy coefficient together (both to x2), so "scale 2.0 rejected twice" is weak evidence about the learning rate alone; D261 rejected entropy x2 separately. D252's frozen result was at scale 0.1; it does not show that the last fifth of a scale-0.5 rung freezes. "The entropy coefficient has never annealed" is established for the trainer tree that ran chains 30 to 36 (code path plus chain 36's log) and, by the verifier's reading, for the torch backend; earlier pins and runs were not checked one by one. The mirror games are the current learner against itself; the learner never meets its immediate predecessor as a frozen opponent.
+8. **What the supervisor does and does not gate.** It applies only the exam-based rules (`none` for the arms, the mean guard for speculative rungs). The tournament half of every gate runs off the rig and is applied by a person or a session. An exam pass advances the campaign without the registered scientific gate, by design for the arms and under the discard rule for the rest.
+9. **Operational record.** The supervisor was paused at 01:16 PDT to fix these points before chain 37 started. Both checks had passed by 01:42 PDT, and the session that paused it went quiet, so the rig idled until 12:51 PDT, when chain 37 launched (about 11 hours lost; nothing else). First panels: 99.0K steps per second against chain 36's 88 to 89K, kl 0.0009, deciding-row kl 0.0019, explained variance 0.92, integrity counters zero.
+
+**D408 - CHAIN 35 READS REPLICATED AND CHAIN 34 STAYS THE PARENT; CHAIN 36'S GATE IS STILL UNRUN (2026-10-02)**
+
+**Gate run.** D404's registered plan for chain 35, 22,400 games over seven pairs, seed block 20700000, 32 games per worker, harness commit b0099fb. `tools/gate_acceptance.py` printed GATE-ACCEPTED; every game ended naturally and every integrity counter is zero.
+
+**Two deviations from D406, both recorded in the merged manifest.**
+- **Machine.** D406 says gates run on droplets. The DigitalOcean account was at its 15-droplet limit with other projects' machines, so shards s1, s2 and s3 (19,200 games, including both decisive pairs and all three offense-bot pairs) ran on the rig's CPU on 2026-10-02. Shard s4 (chain 35 against chain 32, in no decision rule) is the one that completed on a droplet on 2026-09-17; the other three had died that night and were rerun in full under D406's retry rule. A spot check on the rig reproduced 320 of 320 action trails of a droplet reference run (chain 34 against chain 30, seed block 20600000, 32 games per worker).
+- **Merge.** The unchanged `droplet_tournament.py merge` refused the four shards because the rig's compiled shim differs from the droplet's. The merge was done by a script that required that refusal to be the tool's only complaint, used the tool's own merge for the three rig shards, appended s4, and recorded both shim hashes and the refusal text. If this merge is not accepted the gate is unaccepted, and the parent decision below is the same.
+
+**Result** (decisive-Elo, 95% seed-cluster intervals).
+
+| Pair | W / D / L | Decisive-Elo |
+|---|---|---|
+| chain 35 vs chain 30 | 1203 / 1074 / 923 | +46.0 [+32.8, +59.7] |
+| chain 35 vs chain 34 | 1128 / 1021 / 1051 | +12.3 [-1.0, +24.6] |
+| chain 35 vs chain 27 | 1261 / 1174 / 765 | +86.8 [+73.0, +100.9] |
+| chain 35 vs chain 32 (droplet shard) | 1236 / 979 / 985 | +39.4 [+26.2, +52.3] |
+| chain 35 vs offense bot | 845 / 1798 / 557 | +72.4 [+54.1, +90.5] |
+| chain 34 vs offense bot | 848 / 1819 / 533 | +80.7 [+62.9, +98.6] |
+| chain 30 vs offense bot | 895 / 1782 / 523 | +93.3 [+74.7, +111.1] |
+
+**Reading under D404's ordered rules: Replicated.** The exam veto does not fire (offense AWAY 0.564 / 0.564 against chain 30's 0.581 / 0.591: -0.017 and -0.027, and seed 42 is inside 0.02). Chain 35 is +46.0 over chain 30, above +40, with the interval above zero. So the continuation gain from chain 30 replicates at a second training seed.
+
+**Parent.** D405 switches the parent to chain 35 only if chain 35 reads Replicated and the lower endpoint of its interval over chain 34 is above zero. That endpoint is -1.0. **Chain 34 stays the parent**, and chain 36 is not excluded.
+
+**Not established.** Chain 36's gate has not run (no games played). Its exam half clears both the parent veto and the drift guard (offense AWAY 0.554 / 0.566). Until its tournament reads, chain 36 is not a warm start, and D405's Flat clause is unresolved. Descriptive only: the offense-bot scores order chain 30, then 34, then 35 (paired contrasts not computed); the Bradley-Terry fit rejects transitivity (p = 0.0001); chain 35 loses to chain 34 on bash rosters and wins on agile ones.
+
+**Rig throughput for tournaments.** 3.5 to 3.8 games per second at 15 workers, about 30 minutes per 6,400-game shard, against 8 to 10 on a droplet, and it slowed a concurrent trainer by about a third. Chain 36's gate needs about 90 minutes of rig CPU or three droplets.

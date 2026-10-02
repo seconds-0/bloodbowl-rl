@@ -3,8 +3,9 @@
 
     python3 make_plan.py OUT_DIR      # OUT_DIR gets common_env.sh's siblings: sNN_<name>.sh and CAMPAIGN_PLAN.json
 
-Stage 0 is a disposable 50M-step canary of chain 37's exact launch path. Stages 1 and 2 are the registered
-restart-scale arms. Stages 3 onward are the speculative default continuation and are meant to be rewritten.
+Stage 0 is a disposable 50M-step canary of chain 37's exact launch path. Stages 1 to 3 are the registered
+restart-scale arms (chains 37, 38, 39). Stages 4 onward are the speculative continuation from chain 37 under the
+discard rule in D407's amendment and are meant to be replaced by a registered plan.
 """
 import json
 import pathlib
@@ -18,7 +19,9 @@ POOL_C36 = "51a19cff01f7701e10a4aeeca842cfb398b30c461e09c13af158362afd51ab80"
 POOL_C35 = "ff4c0552cb9e6b6a21a49c484a750958521391110a06c23c6f7904ad348660b1"
 MARKER_C34 = f"{OLD}/runs/ladder-d0-r0chain34-cont30-rr1-20260916/LADDER_RUNG_COMPLETE.json"
 MARKER_C30 = f"{OLD}/runs/ladder-d0-r0chain30-rr1-20260914/LADDER_RUNG_COMPLETE.json"
-GUARD = {"EXAM_GUARD_FLOOR_S42": "0.541", "EXAM_GUARD_FLOOR_S43": "0.551", "EXAM_GUARD_FLOOR_MEAN": "0.546"}
+# Speculative rungs halt when the two-seed mean of offense AWAY champion touchdowns is below 0.536. The verdict
+# tool fires only when all three clauses hold, so the per-seed floors are set where they always hold.
+GUARD = {"EXAM_GUARD_FLOOR_S42": "9.0", "EXAM_GUARD_FLOOR_S43": "9.0", "EXAM_GUARD_FLOOR_MEAN": "0.536"}
 
 
 def marker(stamp):
@@ -32,9 +35,11 @@ STAGES = [
          pool=POOL_C36, rule="none"),
     dict(name="s02_chain38", stamp="r0chain38-lr05-from30-s44-20261002", seed=44, prev=MARKER_C30,
          pool=POOL_C35, rule="none"),
+    dict(name="s03_chain39", stamp="r0chain39-lr05-from30-s42-20261002", seed=42, prev=MARKER_C30,
+         pool=POOL_C35, rule="none"),
 ]
 previous = "r0chain37-lr05-from34-20261002"
-for number in range(39, 45):
+for number in range(40, 46):
     stamp = f"r0chain{number}-lr05-cont{previous.split('-')[0].replace('r0chain', '')}-20261002"
     STAGES.append(dict(name=f"s{number - 36:02d}_chain{number}", stamp=stamp, seed=42,
                        prev=marker(previous), pool=None, rule="drift-guard", extra=dict(GUARD)))
