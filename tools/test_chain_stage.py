@@ -654,5 +654,72 @@ class ChainStageRealLadderTests(unittest.TestCase):
         self.assertRegex(lock_log[-1], r"released\(exit \d+\) bloodbowl-rl:chain-stage-plan-b")
 
 
+class ChainSupervisorWiringTests(unittest.TestCase):
+    """The units and the supervisor hand the build flags to the stage."""
+
+    UNITS = ROOT / "training/systemd"
+    CHECKOUT = "%h/bloodbowl-rl-longrun-20261002"
+
+    def test_service_keeps_the_campaign_unit_shape_on_the_long_run_checkout(self):
+        unit = (self.UNITS / "chain-supervisor@.service").read_text()
+        lines = [line for line in unit.splitlines() if not line.startswith("#")]
+        for line in ("Type=oneshot", "KillMode=process", "TimeoutStopSec=45",
+                     "StartLimitIntervalSec=3600", "StartLimitBurst=20",
+                     f"WorkingDirectory={self.CHECKOUT}",
+                     "Environment=CUDA_VISIBLE_DEVICES=0",
+                     "Environment=PUFFER_SKIP_SCRIPTED_BANK_FORWARD=1",
+                     "Environment=BBE_DECIDING_ROW_TELEMETRY=1"):
+            self.assertIn(line, lines)
+        campaign = f"{self.CHECKOUT}/runs/campaigns/%i"
+        self.assertIn(
+            f"ExecStart={self.CHECKOUT}/vendor/PufferLib/.venv/bin/python "
+            f"{self.CHECKOUT}/tools/campaign_supervisor.py "
+            f"--plan {campaign}/CAMPAIGN_PLAN.json "
+            f"--state {campaign}/CAMPAIGN_STATE.json "
+            "--timer-unit chain-supervisor@%i.timer", lines)
+        self.assertNotIn("qualification-candidate", unit)
+
+    def test_timer_keeps_the_five_minute_tick(self):
+        unit = (self.UNITS / "chain-supervisor@.timer").read_text()
+        lines = unit.splitlines()
+        for line in ("OnBootSec=2min", "OnUnitActiveSec=5min", "AccuracySec=30s",
+                     "Persistent=true", "Unit=chain-supervisor@%i.service",
+                     "WantedBy=timers.target"):
+            self.assertIn(line, lines)
+
+    def test_supervisor_passes_its_environment_and_the_stage_env_to_the_stage(self):
+        import sys
+        from unittest import mock
+        sys.path.insert(0, str(REAL_TOOLS))
+        import campaign_supervisor as sup
+
+        seen = {}
+
+        class FakePopen:
+            pid = 4242
+
+            def __init__(self, argv, **kwargs):
+                seen.update(argv=argv, **kwargs)
+
+        flags = {"PUFFER_SKIP_SCRIPTED_BANK_FORWARD": "1",
+                 "BBE_DECIDING_ROW_TELEMETRY": "1", "FROM_UNIT": "kept"}
+        stage = {"name": "r01", "launch": "bash /home/rache/chain/r01.sh",
+                 "env": {"FROM_UNIT": "stage wins", "STAGE_ONLY": 7}}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(os.environ, flags), \
+                mock.patch.object(sup.subprocess, "Popen", FakePopen):
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            pid = sup.launch_stage(Path(tmp), stage, Path(tmp) / "logs", 1)
+        self.assertEqual(pid, 4242)
+        self.assertEqual(seen["argv"], ["setsid", "nohup", "bash", "-lc",
+                                        "bash /home/rache/chain/r01.sh"])
+        env = seen["env"]
+        self.assertEqual(env["PUFFER_SKIP_SCRIPTED_BANK_FORWARD"], "1")
+        self.assertEqual(env["BBE_DECIDING_ROW_TELEMETRY"], "1")
+        self.assertEqual(env["CUDA_VISIBLE_DEVICES"], "0")
+        self.assertEqual(env["FROM_UNIT"], "stage wins")
+        self.assertEqual(env["STAGE_ONLY"], "7")
+
+
 if __name__ == "__main__":
     unittest.main()
