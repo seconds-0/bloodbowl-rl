@@ -79,6 +79,8 @@ case "${STUB_LADDER_MODE:-ok}" in
     exit 1 ;;
   host-death)
     exit 9 ;;
+  slow)
+    sleep 3 ;;
   kill-parent)
     kill -KILL "$PPID"
     exit 9 ;;
@@ -497,6 +499,38 @@ class ChainStageTests(unittest.TestCase):
         self.assertNotIn("chain_stage.sh", command)
         # And it notices its owner is gone and leaves on its own.
         self.assertTrue(self.wait_gone(pid, 15), f"sampler {pid} never exited")
+
+    def test_term_during_the_rung_waits_for_the_rung_then_exits_143(self):
+        # The stage must not die under a live trainer that holds the lock, and
+        # must not log a release it has not made. It stops after the rung,
+        # before the exam, and the next launch only runs the exam.
+        log_path = self.stub / "stage.log"
+        proc = self.start(log_path, STUB_LADDER_MODE="slow")
+        try:
+            self.wait_for(log_path, "rung start")
+            time.sleep(0.5)
+            proc.send_signal(signal.SIGTERM)
+            time.sleep(1.0)
+            self.assertIsNone(proc.poll(), "the stage died under its rung")
+            self.assertEqual(proc.wait(timeout=60), 143, log_path.read_text())
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        output = log_path.read_text()
+        # The trap runs as soon as the rung child returns.
+        self.assertIn("caught TERM; stopping", output)
+        self.assertNotIn("exam start", output)
+        self.assertEqual(self.calls("eval_calls"), [])
+        self.assertTrue((self.run_dir / "LADDER_RUNG_COMPLETE.json").is_file())
+        lock_log = Path(str(self.lock) + ".log").read_text().splitlines()
+        self.assertRegex(lock_log[-1], r"released\(exit 143\)")
+        status = json.loads((self.run_dir / "CHAIN_STAGE_STATUS.json").read_text())
+        self.assertEqual((status["phase"], status["exit_code"]), ("exited", 143))
+        self.assertTrue(self.lock_is_free())
+        again = self.stage()
+        self.assertEqual(again.returncode, 0, again.stdout)
+        self.assertEqual(self.calls("ladder_calls"), ["train"])
+        self.assertEqual(len(self.calls("eval_calls")), 6)
 
     # -- pool identity and plan-only -------------------------------------------
     def test_pool_mismatch_aborts_before_any_training(self):

@@ -61,6 +61,7 @@
 #      mismatch)
 #   8  the verdict tool could not produce a verdict (missing or malformed
 #      evidence). The next launch runs the exam again in a new directory.
+#   143, 130, 129  stopped by TERM, INT or HUP, between steps
 #   any other value is the exit status of tools/ladder_stage.sh.
 set -uo pipefail
 
@@ -186,6 +187,17 @@ cleanup() {
   exit "$rc"
 }
 trap cleanup EXIT
+# TERM, INT and HUP stop the stage between steps, not in the middle of one:
+# bash runs a trap only after the foreground child returns. A signalled stage
+# therefore never abandons a live trainer that still holds the lock, and the
+# released line and the heartbeat carry the true exit status. Without these
+# traps bash would die at once, run cleanup with status 0, and log a release
+# while the trainer still held the lock. To stop a rung, signal the trainer
+# wrapper PID (see the doc); to stop an exam, signal this script and it exits
+# after the running cell.
+trap 'log "caught TERM; stopping"; exit 143' TERM
+trap 'log "caught INT; stopping"; exit 130' INT
+trap 'log "caught HUP; stopping"; exit 129' HUP
 
 # --- terminal states ---------------------------------------------------------
 # Printed by the inspector, one line:
