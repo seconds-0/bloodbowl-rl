@@ -47,6 +47,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-09-17 13:20 (D406): gate tournaments leave the Mac and get about 5x faster.** A droplet runner (create, run, verify, destroy) and a batched policy forward (32 games per worker) are merged in the play harness. Batched games match unbatched ones on 3,200 of 3,200 action trails against the Mac reference, with rare roundoff divergences that never changed a score. Chain 35's 22,400-game gate is budgeted at about 17 minutes and $0.17 on four droplets.
 
+**Update 2026-10-02 (D407): trainer review, a faster build, and two learning-rate restart arms.** The rig sat idle from 2026-09-18. A two-pass review of the training code (48 findings, `docs/trainer-review-2026-10-02.md`) found no algorithmic bug in the update itself, found that the entropy coefficient has never annealed in any native run, and found that each warm restart's jump to the full learning rate costs most of a rung in in-run score. The long-run build (blitz fast path, scripted-bank forward skip, loss telemetry) trains byte-identically to the old build over 24 same-seed epochs and measured +9.7% steps per second on one clean pair. Chains 37 and 38 test a restart at half the learning rate against controls that already exist (chains 36 and 35). An on-box supervisor now runs rung, exam and the next launch without a human. Chain 35's and chain 36's gates are still unscored.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
