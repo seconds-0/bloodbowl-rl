@@ -454,3 +454,274 @@ BB_TEST(carrier_threat_caps_at_tmax) {
     threat_near(t, BB_CARRIER_THREAT_T_MAX);
     threat_near(th.capped_total, BB_CARRIER_THREAT_T_MAX);
 }
+
+// --- bb_reach_any_target: differential against the full reach field --------
+
+static bool reach_any_reference(const bb_match* m, int mover,
+                                const uint8_t target[BB_PITCH_LEN][BB_PITCH_WID]) {
+    bb_reach_field field;
+    bb_reach_field_compute(m, mover, &field);
+    for (int x = 0; x < BB_PITCH_LEN; x++) {
+        for (int y = 0; y < BB_PITCH_WID; y++) {
+            if (target[x][y] && field.cost[x][y].dodges != BB_REACH_UNREACHABLE) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static int reach_rnd(bb_rng* r, int n) {
+    return (int)(bb_rng_next(r) % (uint32_t)n);
+}
+
+// Random crowded boards: mixed stances, NO_TZ/DISTRACTED markers (which do not
+// mark squares), ROOTED movers, Sprint, partially spent movement and the
+// 39-square budget cap, so dodge-vs-length trade-offs at the budget edge occur.
+static int reach_random_board(bb_match* m, bb_rng* r, int placed[BB_NUM_PLAYERS]) {
+    fx_match_midturn(m, reach_rnd(r, 2), 0);
+    int count = reach_rnd(r, 23);
+    int next_idx[2] = {0, 0};
+    int n = 0;
+    for (int i = 0; i < count; i++) {
+        int team = reach_rnd(r, 2);
+        if (next_idx[team] >= BB_TEAM_SLOTS) continue;
+        int x, y;
+        do {
+            x = reach_rnd(r, BB_PITCH_LEN);
+            y = reach_rnd(r, BB_PITCH_WID);
+        } while (m->grid[x][y]);
+        int ma = 1 + reach_rnd(r, 9);
+        if (reach_rnd(r, 40) == 0) ma = 45;
+        int slot = fx_player(m, team, next_idx[team]++, x, y, ma, 3, 3, 4, 9);
+        bb_player* p = &m->players[slot];
+        int st = reach_rnd(r, 10);
+        if (st == 0) p->stance = BB_STANCE_PRONE;
+        else if (st == 1) p->stance = BB_STANCE_STUNNED;
+        if (reach_rnd(r, 8) == 0) p->flags |= BB_PF_NO_TZ;
+        if (reach_rnd(r, 8) == 0) p->flags |= BB_PF_DISTRACTED;
+        if (reach_rnd(r, 12) == 0) p->flags |= BB_PF_ROOTED;
+        if (reach_rnd(r, 4) == 0) fx_give_skill(m, slot, BB_SK_SPRINT);
+        p->moved = (uint8_t)reach_rnd(r, ma + 3);
+        p->rushes = (uint8_t)reach_rnd(r, 4);
+        placed[n++] = slot;
+    }
+    return n;
+}
+
+BB_TEST(reach_any_target_matches_field_per_square_on_random_boards) {
+    bb_rng r;
+    bb_rng_seed(&r, 0xB117Cull, 11);
+    long mismatches = 0, reachable = 0, unreachable = 0;
+    for (int b = 0; b < 400; b++) {
+        bb_match m;
+        int placed[BB_NUM_PLAYERS];
+        int n = reach_random_board(&m, &r, placed);
+        int mover = n > 0 && reach_rnd(&r, 16) ? placed[reach_rnd(&r, n)]
+                                               : reach_rnd(&r, BB_NUM_PLAYERS + 2) - 1;
+        bb_reach_field field;
+        bb_reach_field_compute(&m, mover, &field);
+        for (int x = 0; x < BB_PITCH_LEN; x++) {
+            for (int y = 0; y < BB_PITCH_WID; y++) {
+                uint8_t target[BB_PITCH_LEN][BB_PITCH_WID];
+                memset(target, 0, sizeof target);
+                target[x][y] = 1;
+                bool want = field.cost[x][y].dodges != BB_REACH_UNREACHABLE;
+                bool got = bb_reach_any_target(&m, mover, target);
+                if (got != want) mismatches++;
+                if (want) reachable++;
+                else unreachable++;
+            }
+        }
+    }
+    BB_CHECK_EQ(mismatches, 0);
+    BB_CHECK(reachable > 10000);
+    BB_CHECK(unreachable > 10000);
+}
+
+BB_TEST(reach_any_target_matches_field_for_blitz_and_random_masks) {
+    bb_rng r;
+    bb_rng_seed(&r, 0xB117Dull, 12);
+    long mismatches = 0, hits = 0, misses = 0;
+    for (int b = 0; b < 1500; b++) {
+        bb_match m;
+        int placed[BB_NUM_PLAYERS];
+        int n = reach_random_board(&m, &r, placed);
+        for (int i = 0; i < n; i++) {
+            int mover = placed[i];
+            uint8_t blitz[BB_PITCH_LEN][BB_PITCH_WID];
+            memset(blitz, 0, sizeof blitz);
+            int opp = 1 - BB_TEAM_OF(mover);
+            for (int s = opp * BB_TEAM_SLOTS; s < (opp + 1) * BB_TEAM_SLOTS; s++) {
+                const bb_player* q = &m.players[s];
+                if (q->location != BB_LOC_ON_PITCH) continue;
+                if (q->stance != BB_STANCE_STANDING) continue;
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dy = -1; dy <= 1; dy++) {
+                        if (!dx && !dy) continue;
+                        if (bb_on_pitch_xy(q->x + dx, q->y + dy)) {
+                            blitz[q->x + dx][q->y + dy] = 1;
+                        }
+                    }
+                }
+            }
+            uint8_t sparse[BB_PITCH_LEN][BB_PITCH_WID];
+            int density = 1 + reach_rnd(&r, 60);
+            for (int x = 0; x < BB_PITCH_LEN; x++) {
+                for (int y = 0; y < BB_PITCH_WID; y++) {
+                    sparse[x][y] = reach_rnd(&r, 400) < density;
+                }
+            }
+            bool want = reach_any_reference(&m, mover, blitz);
+            if (bb_reach_any_target(&m, mover, blitz) != want) mismatches++;
+            if (want) hits++;
+            else misses++;
+            want = reach_any_reference(&m, mover, sparse);
+            if (bb_reach_any_target(&m, mover, sparse) != want) mismatches++;
+            if (want) hits++;
+            else misses++;
+        }
+    }
+    BB_CHECK_EQ(mismatches, 0);
+    BB_CHECK(hits > 1000);
+    BB_CHECK(misses > 1000);
+}
+
+// Pocket square (8,6) opens only onto u=(7,7). The mover reaches u in 2 steps
+// through a marked square (1 dodge) or in 4 dodge-free steps. The field keeps
+// the dodge-free label, which uses the whole 4-square budget, so u is never
+// expanded and the pocket is unreachable although a step-count search reaches
+// it in 3. One more rush opens it.
+static void reach_budget_edge_fixture(bb_match* m, int* mover) {
+    fx_match_midturn(m, BB_HOME, 0);
+    *mover = fx_player(m, BB_HOME, 0, 5, 7, 4, 3, 3, 4, 9);
+    m->players[*mover].rushes = 2;
+    fx_lineman(m, BB_AWAY, 0, 7, 6); // marks (6,7) and u
+    static const int blockers[7][2] = {
+        {6, 8}, {7, 5}, {8, 5}, {9, 5}, {9, 6}, {8, 7}, {9, 7},
+    };
+    for (int i = 0; i < 7; i++) {
+        fx_lineman(m, BB_HOME, 1 + i, blockers[i][0], blockers[i][1]);
+    }
+}
+
+static long reach_any_target_square_mismatches(const bb_match* m, int mover) {
+    bb_reach_field field;
+    bb_reach_field_compute(m, mover, &field);
+    long mismatches = 0;
+    for (int x = 0; x < BB_PITCH_LEN; x++) {
+        for (int y = 0; y < BB_PITCH_WID; y++) {
+            uint8_t target[BB_PITCH_LEN][BB_PITCH_WID];
+            memset(target, 0, sizeof target);
+            target[x][y] = 1;
+            bool want = field.cost[x][y].dodges != BB_REACH_UNREACHABLE;
+            if (bb_reach_any_target(m, mover, target) != want) mismatches++;
+        }
+    }
+    return mismatches;
+}
+
+BB_TEST(reach_any_target_keeps_dodge_first_budget_semantics) {
+    bb_match m;
+    int mover;
+    reach_budget_edge_fixture(&m, &mover);
+    uint8_t pocket[BB_PITCH_LEN][BB_PITCH_WID];
+    memset(pocket, 0, sizeof pocket);
+    pocket[8][6] = 1;
+
+    bb_reach_field field;
+    bb_reach_field_compute(&m, mover, &field);
+    BB_CHECK_EQ(field.cost[7][7].dodges, 0);
+    BB_CHECK_EQ(field.len[7][7], 4);
+    BB_CHECK_EQ(field.cost[8][6].dodges, BB_REACH_UNREACHABLE);
+    BB_CHECK(!bb_reach_any_target(&m, mover, pocket));
+    BB_CHECK_EQ(reach_any_target_square_mismatches(&m, mover), 0);
+
+    m.players[mover].rushes = 1;
+    bb_reach_field_compute(&m, mover, &field);
+    BB_CHECK_EQ(field.cost[8][6].dodges, 1);
+    BB_CHECK_EQ(field.cost[8][6].gfis, 1);
+    BB_CHECK(bb_reach_any_target(&m, mover, pocket));
+    BB_CHECK_EQ(reach_any_target_square_mismatches(&m, mover), 0);
+}
+
+static bool blitz_target_reference(const bb_match* m, int slot) {
+    const bb_player* p = &m->players[slot];
+    if (p->location != BB_LOC_ON_PITCH) return false;
+    bb_match adjusted = *m;
+    bb_player* ap = &adjusted.players[slot];
+    if (p->stance == BB_STANCE_PRONE) {
+        ap->stance = BB_STANCE_STANDING;
+        if (!bb_has_skill(&ap->skills, BB_SK_JUMP_UP)) {
+            if (ap->ma < 3) {
+                ap->moved = (uint8_t)ap->ma;
+                ap->rushes = (uint8_t)bb_max_rushes(&adjusted, slot);
+            } else {
+                ap->moved = 3;
+            }
+        }
+    } else if (p->stance != BB_STANCE_STANDING) {
+        return false;
+    }
+    uint8_t target[BB_PITCH_LEN][BB_PITCH_WID];
+    memset(target, 0, sizeof target);
+    int opp = 1 - BB_TEAM_OF(slot);
+    for (int s = opp * BB_TEAM_SLOTS; s < (opp + 1) * BB_TEAM_SLOTS; s++) {
+        const bb_player* q = &adjusted.players[s];
+        if (q->location != BB_LOC_ON_PITCH) continue;
+        if (q->stance != BB_STANCE_STANDING) continue;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (!dx && !dy) continue;
+                if (bb_on_pitch_xy(q->x + dx, q->y + dy)) {
+                    target[q->x + dx][q->y + dy] = 1;
+                }
+            }
+        }
+    }
+    return reach_any_reference(&adjusted, slot, target);
+}
+
+// Every ACTIVATION declaration window in seeded random matches offers
+// DECLARE BLITZ exactly when the full-field reference predicate says a
+// standing opponent is reachable (and the team/Charge budget allows it).
+BB_TEST(reach_blitz_declaration_matches_field_reference_in_random_matches) {
+    long windows = 0, with_blitz = 0, budget_open_without = 0, mismatches = 0;
+    for (int g = 0; g < 12; g++) {
+        bb_match m;
+        int home = g % BB_TEAM_COUNT;
+        int away = (g * 5 + 3) % BB_TEAM_COUNT;
+        bb_match_init(&m, home, away);
+        bb_rng rng, pick;
+        bb_rng_seed(&rng, 0xB117E000ull + (uint64_t)g, 1);
+        bb_rng_seed(&pick, 0xB117F000ull + (uint64_t)g, 2);
+        bb_status st = bb_advance(&m, &rng);
+        for (int steps = 0; st == BB_STATUS_DECISION && steps < 200000; steps++) {
+            bb_action legal[BB_LEGAL_MAX];
+            int n = bb_legal_actions(&m, legal);
+            if (n <= 0) break;
+            const bb_frame* f = &m.stack[m.stack_top - 1];
+            if (f->proc == BB_PROC_ACTIVATION && f->phase == 0) {
+                bool budget_open = f->x == 1
+                    ? !(m.stack[m.stack_top - 2].y & 1)
+                    : !m.blitz_used;
+                bool want = budget_open && blitz_target_reference(&m, f->a);
+                bool got = false;
+                for (int i = 0; i < n; i++) {
+                    if (legal[i].type == BB_A_DECLARE && legal[i].arg == BB_ACT_BLITZ) {
+                        got = true;
+                    }
+                }
+                if (got != want) mismatches++;
+                windows++;
+                if (got) with_blitz++;
+                else if (budget_open) budget_open_without++;
+            }
+            st = bb_apply(&m, legal[fx_pick_smart(&m, legal, n, &pick)], &rng);
+        }
+    }
+    BB_CHECK_EQ(mismatches, 0);
+    BB_CHECK(windows > 500);
+    BB_CHECK(with_blitz > 100);
+    BB_CHECK(budget_open_without > 20);
+}

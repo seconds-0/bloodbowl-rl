@@ -123,6 +123,126 @@ void bb_reach_field_compute(const bb_match* m, int mover, bb_reach_field* out) {
     reach_field_compute_ordered(m, mover, 0, out);
 }
 
+static int reach_square_marked(const bb_match* m, int team, int x, int y) {
+    for (int d = 0; d < 8; d++) {
+        int nx = x + DIR8[d][0];
+        int ny = y + DIR8[d][1];
+        if (!bb_on_pitch_xy(nx, ny)) continue;
+        int s = m->grid[nx][ny] ? m->grid[nx][ny] - 1 : -1;
+        if (s >= 0 && BB_TEAM_OF(s) != team && bb_exerts_tz(m, s)) return 1;
+    }
+    return 0;
+}
+
+bool bb_reach_any_target(const bb_match* m, int mover,
+                         const uint8_t target[BB_PITCH_LEN][BB_PITCH_WID]) {
+    if (mover < 0 || mover >= BB_NUM_PLAYERS) return false;
+    const bb_player* p = &m->players[mover];
+    if (p->location != BB_LOC_ON_PITCH || p->stance != BB_STANCE_STANDING) {
+        return false;
+    }
+    int sx = p->x, sy = p->y;
+    if (target[sx][sy]) return true;
+    if (p->flags & BB_PF_ROOTED) return false;
+
+    int ma_left = p->ma - p->moved;
+    if (ma_left < 0) ma_left = 0;
+    int rush_left = bb_max_rushes(m, mover) - p->rushes;
+    if (rush_left < 0) rush_left = 0;
+    int budget = ma_left + rush_left;
+    if (budget > 39) budget = 39;
+    if (budget <= 0) return false;
+
+    // Every labelled square has path length <= budget, which bounds its
+    // Chebyshev distance from the source.
+    int x0 = sx - budget < 0 ? 0 : sx - budget;
+    int x1 = sx + budget >= BB_PITCH_LEN ? BB_PITCH_LEN - 1 : sx + budget;
+    int y0 = sy - budget < 0 ? 0 : sy - budget;
+    int y1 = sy + budget >= BB_PITCH_WID ? BB_PITCH_WID - 1 : sy + budget;
+    int any_in_window = 0;
+    for (int x = x0; x <= x1 && !any_in_window; x++) {
+        for (int y = y0; y <= y1; y++) {
+            if (target[x][y]) {
+                any_in_window = 1;
+                break;
+            }
+        }
+    }
+    if (!any_in_window) return false;
+
+    // Same label-setting search as reach_field_compute_ordered. Along any
+    // path gfis == max(0, len - ma_left), so the (dodges, gfis, len) order is
+    // the (dodges, len) order: settle one dodge layer at a time, bucketed by
+    // len. Final labels (hence the reachable set) do not depend on how ties
+    // are broken; only the predecessor chain would, and it is not needed.
+    // Squares only ever gain a label, so the first labelled target decides.
+    enum { LEN_BUCKETS = 40, POOL_MAX = 1 + 8 * BB_PITCH_LEN * BB_PITCH_WID };
+    uint8_t label_d[BB_PITCH_LEN][BB_PITCH_WID];
+    uint8_t label_len[BB_PITCH_LEN][BB_PITCH_WID];
+    uint8_t done[BB_PITCH_LEN][BB_PITCH_WID];
+    memset(label_d, BB_REACH_UNREACHABLE, sizeof label_d);
+    memset(done, 0, sizeof done);
+    int16_t heads[2][LEN_BUCKETS];
+    memset(heads, 0xFF, sizeof heads);
+    int16_t pool_sq[POOL_MAX];
+    int16_t pool_next[POOL_MAX];
+    int pool_n = 0;
+    int pending[2] = {0, 0};
+    int cur = 0;
+
+    label_d[sx][sy] = 0;
+    label_len[sx][sy] = 0;
+    pool_sq[pool_n] = (int16_t)(sx * BB_PITCH_WID + sy);
+    pool_next[pool_n] = heads[cur][0];
+    heads[cur][0] = (int16_t)pool_n++;
+    pending[cur] = 1;
+
+    int team = BB_TEAM_OF(mover);
+    for (int d = 0;; d++) {
+        int nxt = 1 - cur;
+        for (int l = 0; l < LEN_BUCKETS && pending[cur]; l++) {
+            while (heads[cur][l] >= 0) {
+                int node = heads[cur][l];
+                heads[cur][l] = pool_next[node];
+                pending[cur]--;
+                int ux = pool_sq[node] / BB_PITCH_WID;
+                int uy = pool_sq[node] % BB_PITCH_WID;
+                if (done[ux][uy] || label_d[ux][uy] != d ||
+                    label_len[ux][uy] != l) {
+                    continue;
+                }
+                done[ux][uy] = 1;
+                if (l >= budget) continue;
+
+                int nd = d + reach_square_marked(m, team, ux, uy);
+                int nl = l + 1;
+                int bucket = nd == d ? cur : nxt;
+                for (int k = 0; k < 8; k++) {
+                    int nx = ux + DIR8[k][0];
+                    int ny = uy + DIR8[k][1];
+                    if (!bb_on_pitch_xy(nx, ny)) continue;
+                    if (m->grid[nx][ny]) continue;
+                    if (label_d[nx][ny] == BB_REACH_UNREACHABLE) {
+                        if (target[nx][ny]) return true;
+                    } else if (nd > label_d[nx][ny] ||
+                               (nd == label_d[nx][ny] &&
+                                nl >= label_len[nx][ny])) {
+                        continue;
+                    }
+                    label_d[nx][ny] = (uint8_t)nd;
+                    label_len[nx][ny] = (uint8_t)nl;
+                    pool_sq[pool_n] = (int16_t)(nx * BB_PITCH_WID + ny);
+                    pool_next[pool_n] = heads[bucket][nl];
+                    heads[bucket][nl] = (int16_t)pool_n++;
+                    pending[bucket]++;
+                }
+            }
+        }
+        if (!pending[nxt]) return false;
+        cur = nxt;
+    }
+}
+
 bool bb_can_score_without_dice(const bb_match* m, int carrier) {
     if (!m || carrier < 0 || carrier >= BB_NUM_PLAYERS ||
         m->ball.state != BB_BALL_HELD || m->ball.carrier != carrier) {

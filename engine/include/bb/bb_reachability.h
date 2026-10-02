@@ -35,6 +35,11 @@ typedef struct {
 // square; a GFI is counted once the path exceeds remaining normal movement.
 void bb_reach_field_compute(const bb_match* m, int mover, bb_reach_field* out);
 
+// Exactly `any target square has a reachable cost in bb_reach_field_compute(m,
+// mover)`, without building the field: stops at the first reached target.
+bool bb_reach_any_target(const bb_match* m, int mover,
+                         const uint8_t target[BB_PITCH_LEN][BB_PITCH_WID]);
+
 // Third Season Stalling predicate at activation start: can this standing ball
 // carrier reach their scoring end-zone without any Dodge, Rush, activation-
 // gate, or compulsory movement roll? This answers rules feasibility only; it
