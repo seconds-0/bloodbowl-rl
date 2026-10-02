@@ -179,17 +179,24 @@ pick_screen_dir() {
             echo "screen attempt dir $dir holds a failed arm (non-zero status); opening the next" >&2
             n=$((n + 1)); continue
         fi
-        if [ -f "$log.process.json" ]; then
-            local pid
-            pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' "$log.process.json" 2>/dev/null)"
-            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-                printf '%s\n' "$dir"; return                          # trainer alive: wait on it
-            fi
+        # Liveness is the screen lock, not the recorded PID. The screen holds
+        # $dir/.screen.lock on fd 8 and its detached trainer inherits it, so a
+        # held lock means an orchestrator or a trainer is still alive in this
+        # attempt. A PID from <log>.process.json proves nothing after a
+        # restart: PIDs start low again (chain 30's relaunch got 1575) and
+        # another process of this user can hold the recorded number. With no
+        # lock file the probe creates one and succeeds, which reads as dead.
+        if ! flock -n "$dir/.screen.lock" -c true 2>/dev/null; then
+            printf '%s\n' "$dir"; return                              # lock held: wait on it
         fi
         echo "screen attempt dir $dir holds a dead partial arm; opening the next" >&2
         n=$((n + 1))
     done
 }
+# pick_screen_dir reads a failed probe as "lock held", so a missing flock must
+# stop here and not pass for a live trainer. The screen needs flock as well.
+command -v flock >/dev/null 2>&1 || {
+  echo "flock is required to tell a live screen attempt from a dead one" >&2; exit 1; }
 SCREEN_DIR="$(pick_screen_dir)"
 RESULT="$SCREEN_DIR/${TAG}.result.json"
 COMPLETE="$SCREEN_DIR/SCREEN_COMPLETE.json"

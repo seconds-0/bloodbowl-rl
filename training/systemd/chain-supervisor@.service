@@ -1,0 +1,32 @@
+[Unit]
+Description=Blood Bowl chain supervisor tick (%i)
+After=network-online.target
+# Twenty starts an hour. The five minute timer uses twelve, which leaves
+# eight for manual `systemctl --user start` ticks. A faster timer needs a
+# higher burst in the same change, or the unit hits its start limit.
+StartLimitIntervalSec=3600
+StartLimitBurst=20
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/bloodbowl-rl-longrun-20261002
+Environment=PYTHONUNBUFFERED=1
+Environment=CUDA_VISIBLE_DEVICES=0
+# The long-run build installs both opt-in Puffer patches. Every drift check
+# (tools/install_puffer_env.sh --check, run by each rung and each exam cell)
+# fails unless it sees the same two flags, so they are set here, and the
+# supervisor hands its whole environment to the stage it launches.
+Environment=PUFFER_SKIP_SCRIPTED_BANK_FORWARD=1
+Environment=BBE_DECIDING_ROW_TELEMETRY=1
+ExecStart=%h/bloodbowl-rl-longrun-20261002/vendor/PufferLib/.venv/bin/python %h/bloodbowl-rl-longrun-20261002/tools/campaign_supervisor.py --plan %h/bloodbowl-rl-longrun-20261002/runs/campaigns/%i/CAMPAIGN_PLAN.json --state %h/bloodbowl-rl-longrun-20261002/runs/campaigns/%i/CAMPAIGN_STATE.json --timer-unit chain-supervisor@%i.timer
+
+# KillMode=process is REQUIRED here and is not the usual choice. A oneshot unit
+# defaults to KillMode=control-group, which reaps every process left in the
+# unit's cgroup when ExecStart returns, and the whole job of a tick is to
+# leave a multi-hour stage (tools/chain_stage.sh and its trainer) running
+# behind it. control-group would kill the run seconds after launching it.
+#
+# This supervisor owns no lifetime and enforces no limits: it launches and
+# observes, and never signals anything. See campaign-supervisor@.service.
+KillMode=process
+TimeoutStopSec=45
