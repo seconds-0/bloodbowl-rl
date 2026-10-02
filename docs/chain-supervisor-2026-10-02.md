@@ -24,6 +24,7 @@ Source of requirements: the launch-robustness review of 2026-10-02 (findings LP1
 | `EXPECTED_POOL_HASH` | Optional. Checked before training and again against the marker. |
 | `PLAN_ONLY=1` | Preflight: plan pass and pool check, then stop. Takes no lock. |
 | `GPU_LOCK`, `GPU_LOCK_WAIT_SECONDS`, `GPU_SAMPLE_SECONDS` | Defaults `/home/rache/kt-e2e/kt-gpu.lock`, 600, 60. |
+| `EXAM_CELL_TIMEOUT_SECONDS` | Default 1800. A cell takes about 90 seconds; a hung one fails as exit 5. |
 
 Recipe variables go to `ladder_stage.sh` untouched, and the stage invents no default. It refuses to start (exit 2) unless these are non-empty: `RUNG RESET_PCT SEED STEPS LADDER_ARM FROZEN_BANK_PCT DEADLINE_HOURS NUM_THREADS`, and `PREV_COMPLETE` or both `WARM` and `PREV_POOL`. These must be set, and may be exported empty to take the screen's fixed value on purpose: `SCRIPTED_BANK_TAG SCRIPTED_BOT_TYPE LADDER_CHAIN_LR_SCALE LADDER_CHAIN_ENT_SCALE LADDER_GAMMA LADDER_GAE_LAMBDA LADDER_REPLAY_RATIO`. Passed through when set: `POOL_KEEP POOL_ANCHOR NUM_FROZEN_BANKS LADDER_PROFILE GRAFT_FROM_SOURCE_SHA256 GRAFT_FROM_PATCH_BUNDLE_SHA256 GRAFT_REASON PUFFER_SKIP_SCRIPTED_BANK_FORWARD BBE_DECIDING_ROW_TELEMETRY`.
 

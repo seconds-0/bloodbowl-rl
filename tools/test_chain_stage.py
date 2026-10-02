@@ -111,6 +111,7 @@ if [ -f "$ROOT/stub/fail_eval" ] && [ "$(cat "$ROOT/stub/fail_eval")" = "$SEED $
   echo "scripted eval integrity gate failed" >&2
   exit 1
 fi
+if [ -f "$ROOT/stub/hang_eval" ]; then sleep 60; fi
 tds="${STUB_TDS:-0.56}"
 python3 - "$STUB_REAL_TOOLS" "$LOG" "$SEED" "$BOT_TYPE" "$BOT_TEAM" "$tds" "$CKPT" <<'PY'
 import hashlib, sys
@@ -404,6 +405,16 @@ class ChainStageTests(unittest.TestCase):
         verdict = json.loads((self.run_dir / "EXAM_VERDICT.json").read_text())
         self.assertEqual(verdict["exam_dir"], str(self.run_dir / "exam-attempt2"))
         self.assertTrue((self.run_dir / "EXAM_VERDICT_PASS.json").is_file())
+
+    def test_hung_exam_cell_times_out_as_a_failed_cell(self):
+        (self.stub / "hang_eval").write_text("")
+        started = time.time()
+        result = self.stage(EXAM_CELL_TIMEOUT_SECONDS="2")
+        self.assertEqual(result.returncode, 5, result.stdout)
+        self.assertLess(time.time() - started, 30)
+        self.assertIn("EXAM CELL FAILED seed=42 contact_away exit 124", result.stdout)
+        self.assertFalse((self.run_dir / "EXAM_VERDICT.json").exists())
+        self.assertTrue(self.lock_is_free())
 
     def test_checkpoint_that_no_longer_matches_the_marker_exits_7(self):
         self.assertEqual(self.stage(STUB_LADDER_MODE="ok").returncode, 0)

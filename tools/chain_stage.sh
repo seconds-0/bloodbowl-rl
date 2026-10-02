@@ -33,6 +33,9 @@
 #   GPU_LOCK                 default /home/rache/kt-e2e/kt-gpu.lock
 #   GPU_LOCK_WAIT_SECONDS    default 600 (one `flock -w` round; rounds repeat)
 #   GPU_SAMPLE_SECONDS       default 60
+#   EXAM_CELL_TIMEOUT_SECONDS  default 1800. A cell takes about 90 seconds;
+#                            a hung one must fail the stage, not hold the GPU
+#                            lock for ever.
 #   HOST_BOOT_EPOCH          default: btime from /proc/stat
 #
 # Recipe for tools/ladder_stage.sh, passed through untouched. This script
@@ -145,10 +148,11 @@ esac
 GPU_LOCK="${GPU_LOCK:-/home/rache/kt-e2e/kt-gpu.lock}"
 GPU_LOCK_WAIT_SECONDS="${GPU_LOCK_WAIT_SECONDS:-600}"
 GPU_SAMPLE_SECONDS="${GPU_SAMPLE_SECONDS:-60}"
-case "$GPU_LOCK_WAIT_SECONDS:$GPU_SAMPLE_SECONDS" in
-  *[!0-9:]*|:*|*:) log "GPU_LOCK_WAIT_SECONDS and GPU_SAMPLE_SECONDS must be positive integers"; exit 2 ;;
+EXAM_CELL_TIMEOUT_SECONDS="${EXAM_CELL_TIMEOUT_SECONDS:-1800}"
+case "$GPU_LOCK_WAIT_SECONDS:$GPU_SAMPLE_SECONDS:$EXAM_CELL_TIMEOUT_SECONDS" in
+  *[!0-9:]*|:*|*:|*::*) log "GPU_LOCK_WAIT_SECONDS, GPU_SAMPLE_SECONDS and EXAM_CELL_TIMEOUT_SECONDS must be positive integers"; exit 2 ;;
 esac
-for tool in flock python3; do
+for tool in flock python3 timeout; do
   command -v "$tool" >/dev/null 2>&1 || { log "$tool is required"; exit 2; }
 done
 
@@ -464,6 +468,8 @@ log "exam start: $EXAM_DIR"
 # The cells of the as-run rig_exam.sh with the exit status kept. PATH carries
 # the venv as rig_exam.sh's did. OMP_NUM_THREADS is removed so tools/cpu_cap.sh
 # derives the thread count as it did for the as-run exams (16 on the rig).
+# `timeout` signals the cell's whole process group, so a hung eval is stopped
+# with its trainer process and reads as a failed cell (status 124).
 for seed in "${SEED_LIST[@]}"; do
   mkdir -p "$EXAM_DIR/s$seed" || exit 5
   for spec in "contact_away 0 1" "contact_home 0 0" "offense_away 1 1"; do
@@ -472,10 +478,11 @@ for seed in "${SEED_LIST[@]}"; do
     env -u OMP_NUM_THREADS PATH="$C/vendor/PufferLib/.venv/bin:$PATH" \
         NATIVE=1 RIG_ALLOW_FLOAT=1 CUDA_VISIBLE_DEVICES=0 SEED="$seed" \
         BOT_TYPE="$bot_type" BOT_TEAM="$bot_team" EVAL_EPISODES=2000 \
+        timeout --signal=TERM --kill-after=60 "$EXAM_CELL_TIMEOUT_SECONDS" \
         bash "$C/tools/eval_vs_contact_bot.sh" "$CKPT" 12000000 \
         "$EXAM_DIR/s$seed/$cell.log" > "$EXAM_DIR/s$seed/$cell.out" 2>&1 || {
       cell_rc=$?
-      log "EXAM CELL FAILED seed=$seed $cell exit $cell_rc; no verdict. Tail of $EXAM_DIR/s$seed/$cell.out:"
+      log "EXAM CELL FAILED seed=$seed $cell exit $cell_rc (124 is the ${EXAM_CELL_TIMEOUT_SECONDS}s cell timeout); no verdict. Tail of $EXAM_DIR/s$seed/$cell.out:"
       tail -n 15 "$EXAM_DIR/s$seed/$cell.out" 2>/dev/null
       exit 5
     }
