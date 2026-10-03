@@ -828,6 +828,7 @@ class Mapper:
         if self.pending_block:
             pb = self.pending_block
             if pb["phase"] == "push" and pid == pb["def"]:
+                pb["def_from"] = self.move_from  # the square a follow-up enters
                 if pb.get("chain"):
                     if not self.emit_chain_push(cmd, x, y, on_pitch):
                         return
@@ -864,9 +865,17 @@ class Mapper:
                      "to": (x, y) if on_pitch else None})
                 return
             if pb["phase"] == "followup" and pid == pb["att"]:
-                self.act(cmd, A_FOLLOW_UP, 1)
+                # A follow-up enters the square the defender vacated. Any
+                # other destination is the attacker's next blitz step after
+                # a DECLINED follow-up: emit the decline and map the move
+                # as an ordinary step below.
+                vacated = pb.get("def_from")
+                if vacated is None or (x, y) == vacated:
+                    self.act(cmd, A_FOLLOW_UP, 1)
+                    self.pending_block = None
+                    return
+                self.act(cmd, A_FOLLOW_UP, 0)
                 self.pending_block = None
-                return
         if mode not in ("regular", "blitz"):
             self.skip(cmd, f"move_in_mode_{mode}", f"{pid} -> {x},{y}")
             return
