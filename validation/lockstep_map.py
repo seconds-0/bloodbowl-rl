@@ -2340,6 +2340,7 @@ class Mapper:
         self.resolve_pending_followup(cmd)
         self.act(cmd, A_FOUL_TARGET, 0, dpos[0], dpos[1])
         a["foul_def"] = defender
+        a["closed"] = True  # engine: the foul ends the activation
 
     def rep_referee(self, i, r, cmd):
         a = self.activation
