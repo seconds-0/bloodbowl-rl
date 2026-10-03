@@ -2318,8 +2318,7 @@ class Mapper:
             vx, vy = self.pos[pid]
             self.resolve_pending_followup(cmd)
             self.act(cmd, A_SPECIAL_TARGET, 1, vx, vy, note="stab")
-            if a.get("kind") == ACT_STAB:
-                a["closed"] = True  # engine: the Stab action ends the activation
+            a["closed"] = True  # engine: a Stab ends the activation, on a Blitz too
         self.attach(cmd, dice, "injury")
         if self.pid_team(pid) == self.active_team:
             # knocked-down active-team player: engine latches a turnover
