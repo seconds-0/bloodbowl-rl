@@ -1926,3 +1926,8 @@ This changes how gate tournaments are computed, not what they measure. Games per
 - Chain 46, the opponent-seat arm, is training with chain 40 as its control. Its veto reference is now fixed: Negative if offense AWAY champion touchdowns are below 0.547 at seed 42 and below 0.545 at seed 43 (more than 0.02 under chain 40's displayed 0.567 and 0.565).
 
 **Not established.** That the play is closer to human, or stronger against anything outside this family. The style numbers are where they have been since chain 1, and the gain against chain 36 on bash rosters is a coin flip in the raw split.
+
+
+**D411 amendment (2026-10-03 16:25 PDT, after Codex's read; no P1).** Two sentences corrected.
+- **Build.** D411 said the build "is not a confound of the reading". The reading is valid under the registered gate, which compares a child with its parent. But the build difference between chain 40 and chain 36 was registered, and its contribution to the +78.5 is not isolated.
+- **Style.** D411 said the style numbers "are where they have been since chain 1". Chain 1's panel against the scripted bots reads match score 0.553, touchdowns 0.50, resolved blocks 5.1, passes plus hand-offs 0.001; chain 40's reads 0.592, 0.54, 6.6, 0.012. The broad pattern persists (few blocks, almost no ball transfers, against a human 40.1 and 1.59); unchanged behaviour is not established. "Coin flip" for bash rosters is the raw point estimate (0.507), not a demonstrated equivalence.
