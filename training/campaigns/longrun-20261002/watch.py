@@ -31,6 +31,18 @@ def main():
     if timer != "enabled":
         alerts.append(f"supervisor timer is {timer or 'missing'}: nothing will launch the next stage")
     statuses = sorted(glob.glob(f"{C}/runs/ladder-d0-*/CHAIN_STAGE_STATUS.json"), key=os.path.getmtime)
+
+    def live(path):
+        # A plan-only preflight also writes a status file, so prefer the stage whose process is still running.
+        try:
+            os.kill(int(json.load(open(path))["pid"]), 0)
+            return True
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+
+    running = [path for path in statuses if live(path)]
+    if running:
+        statuses = running
     if statuses:
         status = json.load(open(statuses[-1]))
         run = os.path.dirname(statuses[-1])
