@@ -2062,6 +2062,12 @@ class Mapper:
                     if self.carrier in (att, pb["def"]) and \
                             self.pid_team(self.carrier) == self.active_team:
                         self.turnover = True
+                    # Both players are Placed Prone. On a Blitz the engine
+                    # ends the prone attacker's activation by itself; on a
+                    # Block action it still waits for END_ACTIVATION.
+                    if pb.get("from_blitz") and self.activation and \
+                            self.activation["pid"] == str(att):
+                        self.activation["closed"] = True
                 elif not att_block:
                     self.fail_likely_turnover(att)
             elif not att_block:
