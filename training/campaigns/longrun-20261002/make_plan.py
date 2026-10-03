@@ -3,9 +3,10 @@
 
     python3 make_plan.py OUT_DIR      # OUT_DIR gets common_env.sh's siblings: sNN_<name>.sh and CAMPAIGN_PLAN.json
 
-Stage 0 is a disposable 50M-step canary of chain 37's exact launch path. Stages 1 to 3 are the registered
-restart-scale arms (chains 37, 38, 39). Stages 4 onward are the speculative continuation from chain 37 under the
-discard rule in D407's amendment and are meant to be replaced by a registered plan.
+Stage 0 is a disposable 50M-step canary of chain 37's exact launch path. Stages 1 and 2 are the registered
+restart-scale arms (chains 37 and 38). After D409 (chain 36 Positive, chain 37 Flat) stage 3 is chain 40, the
+registered continuation from chain 36 on the standard recipe, and later stages continue from it speculatively
+under D409's discard rule. Chain 39 (the third arm) is added by hand only if chain 38 reads Positive.
 """
 import json
 import pathlib
@@ -19,9 +20,14 @@ POOL_C36 = "51a19cff01f7701e10a4aeeca842cfb398b30c461e09c13af158362afd51ab80"
 POOL_C35 = "ff4c0552cb9e6b6a21a49c484a750958521391110a06c23c6f7904ad348660b1"
 MARKER_C34 = f"{OLD}/runs/ladder-d0-r0chain34-cont30-rr1-20260916/LADDER_RUNG_COMPLETE.json"
 MARKER_C30 = f"{OLD}/runs/ladder-d0-r0chain30-rr1-20260914/LADDER_RUNG_COMPLETE.json"
+MARKER_C36 = f"{OLD}/runs/ladder-d0-r0chain36-cont34-rr1-20260917/LADDER_RUNG_COMPLETE.json"
+# D405's drift guard pinned to chain 30 (fires only when all three hold), for the registered continuation.
+GUARD_C30 = {"EXAM_GUARD_FLOOR_S42": "0.541", "EXAM_GUARD_FLOOR_S43": "0.551", "EXAM_GUARD_FLOOR_MEAN": "0.546"}
 # Speculative rungs halt when the two-seed mean of offense AWAY champion touchdowns is below 0.536. The verdict
 # tool fires only when all three clauses hold, so the per-seed floors are set where they always hold.
-GUARD = {"EXAM_GUARD_FLOOR_S42": "9.0", "EXAM_GUARD_FLOOR_S43": "9.0", "EXAM_GUARD_FLOOR_MEAN": "0.536"}
+GUARD_MEAN = {"EXAM_GUARD_FLOOR_S42": "9.0", "EXAM_GUARD_FLOOR_S43": "9.0", "EXAM_GUARD_FLOOR_MEAN": "0.536"}
+ARM = ("0.5", "2.0")       # restart learning-rate scale, entropy scale (entropy coefficient stays 0.009)
+STANDARD = ("1.0", "1.0")
 
 
 def marker(stamp):
@@ -30,19 +36,20 @@ def marker(stamp):
 
 STAGES = [
     dict(name="s00_canary", stamp="canary37-lr05-from34-20261002", seed=42, prev=MARKER_C34,
-         pool=POOL_C36, rule="none", extra={"STEPS": "50000000"}),
+         pool=POOL_C36, rule="none", scales=ARM, extra={"STEPS": "50000000"}),
     dict(name="s01_chain37", stamp="r0chain37-lr05-from34-20261002", seed=42, prev=MARKER_C34,
-         pool=POOL_C36, rule="none"),
+         pool=POOL_C36, rule="none", scales=ARM),
     dict(name="s02_chain38", stamp="r0chain38-lr05-from30-s44-20261002", seed=44, prev=MARKER_C30,
-         pool=POOL_C35, rule="none"),
-    dict(name="s03_chain39", stamp="r0chain39-lr05-from30-s42-20261002", seed=42, prev=MARKER_C30,
-         pool=POOL_C35, rule="none"),
+         pool=POOL_C35, rule="none", scales=ARM),
+    dict(name="s03_chain40", stamp="r0chain40-cont36-rr1-20261003", seed=42, prev=MARKER_C36,
+         pool=None, rule="drift-guard", scales=STANDARD, extra=dict(GUARD_C30)),
 ]
-previous = "r0chain37-lr05-from34-20261002"
-for number in range(40, 46):
-    stamp = f"r0chain{number}-lr05-cont{previous.split('-')[0].replace('r0chain', '')}-20261002"
-    STAGES.append(dict(name=f"s{number - 36:02d}_chain{number}", stamp=stamp, seed=42,
-                       prev=marker(previous), pool=None, rule="drift-guard", extra=dict(GUARD)))
+previous = "r0chain40-cont36-rr1-20261003"
+for number in range(41, 46):
+    stamp = f"r0chain{number}-cont{number - 1}-rr1-20261003"
+    STAGES.append(dict(name=f"s{number - 37:02d}_chain{number}", stamp=stamp, seed=42,
+                       prev=marker(previous), pool=None, rule="drift-guard", scales=STANDARD,
+                       extra=dict(GUARD_MEAN)))
     previous = stamp
 
 
@@ -53,7 +60,7 @@ def wrapper(stage):
              f"source {HOME}/common_env.sh",
              f"export SEED={stage['seed']} STAMP={stage['stamp']}",
              f"export PREV_COMPLETE={stage['prev']}",
-             "export LADDER_CHAIN_LR_SCALE=0.5 LADDER_CHAIN_ENT_SCALE=2.0",
+             f"export LADDER_CHAIN_LR_SCALE={stage['scales'][0]} LADDER_CHAIN_ENT_SCALE={stage['scales'][1]}",
              f"export EXAM_RULE={stage['rule']}"]
     if stage.get("pool"):
         lines.append(f"export EXPECTED_POOL_HASH={stage['pool']}")

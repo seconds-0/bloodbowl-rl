@@ -51,6 +51,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-10-02 12:51 (D407 amendment, D408): chain 37 is training under the on-box supervisor.** The long-run build reproduced chain 36's own first 50M steps byte for byte, and a 50M-step canary passed the whole launch path. Chain 35's gate reads Replicated (+46.0 decisive-Elo over chain 30), its edge over chain 34 is not established (+12.3, interval includes zero), so chain 34 stays the parent. Three restart-scale arms are registered: chains 37, 38 and 39, with controls 36, 35 and 34. Chain 37 runs at 99.0K steps per second. Chain 36's gate has still not run. The rig idled about 11 hours overnight because a paused supervisor was not re-enabled.
 
+**Update 2026-10-02 22:10 (D409): chain 36 is the warm start; the half-rate restart reads Flat.** Chain 36 beats chain 34 by +77.4 decisive-Elo and becomes the warm start, the second Positive continuation in a row. Chain 37, the same rung at half the restart learning rate, is level with chain 36 head to head (+0.5, interval -12.3 to +13.6) with a smaller in-run dip. Chain 38 (the second arm) is training. Chain 40, the continuation from chain 36 on the standard recipe, runs next; chain 39 runs only if chain 38 reads Positive.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

@@ -1799,3 +1799,48 @@ This changes how gate tournaments are computed, not what they measure. Games per
 - **Seeds.** Runs at seeds 42 and 44 start 1,022 of 1,024 env slots from the same seed streams. The roster draw of each episode is shared; the dice stream stops lining up at the first differing decision. D407's "do not resample the matchup sequence" means the roster and kickoff draws only.
 - **Enforcement is manual.** The tournament half of each gate and the discard rule are applied by a person or a session. The supervisor cannot apply them.
 - **Artifacts on the rig**, for anyone checking the claims above: `/home/rache/bbopt-20261001/` holds `replicate_c36.log`, `replicate-c36.json`, `replicate-c36-w/`, `ident-*.json`, `trace-*.json`, `tput-r1-*.json`, `digest_*.txt` and the build and install logs; the canary is `runs/ladder-d0-canary37-lr05-from34-20261002/` in the long-run checkout (exam cells under `exam-attempt1/`); the control exam cells are `runs/exam-c3{0,4,5,6}-s4{2,3}/` in the old checkout. Chain 35's gate artifacts are under `.play-artifacts/tournaments/c35-gate-20260917/main/` in the play harness tree. In D408, accepting the mixed-machine merge is what permits the word Replicated; rejecting it leaves chain 35 unread, with the same parent. The bash and agile split there is the raw roster-conditioned result, not an adjusted roster effect.
+
+
+**D409 - CHAIN 36 READS POSITIVE AND BECOMES THE WARM START; CHAIN 37 (RESTART SCALE 0.5) READS FLAT AGAINST IT; CHAIN 40 IS PRE-REGISTERED AS THE CONTINUATION FROM CHAIN 36 (2026-10-02 22:10 PDT, with chain 38 about 25 minutes into training and no chain 38 result in existence)**
+
+**Both gates** ran on droplets on 2026-10-02 at harness commit b0099fb, 3,200 games per pair, 32 games per worker, merged by the unchanged tool. Chain 36: `GATE-ACCEPTED 19200 games, 6 pairs, seed0 20800000`. Chain 37: `GATE-ACCEPTED 16000 games, 5 pairs, seed0 20900000`. Every game ended naturally and every integrity counter is zero. Cost about $0.27; all six droplets verified destroyed. Decisive-Elo with 95% seed-cluster intervals:
+
+| Gate | Pair | W / D / L | Decisive-Elo |
+|---|---|---|---|
+| chain 36 | chain 36 vs chain 34 (parent) | 1332 / 1015 / 853 | +77.4 [+64.0, +91.3] |
+| chain 36 | chain 36 vs chain 27 | 1282 / 1141 / 777 | +87.0 [+73.8, +101.1] |
+| chain 36 | chain 36 vs chain 35 | 1383 / 1008 / 809 | +93.1 [+80.5, +107.3] |
+| chain 36 | chain 36 vs chain 30 (in pool, diagnostic) | 1364 / 1044 / 792 | +94.4 [+81.5, +107.3] |
+| chain 36 | chain 36 vs offense bot | 818 / 1792 / 590 | +56.8 [+39.0, +74.9] |
+| chain 36 | chain 34 vs offense bot | 862 / 1754 / 584 | +67.6 [+49.5, +85.8] |
+| chain 37 | chain 37 vs chain 36 (control) | 1044 / 1115 / 1041 | +0.5 [-12.3, +13.6] |
+| chain 37 | chain 37 vs chain 34 (parent) | 1288 / 1055 / 857 | +70.8 [+58.1, +84.2] |
+| chain 37 | chain 37 vs chain 27 | 1335 / 1132 / 733 | +104.2 [+90.3, +118.9] |
+| chain 37 | chain 37 vs offense bot | 880 / 1805 / 515 | +93.1 [+74.5, +110.7] |
+| chain 37 | chain 36 vs offense bot | 872 / 1785 / 543 | +82.3 [+64.5, +100.3] |
+
+**Chain 36: Positive under D405 as amended.** Neither the parent veto nor the drift guard fires (offense AWAY 0.554 / 0.566). It is +77.4 over chain 34, above +40 with the interval above zero, and its interval against chain 27 is above zero. **Chain 36 (`b7fb6dee...`) is the warm start.** With chain 30 to 34 at +53 (D404) this is the second consecutive continuation rung on this recipe to read Positive head to head, while its exam cells stayed within about 0.02 of chain 34's. The paired offense-bot contrast, chain 36 minus chain 34, is -10.9 [-31.3, +9.8] (computed outside the stats report with its resampling; diagnostic).
+
+**Chain 37: Flat under the D407 amendment.**
+- Negative: no. The veto does not fire (offense AWAY 0.564 / 0.571 against the control's 0.554 / 0.566) and the interval against chain 36 is not below zero.
+- Positive: no. The point estimate is +0.5, not above +40, and the interval includes zero.
+- Flat: yes.
+- Exam, champion touchdowns per game at seeds 42 / 43, chain 37 against chain 36: contact AWAY 0.595 / 0.553 against 0.574 / 0.573; contact HOME 0.552 / 0.541 against 0.510 / 0.500; offense AWAY 0.564 / 0.571 against 0.554 / 0.566.
+- Registered in-run diagnostic (scripted-bot bank; not a gate): first 25M steps minus worst 300M bin is +0.026 for chain 37 and +0.037 for chain 36. Chain 37's ten 300M bins run 0.546 to 0.567 and the control's 0.526 to 0.558; last bins 0.567 and 0.558.
+- Descriptive: the paired offense-bot contrast chain 37 minus chain 36 is +10.8 [-10.6, +31.5]. Raw roster-conditioned decisive share for chain 37 against chain 36 is 0.386 on bash rosters and 0.701 on agile ones.
+- **Reading in words.** Halving the restart learning rate shrank the in-run dip by about a third and left head-to-head strength against the full-rate control where it was, to within about 13 Elo either way. On this arm the dip is not what limits a rung. The build difference between arm and control (D407 second amendment) stands as declared; it would have to cancel a real effect exactly to produce this null.
+
+**Where the restart-scale question stands.** One accepted reading, Flat. Per the second amendment nothing is adopted or closed until the registered arms have read. Adoption now needs chains 38 and 39 both Positive.
+- **Futility rule for chain 39, registered now, before chain 38 has an exam or a tournament.** If chain 38 does not read Positive, at most one arm can be Positive and adoption is impossible whatever chain 39 reads, so chain 39 is not run and scale 1.0 stays the recipe. The question is then reported as not adopted and not formally closed. If chain 38 reads Positive, chain 39 runs as the next stage after that reading.
+- **The speculative stages from chain 37 are cancelled.** D407's discard rule required chain 37 to read Positive. None of them had started.
+
+**Chain 40, pre-registered: the continuation from chain 36 on the standard recipe.** It is the next stage after chain 38.
+- `r0chain40-cont36-rr1-20261003`: warm chain 36, seed 42, restart scale 1.0 (learning rate 2.8e-4, entropy coefficient 0.009), `r0_poss_half`, gamma 0.999, lambda 0.95, replay ratio 1.0, 4 banks x 0.12 with the contact bot at tag 4, 3B steps, on the long-run build as a declared graft. The plan-only preflight gave pool `23342e2b...`: the anchor, chain 30, chain 34 (an active learned opponent for the first time) and chain 36 in the scripted-bot seat.
+- **Gate.** Exam: parent veto against chain 36 (Negative if offense AWAY champion touchdowns are more than 0.02 below 0.554 at seed 42 and more than 0.02 below 0.566 at seed 43, displayed values normative) and D405's drift guard pinned to chain 30 (below 0.541, 0.551 and 0.546 on the mean, all three; the stage applies this one on the rig). Tournament, seed block 21200000, 3,200 games per pair: chain 40 against chain 36, chain 37, chain 27 and the offense bot, plus chain 36 against the offense bot. Chain 34 and chain 30 are in the pool and are not scored.
+- **Ordered readings:** Negative (veto, guard, or the interval against chain 36 entirely below zero) > Positive (above +40 over chain 36 with that interval entirely above zero, and the interval against chain 27 entirely above zero) > Flat (within plus or minus 40 inclusive) > Inconclusive. Missing or unaccepted evidence is not a reading.
+- **Consequences.** Positive: chain 40 becomes the warm start. Flat: chain 36 stays, and per D405 no further continuation runs on this recipe without a new idea. Negative: chain 36 stays and the rung is discarded.
+- **Chain 37 as an opponent** is there because it is the same parent's other child at equal strength and a different style split; the pair is descriptive.
+
+**After chain 40: speculative, under a discard rule.** So the GPU does not idle, the supervisor continues chain 41 from chain 40, chain 42 from 41 and so on to chain 45, each on the standard recipe at seed 42 with the ladder's pool rotation, each halted on the rig only by the 0.536 mean floor on offense AWAY (a collapse stop, as in D407's second amendment). Each is launched before its parent's gate has read. If a parent's gate does not read Positive, that parent's whole speculative lineage is discarded together: unscored, not retained as a warm start or in a retained pool. The tournament half of every gate and the discard are applied by a person or a session; the supervisor cannot apply them.
+
+**Not decided here.** Whether the next effort should go to something other than another continuation on this recipe. The policy's play is far from human play on the repo's own baseline (about 15 blocks a game against 80, no passing), and two Positive rungs in a row have not moved that. That is a separate question for the owner.
