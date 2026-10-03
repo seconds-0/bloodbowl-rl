@@ -889,7 +889,7 @@ class Mapper:
                 # other destination is the attacker's next blitz step after
                 # a DECLINED follow-up: emit the decline and map the move
                 # as an ordinary step below.
-                vacated = pb.get("def_from")
+                vacated = pb.get("def_from") or pb.get("def_pos")
                 fdice = pb.get("followup_dice")
                 if vacated is None or (x, y) == vacated:
                     self.act(cmd, A_FOLLOW_UP, 1, dice=fdice)
@@ -1927,7 +1927,8 @@ class Mapper:
                               "phase": "dice", "no_followup": False,
                               "stood_firm": False,
                               "from_blitz": a.get("kind") == ACT_BLITZ,
-                              "frenzy_second": frenzy_second, "cmd": cmd}
+                              "frenzy_second": frenzy_second, "cmd": cmd,
+                              "def_pos": self.pos.get(defender)}
         a["blocks"] = a.get("blocks", 0) + 1
         a["last_def"] = defender
         if a.get("kind") == ACT_BLITZ and not frenzy_second:
@@ -2183,14 +2184,31 @@ class Mapper:
     def emit_crowd_push(self, cmd):
         pb = self.pending_block
         apos = self.pos.get(pb["att"])
-        dpos = self.pos.get(pb["def"])
+        # The defender's own record already moved it off the pitch, so the
+        # mirror position is gone: use the square it was pushed from.
+        dpos = self.pos.get(pb["def"]) or pb.get("def_from") or \
+            pb.get("def_pos")
         if not apos or not dpos:
             self.skip(cmd, "crowd_push_unknown_pos", pb["def"])
             return
         dx, dy = dpos[0] - apos[0], dpos[1] - apos[1]
-        x = min(max(dpos[0] + dx, 0), 25)
-        y = min(max(dpos[1] + dy, 0), 14)
+        # Engine candidates: straight on plus the two neighbouring
+        # directions; every off-pitch one is the crowd. Take the first.
+        ring = self.CHAIN_DIRS
+        cands = [(dx, dy)]
+        if (dx, dy) in ring:
+            k = ring.index((dx, dy))
+            cands += [ring[(k - 1) % 8], ring[(k + 1) % 8]]
+        for cx, cy in cands:
+            tx, ty = dpos[0] + cx, dpos[1] + cy
+            if not (0 <= tx <= 25 and 0 <= ty <= 14):
+                break
+        else:
+            tx, ty = dpos[0] + dx, dpos[1] + dy
+        x = min(max(tx, 0), 25)
+        y = min(max(ty, 0), 14)
         self.act(cmd, A_PUSH_SQUARE, 1, x, y, note="crowd")
+        pb["crowd"] = True
 
     def rep_pushback(self, i, r, cmd):
         pass  # the defender's move record carries the chosen square
@@ -2277,6 +2295,12 @@ class Mapper:
             if len(cas) > 1:
                 self.skips["casualty_lasting_d6_dropped"] += 1
         if self.pending_block and pid == self.pending_block.get("def") and \
+                self.pending_block.get("crowd") and \
+                self.pending_block["phase"] == "followup":
+            # Crowd push: the engine rolls the crowd's injury dice inside the
+            # PUSH_SQUARE transition, before it asks for the follow-up.
+            self.pending_block["crowd"] = False
+        elif self.pending_block and pid == self.pending_block.get("def") and \
                 self.pending_block["phase"] in ("push", "followup"):
             # injury arrived before push/follow-up ops: resolve them first
             self.resolve_pending_followup(cmd)
