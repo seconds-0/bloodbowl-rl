@@ -1666,10 +1666,15 @@ class Mapper:
         # rush-for-block: the engine rolls it during the BLOCK_TARGET
         # transition, so the whole test chain routes to the pre-block buffer.
         a = self.activation
+        ps = self.pending_step
+        # The pending rush step already has its successful roll: a further
+        # rush with no new move record is the rush-for-block as well.
+        step_rush_open = bool(ps and ps.get("is_rush") and not ps.get("rush_ok"))
         if (a and not a.get("closed") and a.get("kind") == ACT_BLITZ and
-                (self.pending_step is None or
-                 not self.pending_step.get("is_rush"))):
+                not step_rush_open):
             self.pre_route = True
+        elif step_rush_open and r.get("successful"):
+            ps["rush_ok"] = True
         self._test_record(i, r, cmd, pre=True)
         if r.get("successful") or r.get("reRolled"):
             self.pre_route = False
