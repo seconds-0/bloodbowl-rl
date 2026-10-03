@@ -17,7 +17,7 @@ Per game, one team. Human numbers are the BB2025 replay subset (11,580 games). P
 | Possession (both teams pooled) | 0.475 | 0.361 | | | 0.367 |
 
 - **Style has not moved since chain 1.** Blocks have wandered between 4.6 and 8.2 a game with no direction; passing has never been above 0.008.
-- **Strength against its own family keeps rising** (chain 34 +53 and chain 36 +77 decisive-Elo over their parents), and against the two scripted bots it has been flat for the whole lineage (0.53 to 0.56 touchdowns a game).
+- **Strength against its own family keeps rising** (chain 34 +53 and chain 36 +77 decisive-Elo over their parents), and against the two scripted bots it has not climbed: 0.53 to 0.56 touchdowns a game for the chains in the table, 0.46 to 0.57 across every chain in the panel (the collapsed chain 28 aside).
 - **There is no measurement against a human at all.**
 - Counting caveats are in the panel's own header: red-dice blocks are booked to the defender's side (about 0.5 a game), and most counters other than touchdowns and blocks are logged for both teams together.
 
