@@ -1236,7 +1236,7 @@ class Mapper:
             self.turnover = True  # engine auto-unwinds on TD
         mode = r.get("mode")
         if mode == "setup" and not self.in_kickoff_resolution:
-            self.drive_end(cmd, r, td)
+            self.drive_end(i, cmd, r, td)
             return
         if mode in ("startGame", "setup", "kickoff"):
             self.in_kickoff_resolution = False
@@ -1307,12 +1307,14 @@ class Mapper:
                     self.base[str(e["playerId"])] = 3
         return [v for _, v in sorted(ko)]
 
-    def drive_end(self, cmd, r, td):
+    def drive_end(self, i, cmd, r, td):
         """turnEnd that closes a drive (touchdown or end of half). FFB has
         already switched to setup mode when it reports it, so the buffered
         scoring step and the KO recovery dice must be emitted here, BEFORE
         the next formation's placements."""
         ko_dice = self.ko_recovery_dice(r)
+        if not any(x.get("type") == "formation" for x in self.recs[i + 1:]):
+            ko_dice = []  # last drive: the engine ends the match, no KO rolls
         if td:
             # The engine unwinds the activation and the team turn inside the
             # scoring act's own transition, then rolls KO recovery: the dice
