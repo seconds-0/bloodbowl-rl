@@ -55,6 +55,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-10-03 07:25 (D410): the half-rate restart is not adopted; an opponent-seat arm is next.** Chain 38, the second half-rate arm, lost to its control head to head (-34.5 decisive-Elo, interval below zero) while scoring higher on every scripted-bot measure. With chain 37 Flat, restart scale 1.0 stays and chain 39 is not run. Chain 40 (continuation from chain 36) is training. Chain 46 runs after it: the same rung with the scripted bot moved to the anchor's seat, so the learner faces chains 30, 34 and 36. The owner's stated goal is a superhuman bot; `docs/plans/superhuman-roadmap-2026-10-03.md` is the proposal.
 
+**Update 2026-10-03 16:20 (D411): chain 40 is the warm start.** The continuation from chain 36 beats its parent by +78.5 decisive-Elo and chain 27 by +176.0, the third Positive continuation in a row (after +52.7 and +77.4). Against the scripted bots it scores about the same and concedes less. Chain 46 (the opponent-seat arm, control chain 40) is training; chain 41 continues from chain 40 after it.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

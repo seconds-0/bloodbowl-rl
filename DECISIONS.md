@@ -1900,3 +1900,29 @@ This changes how gate tournaments are computed, not what they measure. Games per
 - **Adoption after a second pair, stated fully.** The seat change is adopted only if chain 46's pair and the later second-seed pair both read Positive. A Negative in either blocks adoption. Any other combination leaves the current seat as the recipe and is reported as descriptive.
 - **Timing, stated exactly.** Chain 46 was registered after its control had started training and before any result of either run existed.
 - **Verification boundary.** The build identity of the pair and the GPU probe are as reported by the session that ran them; they are not checkable from the repository.
+
+
+**D411 - CHAIN 40 READS POSITIVE AND BECOMES THE WARM START: THE THIRD CONSECUTIVE POSITIVE CONTINUATION ON THE STANDARD RECIPE (2026-10-03 16:20 PDT, with chain 46 about an hour into training)**
+
+**Gate** on two droplets, 2026-10-03: `GATE-ACCEPTED 16000 games, 5 pairs, seed0 21200000, games_per_worker 32, commit b0099fb`, unchanged merge, every game ended naturally, integrity counters zero, about $0.13, both droplets verified destroyed (as reported by the session that ran them).
+
+| Pair | W / D / L | Decisive-Elo [95% seed-cluster] |
+|---|---|---|
+| chain 40 vs chain 36 (parent) | 1268 / 1125 / 807 | +78.5 [+64.7, +92.4] |
+| chain 40 vs chain 27 | 1551 / 1086 / 563 | +176.0 [+161.0, +191.5] |
+| chain 40 vs chain 37 (descriptive) | 1263 / 1135 / 802 | +78.9 [+65.5, +92.7] |
+| chain 40 vs offense bot | 846 / 1807 / 547 | +75.8 [+56.1, +94.9] |
+| chain 36 vs offense bot | 812 / 1829 / 559 | +64.9 [+46.8, +83.6] |
+
+**Reading under D409: Positive.** The parent veto does not fire (offense AWAY 0.567 / 0.565 against chain 36's 0.554 / 0.566), the chain 30 drift guard does not fire, the estimate against chain 36 is above +40 with its interval above zero, and the interval against chain 27 is above zero. **Chain 40 (`43848100...`) is the warm start.**
+- Exam, champion / bot touchdowns per game at seeds 42 and 43: contact AWAY 0.539 / 0.350 and 0.554 / 0.342 (chain 36: 0.574 / 0.395 and 0.573 / 0.395); contact HOME 0.504 / 0.374 and 0.504 / 0.352 (chain 36: 0.510 / 0.397 and 0.500 / 0.397); offense AWAY 0.567 / 0.290 and 0.565 / 0.300 (chain 36: 0.554 / 0.345 and 0.566 / 0.345). The champion's own scoring is level or slightly down; the bots score less in all six cells.
+- Style panel against the scripted bots (`tools/style_panel.py`; policy side, per game): match score 0.592, touchdowns 0.54, resolved blocks 6.6, passes plus hand-offs 0.012. Chain 36: 0.574, 0.55, 5.9, 0.004. Humans per team: 1.10 touchdowns, 40.1 blocks, 1.59 passes plus hand-offs.
+- Descriptive: the paired offense-bot contrast chain 40 minus chain 36 is +10.9 [-9.3, +30.4]. Raw roster-conditioned decisive share against chain 36: bash 0.507, agile 0.799, hybrid 0.660, stunty 0.662. The Bradley-Terry fit rejects transitivity (p < 0.0001).
+
+**Three consecutive Positive continuation rungs, with their gate numbers:** chain 30 to 34 +52.7 (D404), chain 34 to 36 +77.4 (D409), chain 36 to 40 +78.5. Each is against the parent on its own seed block; the three are not on a common scale and are not added. Chain 40 ran on the long-run build and its parent on the old one; for a continuation the gate compares a child with its parent, so the build is not a confound of the reading, and the faster build is why the rung took 8.7 hours.
+
+**What follows from D409 and D410, unchanged.**
+- Chain 41 (stage after chain 46) is now an ordinary continuation from an accepted parent, chain 40. It still needs its own gate (seed block 21300000) before it is a warm start, and chains 42 to 45 remain speculative under the discard rule.
+- Chain 46, the opponent-seat arm, is training with chain 40 as its control. Its veto reference is now fixed: Negative if offense AWAY champion touchdowns are below 0.547 at seed 42 and below 0.545 at seed 43 (more than 0.02 under chain 40's displayed 0.567 and 0.565).
+
+**Not established.** That the play is closer to human, or stronger against anything outside this family. The style numbers are where they have been since chain 1, and the gain against chain 36 on bash rosters is a coin flip in the raw split.
