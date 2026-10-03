@@ -114,6 +114,7 @@ fuzz:
 # --dump-pairs. -Wno-unused-function: the env header defines the full binding
 # surface (c_step, c_render, ...); the runner only uses the encoders.
 lockstep:
+	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Wno-unused-function \
 		tools/bb_lockstep.c -o $(BUILD)/bb_lockstep
 	@echo "run: ./$(BUILD)/bb_lockstep validation/lockstep/<id>.jsonl"
