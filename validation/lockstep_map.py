@@ -890,11 +890,12 @@ class Mapper:
                 # a DECLINED follow-up: emit the decline and map the move
                 # as an ordinary step below.
                 vacated = pb.get("def_from")
+                fdice = pb.get("followup_dice")
                 if vacated is None or (x, y) == vacated:
-                    self.act(cmd, A_FOLLOW_UP, 1)
+                    self.act(cmd, A_FOLLOW_UP, 1, dice=fdice)
                     self.pending_block = None
                     return
-                self.act(cmd, A_FOLLOW_UP, 0)
+                self.act(cmd, A_FOLLOW_UP, 0, dice=fdice)
                 self.pending_block = None
         if mode not in ("regular", "blitz"):
             self.skip(cmd, f"move_in_mode_{mode}", f"{pid} -> {x},{y}")
@@ -947,7 +948,8 @@ class Mapper:
 
     def resolve_pending_followup(self, cmd):
         if self.pending_block and self.pending_block["phase"] == "followup":
-            self.act(cmd, A_FOLLOW_UP, 0)
+            self.act(cmd, A_FOLLOW_UP, 0,
+                     dice=self.pending_block.get("followup_dice"))
             self.pending_block = None
         elif self.pending_block and self.pending_block["phase"] == "att_forced":
             self.pending_block = None  # forced follow-up never materialized
@@ -1765,7 +1767,14 @@ class Mapper:
             self.route_die(cmd, int(r.get("roll") or 1), "shadowing")
 
     def rep_steadyFootingRoll(self, i, r, cmd):
-        self.route_die(cmd, int(r.get("roll") or 1), "steady footing")
+        die = int(r.get("roll") or 1)
+        pb = self.pending_block
+        if pb and pb["phase"] == "followup":
+            # The engine asks for the follow-up before it knocks the defender
+            # down, so the roll belongs to the FOLLOW_UP act still to come.
+            pb.setdefault("followup_dice", []).append(die)
+            return
+        self.route_die(cmd, die, "steady footing")
 
     def rep_dauntlessRoll(self, i, r, cmd):
         self.pre_dice.append(("die", int(r.get("roll") or 1)))
