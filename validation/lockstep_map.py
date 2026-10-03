@@ -549,6 +549,8 @@ class Mapper:
         meta = self.meta
         self.rerolls = [meta["teamHome"].get("reRolls") or 0,
                         meta["teamAway"].get("reRolls") or 0]
+        self.rerolls_start = list(self.rerolls)
+        self.bonus_rr = [0, 0]     # drive-scoped Brilliant Coaching re-rolls
         self.apo = [meta["teamHome"].get("apothecaries") or 0,
                     meta["teamAway"].get("apothecaries") or 0]
         # Engine PREGAME grants +1 re-roll per Leader on the roster.
@@ -723,10 +725,21 @@ class Mapper:
         self.pmu_stood = set()
         self.kickoff_window = None
         self.charge = None
+        # Engine END_DRIVE: unspent Brilliant Coaching re-rolls expire.
+        for t in (0, 1):
+            self.rerolls[t] -= min(self.bonus_rr[t], self.rerolls[t])
+            self.bonus_rr[t] = 0
         if r.get("half") == 2 and self.kick_half == 1:
-            # Second half: the team that received the opening kick-off kicks.
+            # Second half: the team that received the opening kick-off kicks,
+            # and re-rolls replenish (+1 while a Leader is still available).
             self.kick_half = 2
             self.kicking = 1 - self.first_kicking
+            self.rerolls = list(self.rerolls_start)
+            for t in (0, 1):
+                if any("Leader" in self.skillnames.get(pid, ()) and
+                       self.base.get(pid, 0) not in (5, 6)
+                       for pid, (tt, _) in self.slot_of.items() if tt == t):
+                    self.rerolls[t] += 1
         finals = self.kickoff_repositioning(i, r)
         if finals:
             coords = dict(r["players"])
@@ -1105,7 +1118,15 @@ class Mapper:
         if rh and ra:
             self.attach(cmd, [rh, ra], "cheering fans")
 
-    rep_extraReRoll = rep_cheeringFans
+    def rep_extraReRoll(self, i, r, cmd):
+        # Brilliant Coaching: the engine compares the raw D6s and grants the
+        # winner one re-roll for this drive.
+        self.rep_cheeringFans(i, r, cmd)
+        rh, ra = r.get("rollHome"), r.get("rollAway")
+        if rh and ra and rh != ra:
+            t = 0 if rh > ra else 1
+            self.rerolls[t] += 1
+            self.bonus_rr[t] += 1
 
     def rep_brilliantCoachingReRoll(self, i, r, cmd):
         pass  # dice arrive via extraReRoll/cheeringFans
