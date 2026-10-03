@@ -334,6 +334,13 @@ class Mapper:
         ts = self.slot_of.get(str(pid))
         return ts[0] if ts else None
 
+    def spend_team_reroll(self, team):
+        """Mirror the engine's spend: a drive-scoped Brilliant Coaching
+        re-roll goes first, so only unspent ones expire at the drive end."""
+        self.rerolls[team] -= 1
+        if self.bonus_rr[team] > 0:
+            self.bonus_rr[team] -= 1
+
     def has_skill(self, pid, name):
         return name in self.skillnames.get(str(pid), ())
 
@@ -1590,7 +1597,7 @@ class Mapper:
         team_like = reroll_src in ("Team ReRoll", "Brilliant Coaching ReRoll",
                                    "Leader", "Mascot TRR")
         if team_like and offers:
-            self.rerolls[team] -= 1  # mirror the engine's spend
+            self.spend_team_reroll(team)  # mirror the engine's spend
             rr_dice = [loner_die] if loner_die is not None else []
             if not loner_ok:
                 # Loner waste: the failure stands, re-roll spent.
@@ -1606,7 +1613,7 @@ class Mapper:
         # single gate die (classified).
         self.skips["gate_reroll_folded"] += 1
         if team_like and team is not None and self.rerolls[team] > 0:
-            self.rerolls[team] -= 1
+            self.spend_team_reroll(team)
         final_ok = bool((second or {}).get("successful")) if second else False
         roll_f = adj(int((second or {}).get("roll") or 1), final_ok) \
             if second else roll1
@@ -1843,7 +1850,7 @@ class Mapper:
         if src in ("Team ReRoll", "Brilliant Coaching ReRoll", "Leader",
                    "Mascot TRR"):
             if team is not None and self.rerolls[team] > 0:
-                self.rerolls[team] -= 1
+                self.spend_team_reroll(team)
             if self.pending_block:
                 self.pending_block["team_rr"] = True
                 self.pending_block["loner_die"] = loner_die
@@ -1885,7 +1892,7 @@ class Mapper:
             return  # failed activation: no re-roll happened
         team = 0 if str(r.get("teamId")) == str(self.meta["teamHome"]["teamId"]) else 1
         if self.rerolls[team] > 0:
-            self.rerolls[team] -= 1  # mirror the ENGINE's reroll spend
+            self.spend_team_reroll(team)  # mirror the ENGINE's reroll spend
         if self.pending_block:
             self.pending_block["team_rr"] = True
             return
