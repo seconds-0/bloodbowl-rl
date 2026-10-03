@@ -1207,20 +1207,13 @@ class Mapper:
                 self.kicking = team
             self.turnover = True  # engine auto-unwinds on TD
         mode = r.get("mode")
+        if mode == "setup" and not self.in_kickoff_resolution:
+            self.drive_end(cmd, r, td)
+            return
         if mode in ("startGame", "setup", "kickoff"):
             self.in_kickoff_resolution = False
             return
-        # KO recovery (drive end): engine rolls per KO player in slot order.
-        ko = []
-        for e in r.get("knockoutRecoveryArray") or []:
-            if str(e.get("playerId")) in self.ignore_all:
-                continue  # engine never saw this player KO'd
-            ts = self.slot_of.get(str(e.get("playerId")))
-            if ts and e.get("roll"):
-                ko.append((ts[0] * 16 + ts[1], e["roll"]))
-                if e.get("recovering"):
-                    self.base[str(e["playerId"])] = 3
-        ko_dice = [v for _, v in sorted(ko)]
+        ko_dice = self.ko_recovery_dice(r)
         self.flush_step(cmd)
         if self.activation and not self.activation.get("closed"):
             self.close_activation(cmd)
@@ -1264,6 +1257,56 @@ class Mapper:
                     self.base[pid] = 1
             self.age_stunned(1 - ended)
         self.emit_expect(cmd, skip_ball=bool(td))
+        self.acts_this_turn = 0
+        self.used_this_turn = set()
+        self.turnover = False
+        self.activation = None
+        self.pending_block = None
+        self.pending_step = None
+        self.pre_dice = []
+        self.pre_route = False
+
+    def ko_recovery_dice(self, r):
+        """KO recovery (drive end): engine rolls per KO player in slot order."""
+        ko = []
+        for e in r.get("knockoutRecoveryArray") or []:
+            if str(e.get("playerId")) in self.ignore_all:
+                continue  # engine never saw this player KO'd
+            ts = self.slot_of.get(str(e.get("playerId")))
+            if ts and e.get("roll"):
+                ko.append((ts[0] * 16 + ts[1], e["roll"]))
+                if e.get("recovering"):
+                    self.base[str(e["playerId"])] = 3
+        return [v for _, v in sorted(ko)]
+
+    def drive_end(self, cmd, r, td):
+        """turnEnd that closes a drive (touchdown or end of half). FFB has
+        already switched to setup mode when it reports it, so the buffered
+        scoring step and the KO recovery dice must be emitted here, BEFORE
+        the next formation's placements."""
+        ko_dice = self.ko_recovery_dice(r)
+        if td:
+            # The engine unwinds the activation and the team turn inside the
+            # scoring act's own transition, then rolls KO recovery: the dice
+            # ride on that act and no END_ACTIVATION / END_TURN follows.
+            if ko_dice:
+                self.attach(cmd, ko_dice, "ko recovery")
+            self.flush_step(cmd)
+        else:
+            self.flush_step(cmd)
+            if self.activation and not self.activation.get("closed"):
+                self.close_activation(cmd)
+            else:
+                self.resolve_pending_followup(cmd)
+            boundary_dice = [v for _, v in sorted(self.pickmeup)] + \
+                list(self.turnend_dice) + ko_dice
+            if not self.turnover and self.engine_turn_open():
+                self.act(cmd, A_END_TURN, dice=boundary_dice)
+            elif boundary_dice:
+                self.attach(cmd, boundary_dice, "half end")
+        self.turnend_dice = []
+        self.pickmeup = []
+        self.pmu_stood = set()
         self.acts_this_turn = 0
         self.used_this_turn = set()
         self.turnover = False
