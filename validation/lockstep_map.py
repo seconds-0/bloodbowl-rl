@@ -564,6 +564,8 @@ class Mapper:
         if meta.get("homeFirstOffense") is not None:
             receiving = 0 if meta["homeFirstOffense"] else 1
         self.kicking = 1 - receiving
+        self.first_kicking = self.kicking
+        self.kick_half = 1         # half whose kicking order is in effect
 
         init = {"op": "init", "replay": meta.get("replayId"),
                 "home": self.team_specs[0], "away": self.team_specs[1],
@@ -720,6 +722,10 @@ class Mapper:
         self.pmu_stood = set()
         self.kickoff_window = None
         self.charge = None
+        if r.get("half") == 2 and self.kick_half == 1:
+            # Second half: the team that received the opening kick-off kicks.
+            self.kick_half = 2
+            self.kicking = 1 - self.first_kicking
         finals = self.kickoff_repositioning(i, r)
         if finals:
             coords = dict(r["players"])
