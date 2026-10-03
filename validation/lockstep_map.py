@@ -241,6 +241,7 @@ class Mapper:
         self.pre_dice = []         # dice before next STEP/JUMP/BLOCK_TARGET
         self.pre_route = False     # route dice/rerolls to pre_dice (block rush)
         self.turnend_dice = []     # dice consumed during END_TURN transition
+        self.stall_dice = []       # Stalling crowd D6 rolled at END_TURN itself
         self.pickmeup = []         # (gslot, roll) Pick Me Up dice this boundary
         self.pmu_stood = set()     # owners stood up by Pick-Me-Up this boundary
         self.last_ball_cmd = None  # cmd of the last ball record seen
@@ -1271,8 +1272,12 @@ class Mapper:
             self.turnover = False
             self.activation = None
             return
-        boundary_dice = [v for _, v in sorted(self.pickmeup)] + \
+        # Engine order: the Stalling roll is made when END_TURN is applied,
+        # before the boundary's Pick-me-up rolls.
+        boundary_dice = list(self.stall_dice) + \
+            [v for _, v in sorted(self.pickmeup)] + \
             list(self.turnend_dice) + ko_dice
+        self.stall_dice = []
         if not self.turnover and self.engine_turn_open():
             self.act(cmd, A_END_TURN, dice=boundary_dice)
         else:
@@ -1335,12 +1340,14 @@ class Mapper:
                 self.close_activation(cmd)
             else:
                 self.resolve_pending_followup(cmd)
-            boundary_dice = [v for _, v in sorted(self.pickmeup)] + \
+            boundary_dice = list(self.stall_dice) + \
+                [v for _, v in sorted(self.pickmeup)] + \
                 list(self.turnend_dice) + ko_dice
             if not self.turnover and self.engine_turn_open():
                 self.act(cmd, A_END_TURN, dice=boundary_dice)
             elif boundary_dice:
                 self.attach(cmd, boundary_dice, "half end")
+        self.stall_dice = []
         self.turnend_dice = []
         self.pickmeup = []
         self.pmu_stood = set()
@@ -2551,7 +2558,7 @@ class Mapper:
         if a and a["pid"] == pid and not a.get("closed"):
             a.setdefault("end_dice", []).append(die)
         else:
-            self.turnend_dice.insert(0, die)
+            self.stall_dice.append(die)
 
     def rep_leader(self, i, r, cmd):
         pass
