@@ -2361,7 +2361,22 @@ class Mapper:
                 self.act(cmd, A_CHOOSE_OPTION, pick,
                          note="apothecary result pick")
             else:
-                self.act(cmd, A_APOTHECARY, 0, note="casualty declined")
+                jc = self.lookahead(i, lambda x: x.get("report") ==
+                                    "apothecaryChoice" and
+                                    str(x.get("playerId")) == pid, limit=10)
+                if jc >= 0 and self.recs[jc].get("playerState") == 9:
+                    # FFB shortcut: the apothecary patches up a Badly Hurt
+                    # player with no second roll. The engine always rolls
+                    # one before the pick, so the original value is fed
+                    # again and the original result picked.
+                    self.consumed.add(jc)
+                    self.apo[team] -= 1
+                    self.act(cmd, A_APOTHECARY, 1, dice=[int(cas[0])],
+                             note="casualty apothecary (badly hurt, no re-roll)")
+                    self.act(cmd, A_CHOOSE_OPTION, 0,
+                             note="apothecary result pick")
+                else:
+                    self.act(cmd, A_APOTHECARY, 0, note="casualty declined")
 
     def rep_apothecaryRoll(self, i, r, cmd):
         self.skip(cmd, "apothecary_roll_unattached", r.get("playerId"))
