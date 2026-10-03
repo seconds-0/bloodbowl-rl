@@ -5,8 +5,9 @@
 
 Stage 0 is a disposable 50M-step canary of chain 37's exact launch path. Stages 1 and 2 are the registered
 restart-scale arms (chains 37 and 38). After D409 (chain 36 Positive, chain 37 Flat) stage 3 is chain 40, the
-registered continuation from chain 36 on the standard recipe, and later stages continue from it speculatively
-under D409's discard rule. Chain 39 (the third arm) is added by hand only if chain 38 reads Positive.
+registered continuation from chain 36 on the standard recipe. Stage 4 is chain 46, the opponent-seat arm of
+D410 (control: chain 40). Later stages continue from chain 40 speculatively under D409's discard rule.
+Chain 39 (the third restart-scale arm) is not run: chain 38 read Negative (D410).
 """
 import json
 import pathlib
@@ -44,10 +45,15 @@ STAGES = [
     dict(name="s03_chain40", stamp="r0chain40-cont36-rr1-20261003", seed=42, prev=MARKER_C36,
          pool=None, rule="drift-guard", scales=STANDARD, extra=dict(GUARD_C30)),
 ]
+# D410: the opponent-seat arm. Same warm start, seed and pool files as chain 40; the scripted bot takes bank
+# tag 1 (the anchor's seat), so chains 30, 34 and 36 are all active learned opponents. Control: chain 40.
+STAGES.append(dict(name="s04_chain46", stamp="r0chain46-botseat1-from36-20261003", seed=42, prev=MARKER_C36,
+                   pool="23342e2bcf322af17b4083de466db4adb87358bc55a41c86cb4f7b11dce31ffc", rule="drift-guard",
+                   scales=STANDARD, extra=dict(GUARD_C30, SCRIPTED_BANK_TAG="1")))
 previous = "r0chain40-cont36-rr1-20261003"
 for number in range(41, 46):
     stamp = f"r0chain{number}-cont{number - 1}-rr1-20261003"
-    STAGES.append(dict(name=f"s{number - 37:02d}_chain{number}", stamp=stamp, seed=42,
+    STAGES.append(dict(name=f"s{number - 36:02d}_chain{number}", stamp=stamp, seed=42,
                        prev=marker(previous), pool=None, rule="drift-guard", scales=STANDARD,
                        extra=dict(GUARD_MEAN)))
     previous = stamp
