@@ -254,7 +254,8 @@ static void report_divergence(runner* R, long cmd, const char* cls,
 // bb_action — exactly what the policy heads must emit — never raw engine
 // fields. A record is staged before bb_apply (the obs is the pre-action
 // decision state) and committed only after the transition succeeds; nothing
-// is written for ops at or beyond the first divergence.
+// is written for ops at or beyond the first divergence, nor for an act op
+// that carries "nopair":1.
 //
 // Encoder-cache coherence: the obs caches inside Bloodbowl are pure
 // functions of the copied state — skill_rows are keyed by the player's
@@ -856,7 +857,10 @@ static int do_act(runner* R, const char* line, long cmd) {
     for (int i = 0; i < nd; i++) {
         script[i] = (uint8_t)(dice[i] < 0 ? 0 : (dice[i] > 255 ? 255 : dice[i]));
     }
-    pd_stage(R, a, cmd); // BC pair: pre-action obs staged, committed on success
+    // BC pair: pre-action obs staged, committed on success. An op the mapper
+    // flags "nopair" is applied but not recorded: its decision state holds a
+    // value the replay never had (see the apothecary shortcut in the mapper).
+    if (!jint(line, "nopair", 0)) pd_stage(R, a, cmd);
     bb_rng rng;
     arm_rng(R, &rng, script, nd, cmd, "act");
     bb_status st = bb_apply(&R->m, a, &rng);

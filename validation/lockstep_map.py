@@ -11,7 +11,7 @@ Output ops (one JSON object per line):
    "weather":<bb_weather int>, "rerolls":[h,a], "apo":[h,a], "dice":[...]}
   {"op":"place","cmd":N,"team":0|1,"slot":S,"x":..,"y":..}
   {"op":"act","cmd":N,"type":<bb_action_type>,"arg":..,"x":..,"y":..,
-   "dice":[...], "hk":[t,s]?, "note":"..."}
+   "dice":[...], "hk":[t,s]?, "note":"...", "nopair":1?}
   {"op":"expect","cmd":N,"players":[[t,s,x,y,state],...],"ball":[x,y,held],
    "score":[h,a]}
   {"op":"skip","cmd":N,"what":"...","detail":"..."}
@@ -2408,7 +2408,9 @@ class Mapper:
                     self.apo[team] -= 1
                     self.act(cmd, A_APOTHECARY, 1, dice=[int(cas[0])],
                              note="casualty apothecary (badly hurt, no re-roll)")
-                    self.act(cmd, A_CHOOSE_OPTION, 0,
+                    # nopair: the decision state shows a second roll the
+                    # coach never saw, so the pick is applied, not recorded.
+                    self.act(cmd, A_CHOOSE_OPTION, 0, nopair=1,
                              note="apothecary result pick")
                 else:
                     self.act(cmd, A_APOTHECARY, 0, note="casualty declined")
