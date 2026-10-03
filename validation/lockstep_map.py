@@ -2271,6 +2271,17 @@ class Mapper:
                 self.pending_block["phase"] in ("push", "followup"):
             # injury arrived before push/follow-up ops: resolve them first
             self.resolve_pending_followup(cmd)
+        a = self.activation
+        if r.get("injuryType") == "stab" and a and not a.get("closed") and \
+                a["pid"] == str(r.get("attackerId")) and self.pos.get(pid) and \
+                a.get("kind") in (ACT_STAB, ACT_BLITZ):
+            # Stab: the engine takes the victim as a target decision and
+            # rolls the armour (and injury) dice in that transition.
+            vx, vy = self.pos[pid]
+            self.resolve_pending_followup(cmd)
+            self.act(cmd, A_SPECIAL_TARGET, 1, vx, vy, note="stab")
+            if a.get("kind") == ACT_STAB:
+                a["closed"] = True  # engine: the Stab action ends the activation
         self.attach(cmd, dice, "injury")
         if self.pid_team(pid) == self.active_team:
             # knocked-down active-team player: engine latches a turnover
