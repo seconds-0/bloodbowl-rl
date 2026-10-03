@@ -509,7 +509,8 @@ class Mapper:
             return
         if a.get("closed"):
             return
-        self.act(cmd, A_END_ACTIVATION, note=f"end {a['pid']}")
+        self.act(cmd, A_END_ACTIVATION, dice=a.get("end_dice") or [],
+                 note=f"end {a['pid']}")
 
     def fail_likely_turnover(self, pid):
         if self.pid_team(pid) == self.active_team:
@@ -2451,6 +2452,19 @@ class Mapper:
 
     def rep_stallerDetected(self, i, r, cmd):
         pass
+
+    def rep_throwAtStallingPlayer(self, i, r, cmd):
+        """BB2025 Stalling crowd D6. The engine rolls it while the staller's
+        activation ends (or at END_TURN when the carrier was never
+        activated). FFB reports roll 0 when the roll cannot succeed (turns
+        7-8); the engine still consumes a D6 there, so feed a 1."""
+        pid = str(r.get("playerId"))
+        die = int(r.get("roll") or 0) or 1
+        a = self.activation
+        if a and a["pid"] == pid and not a.get("closed"):
+            a.setdefault("end_dice", []).append(die)
+        else:
+            self.turnend_dice.insert(0, die)
 
     def rep_leader(self, i, r, cmd):
         pass
