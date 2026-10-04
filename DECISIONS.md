@@ -1975,3 +1975,10 @@ This changes how gate tournaments are computed, not what they measure. Games per
 **Stage order now:** chain 42 (running), chain 47, chain 48, then chains 43 to 45 from chain 42 under D409's discard rule (chain 43 is an ordinary continuation only if chain 42's gate reads Positive).
 
 **Not established.** Why the arm wins head to head while scoring less against the bots, or whether the +42.2 survives a second pair. The style numbers show no response to the stronger opponent mix.
+
+
+**D412 amendment (2026-10-04 11:20 PDT, after Codex's read; no P1; chains 47 and 48 have not started).**
+- **Whose guard decides, for the pair.** The drift guard pinned to chain 30 is applied to each chain separately. If chain 47 trips it, the pair reads Negative. If chain 48, the control, trips it or fails, the control is invalid and the pair is unread: chain 47 is then reported descriptively and the pair is run again with a fresh control before any adoption decision.
+- **Scope of the second pair.** Chains 47 and 48 differ from chain 46's pair in seed, parent and pool together. Two Positive pairs would be replication of the seat change across two contexts, not a measurement of training-seed variation.
+- **Correction.** Against chain 40, the scripted bots score more against chain 41 in five of six exam cells, not four (differences +0.040, +0.047, -0.001, +0.008, +0.042, +0.034).
+- **Blocking, as measured.** Against the scripted bots chain 46 resolved 6.2 blocks a game and its control 6.6, at one training seed and with no uncertainty estimate. That does not show an effect of the seat change on blocking in either direction. The panel's other numbers did differ between the two (match score 0.589 against 0.592, touchdowns 0.52 against 0.54, passes plus hand-offs 0.004 against 0.012); "no response" in D412 is withdrawn.
