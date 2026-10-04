@@ -1931,3 +1931,47 @@ This changes how gate tournaments are computed, not what they measure. Games per
 **D411 amendment (2026-10-03 16:25 PDT, after Codex's read; no P1).** Two sentences corrected.
 - **Build.** D411 said the build "is not a confound of the reading". The reading is valid under the registered gate, which compares a child with its parent. But the build difference between chain 40 and chain 36 was registered, and its contribution to the +78.5 is not isolated.
 - **Style.** D411 said the style numbers "are where they have been since chain 1". Chain 1's panel against the scripted bots reads match score 0.553, touchdowns 0.50, resolved blocks 5.1, passes plus hand-offs 0.001; chain 40's reads 0.592, 0.54, 6.6, 0.012. The broad pattern persists (few blocks, almost no ball transfers, against a human 40.1 and 1.59); unchanged behaviour is not established. "Coin flip" for bash rosters is the raw point estimate (0.507), not a demonstrated equivalence.
+
+
+**D412 - CHAIN 41 READS POSITIVE AND BECOMES THE WARM START; CHAIN 46 (SCRIPTED BOT IN THE ANCHOR'S SEAT) READS POSITIVE BY A NARROW MARGIN AND IS A CANDIDATE; THE SECOND-SEED PAIR, CHAINS 47 AND 48, IS PRE-REGISTERED (2026-10-04 11:10 PDT, with chain 42 about two hours into training)**
+
+**Both gates** at harness commit b0099fb, 3,200 games per pair, 32 games per worker, unchanged merge, accepted before scoring, every game ended naturally, integrity counters zero.
+- Chain 41: `GATE-ACCEPTED 16000 games, 5 pairs, seed0 21300000`. Both shards ran on the rig's CPU beside the chain 42 trainer, because the DigitalOcean account had been at its 15-droplet limit for nine hours with other projects' machines. This is the machine deviation of D408 again; all shards of the gate ran on the one machine, so the merge tool was unchanged. The tournament ran at 3.2 to 3.3 games per second and the trainer's throughput read 71K steps per second against 98K while it ran (one reading).
+- Chain 46: `GATE-ACCEPTED 19200 games, 6 pairs, seed0 21800000`, on two droplets once two slots freed, about $0.14, both verified destroyed (as reported by the session that ran them).
+
+| Gate | Pair | W / D / L | Decisive-Elo [95% seed-cluster] |
+|---|---|---|---|
+| chain 41 | chain 41 vs chain 40 (parent) | 1130 / 1257 / 813 | +57.2 [+42.4, +70.7] |
+| chain 41 | chain 41 vs chain 27 | 1604 / 1063 / 533 | +191.4 [+176.2, +207.4] |
+| chain 41 | chain 41 vs chain 37 | 1394 / 1156 / 650 | +132.5 [+117.9, +147.6] |
+| chain 41 | chain 41 vs offense bot | 983 / 1710 / 507 | +115.0 [+96.2, +134.0] |
+| chain 41 | chain 40 vs offense bot | 904 / 1795 / 501 | +102.5 [+85.2, +121.7] |
+| chain 46 | chain 46 vs chain 40 (control) | 1127 / 1189 / 884 | +42.2 [+28.7, +55.3] |
+| chain 46 | chain 46 vs chain 37 | 1429 / 1076 / 695 | +125.2 [+111.7, +139.4] |
+| chain 46 | chain 46 vs chain 27 | 1627 / 1046 / 527 | +195.8 [+180.7, +212.1] |
+| chain 46 | chain 46 vs offense bot | 808 / 1887 / 505 | +81.6 [+63.0, +100.1] |
+| chain 46 | chain 40 vs chain 37 | 1295 / 1086 / 819 | +79.6 [+66.5, +92.6] |
+| chain 46 | chain 40 vs offense bot | 856 / 1817 / 527 | +84.3 [+65.9, +103.6] |
+
+**Chain 41: Positive under D409 as amended.** Exam clear (offense AWAY 0.647 / 0.629 against chain 40's 0.567 / 0.565; the stage's 0.536 mean floor and D405's chain 30 guard both clear), +57.2 over chain 40 with the interval above zero, interval against chain 27 above zero. **Chain 41 (`b1830e23...`) is the warm start**, the fourth consecutive Positive continuation (parent gates +52.7, +77.4, +78.5, +57.2, each on its own seed block and not additive). Chain 42, which started from chain 41 before this reading, is now an ordinary continuation from an accepted parent; its gate is seed block 21400000.
+- Exam, champion / bot touchdowns per game at seeds 42 and 43: contact AWAY 0.615 / 0.390 and 0.603 / 0.389; contact HOME 0.536 / 0.373 and 0.534 / 0.360; offense AWAY 0.647 / 0.332 and 0.629 / 0.334. The champion is above chain 40 in all six cells by 0.03 to 0.08, and the bots also score more in four of six.
+- Style panel against the scripted bots (policy side, per game): match score 0.606, touchdowns 0.59, resolved blocks 6.7, passes plus hand-offs 0.009 (chain 40: 0.592, 0.54, 6.6, 0.012).
+- Descriptive: paired offense-bot contrast chain 41 minus chain 40 +12.5 [-10.0, +34.5]; raw roster-conditioned decisive share against chain 40: bash 0.487, agile 0.718, hybrid 0.638, stunty 0.637.
+
+**Chain 46: Positive under D410 as amended, narrowly.** The veto does not fire (offense AWAY 0.550 / 0.557 against thresholds 0.547 / 0.545), the drift guard is clear, the point estimate against chain 40 is +42.2 (above +40 by 2.2; the interval's lower end is +28.7), that interval is above zero, and the interval against chain 37 is above zero. The rule was applied to the accepted run as it stands. **The seat change is a candidate, not the recipe. Chain 46 is not a warm start.**
+- Exam, champion / bot touchdowns per game at seeds 42 and 43, chain 46 then chain 40: contact AWAY 0.530 / 0.350 and 0.537 / 0.338 against 0.539 / 0.350 and 0.554 / 0.342; contact HOME 0.474 / 0.354 and 0.491 / 0.335 against 0.504 / 0.374 and 0.504 / 0.352; offense AWAY 0.550 / 0.310 and 0.557 / 0.312 against 0.567 / 0.290 and 0.565 / 0.300. The arm is below its control in all six champion cells by 0.008 to 0.030 and won head to head: the exam and the tournament disagree in direction again.
+- Style panel against the scripted bots: match score 0.589, touchdowns 0.52, resolved blocks 6.2, passes plus hand-offs 0.004. Facing chains 30, 34 and 36 instead of the anchor did not raise blocking.
+- In-run score by opponent, first and last 300M-step bins: chain 30 0.616 to 0.694 (control 0.569 to 0.665); chain 34 0.600 to 0.684 (control 0.552 to 0.655); chain 36, the arm's own parent, 0.535 to 0.621; scripted bot 0.535 to 0.557 (control 0.529 to 0.561). The control's anchor bank sat at 0.896 to 0.921. In-pool evidence.
+- Descriptive: the paired contrast against chain 37, (chain 46 vs chain 37) minus (chain 40 vs chain 37), is +45.6 [+26.6, +63.8]; against the offense bot, chain 46 minus chain 40 is -2.6 [-25.8, +19.7]. Raw roster split against chain 40: bash 0.477, agile 0.690, hybrid 0.596, stunty 0.625. Chain 46 is the least sharp player in its panel (mean log-probability per decision -0.208 against chain 40's -0.174).
+
+**Chains 47 and 48, pre-registered: the second-seed pair D410 requires.**
+- **Chain 47** (`r0chain47-botseat1-from41-s2042-20261004`): warm chain 41, training seed 2042, `SCRIPTED_BANK_TAG=1`. **Chain 48** (`r0chain48-botseat4-from41-s2042-20261004`): the same with `SCRIPTED_BANK_TAG=4`. Standard recipe at restart scale 1.0, 3B steps each, same build, same pool files (`cc9b201e...`: the anchor, chain 36, chain 40, and chain 41 last). On tag 4 the active learned opponents are the anchor, chain 36 and chain 40; on tag 1 they are chains 36, 40 and 41. Both plan-only preflights verified with that pool identity.
+- **Why seed 2042.** Env seeds are the base seed plus the env index, so 42 and 44 share almost all per-slot streams (D407). 2042 shares none with either. This pair therefore changes the seed, the parent and the pool relative to chain 46's pair.
+- **Order.** Chain 47 runs after chain 42, then chain 48. About 17.5 hours for the pair.
+- **Gate, the same test as chain 46's.** Exam veto: Negative if chain 47's offense AWAY champion touchdowns are more than 0.02 below chain 48's at seed 42 and at seed 43 (displayed values normative; neither exists yet). The stage applies D405's chain 30 drift guard to each. Tournament, seed block 21900000, 3,200 games per pair: chain 47 against chain 48, chain 37, chain 27 and the offense bot, plus chain 48 against chain 37 and chain 48 against the offense bot. Ordered readings: Negative (veto, guard, or the interval against chain 48 entirely below zero) > Positive (point estimate above +40 over chain 48, that interval entirely above zero, and the interval against chain 37 entirely above zero) > Flat (within plus or minus 40 inclusive) > Inconclusive. Missing or unaccepted evidence is not a reading. The paired contrast against chain 37 is reported as a diagnostic.
+- **Adoption, per D410's amendment.** Both pairs Positive: the scripted bot sits on bank tag 1 for continuation rungs from then on. A Negative here blocks adoption. Anything else leaves tag 4 as the recipe and is descriptive.
+- **Neither chain is a warm start** unless a later entry gates it against chain 41. If chain 48 fails or halts, chain 47 has no control and is unread.
+
+**Stage order now:** chain 42 (running), chain 47, chain 48, then chains 43 to 45 from chain 42 under D409's discard rule (chain 43 is an ordinary continuation only if chain 42's gate reads Positive).
+
+**Not established.** Why the arm wins head to head while scoring less against the bots, or whether the +42.2 survives a second pair. The style numbers show no response to the stronger opponent mix.
