@@ -202,11 +202,11 @@ def main():
             toks.update(cl["tokens"])
             status.update(cl["status"])
         print(f"-- boundaries reached WITHOUT a stop inside re-seated provenance: {nb}")
-        print(f"   {status['1']:6d} {100 * status['1'] / max(nb, 1):6.2f}%  engine matched "
-              f"the replay on the pitch (squares, stance, ball, score, clock)")
-        print(f"   {status['2']:6d} {100 * status['2'] / max(nb, 1):6.2f}%  engine had drifted")
-        print(f"   {soft:6d} {100 * soft / max(nb, 1):6.2f}%  resources or statuses differed "
-              f"(re-synced to the replay either way)")
+        for code, lab in (("1", "engine equalled the replay in every field the seat carries"),
+                          ("4", "pitch matched; a resource, status or latch differed"),
+                          ("2", "engine was off the replay on the pitch")):
+            print(f"   {status[code]:6d} {100 * status[code] / max(nb, 1):6.2f}%  {lab}")
+        print("   (the engine is re-synced to the replay at each of these either way)")
         print("   by field:")
         for t, v in sorted(toks.items(), key=lambda kv: (kv[0].startswith(BOOK), -kv[1])):
             if not t.startswith(BOOK):
@@ -313,8 +313,8 @@ def main():
     dr = sum(s["spans_drift"] for s in S)
     print(f"boundary-to-boundary spans (team turns, a drive's set-up and kick-off "
           f"counted with the turn before it): {spans}; aligned end to end {al} "
-          f"({100 * al / spans:.1f}%); reached the boundary but drifted {dr} "
-          f"({100 * dr / spans:.1f}%)")
+          f"({100 * al / spans:.1f}%); reached the boundary but off the replay on "
+          f"the pitch {dr} ({100 * dr / spans:.1f}%)")
     print(f"re-seats per replay: mean {statistics.mean(rs):.1f} median "
           f"{statistics.median(rs):.0f} p90 {q(rs, .9)} max {rs[-1]}; total {sum(rs)}")
     print(f"divergences {sum(s['divergences'] for s in S)}; decisions lost while "
@@ -398,8 +398,9 @@ def main():
             for rec in records(path, b"BBR1"):
                 st[rec[11]] += 1
     n = max(res["n"], 1)
-    for code, lab in ((1, "span closed and the engine matched the replay's boundary state"),
-                      (2, "span closed without a stop but the state had drifted"),
+    for code, lab in ((1, "span closed; engine equal to the replay's boundary state"),
+                      (4, "span closed; pitch equal, a resource / status / latch not"),
+                      (2, "span closed without a stop but off the replay on the pitch"),
                       (3, "span closed against the mapper's mirror only (no seat)"),
                       (0, "span never closed (a stop came first, or the script ended)")):
         print(f"   {st[code]:7d} {100 * st[code] / n:5.1f}%  {lab}")

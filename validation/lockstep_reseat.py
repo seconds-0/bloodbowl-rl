@@ -131,7 +131,7 @@ def close_summary(closes):
 
 
 def one(job):
-    rid, out_dir, modes, do_map = job
+    rid, out_dir, modes, do_map, extra = job
     t0 = time.time()
     script = os.path.join(HERE, "lockstep", f"{rid}.jsonl")
     res = {"rid": rid}
@@ -173,7 +173,7 @@ def one(job):
                         "seat_skips": dict(collections.Counter(
                             s["why"] for s in row["seat_skips"]))}
     if "reseat" in modes:
-        rc, lines, err = run_lines([
+        rc, lines, err = run_lines(extra + [
             "--reseat", "--seat-audit",
             "--dump-pairs", os.path.join(out_dir, "pairs", f"{rid}.bbp"),
             "--dump-pairs-reseat", os.path.join(out_dir, "pairs_reseat", f"{rid}.bbr"),
@@ -198,6 +198,9 @@ def main():
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--map", action="store_true")
     ap.add_argument("--modes", default="audit,force,reseat")
+    ap.add_argument("--reseat-arg", action="append", default=[],
+                    help="extra runner flag for the reseat run, e.g. "
+                         "--reseat-arg=--seat-mirror-resources")
     a = ap.parse_args()
     modes = [m for m in a.modes.split(",") if m]
     rids = open(a.ids).read().split()
@@ -205,7 +208,7 @@ def main():
     for d in ("pairs", "pairs_reseat", "states", "force"):
         os.makedirs(os.path.join(out_dir, d), exist_ok=True)
     files = {m: open(os.path.join(out_dir, f"{m}.jsonl"), "w") for m in modes}
-    jobs = [(r, out_dir, modes, a.map) for r in rids]
+    jobs = [(r, out_dir, modes, a.map, a.reseat_arg) for r in rids]
     t0 = time.time()
     done = fails = 0
     with concurrent.futures.ProcessPoolExecutor(max_workers=a.jobs) as ex:
