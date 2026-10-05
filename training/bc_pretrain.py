@@ -26,6 +26,12 @@ dominating solely because they produced more pairs. Use
 The legacy ``load_shards`` function remains as an explicitly in-memory API for
 small tools and tests.
 
+RE-SEATED RECORDS (AGENTS.md, "Replay and BC contract", provenance
+"replay-seated, observation only"): by default only prefix-aligned ``.bbp``
+shards are read. ``--reseat-dir`` adds the separate ``BBR1`` shard set, and
+then only records whose span stamp is in ``--reseat-stamps`` (default 1: the
+span closed equal to the replay). Every run prints the subset it used.
+
 Loss: per head, logits are masked with the record's stored 454-bit legality
 mask (additive -1e9 on illegal entries) before softmax; the three CE terms
 are summed. Reported: per-head accuracy (masked argmax == target) and top-1
@@ -66,7 +72,7 @@ import struct
 import sys
 import types
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import torch
@@ -83,6 +89,22 @@ KNOWN_VERSIONS = (1, 2, 3, 4)  # v4: exact sequential action-mask semantics.
                                # v3: obs-v5 with historical marginal masks.
 HEADER_LEN = 16
 REPLAY_ID_SCAN_BATCH = 65_536
+
+# Re-seated pairs ("replay-seated, observation only"; AGENTS.md, "Replay and BC
+# contract"). They live in separate BBR1 shards that this loader refuses unless
+# the caller names a re-seat directory, and then admits by span stamp only.
+RESEAT_MAGIC = b"BBR1"
+RESEAT_VERSION = 4
+PROVENANCE_PREFIX = "prefix"
+PROVENANCE_RESEAT = "reseat"
+STAMP_OPEN = 0             # the span never reached its closing boundary
+STAMP_CLOSED_EQUAL = 1     # closed equal to the replay in every seated field
+STAMP_OFF_PITCH = 2        # closed, but off the replay on the pitch
+STAMP_MIRROR_ONLY = 3      # closed against the mapper's mirror only
+STAMP_RESOURCE_DRIFT = 4   # pitch equal; a resource, status or latch differed
+KNOWN_STAMPS = (STAMP_OPEN, STAMP_CLOSED_EQUAL, STAMP_OFF_PITCH,
+                STAMP_MIRROR_ONLY, STAMP_RESOURCE_DRIFT)
+DEFAULT_RESEAT_STAMPS = (STAMP_CLOSED_EQUAL,)
 
 
 def rec_dtype(obs_size, mask_size):
@@ -108,10 +130,18 @@ class ShardInfo:
     mask_size: int
     record_count: int
     record_size: int
+    # Re-seated shards only. `rows` lists the admitted physical record numbers
+    # (None means every record); `record_count` is the admitted count.
+    provenance: str = PROVENANCE_PREFIX
+    physical_count: int = -1
+    rows: object = field(default=None, compare=False, repr=False)
+    stamp_counts: tuple = ()
 
     @property
     def body_bytes(self):
-        return self.record_count * self.record_size
+        physical = (self.record_count if self.physical_count < 0
+                    else self.physical_count)
+        return physical * self.record_size
 
 
 def _selected_shard_paths(pair_dir, replay_ids=None):
@@ -206,29 +236,163 @@ def _read_shard_info(path, replay_id):
     )
 
 
-class ShardIndex:
-    """Metadata-only corpus index with a bounded LRU of read-only memmaps."""
+def record_segment(records):
+    """Re-seat segment of each record: 0 for prefix records, >= 1 after a re-seat."""
+    pad = np.asarray(records["pad"])
+    return pad[..., 0].astype(np.uint16) | (pad[..., 1].astype(np.uint16) << 8)
 
-    def __init__(self, shards, cache_size=8):
+
+def record_stamp(records):
+    """Span stamp of each record (meaningful only where record_segment >= 1)."""
+    return np.asarray(records["pad"])[..., 2]
+
+
+def normalize_reseat_stamps(stamps):
+    """Validate a span-stamp allowlist; None means the contract default."""
+    if stamps is None:
+        return DEFAULT_RESEAT_STAMPS
+    out = tuple(sorted(set(int(stamp) for stamp in stamps)))
+    if not out:
+        raise SystemExit("re-seat span-stamp allowlist is empty")
+    unknown = [stamp for stamp in out if stamp not in KNOWN_STAMPS]
+    if unknown:
+        raise SystemExit(f"unknown re-seat span stamp(s) {unknown}; "
+                         f"known: {list(KNOWN_STAMPS)}")
+    return out
+
+
+def reseat_subset_label(reseat_stamps):
+    """One-line name of the training subset, printed with every result."""
+    if reseat_stamps is None:
+        return "prefix records only (no re-seated records)"
+    stamps = ",".join(str(stamp) for stamp in reseat_stamps)
+    if tuple(reseat_stamps) == DEFAULT_RESEAT_STAMPS:
+        return ("prefix records + re-seated records in spans that closed equal "
+                f"to the replay (span stamp {stamps})")
+    return ("prefix records + re-seated records with span stamp in "
+            f"{{{stamps}}} (NOT the contract default)")
+
+
+def _read_reseat_shard_info(path, replay_id, stamps, lineage):
+    """Validate one BBR1 shard and index the records its span stamp admits."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            header = f.read(HEADER_LEN)
+    except OSError as exc:
+        raise SystemExit(f"cannot read .bbr shard {path}: {exc}") from exc
+    if len(header) != HEADER_LEN:
+        raise SystemExit(f"{path}: truncated .bbr header")
+    magic, version, obs_size, mask_size = struct.unpack("<4sIII", header)
+    if magic != RESEAT_MAGIC or version != RESEAT_VERSION:
+        raise SystemExit(f"{path}: bad re-seat header {magic} v{version}")
+    if (version, obs_size, mask_size) != tuple(lineage):
+        raise SystemExit(
+            f"{path}: re-seat header v{version}/{obs_size}/{mask_size} does not "
+            f"match the prefix corpus v{lineage[0]}/{lineage[1]}/{lineage[2]}")
+    dtype = rec_dtype(obs_size, mask_size)
+    body_bytes = size - HEADER_LEN
+    if body_bytes % dtype.itemsize:
+        raise SystemExit(
+            f"{path}: body size {body_bytes} is not a whole number of "
+            f"{dtype.itemsize}-byte records")
+    physical = body_bytes // dtype.itemsize
+    rows = np.empty(0, dtype=np.int64)
+    counts = np.zeros(max(KNOWN_STAMPS) + 1, dtype=np.int64)
+    if physical:
+        shard = np.memmap(path, dtype=dtype, mode="r", offset=HEADER_LEN,
+                          shape=(physical,))
+        try:
+            keep = []
+            for start in range(0, physical, REPLAY_ID_SCAN_BATCH):
+                stop = min(start + REPLAY_ID_SCAN_BATCH, physical)
+                if not np.all(shard["replay"][start:stop] == replay_id):
+                    raise SystemExit(
+                        f"{path}: record replay IDs do not match shard "
+                        f"filename {replay_id}")
+                pad = np.array(shard["pad"][start:stop], copy=True)
+                segment = pad[:, 0].astype(np.uint16) | (
+                    pad[:, 1].astype(np.uint16) << 8)
+                stamp = pad[:, 2]
+                if np.any(segment == 0):
+                    raise SystemExit(
+                        f"{path}: a re-seated record carries segment 0")
+                if np.any(~np.isin(stamp, KNOWN_STAMPS)):
+                    raise SystemExit(f"{path}: unknown span stamp in a record")
+                counts += np.bincount(stamp, minlength=len(counts))
+                keep.append(start + np.flatnonzero(np.isin(stamp, stamps)))
+            rows = np.concatenate(keep).astype(np.int64)
+        finally:
+            _close_memmap(shard)
+    return ShardInfo(
+        replay_id=replay_id,
+        path=path,
+        version=version,
+        obs_size=obs_size,
+        mask_size=mask_size,
+        record_count=int(len(rows)),
+        record_size=dtype.itemsize,
+        provenance=PROVENANCE_RESEAT,
+        physical_count=int(physical),
+        rows=rows,
+        stamp_counts=tuple(int(value) for value in counts),
+    )
+
+
+class ShardIndex:
+    """Metadata-only corpus index with a bounded LRU of read-only memmaps.
+
+    Prefix-aligned BBP shards are the corpus. Re-seated BBR shards are indexed
+    only when the caller passes them in (``from_directory(reseat_dir=...)``),
+    and then only the records whose span stamp is in ``reseat_stamps``; the
+    default allowlist is closed-equal spans (stamp 1).
+    """
+
+    def __init__(self, shards, cache_size=8, reseat_shards=(),
+                 reseat_stamps=None):
         if int(cache_size) < 1:
             raise ValueError("cache_size must be at least 1")
         self.shards = tuple(shards)
         self.cache_size = int(cache_size)
         self._by_id = {shard.replay_id: shard for shard in self.shards}
+        self.reseat_shards = tuple(reseat_shards)
+        self._reseat_by_id = {
+            shard.replay_id: shard for shard in self.reseat_shards}
+        if self.reseat_shards and reseat_stamps is None:
+            raise ValueError("re-seated shards need an explicit span-stamp allowlist")
+        self.reseat_stamps = (
+            None if reseat_stamps is None else tuple(reseat_stamps))
         self._cache = OrderedDict()
         self.max_cache_entries = 0
 
         if not self.shards:
             raise SystemExit("selected .bbp corpus contains no shards")
+        for shard in self.shards:
+            if shard.provenance != PROVENANCE_PREFIX:
+                raise ValueError("a re-seated shard was passed as a prefix shard")
+        for shard in self.reseat_shards:
+            if shard.provenance != PROVENANCE_RESEAT:
+                raise ValueError("a prefix shard was passed as a re-seated shard")
+            if shard.replay_id not in self._by_id:
+                raise SystemExit(
+                    f"{shard.path}: re-seated shard for a replay that is not "
+                    "in the selected prefix corpus")
         self.obs_size = self.shards[0].obs_size
         self.mask_size = self.shards[0].mask_size
-        self.total_records = sum(s.record_count for s in self.shards)
+        self.prefix_records = sum(s.record_count for s in self.shards)
+        self.reseat_records = sum(s.record_count for s in self.reseat_shards)
+        self.total_records = self.prefix_records + self.reseat_records
         if self.total_records == 0:
             parent = os.path.dirname(self.shards[0].path)
             raise SystemExit(f"selected .bbp corpus in {parent} has zero records")
 
     @classmethod
-    def from_directory(cls, pair_dir, replay_ids=None, cache_size=8):
+    def from_directory(cls, pair_dir, replay_ids=None, cache_size=8,
+                       reseat_dir=None, reseat_stamps=None):
+        if reseat_dir is None and reseat_stamps is not None:
+            raise SystemExit(
+                "a re-seat span-stamp allowlist was given without a re-seat "
+                "directory; re-seated shards must be asked for explicitly")
         shards = []
         lineage = None
         for replay_id, path in _selected_shard_paths(pair_dir, replay_ids):
@@ -243,16 +407,50 @@ class ShardIndex:
                     f"v{lineage[0]}/{lineage[1]}/{lineage[2]}; never mix obs lineages "
                     "in one corpus")
             shards.append(info)
-        return cls(shards, cache_size=cache_size)
+        reseat_shards = []
+        stamps = None
+        if reseat_dir is not None:
+            stamps = normalize_reseat_stamps(reseat_stamps)
+            reseat_dir = os.fspath(reseat_dir)
+            for info in shards:
+                path = os.path.join(reseat_dir, f"{info.replay_id}.bbr")
+                if not os.path.exists(path):
+                    raise SystemExit(
+                        f"missing re-seated shard {path}; a requested re-seat "
+                        "corpus must cover every selected replay")
+                reseat_shards.append(_read_reseat_shard_info(
+                    path, info.replay_id, stamps, lineage))
+        return cls(shards, cache_size=cache_size, reseat_shards=reseat_shards,
+                   reseat_stamps=stamps)
+
+    @property
+    def subset_label(self):
+        return reseat_subset_label(self.reseat_stamps)
+
+    @property
+    def reseat_stamp_counts(self):
+        """Physical re-seated records by span stamp, before the filter."""
+        counts = np.zeros(max(KNOWN_STAMPS) + 1, dtype=np.int64)
+        for shard in self.reseat_shards:
+            counts += np.asarray(shard.stamp_counts, dtype=np.int64)
+        return {int(stamp): int(counts[stamp]) for stamp in KNOWN_STAMPS}
 
     @property
     def replay_ids(self):
         return tuple(shard.replay_id for shard in self.shards)
 
+    def replay_record_count(self, replay_id):
+        """Admitted records of one replay across both provenances."""
+        replay_id = int(replay_id)
+        count = self.info(replay_id).record_count
+        reseat = self._reseat_by_id.get(replay_id)
+        return count + (reseat.record_count if reseat is not None else 0)
+
     @property
     def nonempty_replay_ids(self):
         return tuple(
-            shard.replay_id for shard in self.shards if shard.record_count)
+            shard.replay_id for shard in self.shards
+            if self.replay_record_count(shard.replay_id))
 
     @property
     def cache_entries(self):
@@ -262,44 +460,64 @@ class ShardIndex:
     def cached_memmaps(self):
         return tuple(self._cache.values())
 
-    def info(self, replay_id):
+    def info(self, replay_id, provenance=PROVENANCE_PREFIX):
+        table = (self._by_id if provenance == PROVENANCE_PREFIX
+                 else self._reseat_by_id)
         try:
-            return self._by_id[int(replay_id)]
+            return table[int(replay_id)]
         except KeyError as exc:
-            raise KeyError(f"replay {replay_id} is not in this shard index") from exc
+            raise KeyError(
+                f"replay {replay_id} has no {provenance} shard in this index") from exc
 
-    def open_shard(self, replay_id):
-        replay_id = int(replay_id)
-        if replay_id in self._cache:
-            shard = self._cache.pop(replay_id)
-            self._cache[replay_id] = shard
+    def reseat_info(self, replay_id):
+        """The replay's re-seated shard, or None when none was asked for."""
+        return self._reseat_by_id.get(int(replay_id))
+
+    def _open_physical(self, replay_id, provenance):
+        key = (int(replay_id), provenance)
+        if key in self._cache:
+            shard = self._cache.pop(key)
+            self._cache[key] = shard
             return shard
-        info = self.info(replay_id)
-        if info.record_count == 0:
+        info = self.info(replay_id, provenance)
+        physical = (info.record_count if info.physical_count < 0
+                    else info.physical_count)
+        if physical == 0:
             return np.empty(0, dtype=rec_dtype(info.obs_size, info.mask_size))
         # Evict before opening so even transiently the process never owns more
         # mappings than the configured bound.
         while len(self._cache) >= self.cache_size:
-            _old_id, old = self._cache.popitem(last=False)
+            _old_key, old = self._cache.popitem(last=False)
             _close_memmap(old)
         shard = np.memmap(
             info.path,
             dtype=rec_dtype(info.obs_size, info.mask_size),
             mode="r",
             offset=HEADER_LEN,
-            shape=(info.record_count,),
+            shape=(physical,),
         )
-        self._cache[replay_id] = shard
+        self._cache[key] = shard
         self.max_cache_entries = max(self.max_cache_entries, len(self._cache))
         return shard
 
-    def read_records(self, replay_id, selection):
-        """Return an owning batch copy, safe after cache eviction."""
-        return np.array(self.open_shard(replay_id)[selection], copy=True)
+    def open_shard(self, replay_id):
+        """The prefix shard's memmap. Re-seated records go through read_records."""
+        return self._open_physical(replay_id, PROVENANCE_PREFIX)
+
+    def read_records(self, replay_id, selection, provenance=PROVENANCE_PREFIX):
+        """Return an owning batch copy, safe after cache eviction.
+
+        For re-seated shards `selection` indexes the ADMITTED records, so a
+        record whose span stamp is outside the allowlist cannot be reached.
+        """
+        shard = self._open_physical(replay_id, provenance)
+        if provenance == PROVENANCE_RESEAT:
+            selection = self.info(replay_id, provenance).rows[selection]
+        return np.array(shard[selection], copy=True)
 
     def close(self):
         while self._cache:
-            _replay_id, shard = self._cache.popitem(last=False)
+            _key, shard = self._cache.popitem(last=False)
             _close_memmap(shard)
 
     def __enter__(self):
@@ -338,24 +556,59 @@ def split_replay_ids(replay_ids, val_frac, seed):
 
 
 class LazyReplayDataset:
-    """Replay-disjoint lazy view supporting two deterministic IID samplers."""
+    """Replay-disjoint lazy view supporting two deterministic IID samplers.
+
+    A replay's records are its prefix records followed by the re-seated
+    records the index admitted (none unless the index was built with a
+    re-seat directory).
+    """
 
     def __init__(self, index, replay_ids):
         self.index = index
         self.replay_ids = tuple(sorted(set(int(x) for x in replay_ids)))
         self.shards = tuple(index.info(replay_id) for replay_id in self.replay_ids)
-        if any(shard.record_count == 0 for shard in self.shards):
-            raise ValueError("LazyReplayDataset cannot sample zero-record shards")
         if not self.shards:
             raise ValueError("LazyReplayDataset requires at least one shard")
-        self.counts = np.asarray(
+        self.prefix_counts = np.asarray(
             [shard.record_count for shard in self.shards], dtype=np.int64)
+        self.reseat_counts = np.asarray(
+            [(index.reseat_info(replay_id).record_count
+              if index.reseat_info(replay_id) is not None else 0)
+             for replay_id in self.replay_ids], dtype=np.int64)
+        self.counts = self.prefix_counts + self.reseat_counts
+        if np.any(self.counts == 0):
+            raise ValueError("LazyReplayDataset cannot sample zero-record shards")
         self.cumulative_counts = np.cumsum(self.counts)
         self.total_records = int(self.cumulative_counts[-1])
         self.dtype = rec_dtype(index.obs_size, index.mask_size)
 
     def __len__(self):
         return self.total_records
+
+    @property
+    def subset_label(self):
+        return self.index.subset_label
+
+    @property
+    def provenance_counts(self):
+        return {PROVENANCE_PREFIX: int(self.prefix_counts.sum()),
+                PROVENANCE_RESEAT: int(self.reseat_counts.sum())}
+
+    def _read(self, replay_pos, local_indices):
+        """Owning copy of one replay's records at replay-local indices."""
+        replay_id = self.replay_ids[int(replay_pos)]
+        n_prefix = int(self.prefix_counts[int(replay_pos)])
+        local_indices = np.asarray(local_indices, dtype=np.int64)
+        out = np.empty(len(local_indices), dtype=self.dtype)
+        in_prefix = local_indices < n_prefix
+        if in_prefix.any():
+            out[in_prefix] = self.index.read_records(
+                replay_id, local_indices[in_prefix])
+        if (~in_prefix).any():
+            out[~in_prefix] = self.index.read_records(
+                replay_id, local_indices[~in_prefix] - n_prefix,
+                provenance=PROVENANCE_RESEAT)
+        return out
 
     def sample_records(self, batch_size, rng, mode="replay"):
         """Sample an owning batch, uniformly by replay or by record."""
@@ -384,21 +637,19 @@ class LazyReplayDataset:
         out = np.empty(batch_size, dtype=self.dtype)
         for shard_index in np.unique(shard_indices):
             positions = np.flatnonzero(shard_indices == shard_index)
-            shard = self.shards[int(shard_index)]
-            out[positions] = self.index.open_shard(shard.replay_id)[
-                local_indices[positions]]
+            out[positions] = self._read(shard_index, local_indices[positions])
         return out
 
     def iter_record_batches(self, batch_size=2048):
-        """Visit every record once in stable replay/file order."""
+        """Visit every admitted record once in stable replay/file order."""
         batch_size = int(batch_size)
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
-        for shard in self.shards:
-            for start in range(0, shard.record_count, batch_size):
-                stop = min(start + batch_size, shard.record_count)
-                yield self.index.read_records(
-                    shard.replay_id, slice(start, stop))
+        for replay_pos in range(len(self.shards)):
+            count = int(self.counts[replay_pos])
+            for start in range(0, count, batch_size):
+                stop = min(start + batch_size, count)
+                yield self._read(replay_pos, np.arange(start, stop))
 
 
 def load_replay_ids(path):
@@ -622,6 +873,14 @@ def main():
         help="exact replay-ID allowlist; generate the BB2025 list with "
              "tools/replay_corpus_audit.py --write-bb2025-ids")
     ap.add_argument(
+        "--reseat-dir", default=None,
+        help="directory of re-seated BBR1 shards (replay-seated, observation "
+             "only). Without it re-seated records are never read")
+    ap.add_argument(
+        "--reseat-stamps", default=None,
+        help="comma-separated span stamps to admit from --reseat-dir; the "
+             "default is 1 (spans that closed equal to the replay)")
+    ap.add_argument(
         "--allow-legacy-bbp", action="store_true",
         help="permit v1-v3 only for an explicitly historical reproduction; "
              "current exact-action BC requires v4")
@@ -669,10 +928,15 @@ def main():
     torch.manual_seed(args.seed)
 
     replay_ids = load_replay_ids(args.replay_ids) if args.replay_ids else None
+    reseat_stamps = (
+        None if args.reseat_stamps is None
+        else [int(value) for value in args.reseat_stamps.split(",") if value])
     index = ShardIndex.from_directory(
         args.pairs_dir,
         replay_ids=replay_ids,
         cache_size=args.open_shard_cache,
+        reseat_dir=args.reseat_dir,
+        reseat_stamps=reseat_stamps,
     )
     try:
         require_exact_action_lineage(index, args.allow_legacy_bbp)
@@ -687,6 +951,9 @@ def main():
             f"split BY REPLAY: {len(train_data)} train / {len(val_data)} val "
             f"(held out: {list(val_ids)}) | sampling {args.sampling} | "
             f"open-shard cache {args.open_shard_cache}")
+        print(
+            f"subset: {index.subset_label} | {index.prefix_records} prefix + "
+            f"{index.reseat_records} re-seated records admitted")
         if replay_ids is not None:
             print(
                 f"allowlist: {len(replay_ids)} replay IDs | sha256 "
@@ -744,6 +1011,7 @@ def main():
               f"{v_accs[0]:.3f}/{v_accs[1]:.3f}/{v_accs[2]:.3f} | "
               f"exact {v_exact:.3f}")
         print(f"loss curve: {first_loss:.4f} -> {last_loss:.4f}")
+        print(f"subset used for every number above: {index.subset_label}")
 
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
         # Exactly PuffeRL.save_weights: torch.save(policy.state_dict(), path).
