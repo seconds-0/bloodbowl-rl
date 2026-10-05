@@ -23,7 +23,6 @@ Usage:
 Stock python3, stdlib only.
 """
 import argparse
-import bisect
 import copy
 import glob
 import gzip
@@ -243,18 +242,20 @@ class Folder:
         return self.last_nr
 
     def at(self, cmd_nr):
-        """The live state right after the command numbered cmd_nr: the next
-        one in the stream with that number, or the one just applied. Not a
-        copy: read it before asking for a later command. A number that is
-        neither ahead nor current raises LookupError (the fold cannot go
-        back, and guessing a position would hand out the wrong state)."""
+        """The live state right after the command numbered cmd_nr: the one
+        just applied, or else the one ahead in the stream. Not a copy: read
+        it before asking for a later command. Raises LookupError when the
+        number names no single place: it occurs more than once in the log,
+        or it is neither current nor ahead (the fold cannot go back, and
+        guessing a position would hand out the wrong state)."""
         positions = self.where.get(cmd_nr, ())
-        k = bisect.bisect_left(positions, self.i)
-        if k == len(positions):
+        if len(positions) != 1:
+            raise LookupError(f"command {cmd_nr} occurs {len(positions)} times")
+        if positions[0] < self.i:
             if self.last_nr == cmd_nr:
                 return self.state
-            raise LookupError(f"command {cmd_nr} is not ahead in the log")
-        while self.i <= positions[k]:
+            raise LookupError(f"command {cmd_nr} is behind the fold")
+        while self.i <= positions[0]:
             self.step()
         return self.state
 
