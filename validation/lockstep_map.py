@@ -419,6 +419,10 @@ class Mapper:
         if self.turn_owner is not None:
             team, half, turn = self.turn_owner
             tag = {"team": team, "half": half, "turn": turn}
+        if engine_open and self.stall_dice and self.carrier:
+            # Engine team_turn_apply: ending the turn without activating a
+            # Stalling carrier marks that carrier USED before the crowd roll.
+            self.latch_used.add(self.carrier)
         if engine_open:
             self.act(cmd, A_END_TURN, dice=dice, **tag)
             return
@@ -991,9 +995,12 @@ class Mapper:
         self.stun_stage.clear()    # drive boundary: everyone re-set-up
         self.cheer = [0, 0]        # unspent Cheering Fans assist dies with the drive
         self.turn_owner = None     # nobody's turn until the kick-off settles
-        self.latch_used = set()    # END_DRIVE clears every player flag
-        self.latch_blitzed = set() # (but not skill_rr_used)
-        self.latch_pro = set()
+        # END_DRIVE clears every player flag (but not skill_rr_used), except
+        # on a Secret Weapon player it sends off first (end_drive_advance).
+        kept = {pid for pid in self.slot_of if self.has_skill(pid, "Secret Weapon")}
+        self.latch_used &= kept
+        self.latch_blitzed &= kept
+        self.latch_pro &= kept
         self.ignore_pos.clear()    # repositioning divergences reset with it
         self.ball_diverged = False
         self.pickmeup = []

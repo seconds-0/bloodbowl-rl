@@ -186,7 +186,9 @@ typedef struct {
     int reseats, seat_refused, seat_failed;
     int syncs;         // boundary re-syncs inside re-seated provenance
     int end_turn_dropped;     // redundant END_TURN ops (the engine had ended it)
-    int spans, spans_aligned; // boundary-to-boundary spans (~team turns)
+    int spans;         // boundary-to-boundary spans (~team turns), of which:
+    int spans_aligned; // re-seated, closed, equal to the replay's seat
+    int spans_mirror;  // closed against the mapper's mirror (prefix / no seat)
     int spans_drift;   // closed without a stop, but off the replay on the pitch
     int spans_soft_drift;     // ... or off in a resource / status / latch only
     int span_clean;    // nothing diverged since the last boundary
@@ -1529,6 +1531,7 @@ static int on_expect(runner* R, const char* line, long cmd) {
             R->mirror_resources = 0;
             int rc_truth = seat_build(R, &R->m, &s, &truth, why, sizeof why);
             R->mirror_resources = 1;
+            diff[0] = 0;
             if (rc_truth == 0) seat_diff(&R->m, &truth, diff, sizeof diff, &mask);
             else mask = SD_SOFT;
         } else {
@@ -1585,7 +1588,8 @@ static int on_expect(runner* R, const char* line, long cmd) {
         seat_recover(R, &s, &R->m, cmd, R->last_class);
         return -1;
     }
-    if (R->span_clean) R->spans_aligned++;
+    // Passed the mapper's mirror check only (the prefix, or no seat here).
+    if (R->span_clean) R->spans_mirror++;
     pd_span_flush(PD_SPAN_MIRROR);
     if (R->force_reseat && usable) {
         bb_match carry = R->have_prev_boundary ? R->prev_boundary : R->m;
@@ -1625,21 +1629,24 @@ static int do_act(runner* R, const char* line, long cmd) {
     // itself and the op would end the NEXT turn, which nobody played. The
     // mapper names the turn it is closing (lockstep_map.py end_turn: team,
     // half and that team's turn number; "charge" for the Charge! loop). If
-    // the engine is not waiting in that very turn, an END_TURN without dice
-    // is redundant and dropped (return 1); one with dice means the dice
-    // were needed earlier, which is a stop.
+    // the engine has moved past that turn (another team's turn, a later
+    // turn of the same team, or no team turn at all), an END_TURN without
+    // dice is redundant and dropped (return 1); one with dice means the dice
+    // were needed earlier, which is a stop. An engine whose counter is
+    // BEHIND the replay's is still in the turn being closed: applied.
     long end_team = jint(line, "team", -1);
     long end_charge = jint(line, "charge", 0);
     if (jint(line, "type", 0) == BB_A_END_TURN && (end_team >= 0 || end_charge)) {
         long end_half = jint(line, "half", -1), end_turn = jint(line, "turn", -1);
         bool deciding = R->m.status == BB_STATUS_DECISION && R->m.stack_top > 0;
         int top_proc = deciding ? R->m.stack[R->m.stack_top - 1].proc : BB_PROC_NONE;
+        bool ahead = end_half >= 0 && end_turn >= 0 &&
+                     (R->m.half > end_half ||
+                      (R->m.half == end_half && R->m.turn[end_team & 1] > end_turn));
         bool in_turn = end_charge
             ? top_proc == BB_PROC_KICKOFF
             : top_proc == BB_PROC_TEAM_TURN &&
-              R->m.decision_team == (uint8_t)end_team &&
-              (end_half < 0 || R->m.half == (uint8_t)end_half) &&
-              (end_turn < 0 || R->m.turn[end_team & 1] == (uint8_t)end_turn);
+              R->m.decision_team == (uint8_t)end_team && !ahead;
         if (!in_turn) {
             int unused[MAX_DICE];
             int waiting = jarr(line, "dice", unused, MAX_DICE);
@@ -1967,15 +1974,16 @@ int main(int argc, char** argv) {
                  ",\"reseats\":%d,\"syncs\":%d,\"pairs_reseat\":%ld,"
                  "\"pairs_by_span_status\":[%ld,%ld,%ld,%ld,%ld],\"divergences\":%d,"
                  "\"lost_decisions\":%ld,\"seat_refused\":%d,\"seat_failed\":%d,"
-                 "\"spans\":%d,\"spans_aligned\":%d,\"spans_drift\":%d,"
+                 "\"spans\":%d,\"spans_aligned\":%d,\"spans_mirror\":%d,"
+                 "\"spans_drift\":%d,"
                  "\"spans_soft_drift\":%d,\"end_turn_dropped\":%d,"
                  "\"ended_lost\":%s",
                  R.reseats, R.syncs, PD.pairs_reseat, PD.span_status[0],
                  PD.span_status[1], PD.span_status[2], PD.span_status[3],
                  PD.span_status[4],
                  R.divergences, R.lost_decisions, R.seat_refused, R.seat_failed,
-                 R.spans, R.spans_aligned, R.spans_drift, R.spans_soft_drift,
-                 R.end_turn_dropped, R.lost ? "true" : "false");
+                 R.spans, R.spans_aligned, R.spans_mirror, R.spans_drift,
+                 R.spans_soft_drift, R.end_turn_dropped, R.lost ? "true" : "false");
     }
     printf("{\"summary\":true,\"replay\":\"%s\",\"ops_total\":%d,"
            "\"ops_applied\":%d,\"pct_consumed\":%.1f,\"skips\":%d,"

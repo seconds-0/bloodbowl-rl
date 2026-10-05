@@ -489,7 +489,8 @@ static void test_matches(const char* dir) {
         p = slurp(bbp, &len);
         CHECK(len < ref_len && memcmp(p, ref, len) == 0); // no END_TURN record
         free(p);
-        // Right team, wrong turn number (the same team's NEXT turn): dropped.
+        // Right team, but the engine is already in that team's NEXT turn (the
+        // op closes turn n - 1, the engine is in turn n): dropped.
         snprintf(extra, sizeof extra,
                  "{\"op\":\"act\",\"cmd\":%ld,\"type\":%d,\"arg\":0,\"x\":0,\"y\":0,"
                  "\"dice\":[],\"team\":%d,\"half\":%d,\"turn\":%d}",
@@ -501,6 +502,21 @@ static void test_matches(const char* dir) {
         CHECK(jint(o.summary, "end_turn_dropped", -1) == 1);
         p = slurp(bbp, &len);
         CHECK(len == ref_len && memcmp(p, ref, len) == 0);
+        free(p);
+        // Right team, and the replay's counter is AHEAD of the engine's (the
+        // op closes turn n + 1, the engine is in turn n): the engine is still
+        // in the turn being closed, so the op is applied, as it always was.
+        snprintf(extra, sizeof extra,
+                 "{\"op\":\"act\",\"cmd\":%ld,\"type\":%d,\"arg\":0,\"x\":0,\"y\":0,"
+                 "\"dice\":[],\"team\":%d,\"half\":%d,\"turn\":%d}",
+                 jint(S.line[S.boundary_line[2]], "cmd", 0), BB_A_END_TURN, at.active,
+                 at.half, at.turn[at.active] + 1);
+        write_script_with(&S, broken, -1, S.boundary_line[2], extra);
+        run_cli(&o, dir, a4, 4);
+        CHECK(jint(o.summary, "end_turn_dropped", -1) == 0);
+        p = slurp(bbp, &len);
+        CHECK(len > 16 + (size_t)S.decision[resume] * REC_SIZE);
+        CHECK(p[16 + (size_t)S.decision[resume] * REC_SIZE + REC_SIZE - 4] == BB_A_END_TURN);
         free(p);
         snprintf(extra, sizeof extra,
                  "{\"op\":\"act\",\"cmd\":%ld,\"type\":%d,\"arg\":0,\"x\":0,\"y\":0,"

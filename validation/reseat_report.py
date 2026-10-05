@@ -312,17 +312,19 @@ def main():
     rs = sorted(s["reseats"] for s in S)
     dr = sum(s["spans_drift"] for s in S)
     so = sum(s["spans_soft_drift"] for s in S)
+    mi = sum(s["spans_mirror"] for s in S)
     print(f"boundary-to-boundary spans (team turns, a drive's set-up and kick-off "
           f"counted with the turn before it): {spans}")
-    print(f"   {al:6d} {100 * al / spans:5.1f}%  followed end to end and equal to the "
-          f"replay at the closing boundary")
-    print(f"   {so:6d} {100 * so / spans:5.1f}%  followed end to end; pitch equal, a "
-          f"resource / status / latch not")
-    print(f"   {dr:6d} {100 * dr / spans:5.1f}%  followed end to end but off the replay "
-          f"on the pitch")
-    rest = spans - al - so - dr
-    print(f"   {rest:6d} {100 * rest / spans:5.1f}%  stopped inside, or lost waiting "
-          f"for a boundary")
+    for v, lab in ((mi, "prefix (or no seat): followed end to end, passed the mapper's "
+                        "own boundary check"),
+                   (al, "re-seated: followed end to end and equal to the replay's seat "
+                        "at the closing boundary"),
+                   (so, "re-seated: followed end to end; pitch equal, a resource / "
+                        "status / latch not"),
+                   (dr, "re-seated: followed end to end but off the replay on the pitch"),
+                   (spans - mi - al - so - dr, "stopped inside, or lost waiting for "
+                                               "a boundary")):
+        print(f"   {v:6d} {100 * v / spans:5.1f}%  {lab}")
     print(f"redundant END_TURN ops dropped: {sum(s['end_turn_dropped'] for s in S)}")
     print(f"re-seats per replay: mean {statistics.mean(rs):.1f} median "
           f"{statistics.median(rs):.0f} p90 {q(rs, .9)} max {rs[-1]}; total {sum(rs)}")
@@ -372,7 +374,7 @@ def main():
     out["yield"] = {
         "replays": N, "prefix_records": pre["n"], "reseat_records": res["n"],
         "decisions_total": sd, "spans": spans, "spans_aligned": al,
-        "spans_soft": so, "spans_drift": dr,
+        "spans_mirror": mi, "spans_soft": so, "spans_drift": dr,
         "divergences": sum(s["divergences"] for s in S),
         "lost_decisions": sum(s["lost_decisions"] for s in S),
         "replays_ending_lost": sum(1 for s in S if s["ended_lost"]),

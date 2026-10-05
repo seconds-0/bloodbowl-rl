@@ -596,6 +596,11 @@ turn, `step_count`, `turns_completed*`, `surfs`, `ret`, `spp_game`.
 
 Known not reproduced: Rooted and Eye Gouged on a player who has left the
 pitch (the engine keeps the flag, FUMBBL clears it); Eye Gouged timing.
+Known not repaired: after a re-seat the mapper's own bookkeeping (its
+re-roll and apothecary counts, the players it believes the engine still
+has) is still the engine's old story, so some ops that follow assume a
+re-roll window the engine no longer offers, or miss one it now does. Most
+of these are stops; a gate re-roll the mapper folds into one die is not.
 
 ### Results, 399 BB2025 replays (2026-10-05)
 
@@ -622,11 +627,22 @@ same decisions: 0 differ in any observation byte, mask byte or label.
 | hand-off declarations per 100 replays | 7.8 | 83.7 |
 | foul declarations per 100 replays | 10.5 | 94.5 |
 
-62.5% of boundary-to-boundary spans were followed end to end and equalled
-the replay at the closing boundary; 3,693 recoveries, median 8 per replay.
-Of the 446,555 re-seated records, 71.1% carry stamp 1, 2.6% stamp 4, 4.8%
-stamp 2 and 21.4% stamp 0. Every record's action is inside its own exact
+Of the 12,674 boundary-to-boundary spans (team turns, with a drive's set-up
+and kick-off counted into the turn before it), 67.2% were followed end to
+end: 14.8% in the prefix (checked by the mapper's own boundary comparison),
+47.7% re-seated and equal to the replay's seat at the closing boundary, 1.6%
+re-seated with only a resource, status or latch off, and 3.1% re-seated but
+off the replay on the pitch. The other 32.8% stopped inside or were lost
+waiting for a boundary. 3,693 recoveries, median 8 per replay. Of the
+446,555 re-seated records, 71.1% carry stamp 1, 2.6% stamp 4, 4.8% stamp 2
+and 21.4% stamp 0. Every record's action is inside its own exact
 conditional masks, in both files.
+
+Seating re-rolls and apothecaries from the mapper's mirror instead of the
+replay (`--seat-mirror-resources`) follows 2.3% more records, because the
+script was written against that mirror, but then 17.6% of re-seated records
+sit in spans whose resources differ from the replay. The replay's counts
+are the default.
 
 The underlying stop rate is 7.8 per 1,000 decisions, not the 3 to 4 the
 prefix suggests: the prefix rate is survivorship (each replay contributes
