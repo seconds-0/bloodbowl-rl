@@ -13,8 +13,13 @@ Output ops (one JSON object per line):
   {"op":"act","cmd":N,"type":<bb_action_type>,"arg":..,"x":..,"y":..,
    "dice":[...], "hk":[t,s]?, "note":"...", "nopair":1?}
   {"op":"expect","cmd":N,"players":[[t,s,x,y,state],...],"ball":[x,y,held],
-   "score":[h,a]}
+   "score":[h,a], "seat":{...}?}
   {"op":"skip","cmd":N,"what":"...","detail":"..."}
+
+The optional "seat" object on an expect op is the complete FFB game state at
+that team-turn boundary, folded from the replay's model-change log
+(ffb_fold.py) and translated to engine terms (build_seat below). The runner
+ignores it unless asked to re-seat (--reseat / --force-reseat / --seat-audit).
 
 Semantics: dice attached to an op are exactly the values the engine consumes
 during that op's apply+advance transition (init dice cover the very first
@@ -46,6 +51,9 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+sys.path.insert(0, HERE)
+import ffb_fold  # noqa: E402  (sibling module; FFB model fold for re-seat)
+
 NORM_DIR = os.path.join(HERE, "normalized")
 CACHE_DIR = os.path.join(HERE, "replay_cache")
 OUT_DIR = os.path.join(HERE, "lockstep")
@@ -67,6 +75,20 @@ ACT_TTM, ACT_SECURE, ACT_STAB, ACT_GAZE, ACT_KTM = 6, 7, 8, 9, 10
 ACT_CHAINSAW, ACT_BREATHE_FIRE, ACT_VOMIT = 11, 12, 13
 
 RR_TEAM, RR_SKILL, RR_PRO = 0, 1, 2
+
+# bb_types.h mirrors used by the re-seat payload.
+LOC_ON_PITCH, LOC_RESERVES, LOC_KO, LOC_CAS, LOC_SENT_OFF = 0, 1, 2, 3, 4
+STANCE_STANDING, STANCE_PRONE, STANCE_STUNNED, STANCE_STUNNED_USED = 0, 1, 2, 3
+PF_USED, PF_DISTRACTED, PF_HAS_BALL, PF_BLITZED = 1 << 0, 1 << 2, 1 << 3, 1 << 4
+PF_ROOTED, PF_USED_SKILL_B, PF_EYE_GOUGED = 1 << 5, 1 << 8, 1 << 11
+# canonical mirror state code -> (engine location, engine stance)
+SEAT_STATE = {0: (LOC_ON_PITCH, STANCE_STANDING), 1: (LOC_ON_PITCH, STANCE_PRONE),
+              2: (LOC_ON_PITCH, STANCE_STUNNED), 3: (LOC_RESERVES, 0),
+              4: (LOC_KO, 0), 5: (LOC_CAS, 0), 6: (LOC_SENT_OFF, 0)}
+# FFB bases that mean "in the reserves box" to the engine: Missing players
+# keep the Reserves location the init op gave them, and the engine has no
+# Sweltering Heat, so an Exhausted player is simply not on the pitch.
+FFB_BASE_EXTRA = {10: 3, 14: 3, 20: 3}
 
 # Engine D8: roll-1 indexes {-1,-1},{0,-1},{1,-1},{-1,0},{1,0},{-1,1},{0,1},{1,1}
 DIR_TO_FACE = {  # FFB direction name (FieldCoordinate deltas) -> our D8 face
@@ -267,6 +289,13 @@ class Mapper:
         self.last_both_down = None # {att,def,cmd} of the last Both Down
         self.suppress_injury = set()  # pids whose next injury dice are FFB-only
         self.baked_moves = {}      # pid -> final square baked into setup
+        # --- re-seat bookkeeping (never changes the op stream) ---
+        self.folder = ffb_fold.Folder(raw_replay) if raw_replay else None
+        self.blitzed = set()       # pids whose blitz block the engine saw this turn
+        self.pro_used = set()      # pids that spent Pro this turn
+        self.cheer = [0, 0]        # Cheering Fans assist still pending per team
+        self.snack = collections.Counter()  # pid -> Dodgy Snack debuffs so far
+        self.ktm_latched = 0       # engine ktm_used is never cleared once set
 
     # --- roster ---------------------------------------------------------------
     def _build_roster(self):
@@ -358,7 +387,26 @@ class Mapper:
               "dice": list(dice or [])}
         op.update(extra)
         self.ops.append(op)
+        self.note_act_for_seat(typ, arg)
         return op
+
+    def note_act_for_seat(self, typ, arg):
+        """Mirror the engine latches a re-seat must reproduce and FFB does
+        not keep past the turn (see build_seat)."""
+        a = self.activation
+        pid = a.get("pid") if a else None
+        if typ == A_BLOCK_TARGET:
+            if self.pending_block:
+                pid = self.pending_block.get("att") or pid
+            team = self.pid_team(pid) if pid else None
+            if team is not None:
+                self.cheer[team] = 0   # the first Block spends the assist
+            if pid and (self.pending_block or {}).get("from_blitz"):
+                self.blitzed.add(pid)
+        elif typ == A_USE_REROLL and arg == RR_PRO and pid:
+            self.pro_used.add(pid)
+        elif typ == A_DECLARE and arg == ACT_KTM:
+            self.ktm_latched = 1
 
     def flush_step(self, cmd):
         """Emit the buffered STEP (FFB reports the coordinate change BEFORE the
@@ -502,8 +550,164 @@ class Mapper:
             ball = [255, 255, -1]
         else:
             ball = [self.ball[0], self.ball[1], 1 if self.carrier else 0]
-        self.ops.append({"op": "expect", "cmd": cmd, "players": players,
-                         "ball": ball, "score": list(self.score)})
+        op = {"op": "expect", "cmd": cmd, "players": players,
+              "ball": ball, "score": list(self.score)}
+        seat = self.build_seat(cmd, skip_ball)
+        if seat is not None:
+            op["seat"] = seat
+        self.ops.append(op)
+        self.blitzed = set()
+        self.pro_used = set()
+
+    def build_seat(self, cmd, skip_ball):
+        """The engine state FFB recorded at this team-turn boundary.
+
+        Everything FFB carries comes from the folded model after command
+        `cmd` (ffb_fold.Folder): who is where and in what state, the ball,
+        score, half, both turn counters, whose turn starts, both re-roll
+        pools, apothecaries, Bribes, the coach ban and the weather. Three
+        things FFB does not carry are derived from the replay stream:
+          * the kicking team this drive and in half one (drive history);
+          * the Stunned stage (the engine keeps a player who started their
+            own turn Stunned as STUNNED_USED; FFB has already turned them
+            Prone);
+          * engine latches that outlive the turn in bb_match but mean
+            nothing to FFB: last turn's USED / BLITZED / Pro flags on the
+            team that just played, the pending Cheering Fans assist, the
+            Dodgy Snack debuffs and ktm_used.
+        A boundary the engine cannot represent gets {"refuse": reason}.
+        """
+        if self.folder is None:
+            return None
+        st = self.folder.at(cmd)
+        refuse = None
+        if skip_ball:
+            refuse = "touchdown_boundary"
+        if st["homePlaying"] is None or st["half"] not in (1, 2):
+            refuse = refuse or "no_turn_owner"
+        if st["turnMode"] != "regular":
+            refuse = refuse or f"mode_{st['turnMode']}"
+        if self.kicking is None:
+            refuse = refuse or "kicking_unknown"
+        active = 0 if st["homePlaying"] else 1
+        pl = []
+        on_pitch = [0, 0]
+        squares = {}
+        for pid, p in st["players"].items():
+            ts = self.slot_of.get(pid)
+            if ffb_fold.on_pitch(p["xy"]) and not ts:
+                refuse = refuse or "player_without_slot"
+        for pid, (team, sl) in sorted(self.slot_of.items(), key=lambda kv: kv[1]):
+            p = st["players"].get(pid, {"xy": None, "state": 0})
+            fbase = ffb_fold.base_of(p)
+            bits = p["state"] & ~ffb_fold.BASE_MASK
+            xy = tuple(p["xy"]) if ffb_fold.on_pitch(p["xy"]) else None
+            code = BASE_STATE.get(fbase, FFB_BASE_EXTRA.get(fbase, -1))
+            mirror = self.base.get(pid, -1)
+            if fbase == 0 and p["xy"] is None:
+                code = 3   # not in the FFB game (yet): the init op's Reserves
+            elif code < 0 and xy is not None and mirror in (0, 1, 2):
+                code = mirror  # transient FFB base (moving, blocked): last stable
+            if code < 0:
+                refuse = refuse or f"player_state_{fbase}"
+                code = 3
+            if (code < 3) != (xy is not None):
+                refuse = refuse or "state_square_mismatch"
+                xy = None
+                code = max(code, 3)
+            loc, stance = SEAT_STATE[code]
+            x, y = (xy if loc == LOC_ON_PITCH else (0, 0))
+            flags = 0
+            if loc == LOC_ON_PITCH:
+                on_pitch[team] += 1
+                if (x, y) in squares:
+                    refuse = refuse or "two_players_one_square"
+                squares[(x, y)] = (pid, stance)
+                # FFB turns a Stunned player Prone at the START of their own
+                # team's turn; the engine holds them STUNNED_USED through that
+                # turn (not activatable) and turns them Prone at its end.
+                if team == active and (
+                        stance == STANCE_STUNNED or
+                        (stance == STANCE_PRONE and
+                         self.stun_stage.get(pid) == "aged")):
+                    stance = STANCE_STUNNED_USED
+                # FFB shows Distracted as Confused or Hypnotized, but not on
+                # a player who failed their gate while Prone; the mapper's
+                # own gate mirror covers that case.
+                if bits & (ffb_fold.BIT_CONFUSED | ffb_fold.BIT_HYPNOTIZED) or \
+                        pid in self.distracted:
+                    flags |= PF_DISTRACTED
+                if bits & ffb_fold.BIT_ROOTED:
+                    flags |= PF_ROOTED
+                if bits & ffb_fold.BIT_EYE_GOUGED:
+                    flags |= PF_EYE_GOUGED
+            if team != active:
+                # Last turn's latches stay on the team that just played until
+                # its own next turn starts, wherever the player now is (the
+                # engine does not clear them when a player leaves the pitch).
+                if pid in self.used_this_turn:
+                    flags |= PF_USED
+                if pid in self.blitzed:
+                    flags |= PF_BLITZED
+                if pid in self.pro_used:
+                    flags |= PF_USED_SKILL_B
+            pl.append([team * 16 + sl, loc, x, y, stance, flags])
+        if max(on_pitch) > 11:
+            refuse = refuse or "more_than_11_on_pitch"
+        ball = st["ball"]
+        bxy = tuple(ball["xy"]) if ffb_fold.on_pitch(ball["xy"]) else None
+        held = 0
+        # FFB's ballMoving is an animation flag (it stays set after a pass
+        # that ended on the ground), so it is not consulted: a ball on a
+        # Standing player's square is held, any other pitch square is the
+        # ground. The mapper's own carrier mirror must agree.
+        if bxy is None or not ball["inPlay"]:
+            refuse = refuse or "ball_not_on_pitch"
+            bxy = (0, 0)
+        elif bxy in squares:
+            pid, stance = squares[bxy]
+            if stance != STANCE_STANDING:
+                refuse = refuse or "ball_under_downed_player"
+            held = 1
+            for row in pl:
+                if row[0] == self.slot_of[pid][0] * 16 + self.slot_of[pid][1]:
+                    row[5] |= PF_HAS_BALL
+        # (The mapper's own carrier mirror is not consulted: it drops the
+        # carrier where FFB's model keeps it, e.g. a Safe Pass fumble.)
+        td = st["turn"]
+        sides = ("home", "away")
+        seat = {
+            "half": st["half"], "active": active,
+            "turn": [td[s]["turnNr"] for s in sides],
+            "score": [st["score"][s] for s in sides],
+            "kick": self.kicking if self.kicking is not None else 0,
+            "h1kick": self.first_kicking,
+            "weather": WEATHER_NAME.get(st["weather"], 2),
+            "rr": [td[s]["reRolls"] for s in sides],
+            "bonus": [td[s]["rerollBrilliantCoachingOneDrive"] +
+                      td[s]["rerollPumpUpTheCrowdOneDrive"] +
+                      td[s]["rerollShowStarOneDrive"] for s in sides],
+            "apo": [td[s]["apothecaries"] for s in sides],
+            "bribes": [max(0, (st["inducements"][s].get("bribes") or {}).get("value", 0) -
+                           (st["inducements"][s].get("bribes") or {}).get("uses", 0))
+                       for s in sides],
+            "eject": [1 if td[s]["coachBanned"] else 0 for s in sides],
+            "cheer": list(self.cheer), "ktm": self.ktm_latched,
+            # 1 = the mapper itself knows the engine it mirrors is off the
+            # FFB game here (a classified divergence it tolerates). The audit
+            # uses it to tell seat errors from engine drift.
+            "tol": 1 if (self.ignore_all or self.ignore_pos or
+                         self.ignore_state or self.engine_alive or
+                         self.ball_diverged) else 0,
+            "rr_mirror": [max(0, v) for v in self.rerolls],
+            "ball": [bxy[0], bxy[1], held],
+            "pl": pl,
+            "snack": sorted([self.slot_of[p][0] * 16 + self.slot_of[p][1], n]
+                            for p, n in self.snack.items() if p in self.slot_of),
+        }
+        if st["weather"] not in WEATHER_NAME:
+            refuse = refuse or "weather_unknown"
+        return {"refuse": refuse} if refuse else seat
 
     # --- activation plumbing -------------------------------------------------------
     def close_activation(self, cmd):
@@ -727,6 +931,9 @@ class Mapper:
     def handle_formation(self, i, r):
         cmd = r.get("cmd") or 0
         self.stun_stage.clear()    # drive boundary: everyone re-set-up
+        self.cheer = [0, 0]        # unspent Cheering Fans assist dies with the drive
+        self.blitzed = set()       # END_DRIVE clears every player flag
+        self.pro_used = set()
         self.ignore_pos.clear()    # repositioning divergences reset with it
         self.ball_diverged = False
         self.pickmeup = []
@@ -1127,6 +1334,10 @@ class Mapper:
         rh, ra = r.get("rollHome"), r.get("rollAway")
         if rh and ra:
             self.attach(cmd, [rh, ra], "cheering fans")
+            if r.get("report") == "cheeringFans":
+                # Engine: the winner's first Block next turn gets an assist
+                # (both on a tie). Tracked for re-seat only.
+                self.cheer = [1 if rh >= ra else 0, 1 if ra >= rh else 0]
 
     def rep_extraReRoll(self, i, r, cmd):
         # Brilliant Coaching: the engine compares the raw D6s and grants the
@@ -1227,6 +1438,8 @@ class Mapper:
             self.consumed.add(j)
             roll = int(self.recs[j].get("roll") or 1)
             dice.append(roll)
+            if roll >= 2:
+                self.snack[vic] += 1  # re-seat: engine debuff count
             if roll >= 2 and self.ma_of.get(vic, 0) > 1:
                 self.ma_of[vic] -= 1  # mirror the engine's -1 MA debuff
             # roll == 1: victim to Reserves — FFB state records mirror it.
@@ -1298,6 +1511,7 @@ class Mapper:
                     del self.stun_stage[pid]
                     self.base[pid] = 1
             self.age_stunned(1 - ended)
+            self.cheer[ended] = 0  # engine turn_end: the assist was "next turn" only
         self.emit_expect(cmd, skip_ball=bool(td))
         self.acts_this_turn = 0
         self.used_this_turn = set()
