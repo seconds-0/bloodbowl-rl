@@ -2019,3 +2019,11 @@ This changes how gate tournaments are computed, not what they measure. Games per
 - **Chain 49 is not a warm start** unless a later entry says so.
 
 **Stage order now:** chain 47 (running), chain 48, chain 49. Nothing is registered after chain 49; the next entry must add a stage before about 20:45 PDT on 2026-10-05 or the GPU idles.
+
+
+**D413 amendment (2026-10-04 19:10 PDT, after Codex's read; no P1; no chain 47, 48 or 49 result exists).**
+- **Pair count.** Three pairs are added to the 47/48 gate, not two: chain 47 against chain 41, chain 48 against chain 41 and chain 48 against chain 27. The gate is nine pairs, 28,800 games.
+- **Chain 49 differs from its control in one more operational respect, declared here.** Chain 42's stage applied the 0.536 mean floor on the rig; chain 49's applies D405's chain 30 guard (0.541 / 0.551 / 0.546, all three). The training settings are otherwise identical. The guard does not touch training; it only decides whether the stage halts after the exam. If chain 49 trips its guard, the pair reads Negative and the halt is not evidence about the comparison beyond that.
+- **Plateau wording.** D413 said that if chain 48 reads Flat, Inconclusive or Negative, "two seeds agree". Corrected: in any of those cases neither rung qualifies for retention. Two Flat readings would be replicated evidence that a fifth plain continuation from chain 41 does not clear the gate; an Inconclusive is not agreement, and a Negative is a regression, not a plateau.
+- **"Already running"** was wrong: chain 47 is running and chain 48 follows it.
+- **Warm-start timing.** No chain becomes a warm start by this entry. If chain 47, chain 48 or chain 49 qualifies as a candidate under the rules above, a later entry names the warm start before any stage is launched from it, and where two candidates qualify that entry decides between them by a registered direct pair.
