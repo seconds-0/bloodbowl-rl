@@ -296,6 +296,7 @@ class Mapper:
         self.cheer = [0, 0]        # Cheering Fans assist still pending per team
         self.snack = collections.Counter()  # pid -> Dodgy Snack debuffs so far
         self.ktm_latched = 0       # engine ktm_used is never cleared once set
+        self.turn_owner = None     # team whose turn FFB says is in progress
 
     # --- roster ---------------------------------------------------------------
     def _build_roster(self):
@@ -389,6 +390,28 @@ class Mapper:
         self.ops.append(op)
         self.note_act_for_seat(typ, arg)
         return op
+
+    def end_turn(self, cmd, dice, engine_open):
+        """Close the team turn FFB just ended.
+
+        The engine ends a team turn by itself on a turnover or when nobody
+        is left to activate; whether it did depends on engine state the
+        mirror only approximates. So the END_TURN is always emitted, with
+        the team whose turn it ends, and the runner applies it only if the
+        engine is still in that team's turn. When the mirror believes the
+        engine has already ended the turn (engine_open false) the boundary
+        dice ride on the last act as before and the END_TURN is a fallback
+        the runner applies without recording: FFB's turn end was then not
+        a choice the coach made from the state the engine holds."""
+        team = self.turn_owner if self.turn_owner is not None else self.active_team
+        tag = {"team": team} if team is not None else {}
+        if engine_open:
+            self.act(cmd, A_END_TURN, dice=dice, **tag)
+            return
+        if dice:
+            self.attach(cmd, dice, "turn end")
+        if tag:
+            self.act(cmd, A_END_TURN, nopair=1, note="if still open", **tag)
 
     def note_act_for_seat(self, typ, arg):
         """Mirror the engine latches a re-seat must reproduce and FFB does
@@ -580,6 +603,8 @@ class Mapper:
         if self.folder is None:
             return None
         st = self.folder.at(cmd)
+        self.turn_owner = None if st["homePlaying"] is None else \
+            (0 if st["homePlaying"] else 1)
         refuse = None
         if skip_ball:
             refuse = "touchdown_boundary"
@@ -932,6 +957,7 @@ class Mapper:
         cmd = r.get("cmd") or 0
         self.stun_stage.clear()    # drive boundary: everyone re-set-up
         self.cheer = [0, 0]        # unspent Cheering Fans assist dies with the drive
+        self.turn_owner = None     # nobody's turn until the kick-off settles
         self.blitzed = set()       # END_DRIVE clears every player flag
         self.pro_used = set()
         self.ignore_pos.clear()    # repositioning divergences reset with it
@@ -1491,14 +1517,10 @@ class Mapper:
             [v for _, v in sorted(self.pickmeup)] + \
             list(self.turnend_dice) + ko_dice
         self.stall_dice = []
-        if not self.turnover and self.engine_turn_open():
-            self.act(cmd, A_END_TURN, dice=boundary_dice)
-        else:
-            # Turnover or every player used: the engine auto-ends the team
-            # turn during the last act's advance — an explicit END_TURN here
-            # would land on the NEXT team's fresh turn and skip it.
-            if boundary_dice:
-                self.attach(cmd, boundary_dice, "turn end")
+        # Turnover or every player used: the engine auto-ends the team turn
+        # during the last act's advance (see end_turn).
+        self.end_turn(cmd, boundary_dice,
+                      not self.turnover and self.engine_turn_open())
         self.turnend_dice = []
         self.pickmeup = []
         self.pmu_stood = set()
@@ -1557,10 +1579,8 @@ class Mapper:
             boundary_dice = list(self.stall_dice) + \
                 [v for _, v in sorted(self.pickmeup)] + \
                 list(self.turnend_dice) + ko_dice
-            if not self.turnover and self.engine_turn_open():
-                self.act(cmd, A_END_TURN, dice=boundary_dice)
-            elif boundary_dice:
-                self.attach(cmd, boundary_dice, "half end")
+            self.end_turn(cmd, boundary_dice,
+                          not self.turnover and self.engine_turn_open())
         self.stall_dice = []
         self.turnend_dice = []
         self.pickmeup = []

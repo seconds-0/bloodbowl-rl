@@ -235,13 +235,19 @@ class SeatPayloadTests(unittest.TestCase):
             raw = lockstep_map.load_raw(rid)
             ops = lockstep_map.Mapper(records, raw_replay=raw).run()
             # the seat is an addition: with the fold switched off the mapper
-            # emits the very same ops
+            # emits the very same ops. (Only the team an END_TURN names may
+            # differ: without the fold it falls back to the last activation's
+            # team, which is stale after a turn nobody activated in.)
             bare = lockstep_map.Mapper(records, raw_replay=raw)
             bare.folder = None
             plain = bare.run()
             self.assertFalse(any("seat" in o for o in plain))
-            self.assertEqual([{k: v for k, v in o.items() if k != "seat"} for o in ops],
-                             plain, rid)
+
+            def core(op):
+                drop = ("seat", "team") if op.get("type") == lockstep_map.A_END_TURN \
+                    else ("seat",)
+                return {k: v for k, v in op.items() if k not in drop}
+            self.assertEqual([core(o) for o in ops], [core(o) for o in plain], rid)
             for o in ops:
                 if o["op"] != "expect":
                     continue

@@ -18,6 +18,9 @@
 //      how their span ended.
 //   5. seat_build refuses seats that are out of range, self-contradictory or
 //      describe a team turn the engine would never have opened.
+//   6. An END_TURN op that names the team whose turn it closes is dropped when
+//      the engine has already ended that turn, instead of ending the next
+//      team's fresh turn (and recording a decision nobody made).
 #define _POSIX_C_SOURCE 200809L
 
 #define main bb_lockstep_cli_main
@@ -248,10 +251,13 @@ static bool generate(script* S, int seed, int* audited) {
     return S->boundaries >= 4;
 }
 
-static void write_script(const script* S, const char* path, int corrupt_line) {
+// extra_before >= 0: write `extra` just before that line.
+static void write_script_with(const script* S, const char* path, int corrupt_line,
+                              int extra_before, const char* extra) {
     FILE* f = fopen(path, "w");
     CHECK(f != NULL);
     for (int i = 0; i < S->n; i++) {
+        if (i == extra_before) fprintf(f, "%s\n", extra);
         if (i == corrupt_line) {
             // One die the engine will not consume: a dice_overrun stop.
             const char* dice = strstr(S->line[i], "\"dice\":[");
@@ -264,6 +270,10 @@ static void write_script(const script* S, const char* path, int corrupt_line) {
         fprintf(f, "%s\n", S->line[i]);
     }
     CHECK(fclose(f) == 0);
+}
+
+static void write_script(const script* S, const char* path, int corrupt_line) {
+    write_script_with(S, path, corrupt_line, -1, "");
 }
 
 // --- running the CLI ----------------------------------------------------------
@@ -444,6 +454,46 @@ static void test_matches(const char* dir) {
         free(s);
         free(plain);
         free(plain_s);
+
+        // (6) a redundant END_TURN at a boundary: the engine is already in the
+        // next team's turn. Tagged with the team it closes, it is dropped and
+        // the run is the clean run. With dice it is a stop. Untagged (the old
+        // script format) it ends the fresh turn and is recorded.
+        seat_rec at;
+        seat_parse(S.line[S.boundary_line[2]], &at);
+        char extra[256];
+        snprintf(extra, sizeof extra,
+                 "{\"op\":\"act\",\"cmd\":%ld,\"type\":%d,\"arg\":0,\"x\":0,\"y\":0,"
+                 "\"dice\":[],\"team\":%d}", jint(S.line[S.boundary_line[2]], "cmd", 0),
+                 BB_A_END_TURN, 1 - at.active);
+        write_script_with(&S, broken, -1, S.boundary_line[2], extra);
+        char* a4[] = {"--seat-audit", "--dump-pairs", bbp, broken};
+        run_cli(&o, dir, a4, 4);
+        CHECK(strstr(o.summary, "\"diverged\":false") != NULL);
+        CHECK(jint(o.summary, "end_turn_dropped", -1) == 1);
+        p = slurp(bbp, &len);
+        CHECK(len == ref_len && memcmp(p, ref, len) == 0);
+        free(p);
+        snprintf(extra, sizeof extra,
+                 "{\"op\":\"act\",\"cmd\":%ld,\"type\":%d,\"arg\":0,\"x\":0,\"y\":0,"
+                 "\"dice\":[3],\"team\":%d}", jint(S.line[S.boundary_line[2]], "cmd", 0),
+                 BB_A_END_TURN, 1 - at.active);
+        write_script_with(&S, broken, -1, S.boundary_line[2], extra);
+        run_cli(&o, dir, a4, 4);
+        CHECK(strstr(o.summary, "\"diverged\":true") != NULL);
+        p = slurp(bbp, &len);
+        CHECK(len < ref_len && memcmp(p, ref, len) == 0); // no END_TURN record
+        free(p);
+        snprintf(extra, sizeof extra,
+                 "{\"op\":\"act\",\"cmd\":%ld,\"type\":%d,\"arg\":0,\"x\":0,\"y\":0,"
+                 "\"dice\":[]}", jint(S.line[S.boundary_line[2]], "cmd", 0), BB_A_END_TURN);
+        write_script_with(&S, broken, -1, S.boundary_line[2], extra);
+        run_cli(&o, dir, a4, 4);
+        p = slurp(bbp, &len);
+        size_t upto = 16 + (size_t)S.decision[resume] * REC_SIZE;
+        CHECK(len > upto && memcmp(p, ref, upto) == 0);
+        CHECK(p[upto + REC_SIZE - 4] == BB_A_END_TURN); // the unplayed turn, ended
+        free(p);
         free(ref);
         free(ref_s);
     }

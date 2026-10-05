@@ -184,6 +184,7 @@ typedef struct {
     int divergences;   // every divergence, not only the first
     int reseats, seat_refused, seat_failed;
     int syncs;         // boundary re-syncs inside re-seated provenance
+    int end_turn_dropped;     // redundant END_TURN ops (the engine had ended it)
     int spans, spans_aligned; // boundary-to-boundary spans (~team turns)
     int spans_drift;   // closed without a stop, but off the replay's state
     int spans_soft_drift;     // ... or off in resources / statuses only
@@ -1558,6 +1559,33 @@ static int on_expect(runner* R, const char* line, long cmd) {
 
 static int do_act(runner* R, const char* line, long cmd) {
     char ours[512], theirs[256];
+    // END_TURN is legal in every team turn, so legality cannot show that the
+    // engine has already ended this turn by itself and the op would end the
+    // NEXT team's fresh turn, which nobody played. The mapper names the team
+    // whose turn it is closing (lockstep_map.py end_turn): if the engine is
+    // not waiting in that team's turn, an END_TURN without dice is redundant
+    // and dropped (return 1); one with dice means the dice were needed
+    // earlier, which is a stop.
+    long end_team = jint(line, "team", -1);
+    if (jint(line, "type", 0) == BB_A_END_TURN && end_team >= 0) {
+        bool in_turn = R->m.status == BB_STATUS_DECISION && R->m.stack_top > 0 &&
+                       R->m.stack[R->m.stack_top - 1].proc == BB_PROC_TEAM_TURN &&
+                       R->m.decision_team == (uint8_t)end_team;
+        if (!in_turn) {
+            int unused[MAX_DICE];
+            int waiting = jarr(line, "dice", unused, MAX_DICE);
+            if (waiting == 0) {
+                R->end_turn_dropped++;
+                return 1;
+            }
+            snprintf(ours, sizeof ours, "engine is not waiting in team %ld's turn",
+                     end_team);
+            snprintf(theirs, sizeof theirs, "END_TURN for team %ld with %d dice",
+                     end_team, waiting);
+            report_divergence(R, cmd, "wrong_team", ours, theirs);
+            return -1;
+        }
+    }
     if (R->m.status != BB_STATUS_DECISION) {
         snprintf(ours, sizeof ours, "engine status %s, no decision pending",
                  status_name(R->m.status));
@@ -1821,6 +1849,11 @@ int main(int argc, char** argv) {
         } else if (is_expect) {
             rc = on_expect(&R, line, cmd);
         }
+        if (rc == 1) { // dropped as redundant: neither applied nor a stop
+            R.ops_applied++;
+            ctx_push(&R, line);
+            continue;
+        }
         if (rc != 0) {
             SD.staged = 0; // never confirmed: a later op must not commit it
             pd_span_flush(PD_SPAN_OPEN);
@@ -1861,12 +1894,13 @@ int main(int argc, char** argv) {
                  "\"pairs_by_span_status\":[%ld,%ld,%ld,%ld],\"divergences\":%d,"
                  "\"lost_decisions\":%ld,\"seat_refused\":%d,\"seat_failed\":%d,"
                  "\"spans\":%d,\"spans_aligned\":%d,\"spans_drift\":%d,"
-                 "\"spans_soft_drift\":%d,\"ended_lost\":%s",
+                 "\"spans_soft_drift\":%d,\"end_turn_dropped\":%d,"
+                 "\"ended_lost\":%s",
                  R.reseats, R.syncs, PD.pairs_reseat, PD.span_status[0],
                  PD.span_status[1], PD.span_status[2], PD.span_status[3],
                  R.divergences, R.lost_decisions, R.seat_refused, R.seat_failed,
                  R.spans, R.spans_aligned, R.spans_drift, R.spans_soft_drift,
-                 R.lost ? "true" : "false");
+                 R.end_turn_dropped, R.lost ? "true" : "false");
     }
     printf("{\"summary\":true,\"replay\":\"%s\",\"ops_total\":%d,"
            "\"ops_applied\":%d,\"pct_consumed\":%.1f,\"skips\":%d,"
