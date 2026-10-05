@@ -49,7 +49,7 @@ def main():
         age = time.time() - os.path.getmtime(statuses[-1])
         print("stage:", status["stamp"], "phase:", status["phase"], "exit:", status["exit_code"])
         if status["phase"] == "training":
-            logs = glob.glob(f"{run}/screen-attempt*/*-s4[0-9].log")
+            logs = glob.glob(f"{run}/screen-attempt*/*-s[0-9]*.log")
             if logs:
                 log = max(logs, key=os.path.getmtime)
                 silent = time.time() - os.path.getmtime(log)
