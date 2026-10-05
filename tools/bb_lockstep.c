@@ -976,24 +976,25 @@ static int do_expect(runner* R, const char* line, long cmd) {
 // What the seat carries, and where the rest comes from (seat_build):
 //   from the replay   every player's location, square, stance and status
 //                     flags; the ball; half; both turn counters; score; whose
-//                     turn starts; kicking team; weather; both re-roll pools
-//                     and their drive-scoped share; apothecaries; Bribes; the
-//                     coach ban
-//   derived by the    STUNNED versus STUNNED_USED; the kicking team in half
-//   mapper            one; last turn's USED / BLITZED / Pro latches on the
-//                     team that just played; the pending Cheering Fans
-//                     assist; Dodgy Snack debuffs; ktm_used
+//                     turn starts; weather; both re-roll pools and their
+//                     drive-scoped share; apothecaries; Bribes; the coach ban
+//   derived by the    STUNNED versus STUNNED_USED; the kicking team now and
+//   mapper            in half one; the latches the team not on turn keeps
+//                     until its own next turn (USED, BLITZED, Pro, skill
+//                     re-rolls spent); the pending Cheering Fans assist;
+//                     Dodgy Snack debuffs; ktm_used
 //   from the init op  skills, base characteristics, positions, Loner and
 //                     Bloodlust values, re-roll complement, fan factor,
 //                     team ids
 //   set by rule       the two frames of a fresh team turn (MATCH phase 3,
 //                     TEAM_TURN phase 1), DECISION for the active team, no
 //                     turnover, the six per-turn action latches clear, and
-//                     moved / rushes / skill_rr_used zero for everyone
+//                     moved / rushes zero for everyone
 //   carried, stale    step_count, turns_completed*, surfs, ret (bookkeeping
 //                     no observation, mask or rule reads at a fresh turn)
-// Of these, only the "derived" and the zeroed non-active-team bytes are
-// guesses; --seat-audit measures how often each one is wrong.
+// The "derived" rows are the guesses; --seat-audit measures how often each is
+// wrong against states the engine reached legally. Known not reproduced:
+// Rooted / Eye Gouged on a player who has left the pitch.
 
 #define SEAT_BUF 16384
 #define SEAT_COLS 7
