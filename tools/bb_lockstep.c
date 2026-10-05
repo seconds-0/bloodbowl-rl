@@ -187,8 +187,8 @@ typedef struct {
     int syncs;         // boundary re-syncs inside re-seated provenance
     int end_turn_dropped;     // redundant END_TURN ops (the engine had ended it)
     int spans, spans_aligned; // boundary-to-boundary spans (~team turns)
-    int spans_drift;   // closed without a stop, but off the replay's state
-    int spans_soft_drift;     // ... or off in resources / statuses only
+    int spans_drift;   // closed without a stop, but off the replay on the pitch
+    int spans_soft_drift;     // ... or off in a resource / status / latch only
     int span_clean;    // nothing diverged since the last boundary
     long lost_decisions;      // act/place ops skipped while lost
     long span_lost;           // ... since the divergence that opened this gap
@@ -1028,9 +1028,10 @@ static int jrows(const char* s, const char* key, int* out, int cols, int cap) {
     const char* p = pa + 1;
     int rows = 0;
     for (;;) {
-        while (p < end && *p != '[') p++;
-        if (p >= end) break;
-        if (rows == cap) return -1;
+        // between rows: only separators, then a row or the end of the array
+        while (p < end - 1 && (*p == ' ' || *p == ',')) p++;
+        if (p >= end - 1) break;
+        if (*p != '[' || rows == cap) return -1;
         const char* pe = span(p);
         const char* q = p + 1;
         int n = 0;
@@ -1039,7 +1040,7 @@ static int jrows(const char* s, const char* key, int* out, int cols, int cap) {
             if (*q == ']') break;
             char* stop;
             long v = strtol(q, &stop, 10);
-            if (stop == q || n == cols) return -1;
+            if (stop == q || n == cols || v < -1000000 || v > 1000000) return -1;
             out[rows * cols + n++] = (int)v;
             q = stop;
         }
@@ -1520,14 +1521,25 @@ static int on_expect(runner* R, const char* line, long cmd) {
         seat_build(R, &R->m, &s, &built, why, sizeof why) == 0) {
         char diff[2048];
         int mask = 0;
-        seat_diff(&R->m, &built, diff, sizeof diff, &mask);
+        if (R->mirror_resources) {
+            // The stamp says how the engine compares with the REPLAY, also
+            // when the next state is seated from the mapper's mirror.
+            bb_match truth;
+            R->mirror_resources = 0;
+            int rc_truth = seat_build(R, &R->m, &s, &truth, why, sizeof why);
+            R->mirror_resources = 1;
+            if (rc_truth == 0) seat_diff(&R->m, &truth, diff, sizeof diff, &mask);
+            else mask = SD_SOFT;
+        } else {
+            seat_diff(&R->m, &built, diff, sizeof diff, &mask);
+        }
         int status = (mask & SD_HARD) ? PD_SPAN_DRIFT
                      : (mask & (SD_SOFT | SD_DERIVED)) ? PD_SPAN_SOFT
                      : PD_SPAN_MATCH;
         pd_span_flush(status);
-        if (status == PD_SPAN_DRIFT) R->spans_drift++;
-        else R->spans_aligned++;
-        if (status == PD_SPAN_SOFT) R->spans_soft_drift++;
+        if (status == PD_SPAN_MATCH) R->spans_aligned++;
+        else if (status == PD_SPAN_SOFT) R->spans_soft_drift++;
+        else R->spans_drift++;
         printf("{\"close\":true,\"replay\":\"%s\",\"cmd\":%ld,\"seg\":%d,"
                "\"status\":%d,\"mask\":%d,\"diff\":\"%s\"}\n",
                R->replay, cmd, R->segment, status, mask, diff);
@@ -1607,18 +1619,26 @@ static int on_expect(runner* R, const char* line, long cmd) {
 
 static int do_act(runner* R, const char* line, long cmd) {
     char ours[512], theirs[256];
-    // END_TURN is legal in every team turn, so legality cannot show that the
-    // engine has already ended this turn by itself and the op would end the
-    // NEXT team's fresh turn, which nobody played. The mapper names the team
-    // whose turn it is closing (lockstep_map.py end_turn): if the engine is
-    // not waiting in that team's turn, an END_TURN without dice is redundant
-    // and dropped (return 1); one with dice means the dice were needed
-    // earlier, which is a stop.
+    // END_TURN is legal in every team turn (and in the Charge! loop), so
+    // legality cannot show that the engine has already ended this turn by
+    // itself and the op would end the NEXT turn, which nobody played. The
+    // mapper names the turn it is closing (lockstep_map.py end_turn: team,
+    // half and that team's turn number; "charge" for the Charge! loop). If
+    // the engine is not waiting in that very turn, an END_TURN without dice
+    // is redundant and dropped (return 1); one with dice means the dice
+    // were needed earlier, which is a stop.
     long end_team = jint(line, "team", -1);
-    if (jint(line, "type", 0) == BB_A_END_TURN && end_team >= 0) {
-        bool in_turn = R->m.status == BB_STATUS_DECISION && R->m.stack_top > 0 &&
-                       R->m.stack[R->m.stack_top - 1].proc == BB_PROC_TEAM_TURN &&
-                       R->m.decision_team == (uint8_t)end_team;
+    long end_charge = jint(line, "charge", 0);
+    if (jint(line, "type", 0) == BB_A_END_TURN && (end_team >= 0 || end_charge)) {
+        long end_half = jint(line, "half", -1), end_turn = jint(line, "turn", -1);
+        bool deciding = R->m.status == BB_STATUS_DECISION && R->m.stack_top > 0;
+        int top_proc = deciding ? R->m.stack[R->m.stack_top - 1].proc : BB_PROC_NONE;
+        bool in_turn = end_charge
+            ? top_proc == BB_PROC_KICKOFF
+            : top_proc == BB_PROC_TEAM_TURN &&
+              R->m.decision_team == (uint8_t)end_team &&
+              (end_half < 0 || R->m.half == (uint8_t)end_half) &&
+              (end_turn < 0 || R->m.turn[end_team & 1] == (uint8_t)end_turn);
         if (!in_turn) {
             int unused[MAX_DICE];
             int waiting = jarr(line, "dice", unused, MAX_DICE);
@@ -1626,10 +1646,11 @@ static int do_act(runner* R, const char* line, long cmd) {
                 R->end_turn_dropped++;
                 return 1;
             }
-            snprintf(ours, sizeof ours, "engine is not waiting in team %ld's turn",
-                     end_team);
-            snprintf(theirs, sizeof theirs, "END_TURN for team %ld with %d dice",
-                     end_team, waiting);
+            snprintf(ours, sizeof ours, "engine is not waiting in that turn (half %d "
+                     "decision team %d turns [%d,%d])", R->m.half,
+                     R->m.decision_team, R->m.turn[0], R->m.turn[1]);
+            snprintf(theirs, sizeof theirs, "END_TURN for team %ld half %ld turn %ld "
+                     "with %d dice", end_team, end_half, end_turn, waiting);
             report_divergence(R, cmd, "wrong_team", ours, theirs);
             return -1;
         }

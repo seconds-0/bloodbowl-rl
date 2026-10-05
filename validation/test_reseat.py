@@ -159,6 +159,19 @@ class FoldTests(unittest.TestCase):
         with self.assertRaises(LookupError):
             folder.at(999)                            # not in the log at all
 
+    def test_folder_refuses_a_number_that_occurs_twice(self):
+        raw = tiny_replay()
+        syncs = [c for c in raw["gameLog"]["commandArray"]
+                 if c["netCommandId"] == "serverModelSync"]
+        for c, nr in zip(syncs, (1, 2, 1, 3, 4)):
+            c["commandNr"] = nr
+        folder = ffb_fold.Folder(raw)
+        with self.assertRaises(LookupError):
+            folder.at(1)                              # which 1?
+        before = json.dumps(folder.at(2), sort_keys=True)
+        self.assertEqual(json.dumps(folder.at(2), sort_keys=True), before)
+        self.assertEqual(folder.i, 2)                 # did not run ahead
+
     def test_streaming_folder_matches_fold(self):
         raw = tiny_replay()
         snaps, final = ffb_fold.fold(raw, at_cmds={1, 2, 3, 4, 5})
@@ -251,20 +264,25 @@ class SeatPayloadTests(unittest.TestCase):
                 records = [json.loads(l) for l in f]
             raw = lockstep_map.load_raw(rid)
             ops = lockstep_map.Mapper(records, raw_replay=raw).run()
-            # the seat is an addition: with the fold switched off the mapper
-            # emits the very same ops. (Only the team an END_TURN names may
-            # differ: without the fold it falls back to the last activation's
-            # team, which is stale after a turn nobody activated in.)
             bare = lockstep_map.Mapper(records, raw_replay=raw)
             bare.folder = None
             plain = bare.run()
             self.assertFalse(any("seat" in o for o in plain))
 
-            def core(op):
-                drop = ("seat", "team") if op.get("type") == lockstep_map.A_END_TURN \
-                    else ("seat",)
-                return {k: v for k, v in op.items() if k not in drop}
-            self.assertEqual([core(o) for o in ops], [core(o) for o in plain], rid)
+            # the seat is an addition. (Without the fold the mapper cannot
+            # name the turn an END_TURN closes, so it neither tags them nor
+            # emits the unrecorded "if still open" ones: the old behaviour.)
+            def end_turn(o):
+                return o["op"] == "act" and o["type"] == lockstep_map.A_END_TURN
+
+            def core(seq):
+                tags = ("seat", "team", "half", "turn")
+                return [{k: v for k, v in o.items()
+                         if k != "seat" and not (end_turn(o) and k in tags)}
+                        for o in seq if not (end_turn(o) and o.get("auto"))]
+            self.assertEqual(core(ops), core(plain), rid)
+            self.assertFalse(any("team" in o for o in plain if end_turn(o)))
+            self.assertTrue(any("turn" in o for o in ops if end_turn(o)))
             for o in ops:
                 if o["op"] != "expect":
                     continue

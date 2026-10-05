@@ -281,6 +281,7 @@ static void write_script(const script* S, const char* path, int corrupt_line) {
 
 typedef struct {
     char summary[2048];
+    bool wrong_team; // a divergence of class wrong_team was reported
 } cli_out;
 
 static void run_cli(cli_out* out, const char* dir, char* const args[], int nargs) {
@@ -305,10 +306,12 @@ static void run_cli(cli_out* out, const char* dir, char* const args[], int nargs
     CHECK(f != NULL);
     static char line[MAX_LINE];
     out->summary[0] = 0;
+    out->wrong_team = false;
     while (fgets(line, sizeof line, f)) {
         if (strstr(line, "\"summary\":true")) {
             snprintf(out->summary, sizeof out->summary, "%s", line);
         }
+        if (strstr(line, "\"class\":\"wrong_team\"")) out->wrong_team = true;
     }
     fclose(f);
     CHECK(out->summary[0] != 0);
@@ -471,7 +474,7 @@ static void test_matches(const char* dir) {
         write_script_with(&S, broken, -1, S.boundary_line[2], extra);
         char* a4[] = {"--seat-audit", "--dump-pairs", bbp, broken};
         run_cli(&o, dir, a4, 4);
-        CHECK(strstr(o.summary, "\"diverged\":false") != NULL);
+        CHECK(strstr(o.summary, "\"diverged\":false") != NULL && !o.wrong_team);
         CHECK(jint(o.summary, "end_turn_dropped", -1) == 1);
         p = slurp(bbp, &len);
         CHECK(len == ref_len && memcmp(p, ref, len) == 0);
@@ -482,9 +485,22 @@ static void test_matches(const char* dir) {
                  BB_A_END_TURN, 1 - at.active);
         write_script_with(&S, broken, -1, S.boundary_line[2], extra);
         run_cli(&o, dir, a4, 4);
-        CHECK(strstr(o.summary, "\"diverged\":true") != NULL);
+        CHECK(strstr(o.summary, "\"diverged\":true") != NULL && o.wrong_team);
         p = slurp(bbp, &len);
         CHECK(len < ref_len && memcmp(p, ref, len) == 0); // no END_TURN record
+        free(p);
+        // Right team, wrong turn number (the same team's NEXT turn): dropped.
+        snprintf(extra, sizeof extra,
+                 "{\"op\":\"act\",\"cmd\":%ld,\"type\":%d,\"arg\":0,\"x\":0,\"y\":0,"
+                 "\"dice\":[],\"team\":%d,\"half\":%d,\"turn\":%d}",
+                 jint(S.line[S.boundary_line[2]], "cmd", 0), BB_A_END_TURN, at.active,
+                 at.half, at.turn[at.active] - 1);
+        write_script_with(&S, broken, -1, S.boundary_line[2], extra);
+        run_cli(&o, dir, a4, 4);
+        CHECK(strstr(o.summary, "\"diverged\":false") != NULL && !o.wrong_team);
+        CHECK(jint(o.summary, "end_turn_dropped", -1) == 1);
+        p = slurp(bbp, &len);
+        CHECK(len == ref_len && memcmp(p, ref, len) == 0);
         free(p);
         snprintf(extra, sizeof extra,
                  "{\"op\":\"act\",\"cmd\":%ld,\"type\":%d,\"arg\":0,\"x\":0,\"y\":0,"
@@ -623,6 +639,18 @@ static void test_refusals(void) {
         snprintf(line, sizeof line, "%.*s%s", (int)(cut - 1 - src), src, row_end);
         seat_parse(line, &s);
         CHECK(s.present && s.refused && strcmp(s.why, "seat_unparseable") == 0);
+    }
+    {
+        // a stray scalar among the rows, and a number no int should hold
+        int rows[4][2];
+        CHECK(jrows("{\"k\":[[1,2],[3,4]]}", "k", &rows[0][0], 2, 4) == 2);
+        CHECK(jrows("{\"k\":[]}", "k", &rows[0][0], 2, 4) == 0);
+        CHECK(jrows("{\"k\":[[1,2],42]}", "k", &rows[0][0], 2, 4) == -1);
+        CHECK(jrows("{\"k\":[[1,4294967296]]}", "k", &rows[0][0], 2, 4) == -1);
+        CHECK(jrows("{\"k\":[[1,2,3]]}", "k", &rows[0][0], 2, 4) == -1);
+        CHECK(jrows("{\"k\":[[1]]}", "k", &rows[0][0], 2, 4) == -1);
+        CHECK(jrows("{\"k\":[[1,2],[3,4],[5,6]]}", "k", &rows[0][0], 2, 2) == -1);
+        CHECK(jrows("{\"other\":[[1,2]]}", "k", &rows[0][0], 2, 4) == -1);
     }
     s = ok;
     s.nsnack = 2;

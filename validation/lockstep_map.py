@@ -293,13 +293,21 @@ class Mapper:
         self.baked_moves = {}      # pid -> final square baked into setup
         # --- re-seat bookkeeping (never changes the op stream) ---
         self.folder = ffb_fold.Folder(raw_replay) if raw_replay else None
-        self.blitzed = set()       # pids whose blitz block the engine saw this turn
-        self.pro_used = set()      # pids that spent Pro this turn
-        self.skill_rr_turn = collections.Counter()  # pid -> skill_rr_used bits
+        # Engine latches a player keeps until their OWN team's next turn
+        # starts (turn_start): who activated, who blitzed, who spent Pro,
+        # and the skill re-rolls spent (bb_player.skill_rr_used bits). The
+        # three flags also die at the end of a drive; the bits do not.
+        self.latch_used = set()
+        self.latch_blitzed = set()
+        self.latch_pro = set()
+        self.latch_skill_rr = collections.Counter()
+        self.pid_of_gslot = {t * 16 + sl: pid for pid, (t, sl) in self.slot_of.items()}
         self.cheer = [0, 0]        # Cheering Fans assist still pending per team
         self.snack = collections.Counter()  # pid -> Dodgy Snack debuffs so far
         self.ktm_latched = 0       # engine ktm_used is never cleared once set
-        self.turn_owner = None     # team whose turn FFB says is in progress
+        # The team turn FFB says is in progress, from the fold at the last
+        # boundary: (team, half, that team's turn number), or None.
+        self.turn_owner = None
 
     # --- roster ---------------------------------------------------------------
     def _build_roster(self):
@@ -399,38 +407,43 @@ class Mapper:
 
         The engine ends a team turn by itself on a turnover or when nobody
         is left to activate; whether it did depends on engine state the
-        mirror only approximates. So the END_TURN is always emitted, with
-        the team whose turn it ends, and the runner applies it only if the
-        engine is still in that team's turn. When the mirror believes the
+        mirror only approximates. So the END_TURN is always emitted, naming
+        the turn it ends (team, half, turn number, from the FFB fold), and
+        the runner applies it only if the engine is still in that very
+        turn. When the mirror believes the
         engine has already ended the turn (engine_open false) the boundary
         dice ride on the last act as before and the END_TURN is a fallback
         the runner applies without recording: FFB's turn end was then not
         a choice the coach made from the state the engine holds."""
-        team = self.turn_owner if self.turn_owner is not None else self.active_team
-        tag = {"team": team} if team is not None else {}
+        tag = {}
+        if self.turn_owner is not None:
+            team, half, turn = self.turn_owner
+            tag = {"team": team, "half": half, "turn": turn}
         if engine_open:
             self.act(cmd, A_END_TURN, dice=dice, **tag)
             return
         if dice:
             self.attach(cmd, dice, "turn end")
-        if tag:
-            self.act(cmd, A_END_TURN, nopair=1, note="if still open", **tag)
+        if tag:   # without the fold there is no way to name the turn: as before
+            self.act(cmd, A_END_TURN, nopair=1, auto=1, note="if still open", **tag)
 
     def note_act_for_seat(self, typ, arg):
         """Mirror the engine latches a re-seat must reproduce and FFB does
         not keep past the turn (see build_seat)."""
         a = self.activation
         pid = a.get("pid") if a else None
-        if typ == A_BLOCK_TARGET:
+        if typ == A_ACTIVATE:
+            self.latch_used.add(self.pid_of_gslot.get(arg))
+        elif typ == A_BLOCK_TARGET:
             if self.pending_block:
                 pid = self.pending_block.get("att") or pid
             team = self.pid_team(pid) if pid else None
             if team is not None:
                 self.cheer[team] = 0   # the first Block spends the assist
             if pid and (self.pending_block or {}).get("from_blitz"):
-                self.blitzed.add(pid)
+                self.latch_blitzed.add(pid)
         elif typ == A_USE_REROLL and arg == RR_PRO and pid:
-            self.pro_used.add(pid)
+            self.latch_pro.add(pid)
         elif typ == A_DECLARE and arg == ACT_KTM:
             self.ktm_latched = 1
 
@@ -486,7 +499,9 @@ class Mapper:
             self.pending_step["items"].extend(("die", int(d)) for d in dice)
             return
         for op in reversed(self.ops):
-            if op["op"] in ("act", "init"):
+            # ("auto" = the fallback END_TURN of end_turn(): the engine made
+            # the transition these dice belong to on the act before it.)
+            if op["op"] in ("act", "init") and not op.get("auto"):
                 op["dice"].extend(int(d) for d in dice)
                 return
         self.skip(cmd, "orphan_dice", f"{what}:{dice}")
@@ -582,9 +597,6 @@ class Mapper:
         if seat is not None:
             op["seat"] = seat
         self.ops.append(op)
-        self.blitzed = set()
-        self.pro_used = set()
-        self.skill_rr_turn.clear()
 
     def build_seat(self, cmd, skip_ball):
         """The engine state FFB recorded at this team-turn boundary.
@@ -609,9 +621,19 @@ class Mapper:
         try:
             st = self.folder.at(cmd)
         except LookupError:
+            self.turn_owner = None
             return {"refuse": "fold_position_unknown"}
-        self.turn_owner = None if st["homePlaying"] is None else \
-            (0 if st["homePlaying"] else 1)
+        active = 0 if st["homePlaying"] else 1
+        self.turn_owner = None if st["homePlaying"] is None else (
+            active, st["half"], st["turn"]["home" if active == 0 else "away"]["turnNr"])
+        # Engine turn_start(active): that team's latches are gone.
+        mine = {pid for pid, (t, _) in self.slot_of.items()
+                if t == active and st["homePlaying"] is not None}
+        self.latch_used -= mine
+        self.latch_blitzed -= mine
+        self.latch_pro -= mine
+        for pid in mine:
+            self.latch_skill_rr.pop(pid, None)
         refuse = None
         if skip_ball:
             refuse = "touchdown_boundary"
@@ -621,7 +643,6 @@ class Mapper:
             refuse = refuse or f"mode_{st['turnMode']}"
         if self.kicking is None:
             refuse = refuse or "kicking_unknown"
-        active = 0 if st["homePlaying"] else 1
         pl = []
         on_pitch = [0, 0]
         squares = {}
@@ -675,18 +696,16 @@ class Mapper:
             # mapper's own gate mirror covers both.
             if pid in self.distracted:
                 flags |= PF_DISTRACTED
-            skill_rr = 0
-            if team != active:
-                # Last turn's latches stay on the team that just played until
-                # its own next turn starts, wherever the player now is (the
-                # engine does not clear them when a player leaves the pitch).
-                if pid in self.used_this_turn:
-                    flags |= PF_USED
-                if pid in self.blitzed:
-                    flags |= PF_BLITZED
-                if pid in self.pro_used:
-                    flags |= PF_USED_SKILL_B
-                skill_rr = self.skill_rr_turn.get(pid, 0)
+            # The latches of the team not on turn (the active team's were
+            # dropped above), wherever the player now is: the engine does
+            # not clear them when a player leaves the pitch.
+            if pid in self.latch_used:
+                flags |= PF_USED
+            if pid in self.latch_blitzed:
+                flags |= PF_BLITZED
+            if pid in self.latch_pro:
+                flags |= PF_USED_SKILL_B
+            skill_rr = self.latch_skill_rr.get(pid, 0)
             pl.append([team * 16 + sl, loc, x, y, stance, flags, skill_rr])
         if max(on_pitch) > 11:
             refuse = refuse or "more_than_11_on_pitch"
@@ -900,7 +919,7 @@ class Mapper:
             self.base.get(pid, 0) == 0 and not self.mirror_marked(pid)
             for pid, (t, _) in self.slot_of.items())
         if eligible:
-            self.act(cmd, A_END_TURN, note="charge done")
+            self.act(cmd, A_END_TURN, note="charge done", charge=1)
 
     def handle_touchback(self, r):
         """Kick went out of play / into the kicking half: the receiving coach
@@ -972,9 +991,9 @@ class Mapper:
         self.stun_stage.clear()    # drive boundary: everyone re-set-up
         self.cheer = [0, 0]        # unspent Cheering Fans assist dies with the drive
         self.turn_owner = None     # nobody's turn until the kick-off settles
-        self.blitzed = set()       # END_DRIVE clears every player flag
-        self.pro_used = set()
-        self.skill_rr_turn.clear() # the next turn start clears them anyway
+        self.latch_used = set()    # END_DRIVE clears every player flag
+        self.latch_blitzed = set() # (but not skill_rr_used)
+        self.latch_pro = set()
         self.ignore_pos.clear()    # repositioning divergences reset with it
         self.ball_diverged = False
         self.pickmeup = []
@@ -2123,7 +2142,7 @@ class Mapper:
             if sk:
                 self.skill_rr_used[pid].add(sk)
                 if sk in SKILL_RR_KIND:
-                    self.skill_rr_turn[pid] |= 1 << SKILL_RR_KIND[sk]
+                    self.latch_skill_rr[pid] |= 1 << SKILL_RR_KIND[sk]
                 if self.pending_block:
                     self.skip(cmd, "block_skill_reroll", src)
                     return
