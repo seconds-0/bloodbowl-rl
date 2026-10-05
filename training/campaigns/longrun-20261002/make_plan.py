@@ -8,7 +8,8 @@ restart-scale arms (chains 37 and 38). After D409 (chain 36 Positive, chain 37 F
 registered continuation from chain 36 on the standard recipe. Stage 4 is chain 46, the opponent-seat arm of
 D410 (control: chain 40). Stages 5 and 6 are chains 41 and 42, continuations. Stages 7 and 8 are the
 second-seed opponent-seat pair of D412 (chains 47 and 48). Stage 9 is chain 49 (D413): chain 42's rung with
-the bot on tag 1, control chain 42. Chains 43 to 45 are not run: chain 42 read Flat.
+the bot on tag 1, control chain 42. Chains 43 to 45 are not run: chain 42 read Flat. Stages 10 to 13 are
+chains 50 to 53, the compounding test of D414.
 Chain 39 (the third restart-scale arm) is not run: chain 38 read Negative (D410).
 """
 import json
@@ -73,6 +74,18 @@ STAGES.append(dict(name="s08_chain48", stamp="r0chain48-botseat4-from41-s2042-20
 STAGES.append(dict(name="s09_chain49", stamp="r0chain49-botseat1-from41-s42-20261004", seed=42,
                    prev=MARKER_C41, pool=POOL_C42, rule="drift-guard", scales=STANDARD,
                    extra=dict(GUARD_C30, SCRIPTED_BANK_TAG="1")))
+
+
+# D414: the compounding test. Chains 42 and 48 both read Flat against chain 41 (+12.5 and +11.0), so a single
+# further rung is not retained. Chains 50 to 53 continue from chain 42 on the standard recipe and only chain 53,
+# five rungs past chain 41, is gated against chain 41.
+previous = "r0chain42-cont41-rr1-20261003"
+for number in range(50, 54):
+    stamp = f"r0chain{number}-compound-cont{42 if number == 50 else number - 1}-20261005"
+    STAGES.append(dict(name=f"s{number - 40:02d}_chain{number}", stamp=stamp, seed=42,
+                       prev=marker(previous), pool=None, rule="drift-guard", scales=STANDARD,
+                       extra=dict(GUARD_MEAN)))
+    previous = stamp
 
 
 def wrapper(stage):

@@ -61,6 +61,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-10-04 19:05 (D413): chain 42 reads Flat; chain 41 stays the warm start.** After four Positive continuations, chain 42 is +12.5 over chain 41 with an interval that includes zero. Chains 43 to 45 are not run. Chain 48, already queued, is the same continuation at another seed and will say whether the Flat replicates. Chain 47 (training) and chain 48 are the second opponent-seat pair; chain 49 follows as a third seat arm with chain 42 as its control.
 
+**Update 2026-10-05 12:50 (D414): the seat change is not adopted and plain continuation from chain 41 reads Flat at two seeds.** The second opponent-seat pair is +9.0 with an interval that includes zero, so the scripted bot stays on bank tag 4. Chain 48 is +11.0 over chain 41, replicating chain 42's +12.5: one more rung no longer clears the +40 gate. Chain 41 stays the warm start. Chain 49 (a third seat context) is training. Chains 50 to 53 then test whether those small gains compound: only chain 53, five rungs past chain 41, is gated.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

@@ -2027,3 +2027,46 @@ This changes how gate tournaments are computed, not what they measure. Games per
 - **Plateau wording.** D413 said that if chain 48 reads Flat, Inconclusive or Negative, "two seeds agree". Corrected: in any of those cases neither rung qualifies for retention. Two Flat readings would be replicated evidence that a fifth plain continuation from chain 41 does not clear the gate; an Inconclusive is not agreement, and a Negative is a regression, not a plateau.
 - **"Already running"** was wrong: chain 47 is running and chain 48 follows it.
 - **Warm-start timing.** No chain becomes a warm start by this entry. If chain 47, chain 48 or chain 49 qualifies as a candidate under the rules above, a later entry names the warm start before any stage is launched from it, and where two candidates qualify that entry decides between them by a registered direct pair.
+
+
+**D414 - THE SECOND OPPONENT-SEAT PAIR READS FLAT, SO THE SEAT CHANGE IS NOT ADOPTED; CHAIN 48 REPLICATES CHAIN 42'S FLAT, SO A SINGLE FURTHER CONTINUATION FROM CHAIN 41 DOES NOT CLEAR THE GATE AT TWO SEEDS; CHAIN 41 STAYS THE WARM START; A COMPOUNDING TEST (CHAINS 50 TO 53) IS PRE-REGISTERED (2026-10-05 12:50 PDT, with chain 49 about 75 minutes into training)**
+
+**Gate** on three droplets: `GATE-ACCEPTED 28800 games, 9 pairs, seed0 21900000, games_per_worker 32, commit b0099fb`, unchanged merge, every game ended naturally, integrity counters zero, about $0.23, all three droplets verified destroyed (as reported by the session that ran them).
+
+| Pair | W / D / L | Decisive-Elo [95% seed-cluster] |
+|---|---|---|
+| chain 47 vs chain 48 (arm vs control) | 955 / 1338 / 907 | +9.0 [-5.0, +22.7] |
+| chain 47 vs chain 41 (parent) | 1063 / 1305 / 832 | +42.6 [+28.2, +55.5] |
+| chain 48 vs chain 41 (parent) | 974 / 1312 / 914 | +11.0 [-2.1, +24.9] |
+| chain 47 vs chain 37 | 1403 / 1112 / 685 | +124.5 [+110.5, +139.3] |
+| chain 48 vs chain 37 | 1438 / 1073 / 689 | +127.8 [+113.3, +143.3] |
+| chain 47 vs chain 27 | 1602 / 1044 / 554 | +184.5 [+169.3, +199.7] |
+| chain 48 vs chain 27 | 1539 / 1082 / 579 | +169.8 [+155.9, +185.9] |
+| chain 47 vs offense bot | 916 / 1742 / 542 | +91.2 [+73.5, +109.6] |
+| chain 48 vs offense bot | 942 / 1767 / 491 | +113.2 [+94.5, +132.1] |
+
+Exam, champion / bot touchdowns per game at seeds 42 and 43. Chain 47: contact AWAY 0.587 / 0.404 and 0.566 / 0.392; contact HOME 0.492 / 0.405 and 0.503 / 0.380; offense AWAY 0.603 / 0.339 and 0.601 / 0.344. Chain 48: contact AWAY 0.585 / 0.382 and 0.584 / 0.376; contact HOME 0.514 / 0.394 and 0.542 / 0.352; offense AWAY 0.590 / 0.348 and 0.584 / 0.339. Neither chain tripped D405's chain 30 guard. Style panels against the scripted bots (policy side, per game; match score, touchdowns, resolved blocks, passes plus hand-offs): chain 47 0.584, 0.56, 6.9, 0.016; chain 48 0.592, 0.57, 6.8, 0.015.
+
+**(a) The seat pair, chain 47 against chain 48: Flat.** The veto does not fire (offense AWAY 0.603 / 0.601 against 0.590 / 0.584), the interval is not below zero, the point estimate is not above +40, and it is within plus or minus 40. **Under D410's amended rule the seat change is not adopted: the scripted bot stays on bank tag 4.** The two pairs read +42.2 [+28.7, +55.3] (chain 46 against chain 40) and +9.0 [-5.0, +22.7]. They differ in seed, parent and pool, so they are two contexts and are not pooled here.
+- Descriptive paired contrasts, chain 47 minus chain 48: against chain 37 -3.3 [-22.8, +16.7]; against the offense bot -22.0 [-44.6, +1.0]; against chain 41 +31.5 [+12.0, +49.5]. Chain 41 was an active opponent in chain 47's training and not in chain 48's, so the last of these is an in-pool comparison for the arm. Raw roster-conditioned decisive share of chain 47 against chain 48: bash 0.406, agile 0.723, hybrid 0.503, stunty 0.588. Chain 47 is the less sharp of the pair (mean log-probability per decision -0.181 against -0.158), as chain 46 was against chain 40.
+
+**(b) Chain 48 against chain 41: Flat.** +11.0 [-2.1, +24.9]. With chain 42's +12.5 [-1.1, +26.1] at training seed 42, two seeds give a Flat reading for a fifth plain continuation from chain 41. Per D413's amendment that is replicated evidence that one more 3B rung on this recipe does not clear the +40 gate from chain 41. It does not show that the rung gains nothing: both point estimates are positive and both intervals reach just below zero.
+
+**(c) Chain 47 against chain 41: Positive by the parent rule, and not a warm start.** +42.6 [+28.2, +55.5], interval against chain 27 above zero. D413 made this a warm-start candidacy only if the seat change is adopted, and it is not. Chain 41 was in chain 47's training pool as an active opponent, so this is also an in-pool comparison.
+
+**Standing after this entry.**
+- **Chain 41 is the warm start.** Chains 42, 46, 47 and 48 are not.
+- **The scripted bot stays on bank tag 4.**
+- **Chain 49** (chain 42's rung with the bot on tag 1) is training and keeps its registered gate (D413); its pair is a third context and decides nothing by itself.
+- **Reading across the campaign, descriptive.** Parent gates for plain continuations: +52.7, +77.4, +78.5, +57.2, then +12.5 and +11.0. Something changed at chain 41: the per-rung gain against the parent fell by a factor of about five. The exam did not show it coming: chain 41's exam was the highest of the lineage.
+
+**Chains 50 to 53, pre-registered: do sub-threshold gains compound?**
+- **Why this is not a barred continuation.** D405 and D409 bar a further continuation on this recipe "without a new idea". The idea here is about the gate, not the recipe: two rungs each read about +11 to +12 against chain 41 with intervals that nearly exclude zero. If such gains add up, a per-rung +40 gate rejects every step of a climb that a longer cadence would accept. If they do not add up, the recipe is finished from chain 41 and the rig should stop spending on it. One test answers that.
+- **Design.** Chain 50 continues from chain 42 (training seed 42, standard recipe, bot on tag 4, the ladder's normal pool rotation; its plan-only pool is `feadcbfd...`: the anchor, chain 40, chain 41, and chain 42 in the bot's seat). Chain 51 continues from chain 50, chain 52 from 51, chain 53 from 52. Chain 53 is then five 3B rungs past chain 41. Each stage halts the chain only on the 0.536 mean floor.
+- **Gate, on chain 53 only.** Tournament, seed block 22100000, 3,200 games per pair: chain 53 against chain 41, chain 42, chain 37, chain 27 and the offense bot, plus chain 51 against chain 41 and chain 41 against the offense bot. Ordered readings for chain 53 against chain 41 with the parent rule: Negative (interval entirely below zero, or the chain halted on its floor) > Positive (above +40, interval entirely above zero, and the interval against chain 27 entirely above zero) > Flat (within plus or minus 40 inclusive) > Inconclusive. The exam is reported and is not part of this reading, because the stages already apply the floor and the exam's direction has disagreed with the tournament's on several rungs.
+- **Consequences.** Positive: chain 53 becomes the warm start, and continuation on this recipe is gated every five rungs from then on, by a later entry. Anything else: all four rungs are discarded, chain 41 stays, and the plain recipe is not run again from chain 41. Chain 51 against chain 41 is a descriptive midpoint.
+- **Expectation, written down so it cannot be adjusted later.** If the two measured rung gains (+12.5, +11.0) simply add, five rungs give roughly +55 to +60 and the reading is Positive. If the gains shrink further or the earlier rungs' gains are partly in-pool, it reads Flat.
+- **Cost.** Four rungs, about 35 hours of rig time that has no other registered use. The chain can be stopped between rungs if a better-founded stage is ready; a stopped test is unread, not Flat.
+- **What it is not.** It is not evidence about human-likeness or about strength outside this family. Those need the work in `docs/plans/superhuman-roadmap-2026-10-03.md`, which is still a proposal.
+
+**Stage order now:** chain 49 (running), then chains 50, 51, 52, 53.
