@@ -957,10 +957,13 @@ static int do_expect(runner* R, const char* line, long cmd) {
 }
 
 // --- Turn-boundary re-seat ---------------------------------------------------------
-// PROTOTYPE, measurement only. Lockstep stops at the first point where the
-// engine and the recorded FUMBBL game disagree, so one unmapped event costs the
-// rest of the match. A re-seat resumes at the next team-turn boundary by
-// putting the engine into the state FUMBBL recorded there (the "seat" object
+// Imitation pairs only (AGENTS.md, "Replay and BC contract", provenance
+// "replay-seated, observation only", owner-approved 2026-10-05).
+//
+// Lockstep stops at the first point where the engine and the recorded FUMBBL
+// game disagree, so one unmapped event costs the rest of the match. A re-seat
+// resumes at the next team-turn boundary by putting the engine into the
+// state FUMBBL recorded there (the "seat" object
 // the mapper attaches to its expect op: validation/lockstep_map.py build_seat,
 // folded from the replay's model-change log by validation/ffb_fold.py).
 //

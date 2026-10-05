@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""lockstep_reseat.py: run the turn-boundary re-seat prototype over replays.
+"""lockstep_reseat.py: run the turn-boundary re-seat over replays.
 
-PROTOTYPE, measurement only. Nothing this writes is training input: re-seated
-records land in .bbr shards that the BBP readers refuse (see the re-seat
-comment block in tools/bb_lockstep.c and validation/README.md, "Re-seat").
+Re-seated records are imitation pairs only (AGENTS.md, "Replay and BC
+contract", provenance "replay-seated, observation only"). They land in .bbr
+shards that the BBP readers refuse and that training/bc_pretrain.py reads
+only when asked, filtered on the span stamp (see the re-seat comment block
+in tools/bb_lockstep.c and validation/README.md, "Turn-boundary re-seat").
 
 Per replay (scripts must exist; --map re-runs lockstep_map.py first) it runs
 tools/bb_lockstep three ways and keeps every JSON line the runner prints:
@@ -16,7 +18,7 @@ tools/bb_lockstep three ways and keeps every JSON line the runner prints:
                                        boundary although nothing diverged;
                                        its records must equal the prefix
                                        records byte for byte
-  reseat  --reseat --seat-audit        the prototype itself: resume at the
+  reseat  --reseat --seat-audit        the re-seat itself: resume at the
                                        next seatable boundary after every
                                        divergence
 
