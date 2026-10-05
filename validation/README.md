@@ -506,6 +506,141 @@ v2 on the cycle-2 engine): **70 231 pairs (175.1 pairs/replay)** — v1
 yielded 58 079 pre-cycle-2; v0 yielded 1 766 over 21 replays. The count
 grows automatically as lockstep coverage improves.
 
+## Turn-boundary re-seat (prototype, measurement only)
+
+**Nothing in this section is training input, and nothing here may become a
+reset state.** It measures an idea; using its output needs the owner's
+sign-off on a contract change (see "What it would take" below).
+
+Lockstep stops at the first point where the engine and the recorded FUMBBL
+game disagree, so one unmapped event costs the rest of the match and the
+pair corpus is almost all openings. `bb_lockstep --reseat` resumes at the
+next team-turn boundary instead: it writes the state the replay records
+there into `bb_match` and keeps aligning, so a stop costs the rest of one
+team turn.
+
+That is state surgery, which `AGENTS.md` ("Replay and BC contract") forbids
+for banked states. The prototype therefore keeps three walls, enforced in
+`tools/bb_lockstep.c` and tested in `tools/test_reseat.c`:
+
+- no `.bbs` record is written at or after a re-seat;
+- no re-seated record is written to a `.bbp` shard. They go to a separate
+  `.bbr` file whose magic (`BBR1`) both BBP readers refuse
+  (`training/bc_pretrain.py`, `validation/extract_pairs.py`);
+- the surgery lives in the lockstep tool only. The engine has no new entry
+  point.
+
+A re-seated state is used for one thing: computing the observation and the
+exact conditional masks of the human decisions that follow it.
+
+### Pieces
+
+| Piece | What it does |
+|---|---|
+| `ffb_fold.py` | Folds the replay's model-change log into the full FUMBBL state after any command. Checks itself against the replay's end-of-game snapshot: all 400 cached replays reproduce it exactly. |
+| `lockstep_map.py` `build_seat` | Attaches that state, in engine terms, to every `expect` op as a `seat` object, or a refusal when the engine cannot hold it (a player beyond the 16 roster slots, more than 11 on the pitch). |
+| `bb_lockstep --reseat` | After a stop, resumes at the next seatable boundary. Once in re-seated provenance it re-syncs to the replay at every boundary, so drift never carries into the next team turn. |
+| `bb_lockstep --seat-audit` | At every boundary reached in lockstep, rebuilds the state from the seat and lists each field that differs from the state the engine reached legally. |
+| `bb_lockstep --force-reseat` | Test: replaces the state at every boundary although nothing diverged. |
+| `lockstep_reseat.py`, `reseat_report.py` | Run all three over a replay list and measure. |
+
+```sh
+make lockstep
+python3 validation/lockstep_reseat.py --ids ids.txt --out-dir runs/x --map
+python3 validation/reseat_report.py runs/x
+./build/reseat_tests && python3 validation/test_reseat.py
+```
+
+### `.bbr` format (re-seated pairs)
+
+Header: magic `BBR1`, version u32 `4`, obs_size u32, mask_size u32. Records
+are byte for byte the BBP v4 record, except that the three pad bytes after
+`agent` carry provenance:
+
+- bytes 9 to 10, `segment` u16: 1 after the first recovery of this replay,
+  2 after the second, and so on;
+- byte 11, how the boundary-to-boundary span the record sits in ended:
+
+| Value | Meaning |
+|---|---|
+| 0 | lockstep stopped before the next boundary (or the script ended) |
+| 1 | the engine, after playing the recorded actions and dice, equalled the replay's state at the next boundary in every field the seat carries |
+| 4 | as 1 on the pitch, but a resource, status or latch differed (re-rolls, Bribes, Distracted, ...) |
+| 2 | no stop, but the engine was off the replay on the pitch (a square, stance, the ball, score or clock) |
+| 3 | closed against the mapper's mirror only (the boundary had no seat) |
+
+A stamp is evidence about the end of the span only. A state that was wrong
+in the middle and right again at the boundary is not detected.
+
+### What the replay records at a boundary, and what is guessed
+
+Recorded by FUMBBL and folded exactly: every player's square, base state
+and status bits; the ball; score; half; both turn counters; whose turn
+starts; weather; both re-roll pools including their drive-scoped share;
+apothecaries; Bribes; the coach ban.
+
+Derived from the replay stream by the mapper, because FUMBBL does not keep
+them: the kicking team this drive and in half one; Stunned versus
+Stunned-and-rolling-over (the engine keeps a player who started their own
+turn Stunned as `STUNNED_USED`, FUMBBL has already turned them Prone); the
+engine latches that outlive a turn (`USED`, `BLITZED`, Pro and the skill
+re-rolls spent by the team that just played; the pending Cheering Fans
+assist; Dodgy Snack debuffs; `ktm_used`).
+
+Set by rule: the two frames of a fresh team turn, decision for the active
+team, no turnover, per-turn action latches clear.
+
+Carried stale or zeroed, and not read by any observation, mask or rule
+before the engine resets them: `moved` and `rushes` of the team not on
+turn, `step_count`, `turns_completed*`, `surfs`, `ret`, `spp_game`.
+
+Known not reproduced: Rooted and Eye Gouged on a player who has left the
+pitch (the engine keeps the flag, FUMBBL clears it); Eye Gouged timing.
+
+### Results, 399 BB2025 replays (2026-10-05)
+
+Seat fidelity, at 1,524 boundaries the engine reached legally where the
+mapper knows of no divergence: the rebuilt state differed on the pitch at 1
+(0.07%), in a mapper-derived latch at 4 (0.26%), and in a resource at 304
+(20%). The resource differences are the engine being off the human's game,
+not seat errors: the re-roll count differs at 16.5% of boundaries (Team
+Mascot mapped as a team re-roll, Brilliant Coaching ties, Team Captain,
+Leader), Bribes at 3%, the coach ban at 0.8%.
+
+Forced re-seat at every boundary: 75,744 records written after seats that
+matched the engine's state. Compared with the prefix-aligned records of the
+same decisions: 0 differ in any observation byte, mask byte or label.
+
+| | prefix only | with re-seat |
+|---|---|---|
+| records | 118,478 | 565,033 |
+| share of the scripts' decisions | 17.1% | 81.5% |
+| records per replay, median | 202 | 1,491 |
+| records from half two | 2.3% | 47.2% |
+| records from team turns 5 to 8 | 14.4% | 41.2% |
+| pass declarations per 100 replays | 12.8 | 121.8 |
+| hand-off declarations per 100 replays | 7.8 | 83.7 |
+| foul declarations per 100 replays | 10.5 | 94.5 |
+
+62.5% of boundary-to-boundary spans were followed end to end and equalled
+the replay at the closing boundary; 3,693 recoveries, median 8 per replay.
+Of the 446,555 re-seated records, 71.1% carry stamp 1, 2.6% stamp 4, 4.8%
+stamp 2 and 21.4% stamp 0. Every record's action is inside its own exact
+conditional masks, in both files.
+
+The underlying stop rate is 7.8 per 1,000 decisions, not the 3 to 4 the
+prefix suggests: the prefix rate is survivorship (each replay contributes
+exactly one stop, so deep replays dominate the denominator).
+
+### What it would take to use this
+
+1. A contract change in `AGENTS.md`: a third state provenance, "replay-seated,
+   observation only", next to "legally reached" and "authored", with the
+   walls above as its rules. That is the owner's call.
+2. A loader that reads `.bbr` on purpose, reports the two provenances
+   separately, and can filter on the span stamp.
+3. The same held-out checks any new BC lineage needs.
+
 ## Demo-state dump — `bb_lockstep --dump-states` + `build_state_bank.py`
 
 `./build/bb_lockstep --dump-states <out.bbs> <script.jsonl>` additionally

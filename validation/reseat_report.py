@@ -311,10 +311,19 @@ def main():
     al = sum(s["spans_aligned"] for s in S)
     rs = sorted(s["reseats"] for s in S)
     dr = sum(s["spans_drift"] for s in S)
+    so = sum(s["spans_soft_drift"] for s in S)
     print(f"boundary-to-boundary spans (team turns, a drive's set-up and kick-off "
-          f"counted with the turn before it): {spans}; aligned end to end {al} "
-          f"({100 * al / spans:.1f}%); reached the boundary but off the replay on "
-          f"the pitch {dr} ({100 * dr / spans:.1f}%)")
+          f"counted with the turn before it): {spans}")
+    print(f"   {al:6d} {100 * al / spans:5.1f}%  followed end to end and equal to the "
+          f"replay at the closing boundary")
+    print(f"   {so:6d} {100 * so / spans:5.1f}%  followed end to end; pitch equal, a "
+          f"resource / status / latch not")
+    print(f"   {dr:6d} {100 * dr / spans:5.1f}%  followed end to end but off the replay "
+          f"on the pitch")
+    rest = spans - al - so - dr
+    print(f"   {rest:6d} {100 * rest / spans:5.1f}%  stopped inside, or lost waiting "
+          f"for a boundary")
+    print(f"redundant END_TURN ops dropped: {sum(s['end_turn_dropped'] for s in S)}")
     print(f"re-seats per replay: mean {statistics.mean(rs):.1f} median "
           f"{statistics.median(rs):.0f} p90 {q(rs, .9)} max {rs[-1]}; total {sum(rs)}")
     print(f"divergences {sum(s['divergences'] for s in S)}; decisions lost while "
@@ -363,6 +372,10 @@ def main():
     out["yield"] = {
         "replays": N, "prefix_records": pre["n"], "reseat_records": res["n"],
         "decisions_total": sd, "spans": spans, "spans_aligned": al,
+        "spans_soft": so, "spans_drift": dr,
+        "divergences": sum(s["divergences"] for s in S),
+        "lost_decisions": sum(s["lost_decisions"] for s in S),
+        "replays_ending_lost": sum(1 for s in S if s["ended_lost"]),
         "reseats_total": sum(rs), "reseats_median": statistics.median(rs),
         "prefix_dist": ht(pre, "prefix only "),
         "reseat_dist": ht(res, "re-seated   "),
