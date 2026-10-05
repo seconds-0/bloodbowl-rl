@@ -506,11 +506,14 @@ v2 on the cycle-2 engine): **70 231 pairs (175.1 pairs/replay)** — v1
 yielded 58 079 pre-cycle-2; v0 yielded 1 766 over 21 replays. The count
 grows automatically as lockstep coverage improves.
 
-## Turn-boundary re-seat (prototype, measurement only)
+## Turn-boundary re-seat
 
-**Nothing in this section is training input, and nothing here may become a
-reset state.** It measures an idea; using its output needs the owner's
-sign-off on a contract change (see "What it would take" below).
+**Re-seated records are imitation pairs only, and nothing here may become a
+reset state, an exam state or opponent data.** The owner approved this use on
+2026-10-05 ("You can do reseats as often as you need just don't fo
+overboard"); the rules are in `AGENTS.md`, "Replay and BC contract", third
+state provenance "replay-seated, observation only", and are repeated under
+"Contract" below.
 
 Lockstep stops at the first point where the engine and the recorded FUMBBL
 game disagree, so one unmapped event costs the rest of the match and the
@@ -520,13 +523,15 @@ there into `bb_match` and keeps aligning, so a stop costs the rest of one
 team turn.
 
 That is state surgery, which `AGENTS.md` ("Replay and BC contract") forbids
-for banked states. The prototype therefore keeps three walls, enforced in
-`tools/bb_lockstep.c` and tested in `tools/test_reseat.c`:
+for banked states and allows for this one provenance. The tool therefore
+keeps three walls, enforced in `tools/bb_lockstep.c` and tested in
+`tools/test_reseat.c`:
 
 - no `.bbs` record is written at or after a re-seat;
 - no re-seated record is written to a `.bbp` shard. They go to a separate
   `.bbr` file whose magic (`BBR1`) both BBP readers refuse
-  (`training/bc_pretrain.py`, `validation/extract_pairs.py`);
+  (`training/bc_pretrain.py`, `validation/extract_pairs.py`). The BC loader
+  reads a `.bbr` file only through its explicit re-seat path (see "Contract");
 - the surgery lives in the lockstep tool only. The engine has no new entry
   point.
 
@@ -648,14 +653,36 @@ The underlying stop rate is 7.8 per 1,000 decisions, not the 3 to 4 the
 prefix suggests: the prefix rate is survivorship (each replay contributes
 exactly one stop, so deep replays dominate the denominator).
 
-### What it would take to use this
+### Contract (adopted 2026-10-05)
 
-1. A contract change in `AGENTS.md`: a third state provenance, "replay-seated,
-   observation only", next to "legally reached" and "authored", with the
-   walls above as its rules. That is the owner's call.
-2. A loader that reads `.bbr` on purpose, reports the two provenances
-   separately, and can filter on the span stamp.
-3. The same held-out checks any new BC lineage needs.
+The full text is in `AGENTS.md`. In short:
+
+1. Provenance "replay-seated, observation only": re-seated states feed
+   imitation pairs (training and held-out imitation metrics) and nothing
+   else. Never a reset state, an exam state or opponent data. The records
+   stay in the stamped `BBR1` shard set.
+2. Loader rule: a loader must ask for re-seated shards explicitly and filter
+   on the span stamp. The default allowlist is stamp 1 (the span closed equal
+   to the replay). `training/bc_pretrain.py` implements it:
+
+   ```python
+   ShardIndex.from_directory(pairs_dir)                       # prefix only
+   ShardIndex.from_directory(pairs_dir, reseat_dir=reseat)    # + stamp 1
+   ShardIndex.from_directory(pairs_dir, reseat_dir=reseat,
+                             reseat_stamps=(0, 1, 2, 3, 4))   # named, not default
+   ```
+
+   and on the command line `--reseat-dir DIR [--reseat-stamps 1,4]`. A stamp
+   list without a directory, an unknown stamp, a replay without its `.bbr`
+   shard, a record with segment 0 and a header from another observation
+   lineage are all refused (`training/test_bc_pretrain_reseat.py`).
+3. Every result names its subset: prefix only; prefix plus closed-equal
+   re-seated; or the exact stamp list. `ShardIndex.subset_label` is the
+   string to print.
+4. The same held-out checks any new BC lineage needs, split by replay ID.
+
+On the 399 replays the default subset is 118,478 prefix records plus 317,628
+re-seated records with stamp 1 (436,106 of the 565,033).
 
 ## Demo-state dump — `bb_lockstep --dump-states` + `build_state_bank.py`
 

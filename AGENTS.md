@@ -106,6 +106,40 @@ requires prior candidate-transfer evidence. For unattended multi-day work use
   match/grid/ball/score/turn/procedure surgery is forbidden; group train/dev/test
   by recipe template and keep paired rollout/regret diagnostics out of BBS
   records, observations, rewards, and BC labels.
+- **Third state provenance: "replay-seated, observation only".** Next to
+  "legally reached" (lockstep prefix, banked states) and "authored" (drills)
+  there is one owner-approved exception to the no-surgery invariant above,
+  dated 2026-10-05. The owner's words: "You can do reseats as often as you
+  need just don't fo overboard". `bb_lockstep --reseat` writes the state a
+  FUMBBL replay records at a team-turn boundary into `bb_match` and keeps
+  aligning (`validation/README.md`, "Turn-boundary re-seat"). The invariant
+  stays as written for banked reset states, authored drills and everything
+  else; this provenance is the only place state surgery is allowed, and only
+  inside `tools/bb_lockstep.c`.
+  - **Permits:** computing the observation and the exact conditional masks of
+    the human decisions that follow a re-seat, and using those (observation,
+    mask, action) records as imitation pairs, for training and for held-out
+    imitation metrics.
+  - **Forbids:** a re-seated state as a reset state (no `.bbs` record at or
+    after a re-seat), as an exam or evaluation start state, or as opponent
+    data; a re-seated record in a `.bbp` shard (they stay in the separate
+    `BBR1` shard set, each record stamped with its segment and how its span
+    closed); a new engine entry point for the surgery.
+  - **Loader rule:** a loader must ask for re-seated shards explicitly and
+    filter on the span stamp. Nothing reads a `.bbr` file by default
+    (`training/bc_pretrain.py`: `ShardIndex.from_directory(reseat_dir=...)`,
+    `--reseat-dir`). When asked, the default allowlist is closed-equal spans
+    only (stamp 1), so the default training subset is prefix records plus
+    re-seated records whose span closed equal to the replay. Any wider stamp
+    set (0 never closed, 2 off the replay on the pitch, 3 mirror only, 4 a
+    resource, status or latch differed) must be named stamp by stamp and is
+    for a stated measurement, not a default.
+  - **Reporting:** every result says which subset it used (prefix only;
+    prefix plus closed-equal; or the exact stamp list) and gives the record
+    counts of the two provenances separately.
+  - **Restraint:** a re-seat recovers human decisions past a stop. It does
+    not make a stop acceptable: divergence classes still get fixed in the
+    mapper or the engine, and the stop rate is still reported.
 
 ## Rules and reward semantics
 
