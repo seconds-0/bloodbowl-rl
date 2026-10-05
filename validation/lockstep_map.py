@@ -85,6 +85,8 @@ PF_ROOTED, PF_USED_SKILL_B, PF_EYE_GOUGED = 1 << 5, 1 << 8, 1 << 11
 SEAT_STATE = {0: (LOC_ON_PITCH, STANCE_STANDING), 1: (LOC_ON_PITCH, STANCE_PRONE),
               2: (LOC_ON_PITCH, STANCE_STUNNED), 3: (LOC_RESERVES, 0),
               4: (LOC_KO, 0), 5: (LOC_CAS, 0), 6: (LOC_SENT_OFF, 0)}
+# Engine bb_test_kind bit a skill re-roll latches in bb_player.skill_rr_used.
+SKILL_RR_KIND = {"Dodge": 0, "Sure Feet": 1, "Sure Hands": 2, "Pass": 3, "Catch": 4}
 # FFB bases that mean "in the reserves box" to the engine: Missing players
 # keep the Reserves location the init op gave them, and the engine has no
 # Sweltering Heat, so an Exhausted player is simply not on the pitch.
@@ -293,6 +295,7 @@ class Mapper:
         self.folder = ffb_fold.Folder(raw_replay) if raw_replay else None
         self.blitzed = set()       # pids whose blitz block the engine saw this turn
         self.pro_used = set()      # pids that spent Pro this turn
+        self.skill_rr_turn = collections.Counter()  # pid -> skill_rr_used bits
         self.cheer = [0, 0]        # Cheering Fans assist still pending per team
         self.snack = collections.Counter()  # pid -> Dodgy Snack debuffs so far
         self.ktm_latched = 0       # engine ktm_used is never cleared once set
@@ -581,6 +584,7 @@ class Mapper:
         self.ops.append(op)
         self.blitzed = set()
         self.pro_used = set()
+        self.skill_rr_turn.clear()
 
     def build_seat(self, cmd, skip_ball):
         """The engine state FFB recorded at this team-turn boundary.
@@ -602,7 +606,10 @@ class Mapper:
         """
         if self.folder is None:
             return None
-        st = self.folder.at(cmd)
+        try:
+            st = self.folder.at(cmd)
+        except LookupError:
+            return {"refuse": "fold_position_unknown"}
         self.turn_owner = None if st["homePlaying"] is None else \
             (0 if st["homePlaying"] else 1)
         refuse = None
@@ -656,16 +663,19 @@ class Mapper:
                         (stance == STANCE_PRONE and
                          self.stun_stage.get(pid) == "aged")):
                     stance = STANCE_STUNNED_USED
-                # FFB shows Distracted as Confused or Hypnotized, but not on
-                # a player who failed their gate while Prone; the mapper's
-                # own gate mirror covers that case.
-                if bits & (ffb_fold.BIT_CONFUSED | ffb_fold.BIT_HYPNOTIZED) or \
-                        pid in self.distracted:
+                if bits & (ffb_fold.BIT_CONFUSED | ffb_fold.BIT_HYPNOTIZED):
                     flags |= PF_DISTRACTED
                 if bits & ffb_fold.BIT_ROOTED:
                     flags |= PF_ROOTED
                 if bits & ffb_fold.BIT_EYE_GOUGED:
                     flags |= PF_EYE_GOUGED
+            # FFB does not show Distracted on a player who failed their gate
+            # while Prone, nor on one who has left the pitch; the engine
+            # keeps the flag until the player is next activated. The
+            # mapper's own gate mirror covers both.
+            if pid in self.distracted:
+                flags |= PF_DISTRACTED
+            skill_rr = 0
             if team != active:
                 # Last turn's latches stay on the team that just played until
                 # its own next turn starts, wherever the player now is (the
@@ -676,7 +686,8 @@ class Mapper:
                     flags |= PF_BLITZED
                 if pid in self.pro_used:
                     flags |= PF_USED_SKILL_B
-            pl.append([team * 16 + sl, loc, x, y, stance, flags])
+                skill_rr = self.skill_rr_turn.get(pid, 0)
+            pl.append([team * 16 + sl, loc, x, y, stance, flags, skill_rr])
         if max(on_pitch) > 11:
             refuse = refuse or "more_than_11_on_pitch"
         ball = st["ball"]
@@ -724,7 +735,10 @@ class Mapper:
             "tol": 1 if (self.ignore_all or self.ignore_pos or
                          self.ignore_state or self.engine_alive or
                          self.ball_diverged) else 0,
+            # The mapper's own engine-semantics counts (see --seat-mirror-resources).
             "rr_mirror": [max(0, v) for v in self.rerolls],
+            "bonus_mirror": [max(0, v) for v in self.bonus_rr],
+            "apo_mirror": [max(0, v) for v in self.apo],
             "ball": [bxy[0], bxy[1], held],
             "pl": pl,
             "snack": sorted([self.slot_of[p][0] * 16 + self.slot_of[p][1], n]
@@ -960,6 +974,7 @@ class Mapper:
         self.turn_owner = None     # nobody's turn until the kick-off settles
         self.blitzed = set()       # END_DRIVE clears every player flag
         self.pro_used = set()
+        self.skill_rr_turn.clear() # the next turn start clears them anyway
         self.ignore_pos.clear()    # repositioning divergences reset with it
         self.ball_diverged = False
         self.pickmeup = []
@@ -2107,6 +2122,8 @@ class Mapper:
             sk = self.skill_by_slug.get(skill_slug(src))
             if sk:
                 self.skill_rr_used[pid].add(sk)
+                if sk in SKILL_RR_KIND:
+                    self.skill_rr_turn[pid] |= 1 << SKILL_RR_KIND[sk]
                 if self.pending_block:
                     self.skip(cmd, "block_skill_reroll", src)
                     return

@@ -131,9 +131,10 @@ static int put_seat(char* out, size_t cap, const bb_match* m, const bb_match* in
         const bb_player* p = &m->players[s];
         if (p->location == BB_LOC_ABSENT) continue;
         int on = p->location == BB_LOC_ON_PITCH;
-        n += snprintf(out + n, cap - n, "%s[%d,%d,%d,%d,%d,%d]", first ? "" : ",",
+        n += snprintf(out + n, cap - n, "%s[%d,%d,%d,%d,%d,%d,%d]", first ? "" : ",",
                       s, p->location, on ? p->x : 0, on ? p->y : 0,
-                      on ? p->stance : 0, p->flags & ~BB_PF_HAS_BALL);
+                      on ? p->stance : 0, p->flags & ~BB_PF_HAS_BALL,
+                      p->skill_rr_used);
         first = 0;
     }
     n += snprintf(out + n, cap - n, "],\"snack\":[");
@@ -438,6 +439,7 @@ static void test_matches(const char* dir) {
             const uint8_t* rec = r + 16 + i * REC_SIZE;
             CHECK(same_record(rec, ref + 16 + (first_after + i) * REC_SIZE));
             CHECK(rec[9] == 1 && rec[10] == 0); // after the first recovery
+            // the seats are the engine's own states: never a drift stamp
             CHECK(rec[11] == PD_SPAN_MATCH || rec[11] == PD_SPAN_OPEN);
             closed += rec[11] == PD_SPAN_MATCH;
         }
@@ -604,6 +606,34 @@ static void test_refusals(void) {
     s.ball[1] = 7;
     s.ball[2] = 0;
     expect_refused(&R, &R.init_m, s, "no_activatable_player");
+
+    // Rows are never completed with defaults: a short player row, a second
+    // snack row for one player and a snack for an empty roster slot are all
+    // refused.
+    {
+        static char line[MAX_LINE];
+        const char* src = S.line[S.boundary_line[1]];
+        const char* pl = strstr(src, "\"pl\":[[");
+        CHECK(pl != NULL);
+        const char* row_end = strchr(pl, ']');
+        CHECK(row_end != NULL && row_end - src > 4);
+        // drop the last number of the first player row
+        const char* cut = row_end;
+        while (cut[-1] != ',') cut--;
+        snprintf(line, sizeof line, "%.*s%s", (int)(cut - 1 - src), src, row_end);
+        seat_parse(line, &s);
+        CHECK(s.present && s.refused && strcmp(s.why, "seat_unparseable") == 0);
+    }
+    s = ok;
+    s.nsnack = 2;
+    s.snack[0][0] = s.snack[1][0] = ok.pl[a][0];
+    s.snack[0][1] = s.snack[1][1] = 1;
+    expect_refused(&R, &R.init_m, s, "snack_row_invalid");
+    s = ok;
+    s.nsnack = 1;
+    s.snack[0][0] = 15; // the fixture rosters fill slots 0..11 only
+    s.snack[0][1] = 1;
+    expect_refused(&R, &R.init_m, s, "snack_row_invalid");
 
     // A flag the seat claims is never trusted for the ball: HAS_BALL comes
     // from the ball's square alone.

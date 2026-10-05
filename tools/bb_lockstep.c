@@ -179,6 +179,7 @@ typedef struct {
     int reseat;        // --reseat: resume at the next seatable boundary
     int force_reseat;  // --force-reseat: rebuild the state at EVERY boundary
     int seat_audit;    // --seat-audit: rebuild, diff against the live state
+    int mirror_resources; // --seat-mirror-resources (experiment, see usage)
     int lost;          // diverged and not yet re-seated (reseat mode)
     int segment;       // 0 = prefix; k = after the k-th re-seat
     int divergences;   // every divergence, not only the first
@@ -322,6 +323,24 @@ static void report_divergence(runner* R, long cmd, const char* cls,
 // of BBP v4. Without --dump-pairs-reseat, re-seated records are counted and
 // dropped.
 
+// How the boundary-to-boundary span a re-seated record sits in ended (the
+// third pad byte of a .bbr record). Only PD_SPAN_MATCH says the engine, after
+// playing the recorded actions and dice from the re-seated state, arrived at
+// the state the replay records at the next boundary.
+enum {
+    PD_SPAN_OPEN = 0,   // lockstep stopped before the next boundary
+    PD_SPAN_MATCH = 1,  // closed; the engine equalled the replay's boundary
+                        // state in every field the seat carries
+    PD_SPAN_DRIFT = 2,  // closed without a stop, but off the replay on the
+                        // pitch (a square, stance, the ball, score, clock)
+    PD_SPAN_MIRROR = 3, // closed against the mapper's mirror only (no seat)
+    PD_SPAN_SOFT = 4,   // closed; the pitch matched, a resource, status or
+                        // latch did not (re-rolls, Bribes, Distracted, ...)
+    PD_SPAN_STATES = 5,
+};
+// PD_SPAN_MATCH is evidence about the END of the span only. A state that was
+// wrong in the middle and right again at the boundary is not detected.
+
 typedef struct {
     FILE* f;
     FILE* f_reseat;
@@ -330,7 +349,7 @@ typedef struct {
     long pairs_reseat;
     uint8_t* span;      // re-seated records of the span in progress
     size_t span_n, span_cap;
-    long span_status[4]; // re-seated records by how their span ended
+    long span_status[PD_SPAN_STATES]; // re-seated records by how their span ended
     int staged;
     // Staged record fields (committed only after the transition succeeds).
     uint32_t cmd;
@@ -412,17 +431,6 @@ static void pd_stage(runner* R, bb_action a, long cmd) {
     pd_stage_prepared(&PD.env, agent, a, cmd);
 }
 
-// How the boundary-to-boundary span a re-seated record sits in ended (the
-// third pad byte of a .bbr record). Only PD_SPAN_MATCH says the engine, after
-// playing the recorded actions and dice from the re-seated state, arrived at
-// the state the replay records at the next boundary.
-enum {
-    PD_SPAN_OPEN = 0,   // lockstep stopped before the next boundary
-    PD_SPAN_MATCH = 1,  // closed; squares, stance, ball, score, clock matched
-    PD_SPAN_DRIFT = 2,  // closed without a stop, but the state had drifted
-    PD_SPAN_MIRROR = 3, // closed against the mapper's mirror only (no seat)
-};
-
 #define PD_REC_SIZE (12 + BBE_OBS_SIZE + BBE_MASK_SIZE + 4)
 
 static void pd_put_u32(uint8_t* b, uint32_t v) {
@@ -440,7 +448,7 @@ static void pd_span_flush(int status) {
         rec[11] = (uint8_t)status;
         if (PD.f_reseat) fwrite(rec, 1, PD_REC_SIZE, PD.f_reseat);
     }
-    PD.span_status[status & 3] += (long)PD.span_n;
+    PD.span_status[status % PD_SPAN_STATES] += (long)PD.span_n;
     PD.span_n = 0;
 }
 
@@ -988,7 +996,7 @@ static int do_expect(runner* R, const char* line, long cmd) {
 // guesses; --seat-audit measures how often each one is wrong.
 
 #define SEAT_BUF 16384
-#define SEAT_COLS 6
+#define SEAT_COLS 7
 
 typedef struct {
     int present;  // the expect op carried a seat object
@@ -996,36 +1004,46 @@ typedef struct {
     char why[64];
     int half, active, kick, h1kick, weather, ktm;
     int tol;      // the mapper knows its engine mirror is off the replay here
-    int rr_mirror[2]; // the mapper's own (engine-semantics) re-roll count
+    // the mapper's own (engine-semantics) counts; -1 = not given
+    int rr_mirror[2], bonus_mirror[2], apo_mirror[2];
     int turn[2], score[2], rr[2], bonus[2], apo[2], bribes[2], eject[2], cheer[2];
     int ball[3];
     int npl;
-    int pl[BB_NUM_PLAYERS][SEAT_COLS]; // gslot, loc, x, y, stance, flags
+    // gslot, loc, x, y, stance, flags, skill_rr_used
+    int pl[BB_NUM_PLAYERS][SEAT_COLS];
     int nsnack;
     int snack[BB_NUM_PLAYERS][2];      // gslot, count
 } seat_rec;
 
-// Parse "key":[[a,b,..],[..]] rows of up to `cols` ints; returns the row count.
+// Parse "key":[[a,b,..],[..]] rows of exactly `cols` ints; returns the row
+// count, or -1 when the key is missing, a row has another length or there are
+// more than `cap` rows. A seat is written into the engine, so nothing here is
+// filled in by default.
 static int jrows(const char* s, const char* key, int* out, int cols, int cap) {
     const char* pa = ls_find_key(s, key);
-    if (!pa) return 0;
+    if (!pa) return -1;
     while (*pa == ' ') pa++;
-    if (*pa != '[') return 0;
+    if (*pa != '[') return -1;
     const char* end = span(pa);
     const char* p = pa + 1;
     int rows = 0;
-    while (p < end && rows < cap) {
+    for (;;) {
         while (p < end && *p != '[') p++;
         if (p >= end) break;
+        if (rows == cap) return -1;
         const char* pe = span(p);
         const char* q = p + 1;
         int n = 0;
-        for (int c = 0; c < cols; c++) out[rows * cols + c] = 0;
-        while (q < pe && n < cols) {
+        while (q < pe) {
             while (q < pe && (*q == ' ' || *q == ',')) q++;
             if (*q == ']') break;
-            out[rows * cols + n++] = (int)strtol(q, (char**)&q, 10);
+            char* stop;
+            long v = strtol(q, &stop, 10);
+            if (stop == q || n == cols) return -1;
+            out[rows * cols + n++] = (int)v;
+            q = stop;
         }
+        if (n != cols) return -1;
         rows++;
         p = pe;
     }
@@ -1060,6 +1078,12 @@ static void seat_parse(const char* line, seat_rec* s) {
     if (jarr(buf, "rr_mirror", s->rr_mirror, 2) != 2) {
         s->rr_mirror[0] = s->rr_mirror[1] = -1;
     }
+    if (jarr(buf, "bonus_mirror", s->bonus_mirror, 2) != 2) {
+        s->bonus_mirror[0] = s->bonus_mirror[1] = -1;
+    }
+    if (jarr(buf, "apo_mirror", s->apo_mirror, 2) != 2) {
+        s->apo_mirror[0] = s->apo_mirror[1] = -1;
+    }
     int ok = jarr(buf, "turn", s->turn, 2) == 2 &&
              jarr(buf, "score", s->score, 2) == 2 &&
              jarr(buf, "rr", s->rr, 2) == 2 &&
@@ -1071,8 +1095,9 @@ static void seat_parse(const char* line, seat_rec* s) {
              jarr(buf, "ball", s->ball, 3) == 3;
     s->npl = jrows(buf, "pl", &s->pl[0][0], SEAT_COLS, BB_NUM_PLAYERS);
     s->nsnack = jrows(buf, "snack", &s->snack[0][0], 2, BB_NUM_PLAYERS);
-    if (!ok) {
+    if (!ok || s->npl < 0 || s->nsnack < 0) {
         s->refused = 1;
+        s->npl = s->nsnack = 0;
         snprintf(s->why, sizeof s->why, "seat_unparseable");
     }
 }
@@ -1098,10 +1123,23 @@ static int seat_build(const runner* R, const bb_match* carry, const seat_rec* s,
         snprintf(why, cap, "scalar_out_of_range");
         return -1;
     }
+    int rr[2], bonus[2], apo[2];
+    for (int t = 0; t < 2; t++) {
+        // --seat-mirror-resources: take re-rolls and apothecaries from the
+        // mapper's own engine-semantics mirror instead of the replay, so the
+        // ops that follow (which the mapper wrote against that mirror) meet
+        // the windows they expect.
+        bool mirror = R->mirror_resources && s->rr_mirror[t] >= 0 &&
+                      s->bonus_mirror[t] >= 0 && s->apo_mirror[t] >= 0;
+        rr[t] = mirror ? s->rr_mirror[t] : s->rr[t];
+        bonus[t] = mirror ? s->bonus_mirror[t] : s->bonus[t];
+        apo[t] = mirror ? s->apo_mirror[t] : s->apo[t];
+        if (bonus[t] > rr[t]) bonus[t] = mirror ? rr[t] : bonus[t];
+    }
     for (int t = 0; t < 2; t++) {
         if (!seat_in(s->turn[t], 0, 8) || !seat_in(s->score[t], 0, 255) ||
-            !seat_in(s->rr[t], 0, 255) || !seat_in(s->bonus[t], 0, s->rr[t]) ||
-            !seat_in(s->apo[t], 0, 255) || !seat_in(s->bribes[t], 0, 255) ||
+            !seat_in(rr[t], 0, 255) || !seat_in(bonus[t], 0, rr[t]) ||
+            !seat_in(apo[t], 0, 255) || !seat_in(s->bribes[t], 0, 255) ||
             !seat_in(s->eject[t], 0, 1) || !seat_in(s->cheer[t], 0, 1)) {
             snprintf(why, cap, "team_field_out_of_range");
             return -1;
@@ -1126,7 +1164,7 @@ static int seat_build(const runner* R, const bb_match* carry, const seat_rec* s,
             n.players[slot].location == BB_LOC_ABSENT ||
             !seat_in(r[1], BB_LOC_ON_PITCH, BB_LOC_SENT_OFF) ||
             !seat_in(r[4], BB_STANCE_STANDING, BB_STANCE_STUNNED_USED) ||
-            (r[5] & ~0x0FFF) != 0) {
+            (r[5] & ~0x0FFF) != 0 || !seat_in(r[6], 0, 0xFFFF)) {
             snprintf(why, cap, "player_row_invalid");
             return -1;
         }
@@ -1139,6 +1177,7 @@ static int seat_build(const runner* R, const bb_match* carry, const seat_rec* s,
         // who left the pitch keeps last turn's latches (the engine clears
         // them at their team's next turn start, not on removal).
         p->flags = (uint16_t)(r[5] & ~BB_PF_HAS_BALL & ~BB_PF_ACTIVATING);
+        p->skill_rr_used = (uint16_t)r[6];
         if (r[1] != BB_LOC_ON_PITCH) continue;
         if (!bb_on_pitch_xy(r[2], r[3]) || n.grid[r[2]][r[3]] != 0) {
             snprintf(why, cap, "player_square_invalid");
@@ -1155,13 +1194,16 @@ static int seat_build(const runner* R, const bb_match* carry, const seat_rec* s,
             return -1;
         }
     }
+    bool snacked[BB_NUM_PLAYERS] = {false};
     for (int i = 0; i < s->nsnack; i++) {
         int slot = s->snack[i][0];
-        if (!seat_in(slot, 0, BB_NUM_PLAYERS - 1) ||
-            !seat_in(s->snack[i][1], 0, 32)) {
+        if (!seat_in(slot, 0, BB_NUM_PLAYERS - 1) || snacked[slot] ||
+            n.players[slot].location == BB_LOC_ABSENT ||
+            !seat_in(s->snack[i][1], 1, 32)) {
             snprintf(why, cap, "snack_row_invalid");
             return -1;
         }
+        snacked[slot] = true;
         bb_player* v = &n.players[slot];
         for (int k = 0; k < s->snack[i][1]; k++) { // kickoff_event, Dodgy Snack
             if (v->ma > 1) v->ma--;
@@ -1201,9 +1243,9 @@ static int seat_build(const runner* R, const bb_match* carry, const seat_rec* s,
     for (int t = 0; t < 2; t++) {
         n.turn[t] = (uint8_t)s->turn[t];
         n.score[t] = (uint8_t)s->score[t];
-        n.rerolls[t] = (uint8_t)s->rr[t];
-        n.bonus_rerolls[t] = (uint8_t)s->bonus[t];
-        n.apothecary[t] = (uint8_t)s->apo[t];
+        n.rerolls[t] = (uint8_t)rr[t];
+        n.bonus_rerolls[t] = (uint8_t)bonus[t];
+        n.apothecary[t] = (uint8_t)apo[t];
         n.bribes[t] = (uint8_t)s->bribes[t];
         n.coach_ejected[t] = (uint8_t)s->eject[t];
         n.cheer_assist[t] = (uint8_t)s->cheer[t];
@@ -1254,8 +1296,12 @@ enum {
                      // apothecaries, Bribes, weather, coach ban, Distracted /
                      // Rooted / Eye Gouged, Dodgy Snack characteristics
     SD_DERIVED = 4,  // mapper-derived engine latches (last turn's USED /
-                     // BLITZED / Pro, Cheering Fans assist, ktm_used)
-    SD_BOOK = 8,     // bookkeeping no observation or mask reads
+                     // BLITZED / Pro / skill re-rolls, Cheering Fans assist,
+                     // ktm_used)
+    SD_BOOK = 8,     // bookkeeping no observation, mask or rule reads before
+                     // the engine itself resets it: moved / rushes of the
+                     // team not on turn, step_count, turns_completed*, surfs,
+                     // ret, spp_game
 };
 
 typedef struct {
@@ -1326,7 +1372,7 @@ static int seat_diff(const bb_match* live, const bb_match* seat, char* out,
         if (a->st != b->st || a->ag != b->ag || a->pa != b->pa) seat_tok(&k, SD_SOFT, "p.st_ag_pa");
         if (memcmp(&a->skills, &b->skills, sizeof a->skills) != 0) seat_tok(&k, SD_SOFT, "p.skills");
         if (a->moved != b->moved || a->rushes != b->rushes) seat_tok(&k, SD_BOOK, "p.moved_rushes.%s", side);
-        if (a->skill_rr_used != b->skill_rr_used) seat_tok(&k, SD_BOOK, "p.skill_rr_used.%s", side);
+        if (a->skill_rr_used != b->skill_rr_used) seat_tok(&k, SD_DERIVED, "p.skill_rr_used.%s", side);
         if (a->spp_game != b->spp_game) seat_tok(&k, SD_BOOK, "p.spp_game");
         if (a->position_id != b->position_id || a->star_id != b->star_id ||
             a->niggling != b->niggling || a->p_loner != b->p_loner ||
@@ -1354,7 +1400,7 @@ static int seat_diff(const bb_match* live, const bb_match* seat, char* out,
         if (live->rerolls[t] != seat->rerolls[t])
             seat_tok(&k, SD_SOFT, "rerolls(%+d)", (int)seat->rerolls[t] - (int)live->rerolls[t]);
         if (live->rerolls_start[t] != seat->rerolls_start[t]) seat_tok(&k, SD_SOFT, "rerolls_start");
-        if (live->bonus_rerolls[t] != seat->bonus_rerolls[t]) seat_tok(&k, SD_BOOK, "bonus_rerolls");
+        if (live->bonus_rerolls[t] != seat->bonus_rerolls[t]) seat_tok(&k, SD_SOFT, "bonus_rerolls");
         if (live->apothecary[t] != seat->apothecary[t])
             seat_tok(&k, SD_SOFT, "apothecary(%+d)", (int)seat->apothecary[t] - (int)live->apothecary[t]);
         if (live->bribes[t] != seat->bribes[t])
@@ -1456,9 +1502,9 @@ static void seat_audit_line(const runner* R, long cmd, const seat_rec* s,
 // as without --reseat; --reseat adds the clock check.
 // Re-seated provenance (segment > 0) at a seatable boundary: the replay's own
 // boundary state is BOTH the check and the next state. The span that just
-// ended is closed with status 1 if the engine matched it on everything the
-// replay shows on the pitch (SD_HARD), else 2; then the engine is re-synced to
-// the seat so drift never carries into the next team turn.
+// ended is stamped with how the engine compared with it (PD_SPAN_MATCH /
+// _SOFT / _DRIFT); then the engine is re-synced to the seat so drift never
+// carries into the next team turn.
 static int on_expect(runner* R, const char* line, long cmd) {
     seat_rec s;
     seat_parse(line, &s);
@@ -1475,11 +1521,13 @@ static int on_expect(runner* R, const char* line, long cmd) {
         char diff[2048];
         int mask = 0;
         seat_diff(&R->m, &built, diff, sizeof diff, &mask);
-        int status = (mask & SD_HARD) ? PD_SPAN_DRIFT : PD_SPAN_MATCH;
+        int status = (mask & SD_HARD) ? PD_SPAN_DRIFT
+                     : (mask & (SD_SOFT | SD_DERIVED)) ? PD_SPAN_SOFT
+                     : PD_SPAN_MATCH;
         pd_span_flush(status);
-        if (status == PD_SPAN_MATCH) R->spans_aligned++;
-        else R->spans_drift++;
-        if (mask & SD_SOFT) R->spans_soft_drift++;
+        if (status == PD_SPAN_DRIFT) R->spans_drift++;
+        else R->spans_aligned++;
+        if (status == PD_SPAN_SOFT) R->spans_soft_drift++;
         printf("{\"close\":true,\"replay\":\"%s\",\"cmd\":%ld,\"seg\":%d,"
                "\"status\":%d,\"mask\":%d,\"diff\":\"%s\"}\n",
                R->replay, cmd, R->segment, status, mask, diff);
@@ -1726,6 +1774,7 @@ int main(int argc, char** argv) {
         else if (strcmp(argv[i], "--reseat") == 0) R.reseat = 1;
         else if (strcmp(argv[i], "--force-reseat") == 0) R.force_reseat = 1;
         else if (strcmp(argv[i], "--seat-audit") == 0) R.seat_audit = 1;
+        else if (strcmp(argv[i], "--seat-mirror-resources") == 0) R.mirror_resources = 1;
         else if (strcmp(argv[i], "--dump-pairs-reseat") == 0 && i + 1 < argc) {
             reseat_dump_path = argv[++i];
         }
@@ -1765,7 +1814,10 @@ int main(int argc, char** argv) {
                 "           the state from the seat and report each field that\n"
                 "           differs from the engine's own state\n"
                 "  --force-reseat  TEST: replace the state at EVERY seatable\n"
-                "           boundary although nothing diverged\n");
+                "           boundary although nothing diverged\n"
+                "  --seat-mirror-resources  EXPERIMENT: seat re-rolls and\n"
+                "           apothecaries from the mapper's engine-semantics mirror\n"
+                "           instead of the replay's own counts\n");
         return 2;
     }
     if (R.reseat && R.force_reseat) {
@@ -1891,13 +1943,14 @@ int main(int argc, char** argv) {
     if (R.reseat || R.force_reseat || R.seat_audit) {
         snprintf(seat, sizeof seat,
                  ",\"reseats\":%d,\"syncs\":%d,\"pairs_reseat\":%ld,"
-                 "\"pairs_by_span_status\":[%ld,%ld,%ld,%ld],\"divergences\":%d,"
+                 "\"pairs_by_span_status\":[%ld,%ld,%ld,%ld,%ld],\"divergences\":%d,"
                  "\"lost_decisions\":%ld,\"seat_refused\":%d,\"seat_failed\":%d,"
                  "\"spans\":%d,\"spans_aligned\":%d,\"spans_drift\":%d,"
                  "\"spans_soft_drift\":%d,\"end_turn_dropped\":%d,"
                  "\"ended_lost\":%s",
                  R.reseats, R.syncs, PD.pairs_reseat, PD.span_status[0],
                  PD.span_status[1], PD.span_status[2], PD.span_status[3],
+                 PD.span_status[4],
                  R.divergences, R.lost_decisions, R.seat_refused, R.seat_failed,
                  R.spans, R.spans_aligned, R.spans_drift, R.spans_soft_drift,
                  R.end_turn_dropped, R.lost ? "true" : "false");
