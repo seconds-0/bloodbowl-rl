@@ -28,8 +28,9 @@ PUFFER_CONTACT_TESTBIN := $(BUILD)/puffer_contact_bot_tests
 PUFFER_STATE_BANK_TESTBIN := $(BUILD)/puffer_state_bank_tests
 PUFFER_OBSERVATION_TESTBIN := $(BUILD)/puffer_observation_tests
 BBP_V4_WRITER_TESTBIN := $(BUILD)/bbp_v4_writer_tests
+RESEAT_TESTBIN := $(BUILD)/reseat_tests
 PROFILE_BIN := $(BUILD)/bbe_profile
-PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V4_WRITER_TESTBIN)
+PUFFER_TESTBINS := $(PUFFER_REWARD_TESTBIN) $(PUFFER_CONTACT_TESTBIN) $(PUFFER_STATE_BANK_TESTBIN) $(PUFFER_OBSERVATION_TESTBIN) $(BBP_V4_WRITER_TESTBIN) $(RESEAT_TESTBIN)
 
 .PHONY: all test asan fuzz coverage coverage-run lockstep ballstats blockstats human-ball-advancement blockev-mc scenario-scan legal-digest clean
 
@@ -77,6 +78,9 @@ $(PROFILE_BIN): puffer/bloodbowl/bbe_profile.c puffer/bloodbowl/bloodbowl.h $(SR
 $(BBP_V4_WRITER_TESTBIN): tools/test_bbp_v4_writer.c tools/bb_lockstep.c puffer/bloodbowl/bloodbowl.h $(SRC) $(ENGINE_HDR)
 	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Itools -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
 
+$(RESEAT_TESTBIN): tools/test_reseat.c tools/bb_lockstep.c puffer/bloodbowl/bloodbowl.h $(SRC) $(ENGINE_HDR)
+	$(CC) $(CFLAGS) -Ipuffer/bloodbowl -Itools -Wno-unused-function $< -o $@ -lm $(LDFLAGS)
+
 test: $(TESTBIN) $(PUFFER_TESTBINS) $(PROFILE_BIN)
 	./$(TESTBIN) $(TEST)
 	./$(PUFFER_REWARD_TESTBIN) $(TEST)
@@ -84,6 +88,7 @@ test: $(TESTBIN) $(PUFFER_TESTBINS) $(PROFILE_BIN)
 	./$(PUFFER_STATE_BANK_TESTBIN) $(TEST)
 	./$(PUFFER_OBSERVATION_TESTBIN) $(TEST)
 	./$(BBP_V4_WRITER_TESTBIN)
+	./$(RESEAT_TESTBIN)
 	./$(PROFILE_BIN) 50 --smoke
 
 blockev-mc: $(OBJ)

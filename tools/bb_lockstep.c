@@ -23,6 +23,7 @@
 // bbe_fill_mask, bbe_action_arg/bbe_action_sq) for --dump-pairs.
 #include "bloodbowl.h"
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 
 #define MAX_LINE 65536
@@ -173,6 +174,26 @@ typedef struct {
     int die_idx;
     int orig_nd;       // FUMBBL-recorded dice for the current op (pre-pad)
     const char* cur_op;
+    const char* cur_line; // the op being processed (divergence reports)
+    // --- turn-boundary re-seat (see the block comment above seat_rec) ---
+    int reseat;        // --reseat: resume at the next seatable boundary
+    int force_reseat;  // --force-reseat: rebuild the state at EVERY boundary
+    int seat_audit;    // --seat-audit: rebuild, diff against the live state
+    int lost;          // diverged and not yet re-seated (reseat mode)
+    int segment;       // 0 = prefix; k = after the k-th re-seat
+    int divergences;   // every divergence, not only the first
+    int reseats, seat_refused, seat_failed;
+    int syncs;         // boundary re-syncs inside re-seated provenance
+    int spans, spans_aligned; // boundary-to-boundary spans (~team turns)
+    int spans_drift;   // closed without a stop, but off the replay's state
+    int spans_soft_drift;     // ... or off in resources / statuses only
+    int span_clean;    // nothing diverged since the last boundary
+    long lost_decisions;      // act/place ops skipped while lost
+    long span_lost;           // ... since the divergence that opened this gap
+    char last_class[24];      // class of the divergence that opened this gap
+    bb_match init_m;   // the match as the init op built it (statics only)
+    bb_match prev_boundary;   // live state at the previous boundary (audit carry)
+    int have_prev_boundary;
 } runner;
 
 static void ctx_copy(char dst[512], const char* line) {
@@ -203,15 +224,32 @@ static void json_escape(const char* in, char* out, int cap) {
 
 static void report_divergence(runner* R, long cmd, const char* cls,
                               const char* ours, const char* theirs) {
-    if (R->diverged) return;
+    // Without --reseat only the first divergence exists (nothing runs after
+    // it). With it, every divergence is reported, tagged with its segment.
+    if (R->diverged && !R->reseat) return;
     R->diverged = 1;
+    R->divergences++;
+    if (R->reseat) {
+        R->lost = 1;
+        R->span_lost = 0;
+        snprintf(R->last_class, sizeof R->last_class, "%s", cls);
+    }
+    R->span_clean = 0;
     char o[512], t[512], c[CTX_OPS][1024];
     json_escape(ours, o, sizeof o);
     json_escape(theirs, t, sizeof t);
     for (int i = 0; i < R->ctx_n; i++) json_escape(R->ctx[i], c[i], sizeof c[i]);
-    printf("{\"replay\":\"%s\",\"cmd\":%ld,\"class\":\"%s\",\"ours\":\"%s\","
-           "\"theirs\":\"%s\",\"context\":[",
-           R->replay, cmd, cls, o, t);
+    char opname[16] = "?";
+    long op_type = -1, op_arg = -1;
+    if (R->cur_line) {
+        jstr(R->cur_line, "op", opname, sizeof opname);
+        op_type = jint(R->cur_line, "type", -1);
+        op_arg = jint(R->cur_line, "arg", -1);
+    }
+    printf("{\"replay\":\"%s\",\"cmd\":%ld,\"seg\":%d,\"class\":\"%s\","
+           "\"op\":\"%s\",\"type\":%ld,\"arg\":%ld,"
+           "\"ours\":\"%s\",\"theirs\":\"%s\",\"context\":[",
+           R->replay, cmd, R->segment, cls, opname, op_type, op_arg, o, t);
     for (int i = 0; i < R->ctx_n; i++) {
         printf("%s\"%s\"", i ? "," : "", c[i]);
     }
@@ -266,10 +304,32 @@ static void report_divergence(runner* R, long cmd, const char* cls,
 // across replays. ~1 match copy + 1 legal enumeration + 2 encodes per pair;
 // measured ~2 ms total overhead across the 21-replay corpus.
 
+// --- Re-seated pairs (--dump-pairs-reseat <out.bbr>) ---------------------------
+// A record whose decision state descends from a turn-boundary re-seat is NEVER
+// written to the .bbp shard. It goes to a second file with its own magic, so
+// the BBP readers (training/bc_pretrain.py, validation/extract_pairs.py) refuse
+// it outright and nobody can train on re-seated pairs by pointing a loader at
+// the wrong directory:
+//
+//   header (16 bytes):  magic "BBR1", version u32 4, obs_size u32, mask_size u32
+//   record: byte-for-byte the BBP v4 record, except that the three pad bytes
+//           after `agent` carry provenance: segment u16 (1 = after the first
+//           recovery of this replay, 2 = after the second, ...) and a status
+//           byte saying how the record's span ended (PD_SPAN_* below).
+//
+// "Version 4" there means the observation, mask and target semantics are those
+// of BBP v4. Without --dump-pairs-reseat, re-seated records are counted and
+// dropped.
+
 typedef struct {
     FILE* f;
+    FILE* f_reseat;
     uint32_t replay_id;
     long pairs;
+    long pairs_reseat;
+    uint8_t* span;      // re-seated records of the span in progress
+    size_t span_n, span_cap;
+    long span_status[4]; // re-seated records by how their span ended
     int staged;
     // Staged record fields (committed only after the transition succeeds).
     uint32_t cmd;
@@ -288,22 +348,26 @@ typedef struct {
 
 static pair_dumper PD; // static: Bloodbowl carries ~30KB of legal buffers
 
-static void pd_u32(uint32_t v) {
+static void pd_u32_to(FILE* f, uint32_t v) {
     uint8_t b[4] = {(uint8_t)v, (uint8_t)(v >> 8), (uint8_t)(v >> 16),
                     (uint8_t)(v >> 24)};
-    fwrite(b, 1, 4, PD.f);
+    fwrite(b, 1, 4, f);
 }
 
-static void pd_open(const char* path) {
-    PD.f = fopen(path, "wb");
-    if (!PD.f) {
+static FILE* pd_open_file(const char* path, const char* magic) {
+    FILE* f = fopen(path, "wb");
+    if (!f) {
         fprintf(stderr, "cannot open %s for writing\n", path);
         exit(2);
     }
-    fwrite("BBP1", 1, 4, PD.f);
-    pd_u32(4); // v4: exact sequential action semantics; layout unchanged
-    pd_u32(BBE_OBS_SIZE);
-    pd_u32(BBE_MASK_SIZE);
+    fwrite(magic, 1, 4, f);
+    pd_u32_to(f, 4); // v4: exact sequential action semantics; layout unchanged
+    pd_u32_to(f, BBE_OBS_SIZE);
+    pd_u32_to(f, BBE_MASK_SIZE);
+    return f;
+}
+
+static void pd_init_env(void) {
     PD.env.num_agents = BBE_AGENTS;
     for (int a = 0; a < BBE_AGENTS; a++) {
         PD.env.obs_ptr[a] = PD.obs_buf + a * BBE_OBS_SIZE;
@@ -312,6 +376,16 @@ static void pd_open(const char* path) {
         PD.env.reward_ptr[a] = PD.rew_buf + a;
         PD.env.terminal_ptr[a] = PD.term_buf + a;
     }
+}
+
+static void pd_open_reseat(const char* path) {
+    PD.f_reseat = pd_open_file(path, "BBR1");
+    pd_init_env();
+}
+
+static void pd_open(const char* path) {
+    PD.f = pd_open_file(path, "BBP1");
+    pd_init_env();
 }
 
 // Stage one (obs, mask, action) record for the deciding side. Called AFTER
@@ -329,7 +403,7 @@ static void pd_stage_prepared(const Bloodbowl* env, int agent, bb_action a,
 }
 
 static void pd_stage(runner* R, bb_action a, long cmd) {
-    if (!PD.f) return;
+    if (!PD.f && !PD.f_reseat) return;
     PD.env.match = R->m; // mirror the lockstep match into the env shell
     bbe_refresh_legal(&PD.env);
     bbe_emit_all(&PD.env); // the exact per-step encode training runs
@@ -337,20 +411,81 @@ static void pd_stage(runner* R, bb_action a, long cmd) {
     pd_stage_prepared(&PD.env, agent, a, cmd);
 }
 
-static void pd_commit(void) {
-    if (!PD.f || !PD.staged) return;
+// How the boundary-to-boundary span a re-seated record sits in ended (the
+// third pad byte of a .bbr record). Only PD_SPAN_MATCH says the engine, after
+// playing the recorded actions and dice from the re-seated state, arrived at
+// the state the replay records at the next boundary.
+enum {
+    PD_SPAN_OPEN = 0,   // lockstep stopped before the next boundary
+    PD_SPAN_MATCH = 1,  // closed; squares, stance, ball, score, clock matched
+    PD_SPAN_DRIFT = 2,  // closed without a stop, but the state had drifted
+    PD_SPAN_MIRROR = 3, // closed against the mapper's mirror only (no seat)
+};
+
+#define PD_REC_SIZE (12 + BBE_OBS_SIZE + BBE_MASK_SIZE + 4)
+
+static void pd_put_u32(uint8_t* b, uint32_t v) {
+    b[0] = (uint8_t)v;
+    b[1] = (uint8_t)(v >> 8);
+    b[2] = (uint8_t)(v >> 16);
+    b[3] = (uint8_t)(v >> 24);
+}
+
+// Write the buffered records of the span that just ended, stamped with how
+// it ended. Prefix records are never buffered (they go straight to the .bbp).
+static void pd_span_flush(int status) {
+    for (size_t i = 0; i < PD.span_n; i++) {
+        uint8_t* rec = PD.span + i * PD_REC_SIZE;
+        rec[11] = (uint8_t)status;
+        if (PD.f_reseat) fwrite(rec, 1, PD_REC_SIZE, PD.f_reseat);
+    }
+    PD.span_status[status & 3] += (long)PD.span_n;
+    PD.span_n = 0;
+}
+
+// segment 0 = prefix-aligned (the .bbp shard); segment k > 0 = after the k-th
+// recovery (the .bbr shard, or counted and dropped when none was requested).
+static void pd_commit_segment(int segment) {
+    if (!PD.staged) return;
     PD.staged = 0;
-    pd_u32(PD.replay_id);
-    pd_u32(PD.cmd);
-    uint8_t apad[4] = {PD.agent, 0, 0, 0};
-    fwrite(apad, 1, 4, PD.f);
+    uint8_t head[12];
+    pd_put_u32(head, PD.replay_id);
+    pd_put_u32(head + 4, PD.cmd);
+    int seg = segment > 0xFFFF ? 0xFFFF : segment;
+    head[8] = PD.agent;
+    head[9] = (uint8_t)seg;
+    head[10] = (uint8_t)(seg >> 8);
+    head[11] = 0;
+    uint8_t tail[4] = {PD.a_type, PD.a_arg, (uint8_t)PD.a_sq, (uint8_t)(PD.a_sq >> 8)};
+    if (segment > 0) {
+        PD.pairs_reseat++;
+        if (PD.span_n == PD.span_cap) {
+            size_t cap = PD.span_cap ? PD.span_cap * 2 : 256;
+            uint8_t* grown = realloc(PD.span, cap * PD_REC_SIZE);
+            if (!grown) {
+                fprintf(stderr, "out of memory buffering a re-seated span\n");
+                exit(2);
+            }
+            PD.span = grown;
+            PD.span_cap = cap;
+        }
+        uint8_t* rec = PD.span + PD.span_n++ * PD_REC_SIZE;
+        memcpy(rec, head, 12);
+        memcpy(rec + 12, PD.obs, BBE_OBS_SIZE);
+        memcpy(rec + 12 + BBE_OBS_SIZE, PD.mask, BBE_MASK_SIZE);
+        memcpy(rec + 12 + BBE_OBS_SIZE + BBE_MASK_SIZE, tail, 4);
+        return;
+    }
+    if (!PD.f) return;
+    PD.pairs++;
+    fwrite(head, 1, 12, PD.f);
     fwrite(PD.obs, 1, BBE_OBS_SIZE, PD.f);
     fwrite(PD.mask, 1, BBE_MASK_SIZE, PD.f);
-    fwrite(&PD.a_type, 1, 1, PD.f);
-    fwrite(&PD.a_arg, 1, 1, PD.f);
-    uint8_t sq[2] = {(uint8_t)PD.a_sq, (uint8_t)(PD.a_sq >> 8)};
-    fwrite(sq, 1, 2, PD.f);
-    PD.pairs++;
+    fwrite(tail, 1, 4, PD.f);
+}
+
+static void pd_commit(void) {
+    pd_commit_segment(0);
 }
 
 static void pd_abort(void) {
@@ -435,6 +570,13 @@ static void sd_commit(void) {
 // if this op crossed into a fresh team turn.
 static void sd_on_op_applied(runner* R, long cmd) {
     if (!SD.f) return;
+    // A re-seated state is built by writing fields, not reached through
+    // bb_apply: it must never enter the state bank (AGENTS.md, "Replay and BC
+    // contract"), and neither may anything staged before it.
+    if (R->segment > 0) {
+        SD.staged = 0;
+        return;
+    }
     sd_commit();
     const bb_match* m = &R->m;
     if (m->status != BB_STATUS_DECISION) return;
@@ -578,6 +720,7 @@ static int do_init(runner* R, const char* line) {
     R->m.ball.carrier = BB_NO_PLAYER;
     R->m.status = BB_STATUS_RUNNING;
     bb_push(&R->m, BB_PROC_MATCH, 0, 0, 0, 0);
+    R->init_m = R->m; // rosters, re-roll complement, fans: a re-seat's statics
     return 0;
 }
 
@@ -802,6 +945,615 @@ static int do_expect(runner* R, const char* line, long cmd) {
     return 0;
 }
 
+// --- Turn-boundary re-seat ---------------------------------------------------------
+// PROTOTYPE, measurement only. Lockstep stops at the first point where the
+// engine and the recorded FUMBBL game disagree, so one unmapped event costs the
+// rest of the match. A re-seat resumes at the next team-turn boundary by
+// putting the engine into the state FUMBBL recorded there (the "seat" object
+// the mapper attaches to its expect op: validation/lockstep_map.py build_seat,
+// folded from the replay's model-change log by validation/ffb_fold.py).
+//
+// THIS IS STATE SURGERY. A re-seated bb_match is written field by field, not
+// reached through bb_apply from an engine initializer, which is exactly what
+// AGENTS.md ("Replay and BC contract") and CLAUDE.md ("Authored drill bank")
+// forbid for banked states. Therefore, by construction:
+//   * no BBS record is written at or after a re-seat (sd_on_op_applied);
+//   * no re-seated record enters a .bbp shard: they go to a separate file with
+//     its own magic that the BBP readers refuse (pd_commit_segment);
+//   * the surgery lives in this tool only. The engine gains no entry point.
+// A re-seated state is used for ONE thing: computing the observation and the
+// exact conditional masks of the human decisions that follow it.
+//
+// What the seat carries, and where the rest comes from (seat_build):
+//   from the replay   every player's location, square, stance and status
+//                     flags; the ball; half; both turn counters; score; whose
+//                     turn starts; kicking team; weather; both re-roll pools
+//                     and their drive-scoped share; apothecaries; Bribes; the
+//                     coach ban
+//   derived by the    STUNNED versus STUNNED_USED; the kicking team in half
+//   mapper            one; last turn's USED / BLITZED / Pro latches on the
+//                     team that just played; the pending Cheering Fans
+//                     assist; Dodgy Snack debuffs; ktm_used
+//   from the init op  skills, base characteristics, positions, Loner and
+//                     Bloodlust values, re-roll complement, fan factor,
+//                     team ids
+//   set by rule       the two frames of a fresh team turn (MATCH phase 3,
+//                     TEAM_TURN phase 1), DECISION for the active team, no
+//                     turnover, the six per-turn action latches clear, and
+//                     moved / rushes / skill_rr_used zero for everyone
+//   carried, stale    step_count, turns_completed*, surfs, ret (bookkeeping
+//                     no observation, mask or rule reads at a fresh turn)
+// Of these, only the "derived" and the zeroed non-active-team bytes are
+// guesses; --seat-audit measures how often each one is wrong.
+
+#define SEAT_BUF 16384
+#define SEAT_COLS 6
+
+typedef struct {
+    int present;  // the expect op carried a seat object
+    int refused;  // ... that says the engine cannot represent this boundary
+    char why[64];
+    int half, active, kick, h1kick, weather, ktm;
+    int tol;      // the mapper knows its engine mirror is off the replay here
+    int rr_mirror[2]; // the mapper's own (engine-semantics) re-roll count
+    int turn[2], score[2], rr[2], bonus[2], apo[2], bribes[2], eject[2], cheer[2];
+    int ball[3];
+    int npl;
+    int pl[BB_NUM_PLAYERS][SEAT_COLS]; // gslot, loc, x, y, stance, flags
+    int nsnack;
+    int snack[BB_NUM_PLAYERS][2];      // gslot, count
+} seat_rec;
+
+// Parse "key":[[a,b,..],[..]] rows of up to `cols` ints; returns the row count.
+static int jrows(const char* s, const char* key, int* out, int cols, int cap) {
+    const char* pa = ls_find_key(s, key);
+    if (!pa) return 0;
+    while (*pa == ' ') pa++;
+    if (*pa != '[') return 0;
+    const char* end = span(pa);
+    const char* p = pa + 1;
+    int rows = 0;
+    while (p < end && rows < cap) {
+        while (p < end && *p != '[') p++;
+        if (p >= end) break;
+        const char* pe = span(p);
+        const char* q = p + 1;
+        int n = 0;
+        for (int c = 0; c < cols; c++) out[rows * cols + c] = 0;
+        while (q < pe && n < cols) {
+            while (q < pe && (*q == ' ' || *q == ',')) q++;
+            if (*q == ']') break;
+            out[rows * cols + n++] = (int)strtol(q, (char**)&q, 10);
+        }
+        rows++;
+        p = pe;
+    }
+    return rows;
+}
+
+static void seat_parse(const char* line, seat_rec* s) {
+    memset(s, 0, sizeof *s);
+    const char* so = jobj(line, "seat");
+    if (!so) return;
+    static char buf[SEAT_BUF];
+    int len = (int)(span(so) - so);
+    if (len >= SEAT_BUF) {
+        s->present = s->refused = 1;
+        snprintf(s->why, sizeof s->why, "seat_too_long");
+        return;
+    }
+    memcpy(buf, so, len);
+    buf[len] = 0;
+    s->present = 1;
+    if (jstr(buf, "refuse", s->why, sizeof s->why)) {
+        s->refused = 1;
+        return;
+    }
+    s->half = (int)jint(buf, "half", -1);
+    s->active = (int)jint(buf, "active", -1);
+    s->kick = (int)jint(buf, "kick", -1);
+    s->h1kick = (int)jint(buf, "h1kick", -1);
+    s->weather = (int)jint(buf, "weather", -1);
+    s->ktm = (int)jint(buf, "ktm", 0);
+    s->tol = (int)jint(buf, "tol", 0);
+    if (jarr(buf, "rr_mirror", s->rr_mirror, 2) != 2) {
+        s->rr_mirror[0] = s->rr_mirror[1] = -1;
+    }
+    int ok = jarr(buf, "turn", s->turn, 2) == 2 &&
+             jarr(buf, "score", s->score, 2) == 2 &&
+             jarr(buf, "rr", s->rr, 2) == 2 &&
+             jarr(buf, "bonus", s->bonus, 2) == 2 &&
+             jarr(buf, "apo", s->apo, 2) == 2 &&
+             jarr(buf, "bribes", s->bribes, 2) == 2 &&
+             jarr(buf, "eject", s->eject, 2) == 2 &&
+             jarr(buf, "cheer", s->cheer, 2) == 2 &&
+             jarr(buf, "ball", s->ball, 3) == 3;
+    s->npl = jrows(buf, "pl", &s->pl[0][0], SEAT_COLS, BB_NUM_PLAYERS);
+    s->nsnack = jrows(buf, "snack", &s->snack[0][0], 2, BB_NUM_PLAYERS);
+    if (!ok) {
+        s->refused = 1;
+        snprintf(s->why, sizeof s->why, "seat_unparseable");
+    }
+}
+
+static bool seat_in(int v, int lo, int hi) {
+    return v >= lo && v <= hi;
+}
+
+// Build the boundary state the seat describes into *out. `carry` supplies only
+// the stale bookkeeping listed above. Returns 0, or -1 with a reason: a seat
+// that is out of range, self-contradictory, fails the engine's own boundary
+// validator, or describes a team turn the engine would never have opened is
+// refused, never repaired.
+static int seat_build(const runner* R, const bb_match* carry, const seat_rec* s,
+                      bb_match* out, char* why, size_t cap) {
+    if (!s->present || s->refused) {
+        snprintf(why, cap, "%s", s->present ? s->why : "no_seat");
+        return -1;
+    }
+    if (!seat_in(s->half, 1, 2) || !seat_in(s->active, 0, 1) ||
+        !seat_in(s->kick, 0, 1) || !seat_in(s->h1kick, 0, 1) ||
+        !seat_in(s->weather, 0, BB_WEATHER_BLIZZARD) || !seat_in(s->ktm, 0, 1)) {
+        snprintf(why, cap, "scalar_out_of_range");
+        return -1;
+    }
+    for (int t = 0; t < 2; t++) {
+        if (!seat_in(s->turn[t], 0, 8) || !seat_in(s->score[t], 0, 255) ||
+            !seat_in(s->rr[t], 0, 255) || !seat_in(s->bonus[t], 0, s->rr[t]) ||
+            !seat_in(s->apo[t], 0, 255) || !seat_in(s->bribes[t], 0, 255) ||
+            !seat_in(s->eject[t], 0, 1) || !seat_in(s->cheer[t], 0, 1)) {
+            snprintf(why, cap, "team_field_out_of_range");
+            return -1;
+        }
+    }
+    bb_match n = R->init_m;
+    // Stale bookkeeping: monotone counters and the last child result.
+    n.step_count = carry->step_count;
+    n.ret = carry->ret;
+    for (int t = 0; t < 2; t++) {
+        n.surfs[t] = carry->surfs[t];
+        n.turns_completed[t] = carry->turns_completed[t];
+        n.turns_completed_held[t] = carry->turns_completed_held[t];
+        n.turnovers_completed[t] = carry->turnovers_completed[t];
+    }
+    memset(n.grid, 0, sizeof n.grid);
+    bool seen[BB_NUM_PLAYERS] = {false};
+    for (int i = 0; i < s->npl; i++) {
+        const int* r = s->pl[i];
+        int slot = r[0];
+        if (!seat_in(slot, 0, BB_NUM_PLAYERS - 1) || seen[slot] ||
+            n.players[slot].location == BB_LOC_ABSENT ||
+            !seat_in(r[1], BB_LOC_ON_PITCH, BB_LOC_SENT_OFF) ||
+            !seat_in(r[4], BB_STANCE_STANDING, BB_STANCE_STUNNED_USED) ||
+            (r[5] & ~0x0FFF) != 0) {
+            snprintf(why, cap, "player_row_invalid");
+            return -1;
+        }
+        seen[slot] = true;
+        bb_player* p = &n.players[slot];
+        p->location = (uint8_t)r[1];
+        p->stance = BB_STANCE_STANDING;
+        p->x = p->y = 0;
+        // HAS_BALL is set from the ball below, never taken on trust. A player
+        // who left the pitch keeps last turn's latches (the engine clears
+        // them at their team's next turn start, not on removal).
+        p->flags = (uint16_t)(r[5] & ~BB_PF_HAS_BALL & ~BB_PF_ACTIVATING);
+        if (r[1] != BB_LOC_ON_PITCH) continue;
+        if (!bb_on_pitch_xy(r[2], r[3]) || n.grid[r[2]][r[3]] != 0) {
+            snprintf(why, cap, "player_square_invalid");
+            return -1;
+        }
+        p->x = (uint8_t)r[2];
+        p->y = (uint8_t)r[3];
+        p->stance = (uint8_t)r[4];
+        n.grid[r[2]][r[3]] = (uint8_t)(slot + 1);
+    }
+    for (int slot = 0; slot < BB_NUM_PLAYERS; slot++) {
+        if (n.players[slot].location != BB_LOC_ABSENT && !seen[slot]) {
+            snprintf(why, cap, "roster_player_missing");
+            return -1;
+        }
+    }
+    for (int i = 0; i < s->nsnack; i++) {
+        int slot = s->snack[i][0];
+        if (!seat_in(slot, 0, BB_NUM_PLAYERS - 1) ||
+            !seat_in(s->snack[i][1], 0, 32)) {
+            snprintf(why, cap, "snack_row_invalid");
+            return -1;
+        }
+        bb_player* v = &n.players[slot];
+        for (int k = 0; k < s->snack[i][1]; k++) { // kickoff_event, Dodgy Snack
+            if (v->ma > 1) v->ma--;
+            if (v->av > 3) v->av--;
+        }
+    }
+    if (!bb_on_pitch_xy(s->ball[0], s->ball[1])) {
+        snprintf(why, cap, "ball_off_pitch");
+        return -1;
+    }
+    int at = n.grid[s->ball[0]][s->ball[1]];
+    if ((s->ball[2] != 0) != (at != 0)) {
+        snprintf(why, cap, "ball_holder_mismatch");
+        return -1;
+    }
+    n.ball.x = (uint8_t)s->ball[0];
+    n.ball.y = (uint8_t)s->ball[1];
+    if (at) {
+        if (n.players[at - 1].stance != BB_STANCE_STANDING) {
+            snprintf(why, cap, "ball_under_downed_player");
+            return -1;
+        }
+        n.ball.state = BB_BALL_HELD;
+        n.ball.carrier = (uint8_t)(at - 1);
+        n.players[at - 1].flags |= BB_PF_HAS_BALL;
+    } else {
+        n.ball.state = BB_BALL_ON_GROUND;
+        n.ball.carrier = BB_NO_PLAYER;
+    }
+    n.half = (uint8_t)s->half;
+    n.active_team = (uint8_t)s->active;
+    n.kicking_team = (uint8_t)s->kick;
+    n.weather = (uint8_t)s->weather;
+    n.ktm_used = (uint8_t)s->ktm;
+    n.blitz_used = n.pass_used = n.handoff_used = n.foul_used = 0;
+    n.ttm_used = n.secure_used = 0;
+    for (int t = 0; t < 2; t++) {
+        n.turn[t] = (uint8_t)s->turn[t];
+        n.score[t] = (uint8_t)s->score[t];
+        n.rerolls[t] = (uint8_t)s->rr[t];
+        n.bonus_rerolls[t] = (uint8_t)s->bonus[t];
+        n.apothecary[t] = (uint8_t)s->apo[t];
+        n.bribes[t] = (uint8_t)s->bribes[t];
+        n.coach_ejected[t] = (uint8_t)s->eject[t];
+        n.cheer_assist[t] = (uint8_t)s->cheer[t];
+    }
+    // A fresh team turn: MATCH in its turn loop, TEAM_TURN awaiting its first
+    // activation (proc_match.c / proc_turn.c; the same two frames
+    // bb_state_bank_boundary_valid demands).
+    memset(n.stack, 0, sizeof n.stack);
+    n.stack[0].proc = BB_PROC_MATCH;
+    n.stack[0].phase = 3;
+    n.stack[0].data = (uint16_t)(MD_H1_KICKER_SET | (s->h1kick ? MD_H1_KICKER : 0));
+    n.stack[1].proc = BB_PROC_TEAM_TURN;
+    n.stack[1].phase = 1;
+    n.stack[1].a = (uint8_t)s->active;
+    n.stack_top = 2;
+    n.status = BB_STATUS_DECISION;
+    n.decision_team = (uint8_t)s->active;
+    n.turnover = 0;
+    if (!bb_state_bank_boundary_valid(&n)) {
+        snprintf(why, cap, "boundary_validator");
+        return -1;
+    }
+    // The engine ends a team turn nobody can act in without asking: such a
+    // decision state does not exist, so do not invent one.
+    static bb_action legal[BB_LEGAL_MAX];
+    int nl = bb_legal_actions(&n, legal);
+    bool can_act = false;
+    for (int i = 0; i < nl; i++) {
+        if (legal[i].type == BB_A_ACTIVATE) can_act = true;
+    }
+    if (!can_act) {
+        snprintf(why, cap, "no_activatable_player");
+        return -1;
+    }
+    *out = n;
+    return 0;
+}
+
+// Field-by-field difference between the engine's live state and a state
+// built from the seat. Appends short tokens to `out`, returns their number
+// and ORs each token's class into *mask. Player tokens carry both values so
+// the audit can tell which way a field is wrong: "p.stance.own(L3/S1)" =
+// live 3, seat 1.
+enum {
+    SD_HARD = 1,     // what the replay shows on the pitch: squares, location,
+                     // stance, ball, score, half, turn counters, whose turn
+    SD_SOFT = 2,     // replay-recorded resources and statuses: re-rolls,
+                     // apothecaries, Bribes, weather, coach ban, Distracted /
+                     // Rooted / Eye Gouged, Dodgy Snack characteristics
+    SD_DERIVED = 4,  // mapper-derived engine latches (last turn's USED /
+                     // BLITZED / Pro, Cheering Fans assist, ktm_used)
+    SD_BOOK = 8,     // bookkeeping no observation or mask reads
+};
+
+typedef struct {
+    char* out;
+    size_t cap, len;
+    int n, mask;
+} seat_diff_sink;
+
+static void seat_tok(seat_diff_sink* k, int cls, const char* fmt, ...) {
+    char tok[64];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(tok, sizeof tok, fmt, ap);
+    va_end(ap);
+    k->n++;
+    k->mask |= cls;
+    // one token per kind per boundary is enough for the rates
+    size_t tl = strlen(tok);
+    const char* hit = k->len ? strstr(k->out, tok) : 0;
+    if (hit && (hit == k->out || hit[-1] == ',') &&
+        (hit[tl] == ',' || hit[tl] == 0)) return;
+    if (k->len + tl + 2 >= k->cap) return;
+    if (k->len) k->out[k->len++] = ',';
+    memcpy(k->out + k->len, tok, tl + 1);
+    k->len += tl;
+}
+
+#define SEAT_CMP(cls, field, name) \
+    do { \
+        if (live->field != seat->field) \
+            seat_tok(&k, cls, "%s(L%d/S%d)", name, (int)live->field, (int)seat->field); \
+    } while (0)
+
+static int seat_diff(const bb_match* live, const bb_match* seat, char* out,
+                     size_t cap, int* mask) {
+    static const char* FLAG[12] = {"USED", "ACTIVATING", "DISTRACTED", "HAS_BALL",
+                                   "BLITZED", "ROOTED", "HYPNOTIZED", "SKILL_A",
+                                   "SKILL_B", "SECURED", "NO_TZ", "EYE_GOUGED"};
+    static const int FLAG_CLASS[12] = {SD_DERIVED, SD_HARD, SD_SOFT, SD_HARD,
+                                       SD_DERIVED, SD_SOFT, SD_SOFT, SD_DERIVED,
+                                       SD_DERIVED, SD_SOFT, SD_SOFT, SD_SOFT};
+    seat_diff_sink k = {out, cap, 0, 0, 0};
+    out[0] = 0;
+    // BB_SEAT_DETAIL=1 (debugging): name the player slot in every token.
+    bool detail = getenv("BB_SEAT_DETAIL") != 0;
+    for (int i = 0; i < BB_NUM_PLAYERS; i++) {
+        const bb_player* a = &live->players[i];
+        const bb_player* b = &seat->players[i];
+        char side[16];
+        snprintf(side, sizeof side, detail ? "%s#%d" : "%s",
+                 BB_TEAM_OF(i) == seat->active_team ? "own" : "opp", i);
+        if (a->location != b->location) {
+            seat_tok(&k, SD_HARD, "p.loc.%s(L%d/S%d)", side, a->location, b->location);
+        } else if (a->location == BB_LOC_ON_PITCH && (a->x != b->x || a->y != b->y)) {
+            seat_tok(&k, SD_HARD, "p.xy");
+        }
+        if (a->stance != b->stance) {
+            seat_tok(&k, SD_HARD, "p.stance.%s(L%d/S%d)", side, a->stance, b->stance);
+        }
+        for (int bit = 0; bit < 12; bit++) {
+            int la = (a->flags >> bit) & 1, lb = (b->flags >> bit) & 1;
+            if (la != lb) {
+                seat_tok(&k, FLAG_CLASS[bit], "p.flag.%s.%s(L%d/S%d)", FLAG[bit],
+                         side, la, lb);
+            }
+        }
+        if (a->ma != b->ma || a->av != b->av) seat_tok(&k, SD_SOFT, "p.ma_av");
+        if (a->st != b->st || a->ag != b->ag || a->pa != b->pa) seat_tok(&k, SD_SOFT, "p.st_ag_pa");
+        if (memcmp(&a->skills, &b->skills, sizeof a->skills) != 0) seat_tok(&k, SD_SOFT, "p.skills");
+        if (a->moved != b->moved || a->rushes != b->rushes) seat_tok(&k, SD_BOOK, "p.moved_rushes.%s", side);
+        if (a->skill_rr_used != b->skill_rr_used) seat_tok(&k, SD_BOOK, "p.skill_rr_used.%s", side);
+        if (a->spp_game != b->spp_game) seat_tok(&k, SD_BOOK, "p.spp_game");
+        if (a->position_id != b->position_id || a->star_id != b->star_id ||
+            a->niggling != b->niggling || a->p_loner != b->p_loner ||
+            a->p_bloodlust != b->p_bloodlust) seat_tok(&k, SD_SOFT, "p.static");
+    }
+    SEAT_CMP(SD_HARD, ball.state, "ball.state");
+    if (live->ball.x != seat->ball.x || live->ball.y != seat->ball.y) seat_tok(&k, SD_HARD, "ball.xy");
+    SEAT_CMP(SD_HARD, ball.carrier, "ball.carrier");
+    SEAT_CMP(SD_HARD, half, "half");
+    SEAT_CMP(SD_HARD, active_team, "active_team");
+    SEAT_CMP(SD_SOFT, kicking_team, "kicking_team");
+    SEAT_CMP(SD_SOFT, weather, "weather");
+    SEAT_CMP(SD_HARD, blitz_used, "blitz_used");
+    SEAT_CMP(SD_HARD, pass_used, "pass_used");
+    SEAT_CMP(SD_HARD, handoff_used, "handoff_used");
+    SEAT_CMP(SD_HARD, foul_used, "foul_used");
+    SEAT_CMP(SD_HARD, ttm_used, "ttm_used");
+    SEAT_CMP(SD_DERIVED, ktm_used, "ktm_used");
+    SEAT_CMP(SD_HARD, secure_used, "secure_used");
+    for (int t = 0; t < 2; t++) {
+        const char* side = t == seat->active_team ? "own" : "opp";
+        if (live->turn[t] != seat->turn[t])
+            seat_tok(&k, SD_HARD, "turn.%s(%+d)", side, (int)seat->turn[t] - (int)live->turn[t]);
+        if (live->score[t] != seat->score[t]) seat_tok(&k, SD_HARD, "score");
+        if (live->rerolls[t] != seat->rerolls[t])
+            seat_tok(&k, SD_SOFT, "rerolls(%+d)", (int)seat->rerolls[t] - (int)live->rerolls[t]);
+        if (live->rerolls_start[t] != seat->rerolls_start[t]) seat_tok(&k, SD_SOFT, "rerolls_start");
+        if (live->bonus_rerolls[t] != seat->bonus_rerolls[t]) seat_tok(&k, SD_BOOK, "bonus_rerolls");
+        if (live->apothecary[t] != seat->apothecary[t])
+            seat_tok(&k, SD_SOFT, "apothecary(%+d)", (int)seat->apothecary[t] - (int)live->apothecary[t]);
+        if (live->bribes[t] != seat->bribes[t])
+            seat_tok(&k, SD_SOFT, "bribes(%+d)", (int)seat->bribes[t] - (int)live->bribes[t]);
+        if (live->fan_factor[t] != seat->fan_factor[t]) seat_tok(&k, SD_SOFT, "fan_factor");
+        if (live->cheer_assist[t] != seat->cheer_assist[t])
+            seat_tok(&k, SD_DERIVED, "cheer_assist(L%d/S%d)", live->cheer_assist[t], seat->cheer_assist[t]);
+        if (live->surfs[t] != seat->surfs[t]) seat_tok(&k, SD_BOOK, "surfs");
+        if (live->coach_ejected[t] != seat->coach_ejected[t]) seat_tok(&k, SD_SOFT, "coach_ejected");
+        if (live->team_id[t] != seat->team_id[t]) seat_tok(&k, SD_SOFT, "team_id");
+        if (live->turns_completed[t] != seat->turns_completed[t] ||
+            live->turns_completed_held[t] != seat->turns_completed_held[t] ||
+            live->turnovers_completed[t] != seat->turnovers_completed[t])
+            seat_tok(&k, SD_BOOK, "turns_completed");
+    }
+    SEAT_CMP(SD_HARD, stack_top, "stack_top");
+    for (int i = 0; i < 2; i++) {
+        const bb_frame* fa = &live->stack[i];
+        const bb_frame* fb = &seat->stack[i];
+        if (fa->proc != fb->proc || fa->phase != fb->phase || fa->data != fb->data ||
+            fa->b != fb->b || fa->x != fb->x || fa->y != fb->y ||
+            (i == 0 && fa->a != fb->a)) {  // TEAM_TURN.a is active_team, above
+            seat_tok(&k, SD_HARD, "stack[%d](L%d.%d.%d/S%d.%d.%d)", i, fa->proc,
+                     fa->phase, fa->data, fb->proc, fb->phase, fb->data);
+        }
+    }
+    SEAT_CMP(SD_HARD, status, "status");
+    SEAT_CMP(SD_HARD, decision_team, "decision_team");
+    SEAT_CMP(SD_HARD, turnover, "turnover");
+    if (live->ret != seat->ret) seat_tok(&k, SD_BOOK, "ret");
+    if (live->step_count != seat->step_count) seat_tok(&k, SD_BOOK, "step_count");
+    if (mask) *mask = k.mask;
+    return k.n;
+}
+
+// What a human at this boundary could see in FUMBBL and the engine must agree
+// on for the turn that follows to mean the same thing: the clock. Everything
+// else the mirror-based expect op already compares (squares, stance class,
+// ball, score).
+static bool seat_clock_matches(const bb_match* m, const seat_rec* s) {
+    return m->status == BB_STATUS_DECISION && m->stack_top == 2 &&
+           m->stack[1].proc == BB_PROC_TEAM_TURN && m->stack[1].phase == 1 &&
+           m->active_team == s->active && m->half == s->half &&
+           m->turn[0] == s->turn[0] && m->turn[1] == s->turn[1];
+}
+
+// Recover from a loss: put the engine into the seat's state and open a new
+// segment. Returns 0 on success; a seat that cannot be built leaves the
+// runner lost.
+static int seat_recover(runner* R, const seat_rec* s, const bb_match* carry,
+                        long cmd, const char* cause) {
+    char why[64];
+    bb_match n;
+    if (seat_build(R, carry, s, &n, why, sizeof why) != 0) {
+        if (s->present && s->refused) R->seat_refused++;
+        else R->seat_failed++;
+        printf("{\"seat_skip\":true,\"replay\":\"%s\",\"cmd\":%ld,\"why\":\"%s\"}\n",
+               R->replay, cmd, why);
+        return -1;
+    }
+    R->m = n;
+    R->lost = 0;
+    R->segment++;
+    R->reseats++;
+    R->span_clean = 1;
+    pd_abort();
+    SD.staged = 0;
+    printf("{\"reseat\":true,\"replay\":\"%s\",\"cmd\":%ld,\"seg\":%d,\"half\":%d,"
+           "\"active\":%d,\"turn\":[%d,%d],\"cause\":\"%s\",\"lost_decisions\":%ld}\n",
+           R->replay, cmd, R->segment, s->half, s->active, s->turn[0], s->turn[1],
+           cause, R->span_lost);
+    R->span_lost = 0;
+    return 0;
+}
+
+static void seat_audit_line(const runner* R, long cmd, const seat_rec* s,
+                            const bb_match* built, const char* fail) {
+    if (fail) {
+        printf("{\"audit\":true,\"replay\":\"%s\",\"cmd\":%ld,\"seg\":%d,"
+               "\"build_fail\":\"%s\"}\n", R->replay, cmd, R->segment, fail);
+        return;
+    }
+    char diff[2048];
+    int mask = 0;
+    int nd = seat_diff(&R->m, built, diff, sizeof diff, &mask);
+    // rr_known: the re-roll difference is one the mapper's own mirror shares
+    // with the engine (a rules or mapping difference it already models).
+    bool rr_known = s->rr_mirror[0] == R->m.rerolls[0] &&
+                    s->rr_mirror[1] == R->m.rerolls[1];
+    printf("{\"audit\":true,\"replay\":\"%s\",\"cmd\":%ld,\"seg\":%d,\"n\":%d,"
+           "\"mask\":%d,\"tol\":%d,\"rr_known\":%d,\"diff\":\"%s\"}\n",
+           R->replay, cmd, R->segment, nd, mask, s->tol, rr_known ? 1 : 0, diff);
+}
+
+// Every expect op (= team-turn boundary) goes through here. Returns 0 when
+// the op counts as applied.
+//
+// Prefix (segment 0): the mapper's mirror-based expect is the check, exactly
+// as without --reseat; --reseat adds the clock check.
+// Re-seated provenance (segment > 0) at a seatable boundary: the replay's own
+// boundary state is BOTH the check and the next state. The span that just
+// ended is closed with status 1 if the engine matched it on everything the
+// replay shows on the pitch (SD_HARD), else 2; then the engine is re-synced to
+// the seat so drift never carries into the next team turn.
+static int on_expect(runner* R, const char* line, long cmd) {
+    seat_rec s;
+    seat_parse(line, &s);
+    bool usable = s.present && !s.refused;
+    char why[64];
+    bb_match built;
+    R->spans++;
+    if (R->reseat && R->lost) {
+        seat_recover(R, &s, &R->m, cmd, R->last_class);
+        return -1;
+    }
+    if (R->reseat && R->segment > 0 && usable &&
+        seat_build(R, &R->m, &s, &built, why, sizeof why) == 0) {
+        char diff[2048];
+        int mask = 0;
+        seat_diff(&R->m, &built, diff, sizeof diff, &mask);
+        int status = (mask & SD_HARD) ? PD_SPAN_DRIFT : PD_SPAN_MATCH;
+        pd_span_flush(status);
+        if (status == PD_SPAN_MATCH) R->spans_aligned++;
+        else R->spans_drift++;
+        if (mask & SD_SOFT) R->spans_soft_drift++;
+        printf("{\"close\":true,\"replay\":\"%s\",\"cmd\":%ld,\"seg\":%d,"
+               "\"status\":%d,\"mask\":%d,\"diff\":\"%s\"}\n",
+               R->replay, cmd, R->segment, status, mask, diff);
+        R->m = built;
+        R->syncs++;
+        R->span_clean = 1;
+        R->prev_boundary = R->m;
+        R->have_prev_boundary = 1;
+        return 0;
+    }
+    int rc = do_expect(R, line, cmd);
+    if (rc != 0) {
+        pd_span_flush(PD_SPAN_OPEN);
+        SD.staged = 0;
+        if (R->reseat) seat_recover(R, &s, &R->m, cmd, R->last_class);
+        return rc;
+    }
+    if (R->seat_audit && usable) {
+        // Rebuild this boundary from a carry one team turn stale (what a real
+        // re-seat after a lost turn would have) and diff against the state the
+        // engine reached legally.
+        const bb_match* carry = R->have_prev_boundary ? &R->prev_boundary : &R->m;
+        if (seat_build(R, carry, &s, &built, why, sizeof why) != 0) {
+            seat_audit_line(R, cmd, &s, 0, why);
+        } else {
+            seat_audit_line(R, cmd, &s, &built, 0);
+        }
+    }
+    if (R->reseat && usable && !seat_clock_matches(&R->m, &s)) {
+        // Squares, ball and score agree but the engine is in another team's
+        // turn or another turn number: the ops that follow belong to a turn
+        // the engine is not in.
+        char ours[160], theirs[160];
+        snprintf(ours, sizeof ours, "engine half %d active %d turn [%d,%d] status %s",
+                 R->m.half, R->m.active_team, R->m.turn[0], R->m.turn[1],
+                 status_name(R->m.status));
+        snprintf(theirs, sizeof theirs, "half %d active %d turn [%d,%d]", s.half,
+                 s.active, s.turn[0], s.turn[1]);
+        report_divergence(R, cmd, "clock", ours, theirs);
+        pd_span_flush(PD_SPAN_OPEN);
+        SD.staged = 0;
+        seat_recover(R, &s, &R->m, cmd, R->last_class);
+        return -1;
+    }
+    if (R->span_clean) R->spans_aligned++;
+    pd_span_flush(PD_SPAN_MIRROR);
+    if (R->force_reseat && usable) {
+        bb_match carry = R->have_prev_boundary ? R->prev_boundary : R->m;
+        bb_match live = R->m;
+        if (seat_build(R, &carry, &s, &built, why, sizeof why) == 0) {
+            char diff[2048];
+            int mask = 0;
+            seat_diff(&live, &built, diff, sizeof diff, &mask);
+            R->m = built;
+            R->segment++;
+            R->reseats++;
+            SD.staged = 0;
+            printf("{\"forced\":true,\"replay\":\"%s\",\"cmd\":%ld,\"seg\":%d,"
+                   "\"tol\":%d,\"mask\":%d}\n", R->replay, cmd, R->segment, s.tol, mask);
+        } else {
+            R->seat_failed++;
+            printf("{\"seat_skip\":true,\"replay\":\"%s\",\"cmd\":%ld,\"why\":\"%s\"}\n",
+                   R->replay, cmd, why);
+        }
+        R->prev_boundary = live;
+        R->have_prev_boundary = 1;
+        R->span_clean = 1;
+        return 0;
+    }
+    R->prev_boundary = R->m;
+    R->have_prev_boundary = 1;
+    R->span_clean = 1;
+    return 0;
+}
+
 // --- act ----------------------------------------------------------------------------
 
 static int do_act(runner* R, const char* line, long cmd) {
@@ -865,7 +1617,7 @@ static int do_act(runner* R, const char* line, long cmd) {
     arm_rng(R, &rng, script, nd, cmd, "act");
     bb_status st = bb_apply(&R->m, a, &rng);
     int rc = check_transition(R, cmd, &rng, st);
-    if (rc == 0) pd_commit();
+    if (rc == 0) pd_commit_segment(R->segment);
     else pd_abort();
     return rc;
 }
@@ -904,7 +1656,7 @@ static int do_place(runner* R, const char* line, long cmd) {
     arm_rng(R, &rng, script, 0, cmd, "place");
     bb_status st = bb_apply(&R->m, a, &rng);
     int rc = check_transition(R, cmd, &rng, st);
-    if (rc == 0) pd_commit();
+    if (rc == 0) pd_commit_segment(R->segment);
     else pd_abort();
     return rc;
 }
@@ -938,9 +1690,17 @@ int main(int argc, char** argv) {
     memset(&R, 0, sizeof R);
     const char* path = 0;
     const char* dump_path = 0;
+    const char* reseat_dump_path = 0;
     const char* states_path = 0;
+    R.span_clean = 1;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) R.verbose = 1;
+        else if (strcmp(argv[i], "--reseat") == 0) R.reseat = 1;
+        else if (strcmp(argv[i], "--force-reseat") == 0) R.force_reseat = 1;
+        else if (strcmp(argv[i], "--seat-audit") == 0) R.seat_audit = 1;
+        else if (strcmp(argv[i], "--dump-pairs-reseat") == 0 && i + 1 < argc) {
+            reseat_dump_path = argv[++i];
+        }
         else if (strcmp(argv[i], "--pad") == 0 && i + 1 < argc) {
             R.pad = (int)strtol(argv[++i], 0, 10);
         } else if (strcmp(argv[i], "--dump-pairs") == 0 && i + 1 < argc) {
@@ -951,7 +1711,9 @@ int main(int argc, char** argv) {
     }
     if (!path) {
         fprintf(stderr,
-                "usage: bb_lockstep [-v] [--pad N] [--dump-pairs <out.bbp>] <script.jsonl>\n"
+                "usage: bb_lockstep [-v] [--pad N] [--dump-pairs <out.bbp>]\n"
+                "           [--dump-states <out.bbs>] [--reseat] [--force-reseat]\n"
+                "           [--seat-audit] [--dump-pairs-reseat <out.bbr>] <script.jsonl>\n"
                 "  -v       stderr line per consumed die with the live proc stack\n"
                 "  --pad N  append N filler dice (value 1) per op so the roll that\n"
                 "           would underrun shows up as an EXTRA die in -v output;\n"
@@ -962,10 +1724,28 @@ int main(int argc, char** argv) {
                 "  --dump-states <out.bbs>  write one raw bb_match snapshot per\n"
                 "           team-turn boundary reached in lockstep, for the env's\n"
                 "           demo-state reset curriculum (format: see the .bbs\n"
-                "           comment block in this file / validation/README.md)\n");
+                "           comment block in this file / validation/README.md)\n"
+                "  --reseat  PROTOTYPE: after a divergence, resume at the next\n"
+                "           team-turn boundary by writing the state the replay\n"
+                "           records there into the engine (state surgery: see the\n"
+                "           re-seat comment block). Nothing after a re-seat reaches\n"
+                "           --dump-pairs or --dump-states\n"
+                "  --dump-pairs-reseat <out.bbr>  records written after a re-seat\n"
+                "           (BBP v4 record layout, magic BBR1, segment number in\n"
+                "           the pad bytes); without it they are counted only\n"
+                "  --seat-audit  at every boundary reached in lockstep, rebuild\n"
+                "           the state from the seat and report each field that\n"
+                "           differs from the engine's own state\n"
+                "  --force-reseat  TEST: replace the state at EVERY seatable\n"
+                "           boundary although nothing diverged\n");
+        return 2;
+    }
+    if (R.reseat && R.force_reseat) {
+        fprintf(stderr, "--reseat and --force-reseat are separate experiments\n");
         return 2;
     }
     if (dump_path) pd_open(dump_path);
+    if (reseat_dump_path) pd_open_reseat(reseat_dump_path);
     if (states_path) sd_open(states_path);
     FILE* f = fopen(path, "r");
     if (!f) {
@@ -985,12 +1765,25 @@ int main(int argc, char** argv) {
         R.ops_total++;
         long cmd = jint(line, "cmd", last_cmd);
         last_cmd = cmd;
+        R.cur_line = line;
         if (strcmp(op, "skip") == 0) {
             R.skips++;
             R.ops_applied++; // skips are accounted, not applied to the engine
             continue;
         }
-        if (R.diverged) continue; // keep counting ops_total for % consumed
+        bool is_expect = strcmp(op, "expect") == 0;
+        bool is_decision = strcmp(op, "place") == 0 ||
+                           (strcmp(op, "act") == 0 && !jint(line, "nopair", 0));
+        if (R.reseat && R.lost) {
+            // Lost: nothing is applied until a boundary the replay can seat.
+            if (is_decision) {
+                R.lost_decisions++;
+                R.span_lost++;
+            }
+            if (is_expect) on_expect(&R, line, cmd);
+            continue;
+        }
+        if (R.diverged && !R.reseat) continue; // keep counting ops_total for % consumed
         int rc = 0;
         if (strcmp(op, "init") == 0) {
             rc = do_init(&R, line);
@@ -1025,8 +1818,16 @@ int main(int argc, char** argv) {
             rc = do_place(&R, line, cmd);
         } else if (strcmp(op, "act") == 0) {
             rc = do_act(&R, line, cmd);
-        } else if (strcmp(op, "expect") == 0) {
-            rc = do_expect(&R, line, cmd);
+        } else if (is_expect) {
+            rc = on_expect(&R, line, cmd);
+        }
+        if (rc != 0) {
+            SD.staged = 0; // never confirmed: a later op must not commit it
+            pd_span_flush(PD_SPAN_OPEN);
+            if (R.reseat && is_decision) {
+                R.lost_decisions++;
+                R.span_lost++;
+            }
         }
         if (rc == 0) {
             R.ops_applied++;
@@ -1042,20 +1843,37 @@ int main(int argc, char** argv) {
         snprintf(pairs, sizeof pairs, ",\"pairs\":%ld", PD.pairs);
         fclose(PD.f);
     }
+    pd_span_flush(PD_SPAN_OPEN); // the script ended inside a span
+    if (PD.f_reseat) fclose(PD.f_reseat);
     char states[32] = "";
     if (SD.f) {
         // A boundary staged by the final op of a fully consumed script has no
-        // following op to confirm it; commit it iff nothing diverged.
-        if (!R.diverged) sd_commit();
+        // following op to confirm it; commit it iff nothing diverged (and
+        // nothing was re-seated: a forced re-seat diverges from nothing).
+        if (!R.diverged && R.segment == 0) sd_commit();
         snprintf(states, sizeof states, ",\"states\":%ld", SD.states);
         fclose(SD.f);
+    }
+    char seat[512] = "";
+    if (R.reseat || R.force_reseat || R.seat_audit) {
+        snprintf(seat, sizeof seat,
+                 ",\"reseats\":%d,\"syncs\":%d,\"pairs_reseat\":%ld,"
+                 "\"pairs_by_span_status\":[%ld,%ld,%ld,%ld],\"divergences\":%d,"
+                 "\"lost_decisions\":%ld,\"seat_refused\":%d,\"seat_failed\":%d,"
+                 "\"spans\":%d,\"spans_aligned\":%d,\"spans_drift\":%d,"
+                 "\"spans_soft_drift\":%d,\"ended_lost\":%s",
+                 R.reseats, R.syncs, PD.pairs_reseat, PD.span_status[0],
+                 PD.span_status[1], PD.span_status[2], PD.span_status[3],
+                 R.divergences, R.lost_decisions, R.seat_refused, R.seat_failed,
+                 R.spans, R.spans_aligned, R.spans_drift, R.spans_soft_drift,
+                 R.lost ? "true" : "false");
     }
     printf("{\"summary\":true,\"replay\":\"%s\",\"ops_total\":%d,"
            "\"ops_applied\":%d,\"pct_consumed\":%.1f,\"skips\":%d,"
            "\"diverged\":%s,\"engine_score\":[%d,%d],\"engine_status\":\"%s\","
-           "\"unmapped_skills\":%d%s%s}\n",
+           "\"unmapped_skills\":%d%s%s%s}\n",
            R.replay, R.ops_total, R.ops_applied, pct, R.skips,
            R.diverged ? "true" : "false", R.m.score[0], R.m.score[1],
-           status_name(R.m.status), R.unmapped_skills, pairs, states);
+           status_name(R.m.status), R.unmapped_skills, pairs, states, seat);
     return 0;
 }
