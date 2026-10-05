@@ -142,13 +142,30 @@ class FoldTests(unittest.TestCase):
         self.assertIn("player[p1].xy", names)
         self.assertIn("player[p1].box", names)   # Reserves box, but KO state
 
+    def test_folder_finds_commands_by_position_not_by_number(self):
+        raw = tiny_replay()
+        log = raw["gameLog"]["commandArray"]
+        # renumber the sync commands 1,2,30,20,40: not increasing
+        syncs = [c for c in log if c["netCommandId"] == "serverModelSync"]
+        for c, nr in zip(syncs, (1, 2, 30, 20, 40)):
+            c["commandNr"] = nr
+        want, _ = ffb_fold.fold(raw, at_cmds={30, 20})
+        folder = ffb_fold.Folder(raw)
+        self.assertEqual(folder.at(30), want[30])
+        self.assertEqual(folder.at(30), want[30])     # asking again is fine
+        self.assertEqual(folder.at(20), want[20])     # 20 comes AFTER 30
+        with self.assertRaises(LookupError):
+            folder.at(2)                              # behind: cannot go back
+        with self.assertRaises(LookupError):
+            folder.at(999)                            # not in the log at all
+
     def test_streaming_folder_matches_fold(self):
         raw = tiny_replay()
         snaps, final = ffb_fold.fold(raw, at_cmds={1, 2, 3, 4, 5})
         folder = ffb_fold.Folder(raw)
         for nr in (1, 2, 3, 4, 5):
             self.assertEqual(folder.at(nr), snaps[nr], nr)
-        self.assertEqual(folder.at(99), final)
+        self.assertEqual(folder.state, final)
 
 
 class ReaderRefusalTests(unittest.TestCase):

@@ -23,6 +23,7 @@ Usage:
 Stock python3, stdlib only.
 """
 import argparse
+import bisect
 import copy
 import glob
 import gzip
@@ -223,6 +224,13 @@ class Folder:
         self.cmds = [c for c in raw.get("gameLog", {}).get("commandArray", [])
                      if c.get("netCommandId") == "serverModelSync"]
         self.i = 0
+        self.last_nr = None
+        # commandNr -> stream positions. Numbers are not always increasing
+        # (a few logs restart at 1 near either end), so a command is found
+        # by its position in the stream, never by comparing numbers.
+        self.where = {}
+        for pos, c in enumerate(self.cmds):
+            self.where.setdefault(c.get("commandNr") or 0, []).append(pos)
 
     def step(self):
         """Apply the next command (all its changes: FFB sends a command's
@@ -231,13 +239,22 @@ class Folder:
         self.i += 1
         for ch in (cmd.get("modelChangeList") or {}).get("modelChangeArray", []):
             apply_change(self.state, ch)
-        return cmd.get("commandNr") or 0
+        self.last_nr = cmd.get("commandNr") or 0
+        return self.last_nr
 
     def at(self, cmd_nr):
-        """The live state after every logged command up to and including
-        cmd_nr. Not a copy: read it before asking for a later command."""
-        while self.i < len(self.cmds) and \
-                (self.cmds[self.i].get("commandNr") or 0) <= cmd_nr:
+        """The live state right after the command numbered cmd_nr: the next
+        one in the stream with that number, or the one just applied. Not a
+        copy: read it before asking for a later command. A number that is
+        neither ahead nor current raises LookupError (the fold cannot go
+        back, and guessing a position would hand out the wrong state)."""
+        positions = self.where.get(cmd_nr, ())
+        k = bisect.bisect_left(positions, self.i)
+        if k == len(positions):
+            if self.last_nr == cmd_nr:
+                return self.state
+            raise LookupError(f"command {cmd_nr} is not ahead in the log")
+        while self.i <= positions[k]:
             self.step()
         return self.state
 
