@@ -59,6 +59,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-10-04 11:10 (D412): chain 41 is the warm start; the opponent-seat change is a candidate.** Chain 41 beats chain 40 by +57.2 decisive-Elo, the fourth Positive continuation in a row. Chain 46, the same rung as chain 40 with the scripted bot in the anchor's seat, beats chain 40 by +42.2 [+28.7, +55.3], a narrow Positive. Chains 47 and 48 are the second-seed pair that decides whether the seat change becomes the recipe. Chain 42 is training.
 
+**Update 2026-10-04 19:05 (D413): chain 42 reads Flat; chain 41 stays the warm start.** After four Positive continuations, chain 42 is +12.5 over chain 41 with an interval that includes zero. Chains 43 to 45 are not run. Chain 48, already queued, is the same continuation at another seed and will say whether the Flat replicates. Chain 47 (training) and chain 48 are the second opponent-seat pair; chain 49 follows as a third seat arm with chain 42 as its control.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

@@ -7,7 +7,8 @@ Stage 0 is a disposable 50M-step canary of chain 37's exact launch path. Stages 
 restart-scale arms (chains 37 and 38). After D409 (chain 36 Positive, chain 37 Flat) stage 3 is chain 40, the
 registered continuation from chain 36 on the standard recipe. Stage 4 is chain 46, the opponent-seat arm of
 D410 (control: chain 40). Stages 5 and 6 are chains 41 and 42, continuations. Stages 7 and 8 are the
-second-seed opponent-seat pair of D412 (chains 47 and 48). Later stages continue from chain 42 speculatively.
+second-seed opponent-seat pair of D412 (chains 47 and 48). Stage 9 is chain 49 (D413): chain 42's rung with
+the bot on tag 1, control chain 42. Chains 43 to 45 are not run: chain 42 read Flat.
 Chain 39 (the third restart-scale arm) is not run: chain 38 read Negative (D410).
 """
 import json
@@ -67,13 +68,11 @@ STAGES.append(dict(name="s07_chain47", stamp="r0chain47-botseat1-from41-s2042-20
 STAGES.append(dict(name="s08_chain48", stamp="r0chain48-botseat4-from41-s2042-20261004", seed=2042,
                    prev=MARKER_C41, pool=POOL_C42, rule="drift-guard", scales=STANDARD,
                    extra=dict(GUARD_C30)))
-previous = "r0chain42-cont41-rr1-20261003"
-for number in range(43, 46):
-    stamp = f"r0chain{number}-cont{number - 1}-rr1-20261003"
-    STAGES.append(dict(name=f"s{number - 34:02d}_chain{number}", stamp=stamp, seed=42,
-                       prev=marker(previous), pool=None, rule="drift-guard", scales=STANDARD,
-                       extra=dict(GUARD_MEAN)))
-    previous = stamp
+# D413: chain 42 read Flat, so chains 43 to 45 are not run. Chain 49 is a third opponent-seat arm with an
+# existing control: the same rung as chain 42 (chain 41 warm, seed 42, pool cc9b201e) with the bot on tag 1.
+STAGES.append(dict(name="s09_chain49", stamp="r0chain49-botseat1-from41-s42-20261004", seed=42,
+                   prev=MARKER_C41, pool=POOL_C42, rule="drift-guard", scales=STANDARD,
+                   extra=dict(GUARD_C30, SCRIPTED_BANK_TAG="1")))
 
 
 def wrapper(stage):

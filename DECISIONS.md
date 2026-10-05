@@ -1982,3 +1982,40 @@ This changes how gate tournaments are computed, not what they measure. Games per
 - **Scope of the second pair.** Chains 47 and 48 differ from chain 46's pair in seed, parent and pool together. Two Positive pairs would be replication of the seat change across two contexts, not a measurement of training-seed variation.
 - **Correction.** Against chain 40, the scripted bots score more against chain 41 in five of six exam cells, not four (differences +0.040, +0.047, -0.001, +0.008, +0.042, +0.034).
 - **Blocking, as measured.** Against the scripted bots chain 46 resolved 6.2 blocks a game and its control 6.6, at one training seed and with no uncertainty estimate. That does not show an effect of the seat change on blocking in either direction. The panel's other numbers did differ between the two (match score 0.589 against 0.592, touchdowns 0.52 against 0.54, passes plus hand-offs 0.004 against 0.012); "no response" in D412 is withdrawn.
+
+
+**D413 - CHAIN 42 READS FLAT: CHAIN 41 STAYS THE WARM START AND CHAINS 43 TO 45 ARE NOT RUN; THE 47/48 GATE GAINS TWO PARENT PAIRS; CHAIN 49, A THIRD OPPONENT-SEAT ARM WITH AN EXISTING CONTROL, IS PRE-REGISTERED (2026-10-04 19:05 PDT, with chain 47 one hour into training and no chain 47 or 48 result in existence)**
+
+**Chain 42's gate** on two droplets: `GATE-ACCEPTED 16000 games, 5 pairs, seed0 21400000, games_per_worker 32, commit b0099fb`, unchanged merge, every game ended naturally, integrity counters zero, about $0.13, both droplets verified destroyed (as reported by the session that ran them).
+
+| Pair | W / D / L | Decisive-Elo [95% seed-cluster] |
+|---|---|---|
+| chain 42 vs chain 41 (parent) | 977 / 1314 / 909 | +12.5 [-1.1, +26.1] |
+| chain 42 vs chain 27 | 1483 / 1101 / 616 | +152.6 [+137.5, +168.0] |
+| chain 42 vs chain 37 | 1418 / 1048 / 734 | +114.4 [+99.7, +128.7] |
+| chain 42 vs offense bot | 923 / 1743 / 534 | +95.1 [+77.9, +113.9] |
+| chain 41 vs offense bot | 973 / 1703 / 524 | +107.5 [+89.9, +126.0] |
+
+**Reading under D409 as amended: Flat.** The parent veto does not fire (offense AWAY 0.614 / 0.635 against chain 41's 0.647 / 0.629: more than 0.02 below at seed 42 only), the guards are clear, the interval against chain 41 is not below zero, the point estimate is not above +40, and it is within plus or minus 40.
+- Exam, champion / bot touchdowns per game at seeds 42 and 43: contact AWAY 0.559 / 0.401 and 0.576 / 0.380 (chain 41: 0.615 / 0.390 and 0.603 / 0.389); contact HOME 0.501 / 0.363 and 0.506 / 0.345 (chain 41: 0.536 / 0.373 and 0.534 / 0.360); offense AWAY 0.614 / 0.326 and 0.635 / 0.359 (chain 41: 0.647 / 0.332 and 0.629 / 0.334). The champion is below chain 41 in five of six cells.
+- Style panel against the scripted bots (policy side, per game): match score 0.594, touchdowns 0.56, resolved blocks 7.4, passes plus hand-offs 0.012 (chain 41: 0.606, 0.59, 6.7, 0.009).
+- Descriptive: paired offense-bot contrast chain 42 minus chain 41 -12.4 [-34.8, +9.7]. Raw roster-conditioned decisive share against chain 41: bash 0.414, agile 0.706, hybrid 0.533, stunty 0.560; the gate's adjusted roster model puts bash at +14 [-16, +44], so the raw bash figure is not an adjusted effect.
+
+**Consequences, per D409's amendment.**
+- **Chain 41 stays the warm start.** Chain 42 is not a warm start.
+- **No further continuation on this recipe is retained without a new idea.** Chains 43, 44 and 45 had not started and are removed from the plan.
+- This is one Flat reading at one training seed after four Positive ones (+52.7, +77.4, +78.5, +57.2). It does not show that the recipe has stopped paying. The project's rule is a seed-matched replicate before a plateau call, and one is already running: chain 48 is the same continuation from chain 41 at training seed 2042.
+
+**The 47/48 gate gains two pairs, registered now.** Chain 47 against chain 41 and chain 48 against chain 41 are added to seed block 21900000, making eight pairs. They do not enter the pair's reading or the seat adoption rule (D412 and its amendment are unchanged). They answer two separate questions with chain 40's ordered readings and chain 41 as the parent:
+- **Chain 48 against chain 41** is the replicate of chain 42's continuation at another seed. Positive: the Flat did not replicate; chain 48 is then a warm-start candidate under D409's rule, and the plateau question is open. Flat, Inconclusive or Negative: two seeds agree that a fifth continuation from chain 41 on this recipe does not clear the gate.
+- **Chain 47 against chain 41** says whether the seat-changed continuation clears the parent gate. It makes chain 47 a warm start only if it reads Positive and the seat change is adopted.
+- The interval against chain 27 that Positive requires comes from the chain 47 against chain 27 pair already in the gate; chain 48 against chain 27 is added so the same clause can be read for chain 48. Nine pairs, 28,800 games.
+
+**Chain 49, pre-registered: chain 42's rung with the bot in the anchor's seat.**
+- `r0chain49-botseat1-from41-s42-20261004`: warm chain 41, training seed 42, pool `cc9b201e...`, standard recipe, `SCRIPTED_BANK_TAG=1`. **Control: chain 42**, which is exactly this rung with the bot on tag 4 and has been gated. One declared factor, same build, same seed, same pool files. Plan-only preflight verified with that pool identity.
+- **Why this and not a continuation.** A plain continuation is barred by the Flat reading. The seat change is the one new idea on the rig with a Positive pair behind it, and this arm needs no new control. It runs after chain 48, before the 47/48 gate can be read, and it is valid whichever way that gate reads.
+- **Gate.** Exam veto against chain 42 (Negative if offense AWAY champion touchdowns are below 0.594 at seed 42 and below 0.615 at seed 43, that is more than 0.02 under chain 42's displayed 0.614 and 0.635); the stage applies D405's chain 30 drift guard. Tournament, seed block 22000000, 3,200 games per pair: chain 49 against chain 42 (control), chain 41 (parent), chain 37, chain 27 and the offense bot, plus chain 42 against chain 37 and chain 42 against the offense bot. Ordered readings against the control as for chain 46: Negative > Positive (above +40 over chain 42, interval above zero, interval against chain 37 above zero) > Flat > Inconclusive. The pair against chain 41 is read separately with chain 40's parent rule.
+- **Role in adoption.** None by itself. D410's amended rule stands: the seat change is adopted only if chain 46's pair and the 47/48 pair both read Positive. Chain 49's pair is a third context, reported descriptively. If the seat change is adopted and chain 49 reads Positive against chain 41, chain 49 is a warm-start candidate alongside chain 47; a later entry picks between them by a direct pair.
+- **Chain 49 is not a warm start** unless a later entry says so.
+
+**Stage order now:** chain 47 (running), chain 48, chain 49. Nothing is registered after chain 49; the next entry must add a stage before about 20:45 PDT on 2026-10-05 or the GPU idles.
