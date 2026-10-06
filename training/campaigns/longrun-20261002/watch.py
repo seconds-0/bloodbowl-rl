@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """One-shot health report for the long-run chain (campaign longrun-20261002). Exit 1 if anything needs attention."""
+import calendar
 import glob
 import json
 import os
@@ -7,6 +8,8 @@ import subprocess
 import time
 
 C = "/home/rache/bloodbowl-rl-longrun-20261002"
+# Stages run from more than one checkout (D416, D418); the campaign plan and state stay under C.
+CHECKOUTS = (C, "/home/rache/bloodbowl-rl-b3-20261006")
 CAMPAIGN = "longrun-20261002"
 
 
@@ -30,7 +33,15 @@ def main():
     timer = sh(f"systemctl --user is-enabled chain-supervisor@{CAMPAIGN}.timer")
     if timer != "enabled":
         alerts.append(f"supervisor timer is {timer or 'missing'}: nothing will launch the next stage")
-    statuses = sorted(glob.glob(f"{C}/runs/ladder-d0-*/CHAIN_STAGE_STATUS.json"), key=os.path.getmtime)
+    statuses = sorted((path for checkout in CHECKOUTS
+                       for path in glob.glob(f"{checkout}/runs/ladder-d0-*/CHAIN_STAGE_STATUS.json")),
+                      key=os.path.getmtime)
+    # A stage that ended before the supervisor's latest launch is history (for example a rung stopped on purpose).
+    launches = [e["utc"] for e in state["history"] if "launched attempt" in e["event"]]
+    if launches:
+        latest = calendar.timegm(time.strptime(launches[-1][:19], "%Y-%m-%dT%H:%M:%S"))
+        statuses = [path for path in statuses
+                    if os.path.getmtime(path) >= latest or json.load(open(path)).get("phase") != "exited"]
 
     def live(path):
         # A plan-only preflight also writes a status file, so prefer the stage whose process is still running.
@@ -70,10 +81,13 @@ def main():
         if status["phase"] == "waiting-gpu-lock" and age > 5400:
             alerts.append("stage has waited over 90 min for the GPU lock")
     print("gpu:", sh("nvidia-smi --query-gpu=temperature.gpu,utilization.gpu,power.draw --format=csv,noheader"))
-    alive = sh("pgrep -f '[p]uffer_cuda_runtime.py train|[c]hain_stage.sh|[e]val_vs_contact_bot.sh'").split()
+    alive = sh("pgrep -f '[p]uffer_cuda_runtime.py train|[c]hain_stage.sh|[e]val_vs_contact_bot.sh|[b]3_identity.sh"
+               "|[p]robe_train_identity.py'").split()
     if not alive and not state.get("complete") and not state.get("halted"):
         print("no trainer or stage process right now (normal for up to 5 min between stages)")
-    for verdict in sorted(glob.glob(f"{C}/runs/ladder-d0-*/EXAM_VERDICT.json"), key=os.path.getmtime):
+    for verdict in sorted((path for checkout in CHECKOUTS
+                           for path in glob.glob(f"{checkout}/runs/ladder-d0-*/EXAM_VERDICT.json")),
+                          key=os.path.getmtime)[-6:]:
         j = json.load(open(verdict))
         offense = [c["champion_tds"] for c in j["cells"] if c["cell"] == "offense_away"]
         name = os.path.basename(os.path.dirname(verdict)).replace("ladder-d0-", "")
