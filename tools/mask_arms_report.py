@@ -40,7 +40,7 @@ METRICS = (
     ("touchdowns per game", "td", None),
     ("possession (turns ended holding the ball)", "team_turns_holding_ball", "team_turns"),
     ("activations ended at once, per activation", "ended_at_once", "activations"),
-    ("activations ended with a block target on offer, per game",
+    ("activations ended with a block target on offer (Block or Blitz), per game",
      "ended_with_block_target_on_offer", None),
     ("Block declared per team turn", "declared_block", "team_turns"),
     ("Blitz declared per team turn", "declared_blitz", "team_turns"),
@@ -103,8 +103,11 @@ def behaviour_table(games, reps=REPS, seed=0):
 
 
 def mask_table(games):
-    """Per mask on A: decisions per game where it held, applied or gave way, and
-    the expected number of decisions per game it changed."""
+    """Per mask on A, per game: decisions where its condition held, where it
+    removed a type, where it gave way, and the summed probability the unmasked
+    policy gave the removed type at those decisions (on the masked copy's own
+    trajectory; not a count of differences from a plain rollout). With several
+    masks, a removal both m2 and m3 ask for is credited to m2 only."""
     out = {}
     for g in games:
         stats = g["mask_stats"][side_of_a(g)] or {}
@@ -143,24 +146,68 @@ def load(run_dir):
     return games, manifest
 
 
-def check_arm(name, games, manifest, masks):
-    """The run is the arm that was registered: one pair, the masks on A only."""
+CHAIN41_SHA256 = "b1830e2312a6252006de71f2835f3459f0a13f664d83ae3128182c48cb0b303b"
+REGISTERED = {  # arm -> (masks on A, seed block); section 0 of the design doc
+    "m1": (["m1"], 23000000), "m2": (["m2"], 23100000), "m3": (["m3"], 23200000),
+    "m1,m2,m3": (["m1", "m2", "m3"], 23300000), "control": ([], 23400000)}
+GAMES_PER_ARM = 3200
+HARD_COUNTERS = ("illegal", "projection_collision", "error_episodes",
+                 "rejected_submissions", "precheck_collisions")
+
+
+def check_arm(name, games, manifest, masks, registered=True, run_dir=None):
+    """Refuse to read a run that is not the registered arm, played to the end.
+
+    registered=False (tests, pilots) skips the checks tied to the registered
+    design: chain 41's hash, the seed block and the game count."""
     problems = []
     pairs = manifest["pairs"]
     if len(pairs) != 1:
-        problems.append(f"{len(pairs)} pairs")
-    a, b = pairs[0][0], pairs[0][1]
-    got_a = manifest["players"][a].get("masks")
+        raise SystemExit(f"arm {name}: {len(pairs)} pairs, expected one")
+    a, b, n_games = pairs[0][0], pairs[0][1], pairs[0][2]
+    players, checkpoints = manifest["players"], manifest["checkpoints"]
+    got_a = players[a].get("masks")
     if (got_a or None) != (sorted(masks) or None):
         problems.append(f"A's masks {got_a} != {sorted(masks)}")
-    if manifest["players"][b].get("masks"):
+    if players[b].get("masks"):
         problems.append("B is masked")
-    if manifest["checkpoints"][a]["sha256"] != manifest["checkpoints"][b]["sha256"]:
+    if checkpoints[a]["sha256"] != checkpoints[b]["sha256"]:
         problems.append("A and B are not the same checkpoint")
+    for who in (a, b):
+        if players[who].get("mode") != "sample" or players[who].get("temperature") != 1.0:
+            problems.append(f"{who} is not sampled at temperature 1: {players[who]}")
+    if manifest.get("kernel") != "native":
+        problems.append(f"kernel {manifest.get('kernel')}")
+    if registered:
+        want_masks, want_seed = REGISTERED.get(name, (None, None))
+        if want_masks is None or sorted(masks) != want_masks:
+            problems.append(f"{name} is not a registered arm")
+        if manifest.get("seed0") != want_seed:
+            problems.append(f"seed0 {manifest.get('seed0')} != registered {want_seed}")
+        if checkpoints[a]["sha256"] != CHAIN41_SHA256:
+            problems.append("the checkpoint is not chain 41")
+        if n_games != GAMES_PER_ARM or manifest.get("games_per_worker") != 32:
+            problems.append(f"{n_games} games at {manifest.get('games_per_worker')} per worker")
+        if run_dir is not None:
+            done = os.path.join(run_dir, "COMPLETE.json")
+            if not os.path.exists(done) or not json.load(open(done)).get("complete"):
+                problems.append("no COMPLETE.json that says complete")
+    # Every seed of the block exactly once in each leg, nothing else.
+    seed0 = manifest["seed0"]
+    want = {(seed0 + i, leg) for i in range(n_games // 2) for leg in ("A_home", "B_home")}
+    got = [(g["engine_seed"], g["leg"]) for g in games]
+    if len(got) != len(set(got)) or set(got) != want:
+        problems.append(f"games are not the {len(want)} scheduled legs "
+                        f"({len(got)} records, {len(set(got))} distinct)")
     for g in games:
         side = side_of_a(g)
         if (g["masks"][side] or None) != (sorted(masks) or None) or g["masks"][1 - side]:
             problems.append(f"game {g['game_index']} {g['leg']}: masks {g['masks']}")
+            break
+        if tuple(g["pair"]) != (a, b) or not g.get("natural") or any(
+                g.get("integrity", {}).get(k, 1) for k in HARD_COUNTERS):
+            problems.append(f"game {g['game_index']} {g['leg']}: wrong pair, unnatural "
+                            "ending or a nonzero integrity counter")
             break
     if problems:
         raise SystemExit(f"arm {name}: " + "; ".join(problems))
@@ -210,8 +257,8 @@ def print_report(out):
                   f"[{fmt(r['ci95'][0])}, {fmt(r['ci95'][1])}] |")
         print()
         if arm["mask_stats"]:
-            print("| mask | held per game | applied | gave way (fallback) | expected "
-                  "decisions changed |\n|---|---|---|---|---|")
+            print("| mask | held per game | applied | gave way (fallback) | summed "
+                  "removed-type probability |\n|---|---|---|---|---|")
             for m, v in arm["mask_stats"].items():
                 print(f"| {m} | {fmt(v['held'], 2)} | {fmt(v['applied'], 2)} | "
                       f"{fmt(v['fallback'], 2)} | {fmt(v['mass'], 2)} |")
@@ -245,7 +292,7 @@ def main(argv=None):
     for name, run_dir in runs:
         masks = [] if name == "control" else name.split(",")
         games, manifest = load(run_dir)
-        check_arm(name, games, manifest, masks)
+        check_arm(name, games, manifest, masks, run_dir=run_dir)
         out["arms"][name] = {
             "masks": masks, "run_dir": os.path.relpath(run_dir, ROOT),
             "seed0": manifest["seed0"], "harness_git_head": manifest["harness_git_head"],

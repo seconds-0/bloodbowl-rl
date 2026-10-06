@@ -67,22 +67,59 @@ def test_behaviour_table_reads_each_side_from_its_own_seat():
                                           "mass": 2.5}}
 
 
-def test_an_arm_must_be_the_registered_one():
-    games = arm(4, 4)
-    sha = {"sha256": "x"}
-    manifest = {"pairs": [["A", "B", 8]], "checkpoints": {"A": sha, "B": sha},
-                "players": {"A": {"masks": ["m1"]}, "B": {}}}
+def registered_run(name="m1", masks=("m1",), n=8, **over):
+    """A small run shaped like a registered arm (the game count is overridden)."""
+    seed0 = R.REGISTERED[name][1]
+    games = []
+    for i in range(n // 2):
+        for leg in T.LEGS:
+            g = game(i, leg, 1, 0, masks=masks)
+            g.update(engine_seed=seed0 + i, natural=True, integrity={k: 0 for k in R.HARD_COUNTERS})
+            games.append(g)
+    sha = {"sha256": R.CHAIN41_SHA256}
+    spec = {"mode": "sample", "temperature": 1.0}
+    manifest = {"pairs": [["A", "B", n]], "checkpoints": {"A": sha, "B": sha}, "seed0": seed0,
+                "kernel": "native", "games_per_worker": 32,
+                "players": {"A": dict(spec, masks=sorted(masks)) if masks else dict(spec),
+                            "B": dict(spec)}}
+    manifest.update(over)
+    return games, manifest
+
+
+def test_an_arm_must_be_the_registered_one(monkeypatch):
+    monkeypatch.setattr(R, "GAMES_PER_ARM", 8)
+    games, manifest = registered_run()
     R.check_arm("m1", games, manifest, ["m1"])
-    with pytest.raises(SystemExit):
-        R.check_arm("m2", games, manifest, ["m2"])
-    with pytest.raises(SystemExit):
-        R.check_arm("m1", games, dict(manifest, players={"A": {"masks": ["m1"]},
-                                                         "B": {"masks": ["m1"]}}), ["m1"])
-    with pytest.raises(SystemExit):
-        R.check_arm("m1", games, dict(manifest, checkpoints={"A": sha, "B": {"sha256": "y"}}),
-                    ["m1"])
-    with pytest.raises(SystemExit):
-        R.check_arm("control", games, manifest, [])
+    R.check_arm("control", *registered_run("control", ()), [])
+
+    def refused(name="m1", masks=("m1",), games=games, manifest=manifest):
+        with pytest.raises(SystemExit):
+            R.check_arm(name, games, manifest, list(masks))
+
+    spec = {"mode": "sample", "temperature": 1.0}
+    refused("m2", ("m2",))                                           # another arm's masks
+    refused(manifest=dict(manifest, players={"A": dict(spec, masks=["m1"]),
+                                             "B": dict(spec, masks=["m1"])}))
+    refused(manifest=dict(manifest, checkpoints={"A": {"sha256": R.CHAIN41_SHA256},
+                                                 "B": {"sha256": "y"}}))
+    refused(manifest=dict(manifest, checkpoints={"A": {"sha256": "z"}, "B": {"sha256": "z"}}))
+    refused(manifest=dict(manifest, seed0=1))                        # another seed block
+    refused(manifest=dict(manifest, kernel="torch"))
+    refused(manifest=dict(manifest, games_per_worker=1))
+    refused(manifest=dict(manifest, players={"A": dict(spec, masks=["m1"], temperature=0.5),
+                                             "B": dict(spec)}))
+    refused(games=games[:-1])                                        # a leg missing
+    refused(games=games + games[:1])                                 # a leg twice
+    bad = [dict(g) for g in games]
+    bad[0]["integrity"] = dict(bad[0]["integrity"], illegal=1)
+    refused(games=bad)
+    bad = [dict(g) for g in games]
+    bad[0]["natural"] = False
+    refused(games=bad)
+    with pytest.raises(SystemExit):                                  # not played to the end
+        R.check_arm("m1", games, manifest, ["m1"], run_dir="/nonexistent")
+    # Outside the registered design only the structure is checked.
+    R.check_arm("pilot", games, dict(manifest, games_per_worker=1), ["m1"], registered=False)
 
 
 def test_control_legs_and_roster_split():
