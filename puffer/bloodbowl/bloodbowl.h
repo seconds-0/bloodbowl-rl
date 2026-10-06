@@ -387,6 +387,10 @@ typedef struct {
     // (should stay at 0.0 — anything else means a corrupt/stale bank).
     float demo_episodes;
     float demo_fallbacks;
+    // Policy-seat decisions per episode at which no_early_end_turn had taken
+    // END_TURN out of the list. Exactly 0.0 with the flag off; above zero is
+    // the env's own evidence that a run or an exam was under the rule.
+    float end_turn_removed;
     // Team-0/home signed component returns. Team 0 is the primary learner in
     // frozen-bank envs and matches the existing episode_return perspective.
     // Integrity checks below still run independently for both agents.
@@ -794,6 +798,7 @@ typedef struct {
     int n_legal;
     // 1 while legal[] is missing an END_TURN that no_early_end_turn removed.
     uint8_t legal_end_turn_removed;
+    int ep_end_turn_removed; // policy decisions of this episode made so
     int score_prev[2];
     // Scores at episode START (0-0 from kickoff; the banked scores on a demo
     // reset). The Log's tds/score_diff count only the DELTAS scored within
@@ -2732,6 +2737,7 @@ static void bbe_reset_match(Bloodbowl* env) {
     env->ep_carrier_knockdowns = 0;
     env->ep_send_offs = 0;
     env->ep_touchbacks = 0;
+    env->ep_end_turn_removed = 0;
     env->kickoff_touchback_latched = 0;
     for (int t = 0; t < 2; t++) {
         env->ep_team_contact[t] = 0;
@@ -3140,6 +3146,7 @@ static void bbe_finish_episode(Bloodbowl* env) {
     env->log.carrier_knockdowns += (float)env->ep_carrier_knockdowns;
     env->log.ep_send_offs += (float)env->ep_send_offs;
     env->log.ep_touchbacks += (float)env->ep_touchbacks;
+    env->log.end_turn_removed += (float)env->ep_end_turn_removed;
     env->log.carrier_exposed_full += (float)env->ep_carrier_exposed_full;
     env->log.carrier_exposed_soft += (float)env->ep_carrier_exposed_soft;
     env->log.ep_carrier_threat += env->ep_carrier_threat;
@@ -3523,6 +3530,7 @@ static void c_step(Bloodbowl* env) {
                       ? bbe_offense_bot_pick(m, env->legal, env->n_legal)
                       : bbe_contact_bot_pick(m, env->legal, env->n_legal);
         } else {
+            env->ep_end_turn_removed += env->legal_end_turn_removed;
             act = bbe_decode(env, agent, env->action_ptr[agent]);
             if (act.type == BB_A_NONE) {
                 if (env->illegal_projection_collision) {

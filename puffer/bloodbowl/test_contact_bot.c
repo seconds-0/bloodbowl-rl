@@ -34,6 +34,7 @@ typedef struct {
     float tds;
     float tds_t0;
     float tds_t1;
+    float end_turn_removed;
 } ContactHookStats;
 
 typedef struct {
@@ -144,6 +145,7 @@ static ContactHookStats run_contact_hook_tagged(int scripted, int scripted_team,
     out.tds = env.log.tds;
     out.tds_t0 = env.log.tds_t0;
     out.tds_t1 = env.log.tds_t1;
+    out.end_turn_removed = env.log.end_turn_removed;
     return out;
 }
 
@@ -271,6 +273,9 @@ BB_TEST(no_early_end_turn_hands_the_bot_the_engine_list_with_end_turn_in_it) {
     BB_CHECK(home.bot_end_turn_beside_activate > 0);
     BB_CHECK(away.policy_removed > 0);
     BB_CHECK(home.policy_removed > 0);
+    // The panel counts the policy seat's removals only, never the bot's seat.
+    BB_CHECK(away_bot.end_turn_removed == (float)away.policy_removed);
+    BB_CHECK(home_bot.end_turn_removed == (float)home.policy_removed);
     printf("no_early_end_turn bot seats: away bot decisions=%ld with "
            "END_TURN+ACTIVATE=%ld policy removals=%ld; home bot decisions=%ld "
            "with END_TURN+ACTIVATE=%ld policy removals=%ld\n",
@@ -293,6 +298,8 @@ BB_TEST(no_early_end_turn_leaves_bot_versus_bot_games_byte_identical) {
     BB_CHECK(on.digest == off.digest);
     BB_CHECK(on.tds == off.tds);
     BB_CHECK(on.blocks_thrown == off.blocks_thrown);
+    BB_CHECK(on.end_turn_removed == 0.0f);
+    BB_CHECK(off.end_turn_removed == 0.0f);
 }
 
 BB_TEST(no_early_end_turn_still_lets_the_offense_bot_end_its_turn_early) {

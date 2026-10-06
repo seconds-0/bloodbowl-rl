@@ -23,7 +23,7 @@ class PufferLogContractTests(unittest.TestCase):
         # Kept exact on purpose: the count is load-bearing history (37 keys vs
         # capacity 32 corrupted the heap at ~786K steps). binding.c's my_log
         # CAPACITY comment is the authority -- update both together.
-        self.assertEqual(emitted_keys, 144)
+        self.assertEqual(emitted_keys, 145)
         self.assertLessEqual(emitted_keys + 1, EXPECTED_CAPACITY)
 
     def test_both_puffer_backends_and_installer_pin_same_capacity(self) -> None:

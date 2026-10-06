@@ -1309,6 +1309,11 @@ static NeetStats neet_play(int flag, uint64_t seed, int episodes) {
     BB_CHECK_EQ((int)env->log.n, out.episodes);
     BB_CHECK(env->log.error_episodes == 0.0f);
     BB_CHECK(env->log.illegal_frac == 0.0f);
+    // The panel counter is this loop's own count: every seat here is a
+    // policy seat, and the episode that was open when the loop stopped has
+    // not been logged.
+    BB_CHECK(env->log.end_turn_removed + (float)env->ep_end_turn_removed ==
+             (float)out.removed);
     return out;
 }
 

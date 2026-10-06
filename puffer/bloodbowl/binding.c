@@ -335,8 +335,8 @@ void my_log(Log* log, Dict* out) {
     //
     // CAPACITY: vec_log (src/bindings_cpu.cpp / bindings.cu) must hand us a
     // dict large enough for these keys plus the vecenv-appended "n". We emit
-    // 144 (capacity is 160 — training/puffer_dict_capacity.patch), so there is
-    // room for 15 more. Growing past the call-site capacity is SILENT HEAP CORRUPTION
+    // 145 (capacity is 160 — training/puffer_dict_capacity.patch), so there is
+    // room for 14 more. Growing past the call-site capacity is SILENT HEAP CORRUPTION
     // upstream (assert compiles out under NDEBUG); our vendored dict_set
     // aborts loudly instead (training/puffer_dict_capacity.patch).
     // History: key count hit 37 vs capacity 32 when slot scores + demo
@@ -520,6 +520,7 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "error_episodes", log->error_episodes);
     dict_set(out, "demo_episodes", log->demo_episodes);
     dict_set(out, "demo_fallbacks", log->demo_fallbacks);
+    dict_set(out, "end_turn_removed", log->end_turn_removed);
     dict_set(out, "hist_score_bank_0", log->hist_score_bank[0]);
     dict_set(out, "hist_score_bank_1", log->hist_score_bank[1]);
     dict_set(out, "hist_score_bank_2", log->hist_score_bank[2]);
