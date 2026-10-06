@@ -84,10 +84,12 @@ static void bbe_refresh_legal(Bloodbowl* env) {
    decisions inside a team turn that still listed END_TURN. Under the rule a team turn ends when every
    player has been activated, on a turnover, or on a touchdown. A lone END_TURN can still appear in the
    Charge! window when no player is Open, where it is the only action.
-2. **The END_TURN logit gets no gradient.** A masked action is never sampled and has zero probability in
-   the PPO recompute, so the type head's END_TURN logit stays where chain 41 left it (about 0.6 of the
-   mass at those decisions, by the harness's count). A policy trained under the rule must be played under
-   it. Played without it, the old habit is still there.
+2. **Nothing trains the early END_TURN away.** A masked action is never sampled and has zero probability
+   in the PPO recompute, so at those decisions no gradient acts on END_TURN directly. Chain 41 put about
+   0.6 of the type head's mass on it there (the harness's count). The logit is still a function of shared
+   weights that keep moving, so where that mass ends up after a rung is unknown; nothing pushes it down. A
+   policy trained under the rule must therefore be played under it, and how much of the habit is left
+   without it has to be measured (section 7.6), not assumed either way.
 3. **An empty activation is not a free skip.** Activating a player and ending the activation at once
    clears Distracted, can roll a negative trait at the declaration (Bone Head, Really Stupid, Unchannelled
    Fury, Animal Savagery, Take Root), spends the turn's Blitz, Pass, Hand-off, Foul or Secure the Ball
@@ -95,16 +97,17 @@ static void bbe_refresh_legal(Bloodbowl* env) {
    carrier is activated, so the "end the turn without activating the carrier" route to the crowd roll is
    closed for a policy seat and the "activate the carrier and do not score" route is the one left.
 4. **Games are longer in decisions.** Random play, mixed rosters, 300 episodes: 258 decisions an episode
-   without the rule, 1,156 with it (4.5 times). That is the ceiling of the effect, because a uniform
-   policy ends its turn at once 97% of the time. For chain 41 the harness measured 697 engine steps a game
+   without the rule, 1,156 with it (4.5 times). That is a large effect because a uniform policy ends its
+   turn at once 97% of the time; it is not a bound. For chain 41 the harness measured 697 engine steps a game
    plain and 961 with one side under m1 (+38%); both sides under the rule were not measured. A 3B-step
    rung therefore plays fewer games, and a per-decision discount reaches less far: at gamma 0.999 the
    final result seen from the kick-off is weighted 0.50 over 697 decisions and 0.38 over 961.
 5. **The decision cap.** An episode that reaches `max_decisions` (4,096) is cut and scored from the score
-   at the cap. Random play under the rule peaked at 1,522 decisions, and a policy that never ends an
-   activation or a turn by choice at 1,462, so the cap is far away today. A policy that learns to move
-   eleven players a turn square by square would approach it. Watch `truncated_episodes` (expected 0) and
-   `episode_length`.
+   at the cap. Random play under the rule peaked at 1,522 decisions, and a random policy that never ends
+   an activation or a turn by choice at 1,462. Neither is the longest possible game: both lose turns to
+   failed dice early. A policy that learns to move eleven players a turn square by square, safely, would
+   approach the cap (32 team turns of 11 players at about a dozen decisions each is past 4,000). Watch
+   `truncated_episodes` (expected 0) and `episode_length`.
 6. **Frozen opponents were not trained under it.** With the flag on the frozen-bank policies are also
    restricted. They play off the distribution they were trained on (in the harness, 44% of the masked
    copy's activations ended at once), and the harness says chain 41 is stronger that way. So the rung's
@@ -139,15 +142,18 @@ masks equal the union of the joint support's conditional slices head by head; ev
 to its engine action and the removed END_TURN tuple is rejected by `bbe_decode`. At every removal in the
 first 30 episodes the same state with the flag off gives byte-identical observations for both agents and
 masks that differ only at END_TURN's own bits. Every episode ended at match end, none at the cap, with no
-error episode and no abort. The same holds with `macro_moves=1` (60 episodes), and a policy that never
-stops by choice plays the same games with and without the rule.
+error episode and no abort. With `macro_moves=1` (60 episodes) the list, removal, decode and completion
+checks hold; the marginal-against-joint mask comparison is not made there, because the macro STEP head
+marks its virtual destinations from a different condition, which is not this rule's surface. A random
+policy that never stops by choice plays the same games with and without the rule (the rule only binds a
+policy that would have stopped).
 
 | measurement | without the rule | with the rule |
 |---|---|---|
 | decisions per episode, uniform play, 300 episodes | 258.2 (max 359) | 1,156.4 (max 1,451) |
 | same, digest tool, four seeds | 257.9 to 262.0 | 1,148.4 to 1,159.6 (max 1,522) |
 | same with `macro_moves=1`, 60 episodes | 248.4 | 893.0 (max 1,107) |
-| a policy that never ends an activation or a turn by choice, 100 episodes | 920.2 (max 1,462) | 920.2 (max 1,462) |
+| a random policy that never ends an activation or a turn by choice, 100 episodes | 920.2 (max 1,462) | 920.2 (max 1,462) |
 | episodes cut by the 4,096 cap | 0 | 0 |
 
 **Scripted seats** (`test_contact_bot.c`). With the rule on and a bot on one seat, the bot's list equals
@@ -372,35 +378,53 @@ rung. This check covers the first 1.7% of a rung, as D407's did.
 
 ### 7.4 Smoke, flag ON
 
-Two short runs with the flag, both under the GPU lock (wrap them as `replicate_c42.sh` wraps its probe).
+Two short runs with the flag, both judged by the env's own `end_turn_removed`, so neither can pass with
+the flag ignored. Full games, not the 48-decision probe layout: an opening cut at 48 decisions may never
+reach a team turn. About 3 minutes of GPU. Save as `$K/smoke_flag_on.sh`:
 
 ```bash
-SMALL=(--vec.total-agents 512 --vec.num-threads 8 --train.horizon 8 --train.minibatch-size 4096 --env.max-decisions 48)
-# (a) rollout trace: skip routing, integrity, and the env's own count of removals. About 1 minute.
-"$PY" "$C/tools/probe_scripted_bank_skip.py" trace --puffer-root "$C/vendor/PufferLib" \
-  --output "$K/trace-flag-on.json" --rollouts 32 -- "${A[@]}" "${SMALL[@]}" --env.no-early-end-turn 1 \
-  --load-model-path "$WARM" --checkpoint-dir "$K/ckpt-rep" > $K/trace-flag-on.out 2>&1; echo "rc=$?"
+#!/usr/bin/env bash
+# Flag-ON smoke on the rebuilt checkout: (a) a rollout trace, (b) 24 epochs of rollout + PPO.
+# Needs $K/chain42-full.args and $K/pool-cc9b201e from replicate_c42.sh.
+set -uo pipefail
+K=/home/rache/m1-20261005
+C=/home/rache/bloodbowl-rl-longrun-20261002
+PY=$C/vendor/PufferLib/.venv/bin/python
+export CUDA_VISIBLE_DEVICES=0 PUFFER_SKIP_SCRIPTED_BANK_FORWARD=1 BBE_DECIDING_ROW_TELEMETRY=1
+WARM=$C/vendor/PufferLib/checkpoints/bloodbowl/1791097707780/0000002999975936.bin
+POOL=$K/pool-cc9b201e
+LOCK=/home/rache/kt-e2e/kt-gpu.lock
+cd $K
+[ -s "$K/chain42-full.args" ] && [ -d "$POOL" ] || { echo "run replicate_c42.sh first"; exit 2; }
+mapfile -t A < "$K/chain42-full.args"
+# 512 agents and 32 rollouts of 64 steps: about 2,000 decisions an env, so whole games complete.
+TRACE=(--vec.total-agents 512 --vec.num-threads 8 --train.horizon 64 --train.minibatch-size 4096)
+exec 9>>"$LOCK"
+until flock -w 600 9; do echo "$(date -u +%FT%TZ) waiting on gpu lock"; done
+echo "$(date -u +%FT%TZ) $$ acquired(lock=$LOCK) bloodbowl-rl:m1-smoke-flag-on (3 min)" >> "$LOCK.log"
+timeout 900 "$PY" "$C/tools/probe_scripted_bank_skip.py" trace --puffer-root "$C/vendor/PufferLib" --output "$K/trace-flag-on.json" --rollouts 32 -- "${A[@]}" "${TRACE[@]}" --env.no-early-end-turn 1 --load-model-path "$WARM" --checkpoint-dir "$K/ckpt-rep" > trace-flag-on.out 2>&1; echo "trace rc=$?"
+timeout 900 "$PY" "$C/tools/probe_train_identity.py" run --puffer-root "$C/vendor/PufferLib" --output "$K/smoke-flag-on.json" --weights-dir "$K/smoke-flag-on-w" --epochs 24 --save-at 24 -- "${A[@]}" --env.no-early-end-turn 1 --load-model-path "$WARM" --selfplay.league-preseed "$POOL" --checkpoint-dir "$K/ckpt-rep" > smoke-flag-on.out 2>&1; echo "ppo rc=$?"
+echo "$(date -u +%FT%TZ) $$ released(exit 0) bloodbowl-rl:m1-smoke-flag-on" >> "$LOCK.log"
+flock -u 9
+grep -c "outside exact joint support" trace-flag-on.out smoke-flag-on.out
 "$PY" - <<"PY"
 import json
-t = json.load(open("/home/rache/m1-20261005/trace-flag-on.json"))
-print("skip", t["skip"], "integrity_zero", t["hard_integrity"].get("zero"),
-      "no_early_end_turn", t["config"]["env"].get("no_early_end_turn"),
-      "end_turn_removed", t["env"].get("end_turn_removed"),
-      "truncated_episodes", t["env"].get("truncated_episodes"), "n", t["env"].get("n"))
+for name in ("trace-flag-on", "smoke-flag-on"):
+    t = json.load(open(f"/home/rache/m1-20261005/{name}.json"))
+    env = t["env"]
+    print(name, "skip", t["skip"], "integrity_zero", t["hard_integrity"].get("zero"),
+          "no_early_end_turn", t["config"]["env"].get("no_early_end_turn"),
+          "episodes", env.get("n"), "end_turn_removed", env.get("end_turn_removed"),
+          "truncated_episodes", env.get("truncated_episodes"))
 PY
-# (b) 24 epochs of real rollout + PPO at the full layout with the real pool. About 1 minute.
-"$PY" "$C/tools/probe_train_identity.py" run --puffer-root "$C/vendor/PufferLib" \
-  --output "$K/smoke-flag-on.json" --weights-dir "$K/smoke-flag-on-w" --epochs 24 --save-at 24 -- \
-  "${A[@]}" --env.no-early-end-turn 1 --load-model-path "$WARM" --selfplay.league-preseed "$POOL" \
-  --checkpoint-dir "$K/ckpt-rep" > $K/smoke-flag-on.out 2>&1; echo "rc=$?"
+echo SMOKE_DONE
 ```
 
-Pass for (a): `rc=0`; `skip` shows `bank: 4` and `routed: true` (the scripted-bank forward skip is still
-routed with the flag on); `integrity_zero` true; `no_early_end_turn` 1; `end_turn_removed` above zero.
-`truncated_episodes` is large in this trace because `SMALL` caps episodes at 48 decisions; that is the
-probe's layout, not a finding. Pass for (b): `rc=0`, `skip` routed, `hard_integrity_zero` true, and no
-"policy supplied a tuple outside exact joint support" in `smoke-flag-on.out`. The weights of (b) are thrown
-away.
+Pass, for both lines: `rc=0`; `skip` shows `bank: 4` and `routed: True` (the scripted-bank forward skip is
+still routed with the flag on); `integrity_zero` True; `no_early_end_turn` 1; `episodes` above zero;
+`end_turn_removed` well above zero (expect on the order of a hundred an episode);
+`truncated_episodes` 0; and both `grep -c` counts 0. If `end_turn_removed` is 0 or missing, the env did
+not apply the rule: stop. The weights are thrown away.
 
 ### 7.5 The paired rung
 
@@ -429,7 +453,42 @@ export EXAM_RULE=none
 exec bash "$C/tools/chain_stage.sh"
 ```
 
-Put the DECISIONS entry number in `GRAFT_REASON` once it exists. Then:
+Put the DECISIONS entry number in `GRAFT_REASON` once it exists.
+
+**A disposable canary first. This is required, not optional.** `AGENTS.md` asks for provenance, the CUDA
+graph and zero-update checks, deterministic full games and a disposable 50M-step canary before a long
+budget on a changed runtime. 7.2 to 7.4 are the provenance, identity and full-game evidence; they were
+driven by probes, not by the launcher. The canary is the first time the knob, the two-pair graft,
+acceptance, the six exam cells under the rule and the verdict run together on a real build, as D407's
+canary was for the long-run build. If the owner's practice for a rebuilt module includes
+`tools/qualify_recurrent_cuda.py`, run it before the canary. Copy the wrapper to
+`~/longrun/s14_canary54_m1.sh`, replace its `SEED`/`STAMP` line and add the `STEPS` line, and change
+nothing else:
+
+```bash
+export SEED=42 STAMP=canary54-noearlyend-from41-s42-20261006
+export STEPS=50000000     # after `source common_env.sh`, which sets 3000000000
+```
+
+Run it to the end (`bash ~/longrun/s14_canary54_m1.sh`, about 10 minutes of training and 9 of exam). Pass:
+exit 0; `EXAM_VERDICT_PASS.json` with `no_early_end_turn: 1` and six cells each carrying
+`end_turn_removed` above zero; the arm's `.result.json` has `acceptance_pass: true` with
+`train_metrics.end_turn_removed` and `eval_metrics.end_turn_removed` above zero, `truncated_episodes` 0 and
+`illegal_frac` 0 in both; `LADDER_RUNG_COMPLETE.json` has `no_early_end_turn: 1`; and the checkpoint's
+`.lineage.json` has `ancestry.grafted_from` (the original build) and one entry in
+`ancestry.grafted_from_also` (the long-run build). The canary's checkpoint is never a warm start, a pool
+member or a result.
+
+**The D244 regression gate can refuse a rule rung.** `launch_ladder_rung.sh` publishes no marker when the
+rung's eval `tds` is below `LADDER_REGRESSION_FLOOR` (default 0.5) times the warm rung's, and chain 41's
+was 1.738 without the rule. Touchdowns per game under the rule are not that number: in the harness the
+masked copy and its plain opponent scored 0.68 and 0.61 a game against 0.75 each in plain self-play. The
+canary runs the same gate from the same warm start, so it shows where the rule puts `eval_tds`
+(`regression_gate` in the canary's marker). If it lands near or under 0.87, the rung needs
+`export LADDER_REGRESSION_FLOOR=0` in its wrapper, declared in the DECISIONS entry as a third difference
+from chain 42; otherwise 3B steps can end with no marker.
+
+Then the plan-only pass of the real rung:
 
 ```
 PLAN_ONLY=1 bash ~/longrun/s14_chain54_m1.sh 2>&1 | tee ~/longrun/preflight_s14_chain54_m1.log
@@ -458,15 +517,34 @@ Masked actions get no gradient, so a checkpoint trained under the rule is only m
 it. On the harness side that is `--mask chain54=m1`.
 
 - **Rig exam.** Chain 54's six cells run under the rule; chain 42's and chain 41's stored exams did not.
-  For a like-for-like exam read, re-run the controls' cells under the rule (about 90 seconds a cell):
-  `LADDER_NO_EARLY_END_TURN=1 NATIVE=1 RIG_ALLOW_FLOAT=1 CUDA_VISIBLE_DEVICES=0 SEED=42 BOT_TYPE=1 BOT_TEAM=1 EVAL_EPISODES=2000 bash $C/tools/eval_vs_contact_bot.sh <checkpoint> 12000000 <log>`
-  for the three cells and seeds 42 and 43, on chain 42 and chain 41.
+  For a like-for-like exam read, re-run the controls' six cells under the rule (about 90 seconds a
+  cell), with the supervisor paused and under the GPU lock. For chain 42, and the same for chain 41 with
+  its checkpoint (`.../1791097707780/0000002999975936.bin`) and its own output directory:
+
+  ```bash
+  CKPT=$C/vendor/PufferLib/checkpoints/bloodbowl/1791129357655/0000002999975936.bin   # chain 42
+  OUT=$K/exam-under-rule-chain42; mkdir -p $OUT
+  exec 9>>"$LOCK"; flock 9
+  for seed in 42 43; do for spec in "contact_away 0 1" "contact_home 0 0" "offense_away 1 1"; do
+    read -r cell bot_type bot_team <<<"$spec"; mkdir -p $OUT/s$seed
+    env -u OMP_NUM_THREADS PATH="$C/vendor/PufferLib/.venv/bin:$PATH" NATIVE=1 RIG_ALLOW_FLOAT=1 \
+        CUDA_VISIBLE_DEVICES=0 PUFFER_SKIP_SCRIPTED_BANK_FORWARD=1 BBE_DECIDING_ROW_TELEMETRY=1 \
+        SEED=$seed BOT_TYPE=$bot_type BOT_TEAM=$bot_team EVAL_EPISODES=2000 LADDER_NO_EARLY_END_TURN=1 \
+        bash $C/tools/eval_vs_contact_bot.sh "$CKPT" 12000000 $OUT/s$seed/$cell.log \
+        > $OUT/s$seed/$cell.out 2>&1 || echo "FAILED s$seed $cell"
+  done; done; flock -u 9
+  python3 $C/tools/chain_exam_verdict.py --exam-dir $OUT --seeds 42 43 --rule none \
+    --no-early-end-turn 1 --output-dir $OUT
+  ```
+
+  The verdict tool is used here only as a reader: it refuses unless every cell's panel shows
+  `end_turn_removed` above zero, and prints the six cells.
 - **Tournament.** The harness already showed that m1 at play time is worth +32.5 Elo to chain 41 with no
   training. Chain 54 under m1 against plain chain 42 would therefore credit training with what the mask
   gives for free. The pairs that answer "did training under the rule add anything": chain 54 (m1) against
   chain 42 (m1), against chain 41 (m1), and against plain chain 42 and chain 41 for the scoreboard. Also
-  chain 54 unmasked against chain 54 (m1), which measures how much of the early stopping is still in the
-  weights.
+  chain 54 unmasked against chain 54 (m1), together with its unmasked share of team turns ended by choice
+  with a player left, which measures how much of the early stopping is still in the weights.
 - **Not comparable with chain 42:** in-run bank scores (the opponents are restricted too), `episode_length`,
   and per-game counts taken from the training panel.
 - **A checkpoint trained under the rule and one trained without it are different action contracts.** Any
@@ -475,8 +553,9 @@ it. On the harness side that is `--mask chain54=m1`.
 
 ## 8. What would make the rule removable
 
-The rule cannot remove itself: under it the END_TURN logit is frozen. So removal is a separate, registered
-step, and these are the conditions under which it would be worth trying and would count as done.
+The rule does not remove itself: under it nothing trains the early END_TURN away (section 3, point 2), so
+removal is a separate, registered step. These are the conditions under which it would be worth trying and
+would count as done.
 
 1. A rung trained under the rule beats its control with the mask held equal on both sides (section 7.6).
    Without that there is nothing to keep.
@@ -504,10 +583,21 @@ penalty or prior on END_TURN at those decisions that is annealed to zero.
    and the offense bot does 0.03% of the time. The exemption is still right, and tested.
 5. **Rebuilding the long-run checkout in place collides with D407 and D414.** Chains 50 to 53 would run on
    a third build with a changed graft declaration. Preferred: a separate checkout made the way
-   `make_longrun_checkout.sh` made the long-run one (clone, copy the venv, repoint the editable finder,
-   install with both flags, build), which leaves the campaign's build frozen. The patch-bundle digest then
-   differs as well, because it hashes absolute paths; the two-pair declaration is the same. Steps 7.3 to
-   7.5 are unchanged apart from `C`.
+   `/home/rache/bbopt-20261001/make_longrun_checkout.sh` made the long-run one (clone, copy the venv,
+   repoint the editable finder, install with both flags, build), which leaves the campaign's build frozen
+   and needs no pause beyond the GPU lock. It is not a change of one variable. What differs from section 7:
+   - the new checkout's path replaces `C` in 7.2 (no old module to keep, no checkout to move), in the
+     `C=` and `--puffer-root` of `replicate_c42.sh` and `smoke_flag_on.sh`, and in the two tool paths
+     those scripts call;
+   - `RUN`, `MANIFEST`, `WARM` and `REF` in `replicate_c42.sh`, `WARM` in the smoke script and
+     `PREV_COMPLETE` in the wrapper keep pointing at the long-run checkout, where chain 41's and chain
+     42's files live;
+   - the wrapper must not source `~/longrun/common_env.sh`, which sets `C` to the long-run checkout: use a
+     copy of that file with `C` changed, and source the copy;
+   - the patch-bundle digest of the new checkout differs from `c1174af6...` because it hashes absolute
+     paths; the two declared pairs are the same;
+   - the rung's checkpoints and run directory land under the new checkout, so the tournament and any later
+     rung read them from there.
 6. **The stage wrapper should not inherit chain 42's drift guard.** Its floor was registered on exams
    without the rule, and the masked copy scored fewer touchdowns in the harness. `EXAM_RULE=none`.
 7. **The cheapest way to satisfy the rule is the empty activation,** and nothing in the reward pays for
