@@ -3,11 +3,18 @@
 decisions help predict the next human action?
 
 One measurement for the "zero-state i.i.d. versus short sequences" choice in
-docs/human-prior-v1-2026-10-05.md. Same net, data contract, split and budget
-as training/human_prior.py; the only difference is that a training sample is a
-WINDOW of up to --seq-len consecutive decisions of one coach, the MinGRU state
-is zero at the window start and carried through it, and the loss is taken at
-every position.
+docs/human-prior-v1-2026-10-05.md. Same net, data contract, split, optimizer
+settings and budget in sampled records as training/human_prior.py. A training
+sample is a WINDOW of up to --seq-len consecutive decisions of one coach, the
+MinGRU state is zero at the window start and carried through it, and the loss
+is taken at every position.
+
+It is a second recipe, not a one-variable ablation: sampling a replay and then
+a window weights records differently from sampling a replay and then a record
+(a short window's records are drawn more often), and a batch holds fewer
+independent draws. The cleanest single-variable evidence it gives is inside
+the sequence-trained net: the same weights scored with the state carried and
+with the state zeroed.
 
 A window never crosses a hole: its records are consecutive in the shard
 (nothing filtered out between them, both coaches counted), in one provenance
@@ -106,6 +113,7 @@ def main(argv=None):
     ap.add_argument("--epochs", type=float, default=4.0)
     ap.add_argument("--batch-size", type=int, default=1024)
     ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--weight-decay", type=float, default=0.0)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--threads", type=int, default=2)
     args = ap.parse_args(argv)
@@ -122,6 +130,12 @@ def main(argv=None):
     test_w = build_windows(index, [r for r in holdout if r in nonempty], args.seq_len)
     n_train = sum(len(w[2]) for w in train_w)
     lengths = np.asarray([len(w[2]) for w in train_w])
+
+    def provenance_counts(windows):
+        return {prov: int(sum(len(w[2]) for w in windows if w[1] == prov))
+                for prov in (bc.PROVENANCE_PREFIX, bc.PROVENANCE_RESEAT)}
+
+    train_counts, test_counts = provenance_counts(train_w), provenance_counts(test_w)
     print(f"subset: {index.subset_label}", flush=True)
     print(f"train {n_train} records in {len(train_w)} windows (mean length "
           f"{lengths.mean():.1f}, {np.mean(lengths == args.seq_len):.2f} full); "
@@ -133,12 +147,18 @@ def main(argv=None):
         by_replay.setdefault(w[0], []).append(i)
     replay_keys = sorted(by_replay)
     per_step = max(1, args.batch_size // args.seq_len)
-    steps = max(1, int(round(args.epochs * n_train / (per_step * lengths.mean()))))
+    # Budget in SAMPLED records: the expected window length under replay-first
+    # sampling (a replay uniformly, then one of its windows), not the global
+    # mean window length.
+    sampled_len = float(np.mean([lengths[by_replay[r]].mean() for r in replay_keys]))
+    steps = max(1, int(round(args.epochs * n_train / (per_step * sampled_len))))
     policy = hp.new_policy(harness_policy, bias_free=True, seed=args.seed)
-    opt = torch.optim.AdamW([p for p in policy.parameters() if p.requires_grad], lr=args.lr)
+    opt = torch.optim.AdamW([p for p in policy.parameters() if p.requires_grad],
+                            lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=steps, eta_min=args.lr * 0.01)
     rng = np.random.default_rng(args.seed)
     t0 = last = time.time()
+    sampled_records = 0
     policy.train()
     for step in range(1, steps + 1):
         picks = [train_w[rng.choice(by_replay[replay_keys[r]])]
@@ -146,6 +166,7 @@ def main(argv=None):
         block, valid = window_batch(index, picks, args.seq_len)
         rows = run_windows(policy, block, valid, grad=True)
         loss, count = 0.0, float(valid.sum())
+        sampled_records += int(valid.sum())
         for t, (lps, tgt) in enumerate(rows):
             v = torch.from_numpy(valid[:, t])
             for h in range(3):
@@ -188,7 +209,16 @@ def main(argv=None):
     zero = {k: np.concatenate(v) for k, v in zero.items()}
     result = {
         "schema": "human-prior-seq-v1", "subset": index.subset_label,
+        "reseat_stamps": index.reseat_stamps,
+        "config": {k: getattr(args, k) for k in (
+            "seq_len", "epochs", "batch_size", "lr", "weight_decay", "seed")},
+        "sampling": "replay-first, then a window of the replay",
         "seq_len": args.seq_len, "steps": steps, "epochs": args.epochs,
+        "train": {"replays": len(replay_keys), "records": train_counts,
+                  "windows": len(train_w), "mean_window_length": float(lengths.mean()),
+                  "sampled_records": sampled_records,
+                  "sampled_records_per_training_record": sampled_records / n_train},
+        "held_out": {"replays": len(set(w[0] for w in test_w)), "records": test_counts},
         "train_records": n_train, "held_out_records": int(len(carried["lp"])),
         "carried": {"exact": hp.cluster_interval(carried["exact"], carried["replay"]),
                     "nll": float(-carried["lp"].mean()),
