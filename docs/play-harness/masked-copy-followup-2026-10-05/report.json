@@ -1,0 +1,1500 @@
+{
+ "schema": "mask-followup-report-v1",
+ "noninferior_elo": -20.0,
+ "reps": 2000,
+ "harness_git_head": [
+  "0f1032f5c1fce0b3019307356a0147bcedcc3a28"
+ ],
+ "transfer": {
+  "offense": {
+   "seed0": 23500000,
+   "masked": {
+    "strength": {
+     "a": "chain41m1",
+     "b": "offense",
+     "seeds": 1600,
+     "games": 3200,
+     "W": 951,
+     "D": 1725,
+     "L": 524,
+     "decisive_share": 0.6447457627118645,
+     "decisive_share_ci95": [
+      0.622143534966613,
+      0.6671144684197137
+     ],
+     "score_rate": 0.56671875,
+     "score_rate_ci95": [
+      0.55609375,
+      0.57750390625
+     ],
+     "elo_decisive": 103.53969198147496,
+     "elo_decisive_ci95": [
+      86.62549412845667,
+      120.7621768367621
+     ],
+     "elo_decisive_se": 8.90601286671256,
+     "elo_score": 46.6390744010291,
+     "elo_score_ci95": [
+      39.14270171236405,
+      54.29289140734741
+     ],
+     "elo_score_se": 3.9136126602932713,
+     "p_a_ahead": 1.0,
+     "valid_reps": 2000
+    },
+    "means": {
+     "games": 3200,
+     "td_for": 0.4109375,
+     "td_against": 0.2746875,
+     "blocks": 11.3634375,
+     "draw_rate": 0.5390625,
+     "c_steps": 1478.9228125
+    }
+   },
+   "plain": {
+    "strength": {
+     "a": "chain41",
+     "b": "offense",
+     "seeds": 1600,
+     "games": 3200,
+     "W": 1024,
+     "D": 1658,
+     "L": 518,
+     "decisive_share": 0.6640726329442282,
+     "decisive_share_ci95": [
+      0.6408436805040771,
+      0.687675824052954
+     ],
+     "score_rate": 0.5790625,
+     "score_rate_ci95": [
+      0.5675,
+      0.590625
+     ],
+     "elo_decisive": 118.38807875783156,
+     "elo_decisive_ci95": [
+      100.58743746877013,
+      137.1112642867315
+     ],
+     "elo_decisive_se": 9.29358462361985,
+     "elo_score": 55.403129438364815,
+     "elo_score_ci95": [
+      47.191901625730914,
+      63.6762034069919
+     ],
+     "elo_score_se": 4.215097996598839,
+     "p_a_ahead": 1.0,
+     "valid_reps": 2000
+    },
+    "means": {
+     "games": 3200,
+     "td_for": 0.4303125,
+     "td_against": 0.2790625,
+     "blocks": 7.4459375,
+     "draw_rate": 0.518125,
+     "c_steps": 1171.14375
+    }
+   },
+   "contrast": {
+    "masked": [
+     "chain41m1",
+     "offense"
+    ],
+    "plain": [
+     "chain41",
+     "offense"
+    ],
+    "elo_contrast": -14.848386776356605,
+    "ci95": [
+     -35.92843132623021,
+     4.646209284068002
+    ],
+    "verdict": [
+     "inconclusive"
+    ],
+    "valid_reps": 2000,
+    "score_rate_contrast": -0.012343749999999987,
+    "score_rate_ci95": [
+     -0.024843749999999942,
+     -0.0007812500000000666
+    ]
+   }
+  },
+  "contact": {
+   "seed0": 23600000,
+   "masked": {
+    "strength": {
+     "a": "chain41m1",
+     "b": "contact",
+     "seeds": 1600,
+     "games": 3200,
+     "W": 1118,
+     "D": 1448,
+     "L": 634,
+     "decisive_share": 0.6381278538812786,
+     "decisive_share_ci95": [
+      0.6166269789036604,
+      0.6605208290668165
+     ],
+     "score_rate": 0.575625,
+     "score_rate_ci95": [
+      0.56343359375,
+      0.58812890625
+     ],
+     "elo_decisive": 98.54101826746874,
+     "elo_decisive_ci95": [
+      82.56039001317838,
+      115.62935387851455
+     ],
+     "elo_decisive_se": 8.412134101835537,
+     "elo_score": 52.955942366538935,
+     "elo_score_ci95": [
+      44.31696960553591,
+      61.884485054847865
+     ],
+     "elo_score_se": 4.445178904864183,
+     "p_a_ahead": 1.0,
+     "valid_reps": 2000
+    },
+    "means": {
+     "games": 3200,
+     "td_for": 0.5596875,
+     "td_against": 0.3759375,
+     "blocks": 8.110625,
+     "draw_rate": 0.4525,
+     "c_steps": 1212.5946875
+    }
+   },
+   "plain": {
+    "strength": {
+     "a": "chain41",
+     "b": "contact",
+     "seeds": 1600,
+     "games": 3200,
+     "W": 1102,
+     "D": 1393,
+     "L": 705,
+     "decisive_share": 0.6098505810736027,
+     "decisive_share_ci95": [
+      0.5875630389876783,
+      0.6320653442327436
+     ],
+     "score_rate": 0.56203125,
+     "score_rate_ci95": [
+      0.54890625,
+      0.57469140625
+     ],
+     "elo_decisive": 77.59699100974704,
+     "elo_decisive_ci95": [
+      61.47875631212903,
+      93.99651316617827
+     ],
+     "elo_decisive_se": 8.318470769073853,
+     "elo_score": 43.32693602328998,
+     "elo_score_ci95": [
+      34.09254636452206,
+      52.292218034063374
+     ],
+     "elo_score_se": 4.59584230598222,
+     "p_a_ahead": 1.0,
+     "valid_reps": 2000
+    },
+    "means": {
+     "games": 3200,
+     "td_for": 0.541875,
+     "td_against": 0.4021875,
+     "blocks": 5.420625,
+     "draw_rate": 0.4353125,
+     "c_steps": 885.0746875
+    }
+   },
+   "contrast": {
+    "masked": [
+     "chain41m1",
+     "contact"
+    ],
+    "plain": [
+     "chain41",
+     "contact"
+    ],
+    "elo_contrast": 20.9440272577217,
+    "ci95": [
+     1.987290924705499,
+     39.54645232134483
+    ],
+    "verdict": [
+     "better",
+     "non-inferior"
+    ],
+    "valid_reps": 2000,
+    "score_rate_contrast": 0.013593750000000071,
+    "score_rate_ci95": [
+     -0.0009374999999999273,
+     0.027355468749999935
+    ]
+   }
+  },
+  "chain27": {
+   "seed0": 23700000,
+   "masked": {
+    "strength": {
+     "a": "chain41m1",
+     "b": "chain27",
+     "seeds": 1600,
+     "games": 3200,
+     "W": 1651,
+     "D": 1089,
+     "L": 460,
+     "decisive_share": 0.7820937944102321,
+     "decisive_share_ci95": [
+      0.7644876710904294,
+      0.7983866262647352
+     ],
+     "score_rate": 0.68609375,
+     "score_rate_ci95": [
+      0.67390234375,
+      0.6978125
+     ],
+     "elo_decisive": 221.9956966324878,
+     "elo_decisive_ci95": [
+      204.54273553953163,
+      239.07756746801377
+     ],
+     "elo_decisive_se": 8.815406741616092,
+     "elo_score": 135.83340014245542,
+     "elo_score_ci95": [
+      126.09971611987869,
+      145.38489959537446
+     ],
+     "elo_score_se": 4.906943919217523,
+     "p_a_ahead": 1.0,
+     "valid_reps": 2000
+    },
+    "means": {
+     "games": 3200,
+     "td_for": 1.1278125,
+     "td_against": 0.5378125,
+     "blocks": 11.6625,
+     "draw_rate": 0.3403125,
+     "c_steps": 953.7821875
+    }
+   },
+   "plain": {
+    "strength": {
+     "a": "chain41",
+     "b": "chain27",
+     "seeds": 1600,
+     "games": 3200,
+     "W": 1635,
+     "D": 1007,
+     "L": 558,
+     "decisive_share": 0.7455540355677155,
+     "decisive_share_ci95": [
+      0.7283666928102794,
+      0.7627462818165676
+     ],
+     "score_rate": 0.66828125,
+     "score_rate_ci95": [
+      0.65625,
+      0.6810976562500001
+     ],
+     "elo_decisive": 186.75342322349047,
+     "elo_decisive_ci95": [
+      171.34682267270585,
+      202.86682957621096
+     ],
+     "elo_decisive_se": 8.036749201552675,
+     "elo_score": 121.67570243632493,
+     "elo_score_ci95": [
+      112.3306438302777,
+      131.82067029605614
+     ],
+     "elo_score_se": 4.9336470812752635,
+     "p_a_ahead": 1.0,
+     "valid_reps": 2000
+    },
+    "means": {
+     "games": 3200,
+     "td_for": 1.1896875,
+     "td_against": 0.6303125,
+     "blocks": 7.9234375,
+     "draw_rate": 0.3146875,
+     "c_steps": 700.001875
+    }
+   },
+   "contrast": {
+    "masked": [
+     "chain41m1",
+     "chain27"
+    ],
+    "plain": [
+     "chain41",
+     "chain27"
+    ],
+    "elo_contrast": 35.242273408997335,
+    "ci95": [
+     15.122744978372848,
+     56.04147991439207
+    ],
+    "verdict": [
+     "better",
+     "non-inferior"
+    ],
+    "valid_reps": 2000,
+    "score_rate_contrast": 0.017812499999999898,
+    "score_rate_ci95": [
+     0.0025000000000000577,
+     0.03312890624999994
+    ]
+   }
+  },
+  "chain36": {
+   "seed0": 23800000,
+   "masked": {
+    "strength": {
+     "a": "chain41m1",
+     "b": "chain36",
+     "seeds": 1600,
+     "games": 3200,
+     "W": 1492,
+     "D": 1143,
+     "L": 565,
+     "decisive_share": 0.7253281477880409,
+     "decisive_share_ci95": [
+      0.7077701638903563,
+      0.7437527412280702
+     ],
+     "score_rate": 0.64484375,
+     "score_rate_ci95": [
+      0.63327734375,
+      0.65640625
+     ],
+     "elo_decisive": 168.68815012688464,
+     "elo_decisive_ci95": [
+      153.66707895534154,
+      185.1077408304731
+     ],
+     "elo_decisive_se": 7.898528596384858,
+     "elo_score": 103.6140132609781,
+     "elo_score_ci95": [
+      94.90248395693584,
+      112.45098087088061
+     ],
+     "elo_score_se": 4.552362482720381,
+     "p_a_ahead": 1.0,
+     "valid_reps": 2000
+    },
+    "means": {
+     "games": 3200,
+     "td_for": 1.108125,
+     "td_against": 0.6678125,
+     "blocks": 10.754375,
+     "draw_rate": 0.3571875,
+     "c_steps": 956.64875
+    }
+   },
+   "plain": {
+    "strength": {
+     "a": "chain41",
+     "b": "chain36",
+     "seeds": 1600,
+     "games": 3200,
+     "W": 1398,
+     "D": 1144,
+     "L": 658,
+     "decisive_share": 0.6799610894941635,
+     "decisive_share_ci95": [
+      0.6624417271283846,
+      0.6970742847951196
+     ],
+     "score_rate": 0.615625,
+     "score_rate_ci95": [
+      0.60375,
+      0.62703125
+     ],
+     "elo_decisive": 130.91251111828288,
+     "elo_decisive_ci95": [
+      117.11957013047828,
+      144.77716799577604
+     ],
+     "elo_decisive_se": 7.215311038192409,
+     "elo_score": 81.82444588887799,
+     "elo_score_ci95": [
+      73.15514741350427,
+      90.2466962908337
+     ],
+     "elo_score_se": 4.363532608681793,
+     "p_a_ahead": 1.0,
+     "valid_reps": 2000
+    },
+    "means": {
+     "games": 3200,
+     "td_for": 1.1715625,
+     "td_against": 0.794375,
+     "blocks": 7.5503125,
+     "draw_rate": 0.3575,
+     "c_steps": 698.6515625
+    }
+   },
+   "contrast": {
+    "masked": [
+     "chain41m1",
+     "chain36"
+    ],
+    "plain": [
+     "chain41",
+     "chain36"
+    ],
+    "elo_contrast": 37.77563900860176,
+    "ci95": [
+     18.92042395529407,
+     57.005141635349325
+    ],
+    "verdict": [
+     "better",
+     "non-inferior"
+    ],
+    "valid_reps": 2000,
+    "score_rate_contrast": 0.02921875000000007,
+    "score_rate_ci95": [
+     0.014375000000000027,
+     0.04421874999999997
+    ]
+   }
+  },
+  "chain47": {
+   "seed0": 23900000,
+   "masked": {
+    "strength": {
+     "a": "chain41m1",
+     "b": "chain47",
+     "seeds": 1600,
+     "games": 3200,
+     "W": 872,
+     "D": 1403,
+     "L": 925,
+     "decisive_share": 0.4852531997774068,
+     "decisive_share_ci95": [
+      0.4647629709468569,
+      0.50636502784557
+     ],
+     "score_rate": 0.49171875,
+     "score_rate_ci95": [
+      0.48015234375,
+      0.50359765625
+     ],
+     "elo_decisive": -10.25009912258617,
+     "elo_decisive_ci95": [
+      -24.52585288483164,
+      4.42311333534125
+     ],
+     "elo_decisive_se": 7.395177407413122,
+     "elo_score": -5.754928147453329,
+     "elo_score_ci95": [
+      -13.798814901445377,
+      2.499950761002866
+     ],
+     "elo_score_se": 4.146916264329248,
+     "p_a_ahead": 0.0845,
+     "valid_reps": 2000
+    },
+    "means": {
+     "games": 3200,
+     "td_for": 0.6796875,
+     "td_against": 0.725,
+     "blocks": 9.4034375,
+     "draw_rate": 0.4384375,
+     "c_steps": 968.0575
+    }
+   },
+   "plain": {
+    "strength": {
+     "a": "chain41",
+     "b": "chain47",
+     "seeds": 1600,
+     "games": 3200,
+     "W": 822,
+     "D": 1263,
+     "L": 1115,
+     "decisive_share": 0.4243675787299948,
+     "decisive_share_ci95": [
+      0.40373613604644043,
+      0.44468147313556444
+     ],
+     "score_rate": 0.45421875,
+     "score_rate_ci95": [
+      0.44171875,
+      0.4665625
+     ],
+     "elo_decisive": -52.961219937651656,
+     "elo_decisive_ci95": [
+      -67.73634712641966,
+      -38.59725097118276
+     ],
+     "elo_decisive_se": 7.2960249301885245,
+     "elo_score": -31.90142154688758,
+     "elo_score_ci95": [
+      -40.682883085168164,
+      -23.26948535588328
+     ],
+     "elo_score_se": 4.372561987857887,
+     "p_a_ahead": 0.0,
+     "valid_reps": 2000
+    },
+    "means": {
+     "games": 3200,
+     "td_for": 0.709375,
+     "td_against": 0.8596875,
+     "blocks": 6.89,
+     "draw_rate": 0.3946875,
+     "c_steps": 705.889375
+    }
+   },
+   "contrast": {
+    "masked": [
+     "chain41m1",
+     "chain47"
+    ],
+    "plain": [
+     "chain41",
+     "chain47"
+    ],
+    "elo_contrast": 42.711120815065485,
+    "ci95": [
+     23.542913962623388,
+     60.56893310060348
+    ],
+    "verdict": [
+     "better",
+     "non-inferior"
+    ],
+    "valid_reps": 2000,
+    "score_rate_contrast": 0.03749999999999998,
+    "score_rate_ci95": [
+     0.02171875000000001,
+     0.0521875
+    ]
+   }
+  }
+ },
+ "m12": {
+  "seed0": 24000000,
+  "strength": {
+   "a": "chain41m12",
+   "b": "chain41",
+   "seeds": 1600,
+   "games": 3200,
+   "W": 979,
+   "D": 1398,
+   "L": 823,
+   "decisive_share": 0.5432852386237513,
+   "decisive_share_ci95": [
+    0.5225836836826823,
+    0.5639797721556171
+   ],
+   "score_rate": 0.524375,
+   "score_rate_ci95": [
+    0.51265625,
+    0.53609375
+   ],
+   "elo_decisive": 30.153142636347148,
+   "elo_decisive_ci95": [
+    15.70343539801657,
+    44.70275610166343
+   ],
+   "elo_decisive_se": 7.447777462389705,
+   "elo_score": 16.95092162325099,
+   "elo_score_ci95": [
+    8.796342251561589,
+    25.12420818405152
+   ],
+   "elo_score_se": 4.162025096714928,
+   "p_a_ahead": 1.0,
+   "valid_reps": 2000
+  },
+  "means": {
+   "games": 3200,
+   "td_for": 0.765625,
+   "td_against": 0.68875,
+   "blocks": 15.323125,
+   "draw_rate": 0.436875,
+   "c_steps": 987.35
+  },
+  "behaviour": [
+   {
+    "metric": "activations per team turn",
+    "a": 5.9518728180043,
+    "b": 3.103157063930545,
+    "a_minus_b": 2.848715754073755,
+    "ci95": [
+     2.8065630616416217,
+     2.8892328847505406
+    ]
+   },
+   {
+    "metric": "turns ended by choice with a player left, per team turn",
+    "a": 0.0,
+    "b": 0.6216456195737964,
+    "a_minus_b": -0.6216456195737964,
+    "ci95": [
+     -0.6265868273460353,
+     -0.616756892786899
+    ]
+   },
+   {
+    "metric": "block targets chosen per game",
+    "a": 15.323125,
+    "b": 6.645625,
+    "a_minus_b": 8.677499999999998,
+    "ci95": [
+     8.5193359375,
+     8.8306328125
+    ]
+   },
+   {
+    "metric": "block targets inside a Blitz per game",
+    "a": 1.3475,
+    "b": 1.3325,
+    "a_minus_b": 0.014999999999999902,
+    "ci95": [
+     -0.034375000000000044,
+     0.06313281250000005
+    ]
+   },
+   {
+    "metric": "block targets inside a Block per game",
+    "a": 13.975625,
+    "b": 5.313125,
+    "a_minus_b": 8.662500000000001,
+    "ci95": [
+     8.5084296875,
+     8.8106484375
+    ]
+   },
+   {
+    "metric": "turnovers per team turn",
+    "a": 0.5584528294443677,
+    "b": 0.30882004735595897,
+    "a_minus_b": 0.24963278208840872,
+    "ci95": [
+     0.24379602261752392,
+     0.2558822783444194
+    ]
+   },
+   {
+    "metric": "touchdowns per game",
+    "a": 0.765625,
+    "b": 0.68875,
+    "a_minus_b": 0.07687500000000003,
+    "ci95": [
+     0.04437499999999994,
+     0.10813281249999998
+    ]
+   },
+   {
+    "metric": "possession (turns ended holding the ball)",
+    "a": 0.4032821160180674,
+    "b": 0.39713891081294395,
+    "a_minus_b": 0.006143205205123459,
+    "ci95": [
+     -0.0007916391777118447,
+     0.01318319752994147
+    ]
+   },
+   {
+    "metric": "activations ended at once, per activation",
+    "a": 0.0017166301026664103,
+    "b": 0.20922247373909506,
+    "a_minus_b": -0.20750584363642866,
+    "ci95": [
+     -0.21096870380302632,
+     -0.20410658224251582
+    ]
+   },
+   {
+    "metric": "activations ended with a block target on offer (Block or Blitz), per game",
+    "a": 0.585,
+    "b": 3.3725,
+    "a_minus_b": -2.7875,
+    "ci95": [
+     -2.8806328125,
+     -2.7021875
+    ]
+   },
+   {
+    "metric": "Block declared per team turn",
+    "a": 0.9063295134026312,
+    "b": 0.5271902131018154,
+    "a_minus_b": 0.3791393003008159,
+    "ci95": [
+     0.36964190885979537,
+     0.3886037396010852
+    ]
+   },
+   {
+    "metric": "Blitz declared per team turn",
+    "a": 0.36501706148050256,
+    "b": 0.31215469613259667,
+    "a_minus_b": 0.05286236534790589,
+    "ci95": [
+     0.047264416039676446,
+     0.05867488084482957
+    ]
+   },
+   {
+    "metric": "Pass declared per team turn",
+    "a": 0.24055701295883547,
+    "b": 0.18234017363851618,
+    "a_minus_b": 0.05821683932031929,
+    "ci95": [
+     0.053785990078537044,
+     0.06268092226028014
+    ]
+   },
+   {
+    "metric": "pass targets chosen per game",
+    "a": 0.000625,
+    "b": 0.0,
+    "a_minus_b": 0.000625,
+    "ci95": [
+     0.0,
+     0.0015625
+    ]
+   },
+   {
+    "metric": "foul targets chosen per game",
+    "a": 0.0028125,
+    "b": 0.0009375,
+    "a_minus_b": 0.001875,
+    "ci95": [
+     -0.00031250000000000006,
+     0.004375
+    ]
+   },
+   {
+    "metric": "team turns per game",
+    "a": 15.8434375,
+    "b": 15.8375,
+    "a_minus_b": 0.005937499999999929,
+    "ci95": [
+     0.0006249999999994316,
+     0.011562500000000142
+    ]
+   },
+   {
+    "metric": "engine steps per game (both sides)",
+    "a": 987.35,
+    "b": 987.35,
+    "a_minus_b": 0.0,
+    "ci95": [
+     0.0,
+     0.0
+    ]
+   }
+  ],
+  "verdict": [
+   "better",
+   "non-inferior"
+  ],
+  "mask_stats": {
+   "m1": {
+    "held": 94.298125,
+    "applied": 94.298125,
+    "fallback": 0.0,
+    "mass": 54.251217843749984
+   },
+   "m2": {
+    "held": 92.983125,
+    "applied": 92.82125,
+    "fallback": 0.161875,
+    "mass": 33.46560856249989
+   }
+  },
+  "roster": [
+   {
+    "class": "agile",
+    "games": 536,
+    "W": 245,
+    "D": 194,
+    "L": 97,
+    "decisive_share": 0.716374269005848,
+    "cluster_ci95": [
+     0.6666666666666666,
+     0.7638961442786069
+    ]
+   },
+   {
+    "class": "bash",
+    "games": 1608,
+    "W": 365,
+    "D": 780,
+    "L": 463,
+    "decisive_share": 0.44082125603864736,
+    "cluster_ci95": [
+     0.40778725872755883,
+     0.4743333429782555
+    ]
+   },
+   {
+    "class": "hybrid",
+    "games": 506,
+    "W": 158,
+    "D": 215,
+    "L": 133,
+    "decisive_share": 0.5429553264604811,
+    "cluster_ci95": [
+     0.4833317843866171,
+     0.5969671064383596
+    ]
+   },
+   {
+    "class": "stunty",
+    "games": 550,
+    "W": 211,
+    "D": 209,
+    "L": 130,
+    "decisive_share": 0.6187683284457478,
+    "cluster_ci95": [
+     0.5687968824070718,
+     0.6686050774057151
+    ]
+   }
+  ]
+ },
+ "null": {
+  "seed0": 24100000,
+  "strength": {
+   "a": "chain41b",
+   "b": "chain41",
+   "seeds": 1600,
+   "games": 3200,
+   "W": 880,
+   "D": 1382,
+   "L": 938,
+   "decisive_share": 0.48404840484048406,
+   "decisive_share_ci95": [
+    0.4635366106343901,
+    0.5040592972788122
+   ],
+   "score_rate": 0.4909375,
+   "score_rate_ci95": [
+    0.479375,
+    0.50234375
+   ],
+   "elo_decisive": -11.088066491558333,
+   "elo_decisive_ci95": [
+    -25.382419315075815,
+    2.8207506323474387
+   ],
+   "elo_decisive_se": 7.275997150277833,
+   "elo_score": -6.297959707414406,
+   "elo_score_ci95": [
+    -14.33985498312266,
+    1.628616235548629
+   ],
+   "elo_score_se": 4.122013838866157,
+   "p_a_ahead": 0.056,
+   "valid_reps": 2000
+  },
+  "means": {
+   "games": 3200,
+   "td_for": 0.7303125,
+   "td_against": 0.754375,
+   "blocks": 7.3325,
+   "draw_rate": 0.431875,
+   "c_steps": 694.976875
+  },
+  "behaviour": [
+   {
+    "metric": "activations per team turn",
+    "a": 2.983991630642901,
+    "b": 2.9675432361999525,
+    "a_minus_b": 0.016448394442948544,
+    "ci95": [
+     -0.013011935144069087,
+     0.04572988920148942
+    ]
+   },
+   {
+    "metric": "turns ended by choice with a player left, per team turn",
+    "a": 0.6170229565148734,
+    "b": 0.6145858011529653,
+    "a_minus_b": 0.0024371553619080277,
+    "ci95": [
+     -0.00312634149823455,
+     0.0075321757801860316
+    ]
+   },
+   {
+    "metric": "block targets chosen per game",
+    "a": 7.3325,
+    "b": 7.3221875,
+    "a_minus_b": 0.010312499999999503,
+    "ci95": [
+     -0.10749999999999993,
+     0.13563281250000006
+    ]
+   },
+   {
+    "metric": "block targets inside a Blitz per game",
+    "a": 1.1903125,
+    "b": 1.181875,
+    "a_minus_b": 0.008437500000000098,
+    "ci95": [
+     -0.038437500000000124,
+     0.05532812500000001
+    ]
+   },
+   {
+    "metric": "block targets inside a Block per game",
+    "a": 6.1421875,
+    "b": 6.1403125,
+    "a_minus_b": 0.001875000000000071,
+    "ci95": [
+     -0.109390625,
+     0.11219531250000007
+    ]
+   },
+   {
+    "metric": "turnovers per team turn",
+    "a": 0.31665383628432126,
+    "b": 0.3177959409302693,
+    "a_minus_b": -0.00114210464594805,
+    "ci95": [
+     -0.006514741871395759,
+     0.004789530807942849
+    ]
+   },
+   {
+    "metric": "touchdowns per game",
+    "a": 0.7303125,
+    "b": 0.754375,
+    "a_minus_b": -0.024062499999999987,
+    "ci95": [
+     -0.05656249999999996,
+     0.007195312499999969
+    ]
+   },
+   {
+    "metric": "possession (turns ended holding the ball)",
+    "a": 0.4108091036497503,
+    "b": 0.4193319118692253,
+    "a_minus_b": -0.008522808219474987,
+    "ci95": [
+     -0.01612871969896458,
+     -0.001227258650703761
+    ]
+   },
+   {
+    "metric": "activations ended at once, per activation",
+    "a": 0.21832085306802848,
+    "b": 0.21970967055191867,
+    "a_minus_b": -0.0013888174838901923,
+    "ci95": [
+     -0.005810913359816902,
+     0.003003765848708948
+    ]
+   },
+   {
+    "metric": "activations ended with a block target on offer (Block or Blitz), per game",
+    "a": 4.240625,
+    "b": 4.2225,
+    "a_minus_b": 0.018124999999999503,
+    "ci95": [
+     -0.10500781250000042,
+     0.1381250000000005
+    ]
+   },
+   {
+    "metric": "Block declared per team turn",
+    "a": 0.644164149937822,
+    "b": 0.6450288241333018,
+    "a_minus_b": -0.0008646741954797532,
+    "ci95": [
+     -0.010827836564038143,
+     0.008955077982066717
+    ]
+   },
+   {
+    "metric": "Blitz declared per team turn",
+    "a": 0.28838751702493043,
+    "b": 0.28135118060491193,
+    "a_minus_b": 0.007036336420018496,
+    "ci95": [
+     0.0015829708925388293,
+     0.012177182041468372
+    ]
+   },
+   {
+    "metric": "Pass declared per team turn",
+    "a": 0.18738279939203728,
+    "b": 0.1849680170575693,
+    "a_minus_b": 0.0024147823344679853,
+    "ci95": [
+     -0.0018820356643921218,
+     0.006715163120864833
+    ]
+   },
+   {
+    "metric": "pass targets chosen per game",
+    "a": 0.0,
+    "b": 0.0,
+    "a_minus_b": 0.0,
+    "ci95": [
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "metric": "foul targets chosen per game",
+    "a": 0.0,
+    "b": 0.0003125,
+    "a_minus_b": -0.0003125,
+    "ci95": [
+     -0.0009375,
+     0.0
+    ]
+   },
+   {
+    "metric": "team turns per game",
+    "a": 15.8315625,
+    "b": 15.82875,
+    "a_minus_b": 0.0028125000000009948,
+    "ci95": [
+     -0.004062499999999858,
+     0.009687499999998295
+    ]
+   },
+   {
+    "metric": "engine steps per game (both sides)",
+    "a": 694.976875,
+    "b": 694.976875,
+    "a_minus_b": 0.0,
+    "ci95": [
+     0.0,
+     0.0
+    ]
+   }
+  ]
+ },
+ "both-m1": {
+  "seed0": 24200000,
+  "strength": {
+   "a": "chain41m1b",
+   "b": "chain41m1",
+   "seeds": 1600,
+   "games": 3200,
+   "W": 836,
+   "D": 1561,
+   "L": 803,
+   "decisive_share": 0.5100671140939598,
+   "decisive_share_ci95": [
+    0.48889644781216957,
+    0.5301779078409513
+   ],
+   "score_rate": 0.50515625,
+   "score_rate_ci95": [
+    0.49437109375,
+    0.51546875
+   ],
+   "elo_decisive": 6.996292864134207,
+   "elo_decisive_ci95": [
+    -7.716807042581028,
+    20.995277010825422
+   ],
+   "elo_decisive_se": 7.3800061774995,
+   "elo_score": 3.5830564958576456,
+   "elo_score_ci95": [
+    -3.911529939560842,
+    10.752219723207032
+   ],
+   "elo_score_se": 3.7792693800210233,
+   "p_a_ahead": 0.831,
+   "valid_reps": 2000
+  },
+  "means": {
+   "games": 3200,
+   "td_for": 0.585,
+   "td_against": 0.5765625,
+   "blocks": 10.6278125,
+   "draw_rate": 0.4878125,
+   "c_steps": 1202.2165625
+  },
+  "behaviour": [
+   {
+    "metric": "activations per team turn",
+    "a": 6.85829767937065,
+    "b": 6.874265662579348,
+    "a_minus_b": -0.0159679832086983,
+    "ci95": [
+     -0.06386854494838143,
+     0.03114150168323564
+    ]
+   },
+   {
+    "metric": "turns ended by choice with a player left, per team turn",
+    "a": 0.0,
+    "b": 0.0,
+    "a_minus_b": 0.0,
+    "ci95": [
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "metric": "block targets chosen per game",
+    "a": 10.6278125,
+    "b": 10.5825,
+    "a_minus_b": 0.045312499999999645,
+    "ci95": [
+     -0.1190859375000001,
+     0.2078515625000008
+    ]
+   },
+   {
+    "metric": "block targets inside a Blitz per game",
+    "a": 1.3053125,
+    "b": 1.250625,
+    "a_minus_b": 0.0546875,
+    "ci95": [
+     0.005624999999999991,
+     0.10875781250000008
+    ]
+   },
+   {
+    "metric": "block targets inside a Block per game",
+    "a": 9.3225,
+    "b": 9.331875,
+    "a_minus_b": -0.009375000000000355,
+    "ci95": [
+     -0.16907031249999904,
+     0.14784374999999864
+    ]
+   },
+   {
+    "metric": "turnovers per team turn",
+    "a": 0.42201147498964886,
+    "b": 0.41830619406221664,
+    "a_minus_b": 0.0037052809274322196,
+    "ci95": [
+     -0.0022894861214485694,
+     0.009444533506365461
+    ]
+   },
+   {
+    "metric": "touchdowns per game",
+    "a": 0.585,
+    "b": 0.5765625,
+    "a_minus_b": 0.008437499999999987,
+    "ci95": [
+     -0.020312499999999956,
+     0.03657031250000001
+    ]
+   },
+   {
+    "metric": "possession (turns ended holding the ball)",
+    "a": 0.39399436108756086,
+    "b": 0.3988487166344675,
+    "a_minus_b": -0.0048543555469066635,
+    "ci95": [
+     -0.01241663419307076,
+     0.002265409450528644
+    ]
+   },
+   {
+    "metric": "activations ended at once, per activation",
+    "a": 0.42334251364109404,
+    "b": 0.42485030283564285,
+    "a_minus_b": -0.0015077891945488031,
+    "ci95": [
+     -0.005955451890965717,
+     0.0026654808221618837
+    ]
+   },
+   {
+    "metric": "activations ended with a block target on offer (Block or Blitz), per game",
+    "a": 7.5371875,
+    "b": 7.6096875,
+    "a_minus_b": -0.07249999999999979,
+    "ci95": [
+     -0.22783593749999975,
+     0.07374999999999957
+    ]
+   },
+   {
+    "metric": "Block declared per team turn",
+    "a": 1.0513811392180445,
+    "b": 1.0571896069077003,
+    "a_minus_b": -0.005808467689655705,
+    "ci95": [
+     -0.016624730414088074,
+     0.004874021911969177
+    ]
+   },
+   {
+    "metric": "Blitz declared per team turn",
+    "a": 0.4137108381474398,
+    "b": 0.41164294444663485,
+    "a_minus_b": 0.002067893700804957,
+    "ci95": [
+     -0.003912407179181211,
+     0.007897638081525351
+    ]
+   },
+   {
+    "metric": "Pass declared per team turn",
+    "a": 0.2697214061791439,
+    "b": 0.2713401411504948,
+    "a_minus_b": -0.0016187349713508992,
+    "ci95": [
+     -0.0065343316224660535,
+     0.0034487096622282908
+    ]
+   },
+   {
+    "metric": "pass targets chosen per game",
+    "a": 0.0,
+    "b": 0.0,
+    "a_minus_b": 0.0,
+    "ci95": [
+     0.0,
+     0.0
+    ]
+   },
+   {
+    "metric": "foul targets chosen per game",
+    "a": 0.001875,
+    "b": 0.0,
+    "a_minus_b": 0.001875,
+    "ci95": [
+     0.000625,
+     0.0034375
+    ]
+   },
+   {
+    "metric": "team turns per game",
+    "a": 15.8496875,
+    "b": 15.851875,
+    "a_minus_b": -0.002187499999999787,
+    "ci95": [
+     -0.006562500000001137,
+     0.0024999999999995026
+    ]
+   },
+   {
+    "metric": "engine steps per game (both sides)",
+    "a": 1202.2165625,
+    "b": 1202.2165625,
+    "a_minus_b": 0.0,
+    "ci95": [
+     0.0,
+     0.0
+    ]
+   }
+  ]
+ },
+ "activations": {
+  "chain 41 + m1 (five transfer runs)": {
+   "games": 16000,
+   "team_turns": 253621,
+   "activations_per_turn": 7.17821079484743,
+   "empty_per_turn": 3.181597738357628,
+   "moved_per_turn": 3.277934398176807,
+   "block_per_turn": 0.5737774080222063,
+   "blitz_per_turn": 0.07338509035135103,
+   "foul_per_turn": 0.00012617251726000607,
+   "pass_handoff_per_turn": 0.0020424176231463483,
+   "no_decision_per_turn": 0.037370722455948045,
+   "other_per_turn": 0.03197684734308279,
+   "moved_measured": 807337,
+   "moved_mean_net_displacement": 2.4644491705446425,
+   "moved_mean_change_distance_to_ball": -0.38855521300274853,
+   "moved_mean_change_distance_from_own_endzone": 0.061099639927316596,
+   "negative_trait": {
+    "activations_per_game": 8.241,
+    "activations_per_turn": 0.519893857369855,
+    "came_out_distracted_or_rooted": 0.08435717752699914,
+    "ended_at_once": 0.2376380293653683,
+    "engine_ended_it": 0.0670883387938357,
+    "blocked_or_blitzed": 0.30499939327751485,
+    "turn_ended_in_turnover_there": 0.1279577721150346,
+    "failures_per_game": 0.6951875,
+    "turnovers_there_per_game": 1.0545
+   },
+   "activations_that_ended_the_turn_in_a_turnover_per_turn": 0.37070668438339094
+  },
+  "plain chain 41 (same runs)": {
+   "games": 16000,
+   "team_turns": 253558,
+   "activations_per_turn": 2.9626830942032987,
+   "empty_per_turn": 0.735125691163363,
+   "moved_per_turn": 1.7376024420448182,
+   "block_per_turn": 0.3738040211706986,
+   "blitz_per_turn": 0.07080036914630972,
+   "foul_per_turn": 6.310193328548103e-05,
+   "pass_handoff_per_turn": 0.000887370936827077,
+   "no_decision_per_turn": 0.0196799154434094,
+   "other_per_turn": 0.024720182364587194,
+   "moved_measured": 420631,
+   "moved_mean_net_displacement": 2.9794023740523166,
+   "moved_mean_change_distance_to_ball": -0.571149059389346,
+   "moved_mean_change_distance_from_own_endzone": 0.1270234481053465,
+   "negative_trait": {
+    "activations_per_game": 6.100125,
+    "activations_per_turn": 0.384929680783095,
+    "came_out_distracted_or_rooted": 0.07638163152394419,
+    "ended_at_once": 0.17426896989815782,
+    "engine_ended_it": 0.048626052744820805,
+    "blocked_or_blitzed": 0.3865699473371447,
+    "turn_ended_in_turnover_there": 0.15774266920759822,
+    "failures_per_game": 0.4659375,
+    "turnovers_there_per_game": 0.96225
+   },
+   "activations_that_ended_the_turn_in_a_turnover_per_turn": 0.27414634915877234
+  },
+  "chain 41 + m1 v chain 47": {
+   "games": 3200,
+   "team_turns": 50722,
+   "activations_per_turn": 6.904439888017034,
+   "empty_per_turn": 3.0031150191238516,
+   "moved_per_turn": 3.2425771854422143,
+   "block_per_turn": 0.5210756673632743,
+   "blitz_per_turn": 0.07217775324316865,
+   "foul_per_turn": 0.00015772248728362445,
+   "pass_handoff_per_turn": 0.0025827057292693504,
+   "no_decision_per_turn": 0.03574385868065139,
+   "other_per_turn": 0.02700997594732069,
+   "moved_measured": 159653,
+   "moved_mean_net_displacement": 2.6688129881680895,
+   "moved_mean_change_distance_to_ball": -0.2650247724753058,
+   "moved_mean_change_distance_from_own_endzone": 0.03522639724903384,
+   "negative_trait": {
+    "activations_per_game": 7.726875,
+    "activations_per_turn": 0.4874807775718623,
+    "came_out_distracted_or_rooted": 0.08549704764215806,
+    "ended_at_once": 0.2233276712771981,
+    "engine_ended_it": 0.06798511688101594,
+    "blocked_or_blitzed": 0.33329289007522445,
+    "turn_ended_in_turnover_there": 0.14628326457979454,
+    "failures_per_game": 0.660625,
+    "turnovers_there_per_game": 1.1303125
+   },
+   "activations_that_ended_the_turn_in_a_turnover_per_turn": 0.40942786167737866
+  },
+  "plain chain 41 v chain 47": {
+   "games": 3200,
+   "team_turns": 50724,
+   "activations_per_turn": 3.016402491917041,
+   "empty_per_turn": 0.6499290276792051,
+   "moved_per_turn": 1.8908406277107483,
+   "block_per_turn": 0.36174197618484344,
+   "blitz_per_turn": 0.07290434508319533,
+   "foul_per_turn": 1.971453355413611e-05,
+   "pass_handoff_per_turn": 0.0010054412112609416,
+   "no_decision_per_turn": 0.019793391688352653,
+   "other_per_turn": 0.02016796782588124,
+   "moved_measured": 91808,
+   "moved_mean_net_displacement": 3.1473509933774833,
+   "moved_mean_change_distance_to_ball": -0.3328359184384803,
+   "moved_mean_change_distance_from_own_endzone": 0.061062216800278846,
+   "negative_trait": {
+    "activations_per_game": 5.855,
+    "activations_per_turn": 0.3693715006702941,
+    "came_out_distracted_or_rooted": 0.07338812980358668,
+    "ended_at_once": 0.1419726729291204,
+    "engine_ended_it": 0.05006404782237404,
+    "blocked_or_blitzed": 0.43344363791631085,
+    "turn_ended_in_turnover_there": 0.18013450042698548,
+    "failures_per_game": 0.4296875,
+    "turnovers_there_per_game": 1.0546875
+   },
+   "activations_that_ended_the_turn_in_a_turnover_per_turn": 0.31466367005756646
+  },
+  "m1 + m2 v plain": {
+   "games": 3200,
+   "team_turns": 50699,
+   "activations_per_turn": 5.9518728180043,
+   "empty_per_turn": 0.010217164046628138,
+   "moved_per_turn": 4.910294088640802,
+   "block_per_turn": 0.882108128365451,
+   "blitz_per_turn": 0.08505098719895855,
+   "foul_per_turn": 0.00017751829424643485,
+   "pass_handoff_per_turn": 0.0028008441981104163,
+   "no_decision_per_turn": 0.03491193120179885,
+   "other_per_turn": 0.0263121560583049,
+   "moved_measured": 242735,
+   "moved_mean_net_displacement": 2.1034090675015964,
+   "moved_mean_change_distance_to_ball": -0.2685644839021979,
+   "moved_mean_change_distance_from_own_endzone": 0.10974519537767524,
+   "negative_trait": {
+    "activations_per_game": 7.6178125,
+    "activations_per_turn": 0.4808181620939269,
+    "came_out_distracted_or_rooted": 0.0843007753209993,
+    "ended_at_once": 0.019485580670303974,
+    "engine_ended_it": 0.0669893752307503,
+    "blocked_or_blitzed": 0.37888173278090004,
+    "turn_ended_in_turnover_there": 0.1654018131845592,
+    "failures_per_game": 0.6421875,
+    "turnovers_there_per_game": 1.26
+   },
+   "activations_that_ended_the_turn_in_a_turnover_per_turn": 0.5584528294443677
+  },
+  "both under m1": {
+   "games": 3200,
+   "team_turns": 50719,
+   "activations_per_turn": 6.85829767937065,
+   "empty_per_turn": 2.903408978883653,
+   "moved_per_turn": 3.215303929493878,
+   "block_per_turn": 0.5881622271732487,
+   "blitz_per_turn": 0.08235572467911434,
+   "foul_per_turn": 0.00011829886235927364,
+   "pass_handoff_per_turn": 0.003371517577239299,
+   "no_decision_per_turn": 0.037106409826692166,
+   "other_per_turn": 0.02847059287446519,
+   "moved_measured": 158669,
+   "moved_mean_net_displacement": 2.567754255714727,
+   "moved_mean_change_distance_to_ball": -0.26497299409462466,
+   "moved_mean_change_distance_from_own_endzone": -0.01585690966729481,
+   "negative_trait": {
+    "activations_per_game": 7.8571875,
+    "activations_per_turn": 0.4957313827165362,
+    "came_out_distracted_or_rooted": 0.08519269776876268,
+    "ended_at_once": 0.2188283021119198,
+    "engine_ended_it": 0.066976892176749,
+    "blocked_or_blitzed": 0.33098675575706954,
+    "turn_ended_in_turnover_there": 0.13964125203834069,
+    "failures_per_game": 0.669375,
+    "turnovers_there_per_game": 1.0971875
+   },
+   "activations_that_ended_the_turn_in_a_turnover_per_turn": 0.42201147498964886
+  },
+  "plain v plain (null)": {
+   "games": 3200,
+   "team_turns": 50661,
+   "activations_per_turn": 2.983991630642901,
+   "empty_per_turn": 0.6514675983498155,
+   "moved_per_turn": 1.8288032214129213,
+   "block_per_turn": 0.3879710230749492,
+   "blitz_per_turn": 0.07518604054400821,
+   "foul_per_turn": 0.0,
+   "pass_handoff_per_turn": 0.0010461696373936559,
+   "no_decision_per_turn": 0.01934426876690156,
+   "other_per_turn": 0.02017330885691163,
+   "moved_measured": 88621,
+   "moved_mean_net_displacement": 3.074158495164803,
+   "moved_mean_change_distance_to_ball": -0.32039809977319145,
+   "moved_mean_change_distance_from_own_endzone": 0.1191026957493145,
+   "negative_trait": {
+    "activations_per_game": 6.03,
+    "activations_per_turn": 0.3808847042103393,
+    "came_out_distracted_or_rooted": 0.07270936981757878,
+    "ended_at_once": 0.1458851575456053,
+    "engine_ended_it": 0.04710820895522388,
+    "blocked_or_blitzed": 0.4288453565505804,
+    "turn_ended_in_turnover_there": 0.1799336650082919,
+    "failures_per_game": 0.4384375,
+    "turnovers_there_per_game": 1.085
+   },
+   "activations_that_ended_the_turn_in_a_turnover_per_turn": 0.316614358184797
+  }
+ }
+}
