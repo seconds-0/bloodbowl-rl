@@ -335,6 +335,121 @@ class PolicySeat:
         return action, logprob
 
 
+MASKS = ("m1", "m2", "m3")
+MASK_HELP = {
+    "m1": "no END_TURN while a player can still be activated",
+    "m2": "no END_ACTIVATION as the first decision after a declaration",
+    "m3": "no END_ACTIVATION while a block target is on offer",
+}
+
+
+def check_masks(masks):
+    """A sorted tuple of known mask names; empty or None means no mask."""
+    if not masks:
+        return ()
+    out = tuple(sorted(set(masks)))
+    unknown = [m for m in out if m not in MASKS]
+    if unknown:
+        raise ValueError(f"unknown mask(s) {unknown}; known: {list(MASKS)}")
+    return out
+
+
+def restrict_support(support, masks, after_declare):
+    """Apply action masks to one exact joint support.
+
+    Returns (kept packed tuples, events), events being {mask: (held, dropped
+    type or None, fallback)}:
+      held      the mask's condition was met at this decision;
+      dropped   the action type it removed, or None when it removed nothing
+                (another mask had already removed it, or the fallback fired);
+      fallback  removing the type would leave no legal action, so it stays.
+    A mask never removes the last legal action, and it only ever removes whole
+    action types, so what is left is still an exact joint support: the sampler
+    renormalizes over it head by head as it does over any support.
+    """
+    packed = np.asarray(support, dtype=np.int64).reshape(-1)
+    types = packed & 1023
+    present = set(int(t) for t in np.unique(types))
+    keep = np.ones(len(packed), dtype=bool)
+    end_turn, end_act = E.A["END_TURN"], E.A["END_ACTIVATION"]
+    conditions = {
+        "m1": (end_turn in present and E.A["ACTIVATE"] in present, end_turn),
+        "m2": (bool(after_declare) and end_act in present, end_act),
+        "m3": (E.A["BLOCK_TARGET"] in present and end_act in present, end_act),
+    }
+    events = {}
+    for mask in check_masks(masks):
+        held, drop_type = conditions[mask]
+        if not held:
+            continue
+        drop = types == drop_type
+        if not (keep & ~drop).any():
+            events[mask] = (True, None, True)
+            continue
+        newly = keep & drop
+        events[mask] = (True, drop_type if newly.any() else None, False)
+        keep &= ~drop
+    return np.asarray(support).reshape(-1)[keep], events
+
+
+class MaskedPolicySeat(PolicySeat):
+    """A PolicySeat that selects under action masks (see MASKS).
+
+    The forward, the recurrent state and the sampling generator are the plain
+    seat's. Only the support handed to the sampler changes, so the policy's own
+    distribution is renormalized over the actions that remain. mask_stats counts,
+    per mask and per match: `held` (decisions where its condition was met),
+    `applied` (it removed an action type), `fallback` (it would have removed the
+    last legal action and did not) and `mass` (the probability the unmasked
+    policy gave the removed type, summed: the expected number of decisions the
+    mask changed).
+    """
+
+    def __init__(self, policy, seat, mode="sample", seed=0, provenance=None, temperature=1.0,
+                 masks=()):
+        self.masks = check_masks(masks)
+        if not self.masks:
+            raise ValueError("MaskedPolicySeat needs at least one mask")
+        super().__init__(policy, seat, mode=mode, seed=seed, provenance=provenance,
+                         temperature=temperature)
+        self._after_declare = False
+        self.mask_stats = self._fresh_stats()
+
+    def _fresh_stats(self):
+        return {m: {"held": 0, "applied": 0, "fallback": 0, "mass": 0.0} for m in self.masks}
+
+    def reset_match(self):
+        super().reset_match()
+        self._after_declare = False
+        self.mask_stats = self._fresh_stats()
+
+    def restrict(self, logits, support):
+        kept, events = restrict_support(support, self.masks, self._after_declare)
+        type_probs = None
+        for mask, (held, dropped, fallback) in events.items():
+            stats = self.mask_stats[mask]
+            stats["held"] += int(held)
+            stats["fallback"] += int(fallback)
+            if dropped is None:
+                continue
+            stats["applied"] += 1
+            if type_probs is None:
+                legal = np.unique(np.asarray(support, dtype=np.int64).reshape(-1) & 1023)
+                head = torch.as_tensor(logits).reshape(-1)[:E.ACT_SIZES[0]] / self.temperature
+                probs = torch.softmax(head[torch.from_numpy(legal)], dim=-1)
+                type_probs = {int(t): float(p) for t, p in zip(legal, probs)}
+            stats["mass"] += type_probs[int(dropped)]
+        return kept
+
+    def decide(self, logits, support, deciding):
+        if deciding:
+            support = self.restrict(logits, support)
+        action, logprob = super().decide(logits, support, deciding)
+        if deciding:
+            self._after_declare = action[0] == E.A["DECLARE"]
+        return action, logprob
+
+
 def batched_forward(policy, seats, obs_rows):
     """ONE forward for every seat of `policy`; returns the logits, one row per seat.
 
