@@ -1,0 +1,1403 @@
+{
+ "schema": "mask-arms-report-v1",
+ "noninferior_elo": -20.0,
+ "reps": 2000,
+ "arms": {
+  "m1": {
+   "masks": [
+    "m1"
+   ],
+   "run_dir": ".play-artifacts/tournaments/mask-m1-20261005/main",
+   "seed0": 23000000,
+   "harness_git_head": "abcd42ea5f5667cca1526767011283e34ed04669",
+   "strength": {
+    "a": "chain41m1",
+    "b": "chain41",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 949,
+    "D": 1464,
+    "L": 787,
+    "decisive_share": 0.5466589861751152,
+    "decisive_share_ci95": [
+     0.5263454280197641,
+     0.5674379133517451
+    ],
+    "score_rate": 0.5253125,
+    "score_rate_ci95": [
+     0.514375,
+     0.53625
+    ],
+    "elo_decisive": 32.516592027291246,
+    "elo_decisive_ci95": [
+     18.323648475036013,
+     47.14795931313268
+    ],
+    "elo_decisive_se": 7.223706671862332,
+    "elo_score": 17.60397583067382,
+    "elo_score_ci95": [
+     9.991526564542234,
+     25.233353027871356
+    ],
+    "elo_score_se": 3.8861127718964656,
+    "p_a_ahead": 1.0,
+    "valid_reps": 2000,
+    "verdict": [
+     "better",
+     "non-inferior"
+    ]
+   },
+   "behaviour": [
+    {
+     "metric": "activations per team turn",
+     "a": 6.918533725497937,
+     "b": 3.142262221959066,
+     "a_minus_b": 3.7762715035388714,
+     "ci95": [
+      3.729245515061197,
+      3.822400178404561
+     ]
+    },
+    {
+     "metric": "turns ended by choice with a player left, per team turn",
+     "a": 0.0,
+     "b": 0.609390727692581,
+     "a_minus_b": -0.609390727692581,
+     "ci95": [
+      -0.6143847546250679,
+      -0.6045067995454135
+     ]
+    },
+    {
+     "metric": "block targets chosen per game",
+     "a": 10.320625,
+     "b": 7.613125,
+     "a_minus_b": 2.7074999999999996,
+     "ci95": [
+      2.5690624999999994,
+      2.8393906250000005
+     ]
+    },
+    {
+     "metric": "block targets inside a Blitz per game",
+     "a": 1.1965625,
+     "b": 1.2428125,
+     "a_minus_b": -0.046250000000000124,
+     "ci95": [
+      -0.09125781249999984,
+      -0.0021796875000000475
+     ]
+    },
+    {
+     "metric": "block targets inside a Block per game",
+     "a": 9.1240625,
+     "b": 6.3703125,
+     "a_minus_b": 2.753750000000001,
+     "ci95": [
+      2.621234375,
+      2.8831484374999996
+     ]
+    },
+    {
+     "metric": "turnovers per team turn",
+     "a": 0.4128190449870704,
+     "b": 0.3272938993822409,
+     "a_minus_b": 0.08552514560482949,
+     "ci95": [
+      0.07962191345009897,
+      0.09146561440338838
+     ]
+    },
+    {
+     "metric": "touchdowns per game",
+     "a": 0.6790625,
+     "b": 0.6084375,
+     "a_minus_b": 0.07062500000000005,
+     "ci95": [
+      0.040929687499999964,
+      0.09968749999999993
+     ]
+    },
+    {
+     "metric": "possession (turns ended holding the ball)",
+     "a": 0.4035610651611757,
+     "b": 0.40241182623798527,
+     "a_minus_b": 0.0011492389231904099,
+     "ci95": [
+      -0.005850822017538971,
+      0.008314648347794622
+     ]
+    },
+    {
+     "metric": "activations ended at once, per activation",
+     "a": 0.43591184811946837,
+     "b": 0.22330395894704444,
+     "a_minus_b": 0.21260788917242393,
+     "ci95": [
+      0.20813581058741557,
+      0.21689722599408606
+     ]
+    },
+    {
+     "metric": "activations ended with a block target on offer (Block or Blitz), per game",
+     "a": 8.9140625,
+     "b": 3.8171875,
+     "a_minus_b": 5.096875,
+     "ci95": [
+      4.9281171875,
+      5.2731484375
+     ]
+    },
+    {
+     "metric": "Block declared per team turn",
+     "a": 1.1322371148265855,
+     "b": 0.6291866500878284,
+     "a_minus_b": 0.5030504647387571,
+     "ci95": [
+      0.49127931594427077,
+      0.5143604368359561
+     ]
+    },
+    {
+     "metric": "Blitz declared per team turn",
+     "a": 0.38999980260170947,
+     "b": 0.3077940276708706,
+     "a_minus_b": 0.08220577493083886,
+     "ci95": [
+      0.07661483753993312,
+      0.08819991907653894
+     ]
+    },
+    {
+     "metric": "Pass declared per team turn",
+     "a": 0.2704356580272015,
+     "b": 0.18599877632384,
+     "a_minus_b": 0.0844368817033615,
+     "ci95": [
+      0.07930877156877054,
+      0.0893453002763416
+     ]
+    },
+    {
+     "metric": "pass targets chosen per game",
+     "a": 0.0,
+     "b": 0.0,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "foul targets chosen per game",
+     "a": 0.00125,
+     "b": 0.0009375,
+     "a_minus_b": 0.00031250000000000006,
+     "ci95": [
+      -0.00125,
+      0.0018750000000000001
+     ]
+    },
+    {
+     "metric": "team turns per game",
+     "a": 15.8309375,
+     "b": 15.8334375,
+     "a_minus_b": -0.002500000000001279,
+     "ci95": [
+      -0.008124999999999716,
+      0.0031328125000006607
+     ]
+    },
+    {
+     "metric": "engine steps per game (both sides)",
+     "a": 961.1978125,
+     "b": 961.1978125,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    }
+   ],
+   "mask_stats": {
+    "m1": {
+     "held": 109.526875,
+     "applied": 109.526875,
+     "fallback": 0.0,
+     "mass": 65.33277096874997
+    }
+   },
+   "roster": [
+    {
+     "class": "agile",
+     "games": 536,
+     "W": 224,
+     "D": 216,
+     "L": 96,
+     "decisive_share": 0.7,
+     "cluster_ci95": [
+      0.6491788898475698,
+      0.7483670538279006
+     ]
+    },
+    {
+     "class": "bash",
+     "games": 1556,
+     "W": 338,
+     "D": 778,
+     "L": 440,
+     "decisive_share": 0.43444730077120824,
+     "cluster_ci95": [
+      0.4012482726305256,
+      0.46780703917521593
+     ]
+    },
+    {
+     "class": "hybrid",
+     "games": 552,
+     "W": 173,
+     "D": 256,
+     "L": 123,
+     "decisive_share": 0.5844594594594594,
+     "cluster_ci95": [
+      0.533530036152682,
+      0.638633451067421
+     ]
+    },
+    {
+     "class": "stunty",
+     "games": 556,
+     "W": 214,
+     "D": 214,
+     "L": 128,
+     "decisive_share": 0.6257309941520468,
+     "cluster_ci95": [
+      0.5761032103632779,
+      0.6756047984836393
+     ]
+    }
+   ]
+  },
+  "m2": {
+   "masks": [
+    "m2"
+   ],
+   "run_dir": ".play-artifacts/tournaments/mask-m2-20261005/main",
+   "seed0": 23100000,
+   "harness_git_head": "abcd42ea5f5667cca1526767011283e34ed04669",
+   "strength": {
+    "a": "chain41m2",
+    "b": "chain41",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 890,
+    "D": 1280,
+    "L": 1030,
+    "decisive_share": 0.4635416666666667,
+    "decisive_share_ci95": [
+     0.4451241523213354,
+     0.4824384696244744
+    ],
+    "score_rate": 0.478125,
+    "score_rate_ci95": [
+     0.466875,
+     0.489375
+    ],
+    "elo_decisive": -25.378887224103735,
+    "elo_decisive_ci95": [
+     -38.285864849598006,
+     -12.208022888921114
+    ],
+    "elo_decisive_se": 6.533406767332387,
+    "elo_score": -15.210016131993768,
+    "elo_score_ci95": [
+     -23.05137174084972,
+     -7.384117789788827
+    ],
+    "elo_score_se": 3.9085885024581137,
+    "p_a_ahead": 0.0,
+    "valid_reps": 2000,
+    "verdict": [
+     "worse"
+    ]
+   },
+   "behaviour": [
+    {
+     "metric": "activations per team turn",
+     "a": 2.752656166840788,
+     "b": 2.9087915771210002,
+     "a_minus_b": -0.15613541028021238,
+     "ci95": [
+      -0.18595919121728466,
+      -0.1270025430746248
+     ]
+    },
+    {
+     "metric": "turns ended by choice with a player left, per team turn",
+     "a": 0.5440854704224242,
+     "b": 0.6183481535519233,
+     "a_minus_b": -0.07426268312949913,
+     "ci95": [
+      -0.07947698379400123,
+      -0.06906137383870886
+     ]
+    },
+    {
+     "metric": "block targets chosen per game",
+     "a": 10.0878125,
+     "b": 6.8040625,
+     "a_minus_b": 3.2837500000000004,
+     "ci95": [
+      3.1505859375,
+      3.4190703124999997
+     ]
+    },
+    {
+     "metric": "block targets inside a Blitz per game",
+     "a": 1.3434375,
+     "b": 1.2540625,
+     "a_minus_b": 0.08937499999999998,
+     "ci95": [
+      0.04468750000000021,
+      0.1334375000000001
+     ]
+    },
+    {
+     "metric": "block targets inside a Block per game",
+     "a": 8.744375,
+     "b": 5.55,
+     "a_minus_b": 3.194375,
+     "ci95": [
+      3.0624921874999993,
+      3.3240703125
+     ]
+    },
+    {
+     "metric": "turnovers per team turn",
+     "a": 0.3930732688099978,
+     "b": 0.30945010745479995,
+     "a_minus_b": 0.08362316135519787,
+     "ci95": [
+      0.0778407921279897,
+      0.08959481839730606
+     ]
+    },
+    {
+     "metric": "touchdowns per game",
+     "a": 0.7403125,
+     "b": 0.808125,
+     "a_minus_b": -0.06781249999999994,
+     "ci95": [
+      -0.09970312500000005,
+      -0.03687499999999999
+     ]
+    },
+    {
+     "metric": "possession (turns ended holding the ball)",
+     "a": 0.4034811062269618,
+     "b": 0.4162148307340444,
+     "a_minus_b": -0.0127337245070826,
+     "ci95": [
+      -0.019776600859701614,
+      -0.0060941284886642105
+     ]
+    },
+    {
+     "metric": "activations ended at once, per activation",
+     "a": 0.0012245336388699917,
+     "b": 0.20463495807660761,
+     "a_minus_b": -0.20341042443773763,
+     "ci95": [
+      -0.20698426609638393,
+      -0.20012269343509964
+     ]
+    },
+    {
+     "metric": "activations ended with a block target on offer (Block or Blitz), per game",
+     "a": 0.4875,
+     "b": 3.789375,
+     "a_minus_b": -3.3018750000000003,
+     "ci95": [
+      -3.4059375,
+      -3.1890546875
+     ]
+    },
+    {
+     "metric": "Block declared per team turn",
+     "a": 0.5694151504996945,
+     "b": 0.5760365937814231,
+     "a_minus_b": -0.006621443281728645,
+     "ci95": [
+      -0.015282787428813255,
+      0.002268306584256719
+     ]
+    },
+    {
+     "metric": "Blitz declared per team turn",
+     "a": 0.2777591610652264,
+     "b": 0.2817287407086102,
+     "a_minus_b": -0.0039695796433837915,
+     "ci95": [
+      -0.008604434789752955,
+      0.0008434922954846344
+     ]
+    },
+    {
+     "metric": "Pass declared per team turn",
+     "a": 0.18077703967988015,
+     "b": 0.1849011218675447,
+     "a_minus_b": -0.004124082187664552,
+     "ci95": [
+      -0.008278007962207987,
+      -0.00016849889266119637
+     ]
+    },
+    {
+     "metric": "pass targets chosen per game",
+     "a": 0.000625,
+     "b": 0.0,
+     "a_minus_b": 0.000625,
+     "ci95": [
+      0.0,
+      0.0015625
+     ]
+    },
+    {
+     "metric": "foul targets chosen per game",
+     "a": 0.0025,
+     "b": 0.0009375,
+     "a_minus_b": 0.0015625,
+     "ci95": [
+      -0.0006250000000000001,
+      0.00375
+     ]
+    },
+    {
+     "metric": "team turns per game",
+     "a": 15.8534375,
+     "b": 15.8496875,
+     "a_minus_b": 0.003750000000000142,
+     "ci95": [
+      -0.002499999999999547,
+      0.009999999999999787
+     ]
+    },
+    {
+     "metric": "engine steps per game (both sides)",
+     "a": 702.28375,
+     "b": 702.28375,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    }
+   ],
+   "mask_stats": {
+    "m2": {
+     "held": 42.6946875,
+     "applied": 42.64125,
+     "fallback": 0.0534375,
+     "mass": 7.743174062499996
+    }
+   },
+   "roster": [
+    {
+     "class": "agile",
+     "games": 545,
+     "W": 217,
+     "D": 192,
+     "L": 136,
+     "decisive_share": 0.6147308781869688,
+     "cluster_ci95": [
+      0.5654568583789825,
+      0.6646350591499928
+     ]
+    },
+    {
+     "class": "bash",
+     "games": 1596,
+     "W": 349,
+     "D": 674,
+     "L": 573,
+     "decisive_share": 0.37852494577006507,
+     "cluster_ci95": [
+      0.3510486215664327,
+      0.405954346624574
+     ]
+    },
+    {
+     "class": "hybrid",
+     "games": 527,
+     "W": 151,
+     "D": 219,
+     "L": 157,
+     "decisive_share": 0.4902597402597403,
+     "cluster_ci95": [
+      0.43892808923749516,
+      0.5448510307521935
+     ]
+    },
+    {
+     "class": "stunty",
+     "games": 532,
+     "W": 173,
+     "D": 195,
+     "L": 164,
+     "decisive_share": 0.5133531157270029,
+     "cluster_ci95": [
+      0.4603095238095238,
+      0.5657534145550016
+     ]
+    }
+   ]
+  },
+  "m3": {
+   "masks": [
+    "m3"
+   ],
+   "run_dir": ".play-artifacts/tournaments/mask-m3-20261005/main",
+   "seed0": 23200000,
+   "harness_git_head": "abcd42ea5f5667cca1526767011283e34ed04669",
+   "strength": {
+    "a": "chain41m3",
+    "b": "chain41",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 899,
+    "D": 1266,
+    "L": 1035,
+    "decisive_share": 0.46483971044467426,
+    "decisive_share_ci95": [
+     0.4474351989141182,
+     0.4830209790394874
+    ],
+    "score_rate": 0.47875,
+    "score_rate_ci95": [
+     0.468125,
+     0.48969140624999996
+    ],
+    "elo_decisive": -24.472263223883118,
+    "elo_decisive_ci95": [
+     -36.66122809852832,
+     -11.802770356785759
+    ],
+    "elo_decisive_se": 6.417132358565143,
+    "elo_score": -14.7749124020539,
+    "elo_score_ci95": [
+     -22.17909695404856,
+     -7.164159828994005
+    ],
+    "elo_score_se": 3.863157488035361,
+    "p_a_ahead": 0.0,
+    "valid_reps": 2000,
+    "verdict": [
+     "worse"
+    ]
+   },
+   "behaviour": [
+    {
+     "metric": "activations per team turn",
+     "a": 2.7752458433711147,
+     "b": 2.922393189404863,
+     "a_minus_b": -0.14714734603374824,
+     "ci95": [
+      -0.17632963340188962,
+      -0.11892509621893865
+     ]
+    },
+    {
+     "metric": "turns ended by choice with a player left, per team turn",
+     "a": 0.5587259586904151,
+     "b": 0.6206569617002785,
+     "a_minus_b": -0.06193100300986343,
+     "ci95": [
+      -0.06705012655877256,
+      -0.05673427845257587
+     ]
+    },
+    {
+     "metric": "block targets chosen per game",
+     "a": 9.96625,
+     "b": 6.8346875,
+     "a_minus_b": 3.1315625000000002,
+     "ci95": [
+      2.99903125,
+      3.264687499999999
+     ]
+    },
+    {
+     "metric": "block targets inside a Blitz per game",
+     "a": 1.534375,
+     "b": 1.248125,
+     "a_minus_b": 0.2862500000000001,
+     "ci95": [
+      0.24030468749999992,
+      0.33343749999999983
+     ]
+    },
+    {
+     "metric": "block targets inside a Block per game",
+     "a": 8.431875,
+     "b": 5.5865625,
+     "a_minus_b": 2.8453124999999995,
+     "ci95": [
+      2.7190390625,
+      2.9656406249999994
+     ]
+    },
+    {
+     "metric": "turnovers per team turn",
+     "a": 0.37832234113976543,
+     "b": 0.3066150473067731,
+     "a_minus_b": 0.07170729383299235,
+     "ci95": [
+      0.06608758958916255,
+      0.07711548733722687
+     ]
+    },
+    {
+     "metric": "touchdowns per game",
+     "a": 0.7525,
+     "b": 0.8171875,
+     "a_minus_b": -0.06468750000000001,
+     "ci95": [
+      -0.09531250000000002,
+      -0.03249999999999997
+     ]
+    },
+    {
+     "metric": "possession (turns ended holding the ball)",
+     "a": 0.415228466490265,
+     "b": 0.413968830861003,
+     "a_minus_b": 0.0012596356292620126,
+     "ci95": [
+      -0.00548203458246236,
+      0.007510548737453096
+     ]
+    },
+    {
+     "metric": "activations ended at once, per activation",
+     "a": 0.1367400956284153,
+     "b": 0.20326186871417756,
+     "a_minus_b": -0.06652177308576226,
+     "ci95": [
+      -0.07106164974531091,
+      -0.062287432430194994
+     ]
+    },
+    {
+     "metric": "activations ended with a block target on offer (Block or Blitz), per game",
+     "a": 0.0,
+     "b": 3.655,
+     "a_minus_b": -3.655,
+     "ci95": [
+      -3.7678125,
+      -3.5477890625
+     ]
+    },
+    {
+     "metric": "Block declared per team turn",
+     "a": 0.5470360570277635,
+     "b": 0.5725996010034171,
+     "a_minus_b": -0.025563543975653635,
+     "ci95": [
+      -0.033890629169753196,
+      -0.017514042907235385
+     ]
+    },
+    {
+     "metric": "Blitz declared per team turn",
+     "a": 0.28355910114134514,
+     "b": 0.2893317794852549,
+     "a_minus_b": -0.005772678343909765,
+     "ci95": [
+      -0.010107217964628433,
+      -0.0011650999671563621
+     ]
+    },
+    {
+     "metric": "Pass declared per team turn",
+     "a": 0.18293116385608782,
+     "b": 0.18373595117229938,
+     "a_minus_b": -0.0008047873162115582,
+     "ci95": [
+      -0.00476563414390133,
+      0.003375168529299359
+     ]
+    },
+    {
+     "metric": "pass targets chosen per game",
+     "a": 0.000625,
+     "b": 0.0,
+     "a_minus_b": 0.000625,
+     "ci95": [
+      0.0,
+      0.0015625
+     ]
+    },
+    {
+     "metric": "foul targets chosen per game",
+     "a": 0.0003125,
+     "b": 0.0,
+     "a_minus_b": 0.0003125,
+     "ci95": [
+      0.0,
+      0.0009375
+     ]
+    },
+    {
+     "metric": "team turns per game",
+     "a": 15.825625,
+     "b": 15.8209375,
+     "a_minus_b": 0.004687500000001066,
+     "ci95": [
+      -0.0009374999999991918,
+      0.010312499999999503
+     ]
+    },
+    {
+     "metric": "engine steps per game (both sides)",
+     "a": 693.255625,
+     "b": 693.255625,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    }
+   ],
+   "mask_stats": {
+    "m3": {
+     "held": 10.4475,
+     "applied": 10.4475,
+     "fallback": 0.0,
+     "mass": 3.029568125
+    }
+   },
+   "roster": [
+    {
+     "class": "agile",
+     "games": 516,
+     "W": 203,
+     "D": 172,
+     "L": 141,
+     "decisive_share": 0.5901162790697675,
+     "cluster_ci95": [
+      0.539542468101314,
+      0.6430839648137352
+     ]
+    },
+    {
+     "class": "bash",
+     "games": 1609,
+     "W": 341,
+     "D": 704,
+     "L": 564,
+     "decisive_share": 0.37679558011049724,
+     "cluster_ci95": [
+      0.34967823441572743,
+      0.4064263928979903
+     ]
+    },
+    {
+     "class": "hybrid",
+     "games": 540,
+     "W": 165,
+     "D": 214,
+     "L": 161,
+     "decisive_share": 0.5061349693251533,
+     "cluster_ci95": [
+      0.4522187476018725,
+      0.559375
+     ]
+    },
+    {
+     "class": "stunty",
+     "games": 535,
+     "W": 190,
+     "D": 176,
+     "L": 169,
+     "decisive_share": 0.5292479108635098,
+     "cluster_ci95": [
+      0.4789146020702529,
+      0.580464404894327
+     ]
+    }
+   ]
+  },
+  "m1,m2,m3": {
+   "masks": [
+    "m1",
+    "m2",
+    "m3"
+   ],
+   "run_dir": ".play-artifacts/tournaments/mask-m123-20261005/main",
+   "seed0": 23300000,
+   "harness_git_head": "abcd42ea5f5667cca1526767011283e34ed04669",
+   "strength": {
+    "a": "chain41m123",
+    "b": "chain41",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 914,
+    "D": 1443,
+    "L": 843,
+    "decisive_share": 0.5202048947068867,
+    "decisive_share_ci95": [
+     0.49941159586681977,
+     0.5405409320096458
+    ],
+    "score_rate": 0.51109375,
+    "score_rate_ci95": [
+     0.4996796875,
+     0.5225
+    ],
+    "elo_decisive": 14.047448443635611,
+    "elo_decisive_ci95": [
+     -0.4088652750090301,
+     28.232703535714798
+    ],
+    "elo_decisive_se": 7.507929261011687,
+    "elo_score": 7.709992391515333,
+    "elo_score_ci95": [
+     -0.2225759551978071,
+     15.64516754533055
+    ],
+    "elo_score_se": 4.120361231321582,
+    "p_a_ahead": 0.969,
+    "valid_reps": 2000,
+    "verdict": [
+     "non-inferior"
+    ]
+   },
+   "behaviour": [
+    {
+     "metric": "activations per team turn",
+     "a": 5.874790297432254,
+     "b": 3.092725298588491,
+     "a_minus_b": 2.782064998843763,
+     "ci95": [
+      2.7376109983524985,
+      2.8262201524782684
+     ]
+    },
+    {
+     "metric": "turns ended by choice with a player left, per team turn",
+     "a": 0.0,
+     "b": 0.6226433718290396,
+     "a_minus_b": -0.6226433718290396,
+     "ci95": [
+      -0.6274081218639553,
+      -0.6177113044177157
+     ]
+    },
+    {
+     "metric": "block targets chosen per game",
+     "a": 15.5125,
+     "b": 6.54875,
+     "a_minus_b": 8.96375,
+     "ci95": [
+      8.804984375,
+      9.114390625
+     ]
+    },
+    {
+     "metric": "block targets inside a Blitz per game",
+     "a": 1.639375,
+     "b": 1.3228125,
+     "a_minus_b": 0.3165625000000001,
+     "ci95": [
+      0.2653046875000001,
+      0.37188281250000016
+     ]
+    },
+    {
+     "metric": "block targets inside a Block per game",
+     "a": 13.873125,
+     "b": 5.2259375,
+     "a_minus_b": 8.647187500000001,
+     "ci95": [
+      8.5046875,
+      8.7925234375
+     ]
+    },
+    {
+     "metric": "turnovers per team turn",
+     "a": 0.5704896678311326,
+     "b": 0.3097028921133156,
+     "a_minus_b": 0.26078677571781705,
+     "ci95": [
+      0.2545546216388342,
+      0.26697124095975466
+     ]
+    },
+    {
+     "metric": "touchdowns per game",
+     "a": 0.7025,
+     "b": 0.6690625,
+     "a_minus_b": 0.03343750000000001,
+     "ci95": [
+      0.002187500000000009,
+      0.06500000000000006
+     ]
+    },
+    {
+     "metric": "possession (turns ended holding the ball)",
+     "a": 0.39564213393332937,
+     "b": 0.3970190504392459,
+     "a_minus_b": -0.0013769165059165367,
+     "ci95": [
+      -0.008788244764824985,
+      0.006087254961922136
+     ]
+    },
+    {
+     "metric": "activations ended at once, per activation",
+     "a": 0.0017940052005993455,
+     "b": 0.21243824284127613,
+     "a_minus_b": -0.21064423764067677,
+     "ci95": [
+      -0.21403668811062007,
+      -0.2071669508911711
+     ]
+    },
+    {
+     "metric": "activations ended with a block target on offer (Block or Blitz), per game",
+     "a": 0.0,
+     "b": 3.358125,
+     "a_minus_b": -3.358125,
+     "ci95": [
+      -3.448140625,
+      -3.2678046875
+     ]
+    },
+    {
+     "metric": "Block declared per team turn",
+     "a": 0.8932046499694081,
+     "b": 0.522218931990919,
+     "a_minus_b": 0.3709857179784891,
+     "ci95": [
+      0.3616464823320948,
+      0.3802740882831624
+     ]
+    },
+    {
+     "metric": "Blitz declared per team turn",
+     "a": 0.3635699765133124,
+     "b": 0.3106109959530155,
+     "a_minus_b": 0.05295898056029691,
+     "ci95": [
+      0.04714713046502597,
+      0.058477189727079354
+     ]
+    },
+    {
+     "metric": "Pass declared per team turn",
+     "a": 0.24268261393017151,
+     "b": 0.1881946500839009,
+     "a_minus_b": 0.05448796384627061,
+     "ci95": [
+      0.04994683805552991,
+      0.05911863604630191
+     ]
+    },
+    {
+     "metric": "pass targets chosen per game",
+     "a": 0.0,
+     "b": 0.0,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "foul targets chosen per game",
+     "a": 0.0021875,
+     "b": 0.000625,
+     "a_minus_b": 0.0015625,
+     "ci95": [
+      0.0,
+      0.0034375
+     ]
+    },
+    {
+     "metric": "team turns per game",
+     "a": 15.8334375,
+     "b": 15.8296875,
+     "a_minus_b": 0.003750000000000142,
+     "ci95": [
+      -0.0015625000000003553,
+      0.00906250000000064
+     ]
+    },
+    {
+     "metric": "engine steps per game (both sides)",
+     "a": 977.6796875,
+     "b": 977.6796875,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    }
+   ],
+   "mask_stats": {
+    "m1": {
+     "held": 93.018125,
+     "applied": 93.018125,
+     "fallback": 0.0,
+     "mass": 53.690845187500024
+    },
+    "m2": {
+     "held": 91.774375,
+     "applied": 91.6075,
+     "fallback": 0.166875,
+     "mass": 32.816876062499986
+    },
+    "m3": {
+     "held": 16.1340625,
+     "applied": 2.4325,
+     "fallback": 0.0,
+     "mass": 0.6707253125000002
+    }
+   },
+   "roster": [
+    {
+     "class": "agile",
+     "games": 568,
+     "W": 227,
+     "D": 212,
+     "L": 129,
+     "decisive_share": 0.6376404494382022,
+     "cluster_ci95": [
+      0.5840965524451763,
+      0.6857160669754186
+     ]
+    },
+    {
+     "class": "bash",
+     "games": 1632,
+     "W": 354,
+     "D": 816,
+     "L": 462,
+     "decisive_share": 0.4338235294117647,
+     "cluster_ci95": [
+      0.4044104294260077,
+      0.4665891010342084
+     ]
+    },
+    {
+     "class": "hybrid",
+     "games": 472,
+     "W": 133,
+     "D": 221,
+     "L": 118,
+     "decisive_share": 0.5298804780876494,
+     "cluster_ci95": [
+      0.46549348357317405,
+      0.5887131898392717
+     ]
+    },
+    {
+     "class": "stunty",
+     "games": 528,
+     "W": 200,
+     "D": 194,
+     "L": 134,
+     "decisive_share": 0.5988023952095808,
+     "cluster_ci95": [
+      0.5448699787760188,
+      0.6490723841376015
+     ]
+    }
+   ]
+  },
+  "control": {
+   "masks": [],
+   "run_dir": ".play-artifacts/tournaments/mask-control-20261005/main",
+   "seed0": 23400000,
+   "harness_git_head": "abcd42ea5f5667cca1526767011283e34ed04669",
+   "strength": {
+    "a": "chain41c",
+    "b": "chain41",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 948,
+    "D": 1304,
+    "L": 948,
+    "decisive_share": 0.5,
+    "decisive_share_ci95": [
+     0.5,
+     0.5
+    ],
+    "score_rate": 0.5,
+    "score_rate_ci95": [
+     0.5,
+     0.5
+    ],
+    "elo_decisive": 0.0,
+    "elo_decisive_ci95": [
+     0.0,
+     0.0
+    ],
+    "elo_decisive_se": 0.0,
+    "elo_score": 0.0,
+    "elo_score_ci95": [
+     0.0,
+     0.0
+    ],
+    "elo_score_se": 0.0,
+    "p_a_ahead": 0.0,
+    "valid_reps": 2000,
+    "verdict": [
+     "non-inferior"
+    ]
+   },
+   "behaviour": [
+    {
+     "metric": "activations per team turn",
+     "a": 2.9831475086334485,
+     "b": 2.9831475086334485,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "turns ended by choice with a player left, per team turn",
+     "a": 0.6107153428712383,
+     "b": 0.6107153428712383,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "block targets chosen per game",
+     "a": 7.4065625,
+     "b": 7.4065625,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "block targets inside a Blitz per game",
+     "a": 1.2125,
+     "b": 1.2125,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "block targets inside a Block per game",
+     "a": 6.1940625,
+     "b": 6.1940625,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "turnovers per team turn",
+     "a": 0.3219536260483473,
+     "b": 0.3219536260483473,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "touchdowns per game",
+     "a": 0.7509375,
+     "b": 0.7509375,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "possession (turns ended holding the ball)",
+     "a": 0.41436605821410954,
+     "b": 0.41436605821410954,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "activations ended at once, per activation",
+     "a": 0.21845459777338247,
+     "b": 0.21845459777338247,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "activations ended with a block target on offer (Block or Blitz), per game",
+     "a": 4.2859375,
+     "b": 4.2859375,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "Block declared per team turn",
+     "a": 0.6496299950666009,
+     "b": 0.6496299950666009,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "Blitz declared per team turn",
+     "a": 0.2861766156882092,
+     "b": 0.2861766156882092,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "Pass declared per team turn",
+     "a": 0.1898766650222003,
+     "b": 0.1898766650222003,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "pass targets chosen per game",
+     "a": 0.0,
+     "b": 0.0,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "foul targets chosen per game",
+     "a": 0.0,
+     "b": 0.0,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "team turns per game",
+     "a": 15.8359375,
+     "b": 15.8359375,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "metric": "engine steps per game (both sides)",
+     "a": 696.600625,
+     "b": 696.600625,
+     "a_minus_b": 0.0,
+     "ci95": [
+      0.0,
+      0.0
+     ]
+    }
+   ],
+   "mask_stats": {},
+   "roster": [
+    {
+     "class": "agile",
+     "games": 545,
+     "W": 220,
+     "D": 209,
+     "L": 116,
+     "decisive_share": 0.6547619047619048,
+     "cluster_ci95": [
+      0.6070248919814677,
+      0.7013451807228915
+     ]
+    },
+    {
+     "class": "bash",
+     "games": 1612,
+     "W": 351,
+     "D": 702,
+     "L": 559,
+     "decisive_share": 0.38571428571428573,
+     "cluster_ci95": [
+      0.36294649137890606,
+      0.4092422018750548
+     ]
+    },
+    {
+     "class": "hybrid",
+     "games": 520,
+     "W": 163,
+     "D": 216,
+     "L": 141,
+     "decisive_share": 0.5361842105263158,
+     "cluster_ci95": [
+      0.4895067698259188,
+      0.5857656276613865
+     ]
+    },
+    {
+     "class": "stunty",
+     "games": 523,
+     "W": 214,
+     "D": 177,
+     "L": 132,
+     "decisive_share": 0.6184971098265896,
+     "cluster_ci95": [
+      0.5714285714285714,
+      0.6676877512985555
+     ]
+    }
+   ]
+  }
+ },
+ "control": {
+  "seeds": 1600,
+  "seeds_with_identical_legs": 1600,
+  "records_with_a_mask": 0
+ },
+ "reference_slice": {
+  "games_modified": 64,
+  "games_unmodified": 64,
+  "compared": 64,
+  "same_action_trail_sha256": 64,
+  "same_final_digest": 64,
+  "same_score": 64,
+  "same_c_steps": 64,
+  "same_logprob_sum": 64,
+  "new_record_keys": [
+   "behaviour",
+   "mask_stats",
+   "masks"
+  ]
+ }
+}
