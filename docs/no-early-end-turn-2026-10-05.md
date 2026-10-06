@@ -47,9 +47,18 @@ static void bbe_refresh_legal(Bloodbowl* env) {
                        : 0;
     env->legal_end_turn_removed = 0;
     if (env->no_early_end_turn && env->n_legal > 0 &&
-        !bbe_seat_is_scripted(env, env->match.decision_team)) {
+        bbe_seat_is_learner(env, env->match.decision_team)) {
         bbe_restrict_end_turn(env);
     }
+}
+
+static bool bbe_seat_is_frozen_bank(const Bloodbowl* env, int agent) {
+    return env->tag > 0 && agent == BB_AWAY;
+}
+
+static bool bbe_seat_is_learner(const Bloodbowl* env, int agent) {
+    return !bbe_seat_is_scripted(env, agent) &&
+           !bbe_seat_is_frozen_bank(env, agent);
 }
 ```
 

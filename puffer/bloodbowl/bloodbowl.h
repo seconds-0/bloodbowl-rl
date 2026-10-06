@@ -392,9 +392,10 @@ typedef struct {
     // (should stay at 0.0 — anything else means a corrupt/stale bank).
     float demo_episodes;
     float demo_fallbacks;
-    // Policy-seat decisions per episode at which no_early_end_turn had taken
-    // END_TURN out of the list. Exactly 0.0 with the flag off; above zero is
-    // the env's own evidence that a run or an exam was under the rule.
+    // Decisions per episode that a policy took from a list no_early_end_turn
+    // had shortened: the learner seats' removals. Exactly 0.0 with the flag
+    // off; above zero is the env's own evidence that a run or an exam was
+    // under the rule.
     float end_turn_removed;
     // Team-0/home signed component returns. Team 0 is the primary learner in
     // frozen-bank envs and matches the existing episode_return perspective.
@@ -689,10 +690,12 @@ typedef struct {
     int scripted_bank_tag;
     // Env-layer TRAINING RESTRICTION, not a Blood Bowl rule: the rulebook lets
     // a coach end the team turn at any time and the engine still offers it.
-    // When set, a policy-controlled seat's legal list loses END_TURN at every
-    // decision where an ACTIVATE is also legal (bbe_refresh_legal). Scripted
-    // bot seats are never restricted. 0 = off (default), which leaves the
-    // list exactly as the engine enumerated it.
+    // When set, a LEARNER seat's legal list loses END_TURN at every decision
+    // where an ACTIVATE is also legal (bbe_refresh_legal). A learner seat is
+    // one that is neither a scripted bot's nor a frozen selfplay bank's: both
+    // seats of a mirror env, slot 0 of a bank env, the champion in a scripted
+    // exam. 0 = off (default), which leaves the list exactly as the engine
+    // enumerated it.
     int no_early_end_turn;
     int max_decisions;
     // Spectator rendering (bbe_render.h); NULL until c_render is first called.
@@ -1135,6 +1138,24 @@ static bool bbe_seat_is_scripted(const Bloodbowl* env, int agent) {
     return agent == (env->scripted_opponent_team == BB_HOME ? BB_HOME : BB_AWAY);
 }
 
+// A seat a frozen selfplay bank plays. The env learns this from its tag alone:
+// selfplay.py (build_perm_tags) gives an env tag b+1 exactly when it routes
+// slot 1 to frozen bank b's row slice and slot 0 to a learner row, and tag 0
+// when both slots are learner rows. The opt-in forward-skip patch validates
+// the same layout (scripted_bank_skip_validate: a bank's rows are the AWAY
+// seats of the envs tagged for it). `puffer match` is the exception: it
+// routes slot 1 to a frozen bank through the perm alone and sets no tags, so
+// there the env reads both seats as learner seats.
+static bool bbe_seat_is_frozen_bank(const Bloodbowl* env, int agent) {
+    return env->tag > 0 && agent == BB_AWAY;
+}
+
+// The seats no_early_end_turn restricts.
+static bool bbe_seat_is_learner(const Bloodbowl* env, int agent) {
+    return !bbe_seat_is_scripted(env, agent) &&
+           !bbe_seat_is_frozen_bank(env, agent);
+}
+
 // no_early_end_turn: drop END_TURN from legal[] when an ACTIVATE is also in
 // it. Only whole-type removal, and only when another type remains, so the
 // list is never emptied and stays an exact joint support. The engine is not
@@ -1159,9 +1180,12 @@ static void bbe_restrict_end_turn(Bloodbowl* env) {
 }
 
 // The scripted bot chooses from the engine's own list. This undoes a removal
-// made while the seat still read as policy-controlled: selfplay tags are
-// assigned after the first reset, so a scripted-bank seat can inherit a list
-// that was built for a policy.
+// made while the seat still read as a learner's: selfplay tags are assigned
+// after the first reset, so a scripted-bank seat can inherit a list that was
+// built for a learner. A frozen-bank seat in the same position has already
+// sampled from the shortened list and plays that one decision restricted;
+// that needs a banked start that opens on the AWAY team's turn, and a kick-off
+// start never does.
 static void bbe_unrestrict_legal(Bloodbowl* env) {
     if (!env->legal_end_turn_removed) return;
     env->n_legal = bb_legal_actions(&env->match, env->legal);
@@ -1174,7 +1198,7 @@ static void bbe_refresh_legal(Bloodbowl* env) {
                        : 0;
     env->legal_end_turn_removed = 0;
     if (env->no_early_end_turn && env->n_legal > 0 &&
-        !bbe_seat_is_scripted(env, env->match.decision_team)) {
+        bbe_seat_is_learner(env, env->match.decision_team)) {
         bbe_restrict_end_turn(env);
     }
 }

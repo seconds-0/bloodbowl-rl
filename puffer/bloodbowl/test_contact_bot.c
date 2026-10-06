@@ -41,7 +41,10 @@ typedef struct {
     long bot_decisions;
     long bot_end_turn_beside_activate; // bot lists holding both types
     long bot_early_end_turns;          // ... at which the bot picks END_TURN
-    long policy_removed;               // policy lists the rule shortened
+    long policy_removed;               // learner lists the rule shortened
+    long learner_removed[BBE_AGENTS];  // ... by seat
+    long bank_decisions;               // frozen-bank seat decisions
+    long bank_end_turn_beside_activate; // ... whose list holds both types
 } ContactSeatStats;
 
 // Set by the no_early_end_turn tests; every other test runs with the flag off
@@ -50,8 +53,9 @@ static int contact_no_early_end_turn = 0;
 static int contact_bot_type = 0;
 static ContactSeatStats* contact_seat_stats = NULL;
 
-// With the rule on, a scripted seat's list is the engine's own list and a
-// policy seat's list is that list without END_TURN beside an ACTIVATE.
+// With the rule on, a scripted seat's list and a frozen-bank seat's list are
+// the engine's own list, and a learner seat's list is that list without
+// END_TURN beside an ACTIVATE.
 static void contact_check_seat_list(const Bloodbowl* env) {
     static bb_action engine_legal[BB_LEGAL_MAX];
     const bb_match* m = &env->match;
@@ -79,10 +83,21 @@ static void contact_check_seat_list(const Bloodbowl* env) {
             contact_seat_stats->bot_early_end_turns +=
                 pick.type == BB_A_END_TURN;
         }
+    } else if (bbe_seat_is_frozen_bank(env, m->decision_team)) {
+        BB_CHECK_EQ(env->legal_end_turn_removed, 0);
+        BB_CHECK_EQ(env->n_legal, n);
+        for (int i = 0; i < n && i < env->n_legal; i++) {
+            BB_CHECK(bb_action_eq(env->legal[i], engine_legal[i]));
+        }
+        contact_seat_stats->bank_decisions++;
+        contact_seat_stats->bank_end_turn_beside_activate +=
+            activates > 0 && end_turns > 0;
     } else if (activates > 0 && end_turns > 0) {
+        BB_CHECK(bbe_seat_is_learner(env, m->decision_team));
         BB_CHECK_EQ(env->legal_end_turn_removed, 1);
         BB_CHECK_EQ(env->n_legal, n - end_turns);
         contact_seat_stats->policy_removed++;
+        contact_seat_stats->learner_removed[m->decision_team]++;
     }
 }
 
@@ -342,6 +357,149 @@ BB_TEST(no_early_end_turn_changes_a_policy_seat_but_not_the_flag_off_run) {
     BB_CHECK(off.digest == off_again.digest);
     BB_CHECK(on.digest != off.digest);
     BB_CHECK_EQ(on.completed, 6);
+}
+
+// --- no_early_end_turn restricts learner seats only --------------------------
+// The env knows a frozen-bank seat from its selfplay tag: tag b+1 means slot 1
+// (AWAY) is routed to frozen bank b and slot 0 is the learner; tag 0 is a
+// mirror env with the learner on both seats.
+
+BB_TEST(no_early_end_turn_restricts_both_seats_of_a_mirror_env) {
+    ContactSeatStats seats = {0};
+    contact_seat_stats = &seats;
+    contact_no_early_end_turn = 1;
+    ContactHookStats mirror = run_contact_hook_tagged(0, BB_AWAY, 0x31220u, 8, 0, 0);
+    contact_no_early_end_turn = 0;
+    contact_seat_stats = NULL;
+    BB_CHECK_EQ(mirror.completed, 8);
+    BB_CHECK(seats.learner_removed[BB_HOME] > 0);
+    BB_CHECK(seats.learner_removed[BB_AWAY] > 0);
+    BB_CHECK_EQ(seats.bank_decisions, 0);
+    BB_CHECK_EQ(seats.bot_decisions, 0);
+    BB_CHECK(mirror.end_turn_removed ==
+             (float)(seats.learner_removed[BB_HOME] + seats.learner_removed[BB_AWAY]));
+}
+
+BB_TEST(no_early_end_turn_leaves_the_frozen_bank_seat_the_engine_list) {
+    // A bank env (tag 2 = frozen bank 1 on slot 1), no scripted opponent: the
+    // bank's seat keeps END_TURN beside ACTIVATE, the learner's does not.
+    ContactSeatStats seats = {0};
+    contact_seat_stats = &seats;
+    contact_no_early_end_turn = 1;
+    ContactHookStats bank = run_contact_hook_tagged(0, BB_AWAY, 0x31220u, 8, 0, 2);
+    ContactSeatStats on = seats;
+    memset(&seats, 0, sizeof seats);
+    // The same env with a scripted bank configured for ANOTHER tag: slot 1 is
+    // still a frozen policy's seat here, not a bot's.
+    ContactHookStats other = run_contact_hook_tagged(1, BB_AWAY, 0x31220u, 8, 4, 2);
+    ContactSeatStats other_seats = seats;
+    contact_no_early_end_turn = 0;
+    contact_seat_stats = NULL;
+
+    BB_CHECK_EQ(bank.completed, 8);
+    BB_CHECK(on.bank_decisions > 0);
+    BB_CHECK(on.bank_end_turn_beside_activate > 0);
+    BB_CHECK(on.learner_removed[BB_HOME] > 0);
+    BB_CHECK_EQ(on.learner_removed[BB_AWAY], 0);
+    BB_CHECK_EQ(on.bot_decisions, 0);
+    // The panel counts the learner seat's removals and nothing of the bank's.
+    BB_CHECK(bank.end_turn_removed == (float)on.learner_removed[BB_HOME]);
+    BB_CHECK(other.digest == bank.digest);
+    BB_CHECK_EQ(other_seats.bot_decisions, 0);
+    BB_CHECK_EQ(other_seats.bank_end_turn_beside_activate,
+                on.bank_end_turn_beside_activate);
+    printf("no_early_end_turn bank env: bank seat decisions=%ld with "
+           "END_TURN+ACTIVATE=%ld (kept); learner seat removals=%ld\n",
+           on.bank_decisions, on.bank_end_turn_beside_activate,
+           on.learner_removed[BB_HOME]);
+}
+
+BB_TEST(no_early_end_turn_scripted_bank_env_restricts_the_learner_seat_only) {
+    // The env of the scripted bank (tag == scripted_bank_tag): slot 1 is the
+    // bot, slot 0 the learner.
+    ContactSeatStats seats = {0};
+    contact_seat_stats = &seats;
+    contact_no_early_end_turn = 1;
+    ContactHookStats bot_bank = run_contact_hook_tagged(1, BB_AWAY, 0x31220u, 8, 4, 4);
+    contact_no_early_end_turn = 0;
+    contact_seat_stats = NULL;
+    BB_CHECK_EQ(bot_bank.completed, 8);
+    BB_CHECK(seats.bot_end_turn_beside_activate > 0);
+    BB_CHECK_EQ(seats.bank_decisions, 0);
+    BB_CHECK(seats.learner_removed[BB_HOME] > 0);
+    BB_CHECK_EQ(seats.learner_removed[BB_AWAY], 0);
+    BB_CHECK(bot_bank.end_turn_removed == (float)seats.learner_removed[BB_HOME]);
+}
+
+BB_TEST(no_early_end_turn_exam_layout_restricts_the_champion_whichever_seat) {
+    // The exam: scripted_opponent global (no bank tag, env tag 0), the bot on
+    // one seat and the champion on the other.
+    for (int bot_team = 0; bot_team < 2; bot_team++) {
+        ContactSeatStats seats = {0};
+        contact_seat_stats = &seats;
+        contact_no_early_end_turn = 1;
+        ContactHookStats exam = run_contact_hook_tagged(1, bot_team, 0xE8A3u, 8, 0, 0);
+        contact_no_early_end_turn = 0;
+        contact_seat_stats = NULL;
+        int champion = 1 - bot_team;
+        BB_CHECK_EQ(exam.completed, 8);
+        BB_CHECK(seats.learner_removed[champion] > 0);
+        BB_CHECK_EQ(seats.learner_removed[bot_team], 0);
+        BB_CHECK(seats.bot_end_turn_beside_activate > 0);
+        BB_CHECK_EQ(seats.bank_decisions, 0);
+        BB_CHECK(exam.end_turn_removed == (float)seats.learner_removed[champion]);
+    }
+}
+
+BB_TEST(no_early_end_turn_reads_the_env_tag_only_when_the_flag_is_on) {
+    // Flag off against flag on in a bank env differ only through the learner
+    // seat; in a mirror env through both. Flag off, a tag changes nothing.
+    const uint64_t seed = 0x7A6ED0u;
+    ContactHookStats off_mirror = run_contact_hook_tagged(0, BB_AWAY, seed, 6, 0, 0);
+    ContactHookStats off_bank = run_contact_hook_tagged(0, BB_AWAY, seed, 6, 0, 2);
+    BB_CHECK(off_mirror.digest == off_bank.digest);
+    contact_no_early_end_turn = 1;
+    ContactHookStats on_mirror = run_contact_hook_tagged(0, BB_AWAY, seed, 6, 0, 0);
+    ContactHookStats on_bank = run_contact_hook_tagged(0, BB_AWAY, seed, 6, 0, 2);
+    contact_no_early_end_turn = 0;
+    BB_CHECK(on_mirror.digest != off_mirror.digest);
+    BB_CHECK(on_bank.digest != off_bank.digest);
+    BB_CHECK(on_bank.digest != on_mirror.digest);
+    BB_CHECK(on_bank.end_turn_removed > 0.0f);
+    BB_CHECK(on_bank.end_turn_removed < on_mirror.end_turn_removed);
+}
+
+BB_TEST(no_early_end_turn_kickoff_reset_never_opens_on_a_shortened_list) {
+    // Selfplay tags arrive after the first reset. A kick-off start opens in
+    // the pre-game sequence, so no list is shortened before the tags exist
+    // and a frozen-bank seat is never restricted by a stale tag.
+    static Bloodbowl env;
+    static uint8_t obs[BBE_AGENTS * BBE_OBS_SIZE];
+    static float actions[BBE_AGENTS * 3];
+    static unsigned char masks[BBE_AGENTS * BBE_MASK_SIZE];
+    static float rewards[BBE_AGENTS];
+    static float terminals[BBE_AGENTS];
+    for (uint64_t seed = 1; seed <= 200; seed++) {
+        memset(&env, 0, sizeof env);
+        env.num_agents = BBE_AGENTS;
+        env.seed = seed * 7919u;
+        env.no_early_end_turn = 1;
+        env.exclude_team = env.force_home_team = env.force_away_team = -1;
+        for (int a = 0; a < BBE_AGENTS; a++) {
+            env.obs_ptr[a] = obs + a * BBE_OBS_SIZE;
+            env.action_ptr[a] = actions + a * 3;
+            env.action_mask_ptr[a] = masks + a * BBE_MASK_SIZE;
+            env.reward_ptr[a] = rewards + a;
+            env.terminal_ptr[a] = terminals + a;
+        }
+        c_reset(&env);
+        BB_CHECK_EQ(env.match.status, BB_STATUS_DECISION);
+        BB_CHECK_EQ(env.legal_end_turn_removed, 0);
+        for (int i = 0; i < env.n_legal; i++) {
+            BB_CHECK(env.legal[i].type != BB_A_END_TURN);
+            BB_CHECK(env.legal[i].type != BB_A_ACTIVATE);
+        }
+    }
 }
 
 BB_TEST(no_early_end_turn_gives_a_late_tagged_bot_seat_its_end_turn_back) {
