@@ -77,6 +77,27 @@ PUFFER_BIN="$ROOT/vendor/PufferLib/.venv/bin/puffer"
 PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
 [ -x "$PUFFER_BIN" ] || { echo "vendored puffer entrypoint missing: $PUFFER_BIN" >&2; exit 1; }
 [ -x "$PYBIN" ] || { echo "vendored Python missing: $PYBIN" >&2; exit 1; }
+# The trainer below runs under the interpreter named in the entrypoint's
+# shebang, not under $PYBIN. A venv made with `cp -a` keeps the shebangs of
+# the venv it was copied from, and that interpreter imports the OTHER
+# checkout's pufferlib and compiled env while the manifest records this
+# checkout's module. Under the rule that would run the exam on a module that
+# may not know the flag, so it is refused; otherwise it is reported and the
+# exam runs as it always did.
+ENTRY_INTERPRETER="$(head -n 1 "$PUFFER_BIN" | sed -n 's/^#![[:space:]]*//p')"
+if [ "$ENTRY_INTERPRETER" = "/bin/sh" ]; then
+  ENTRY_INTERPRETER="$(sed -n "2s/^'''exec' \"\([^\"]*\)\".*/\1/p" "$PUFFER_BIN")"
+fi
+case "$ENTRY_INTERPRETER" in
+  "$ROOT/vendor/PufferLib/.venv/bin/"*) ;;
+  *)
+    if [ "$NO_EARLY_END_TURN" = "1" ]; then
+      echo "LADDER_NO_EARLY_END_TURN=1 refused: $PUFFER_BIN runs under '$ENTRY_INTERPRETER', which is not this checkout's venv ($ROOT/vendor/PufferLib/.venv); fix the venv's entrypoint shebangs" >&2
+      exit 1
+    fi
+    echo "warning: $PUFFER_BIN runs under '$ENTRY_INTERPRETER', not this checkout's venv ($ROOT/vendor/PufferLib/.venv): the exam imports whatever pufferlib that interpreter resolves, and the eval manifest's module hash describes this checkout instead" >&2
+    ;;
+esac
 if [ "${NATIVE:-0}" = "1" ]; then
   # Native flat fp32 blob: size-pinned, and its lineage sidecar must validate
   # against THIS build (the obs/action semantics are only knowable from it).
