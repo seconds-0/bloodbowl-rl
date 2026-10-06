@@ -119,6 +119,31 @@ def no_early_end_turn_truncation_failure(metrics, declared):
     return None
 
 
+def no_early_end_turn_truncation_failure_in_log(path, phase, declared):
+    """The same condition, held against every window of one phase of a log.
+
+    weighted_dashboard averages a key over the windows that carry it, so a
+    window without truncated_episodes would vanish from the aggregate and a
+    phase could read zero with part of it unreported. A run that declares the
+    rule is accepted only if every completed-episode window of the phase
+    carries the counter at exactly zero.
+
+    Returns None when the phase is acceptable or the rule is not declared,
+    otherwise the reason.
+    """
+    if not declared:
+        return None
+    windows = analysis_windows(path, phase=phase)
+    if not windows:
+        return (f"no completed-episode window in phase {phase!r}: nothing shows "
+                "that no game was cut by the decision cap")
+    for index, window in enumerate(windows, 1):
+        reason = no_early_end_turn_truncation_failure(window, True)
+        if reason:
+            return f"window {index} of {len(windows)}: {reason}"
+    return None
+
+
 def strip_ansi(s):
     s = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", s)
     return s.replace("\u2502", " ").replace("\u2503", " ")  # box verticals

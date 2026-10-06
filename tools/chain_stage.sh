@@ -78,7 +78,8 @@
 #      pass did not verify. Nothing was trained by this launch.
 #   7  the rung marker or its checkpoint is unusable (missing file, sha256
 #      mismatch), or LADDER_NO_EARLY_END_TURN disagrees with the rule the rung
-#      marker or a registered verdict records
+#      marker or a registered verdict records, or, under the rule, a marker or
+#      verdict on disk does not record zero truncated_episodes
 #   8  the verdict tool could not produce a verdict (missing or malformed
 #      evidence). The next launch runs the exam again in a new directory.
 #   143, 130, 129  stopped by TERM, INT or HUP, between steps
@@ -306,6 +307,38 @@ for path in sys.argv[2:]:
     if recorded != declared:
         print(f"RULE MISMATCH: {path} records no_early_end_turn={recorded}, "
               f"this stage declares {declared} (LADDER_NO_EARLY_END_TURN)",
+              file=sys.stderr)
+        raise SystemExit(7)
+    if not declared:
+        continue
+    # Under the rule a game cut by the decision cap fails the stage (the
+    # screen and the verdict tool refuse it). A marker or a verdict already
+    # on disk was written by whatever tools ran then, so its own record is
+    # read here: zero truncated_episodes, present, or it does not count.
+    try:
+        if "cells" in record:
+            counts = {f"exam cell s{cell['seed']} {cell['cell']}":
+                      cell.get("truncated_episodes") for cell in record["cells"]}
+            if len(counts) != len(record["cells"]) or not counts:
+                raise ValueError("exam cells are missing or repeated")
+        else:
+            result = json.load(open(record["result"], encoding="utf-8"))
+            if result.get("checkpoint_sha256") != record.get("checkpoint_sha256"):
+                raise ValueError("the result file belongs to another checkpoint")
+            counts = {
+                "training": result["train_metrics"].get("truncated_episodes"),
+                "end-of-run evaluation":
+                    result["eval_metrics"].get("truncated_episodes")}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        print(f"{path}: no readable truncated_episodes record under "
+              f"no_early_end_turn: {exc!r}", file=sys.stderr)
+        raise SystemExit(7)
+    bad = {where: count for where, count in counts.items()
+           if isinstance(count, bool) or not isinstance(count, (int, float))
+           or count != 0}
+    if bad:
+        print(f"TRUNCATED EPISODES: {path} does not record zero "
+              f"truncated_episodes under no_early_end_turn: {bad}",
               file=sys.stderr)
         raise SystemExit(7)
 PY

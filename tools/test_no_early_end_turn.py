@@ -432,6 +432,12 @@ STUB_LADDER_RULE = chain_tests.STUB_LADDER.replace(
     'rule = os.environ.get("STUB_MARKER_RULE", os.environ.get("' + KNOB + '", ""))\n'
     'if rule == "1":\n'
     '    marker["no_early_end_turn"] = 1\n'
+    '    cut = float(os.environ.get("STUB_RESULT_TRUNCATED", "0"))\n'
+    '    train = {} if os.environ.get("STUB_RESULT_NO_COUNTER") else {"truncated_episodes": cut}\n'
+    '    json.dump({"checkpoint_sha256": sha, "acceptance_pass": True,\n'
+    '               "train_metrics": train, "eval_metrics": {"truncated_episodes": 0.0}},\n'
+    '              open(out + "/arm.result.json", "w"))\n'
+    '    marker["result"] = out + "/arm.result.json"\n'
     'json.dump(marker, open(out + "/LADDER_RUNG_COMPLETE.json", "w"))')
 STUB_EVAL_RULE = chain_tests.STUB_EVAL.replace(
     'echo "$SEED $BOT_TYPE $BOT_TEAM $STEPS $LOG omp=',
@@ -609,9 +615,83 @@ class ChainStageRuleTests(unittest.TestCase):
                 self.setUp()
                 result = self.stage(**{KNOB: "1", knob: "43 1 1"})
                 self.assertEqual(result.returncode, 8, result.stdout)
-                self.assertIn("s43/offense_away.log: " + message, result.stdout)
+                self.assertIn("s43/offense_away.log: window 1 of 1: " + message,
+                              result.stdout)
                 self.assertFalse((self.run_dir / "EXAM_VERDICT.json").exists())
                 self.assertFalse((self.run_dir / "EXAM_VERDICT_PASS.json").exists())
+
+    def test_a_rung_marker_already_on_disk_must_itself_record_no_cut_game(self):
+        # A marker written by whatever tools ran then skips the screen on a
+        # relaunch. Under the rule its own result must show zero, or it does
+        # not count and no exam is run on it.
+        for knobs, message in (
+            ({"STUB_RESULT_TRUNCATED": "0.002"}, "'training': 0.002"),
+            ({"STUB_RESULT_NO_COUNTER": "1"}, "'training': None"),
+        ):
+            with self.subTest(knobs=knobs):
+                self.tearDown()
+                self.setUp()
+                result = self.stage(**{KNOB: "1"}, **knobs)
+                self.assertEqual(result.returncode, 7, result.stdout)
+                self.assertIn("TRUNCATED EPISODES", result.stdout)
+                self.assertIn(message, result.stdout)
+                self.assertEqual(self.calls("eval_calls"), [])
+                self.assertFalse((self.run_dir / "EXAM_VERDICT.json").exists())
+                # And a relaunch reaches the same refusal without retraining.
+                again = self.stage(**{KNOB: "1"})
+                self.assertEqual(again.returncode, 7, again.stdout)
+                self.assertEqual(self.calls("ladder_calls"), ["train"])
+        # A marker with no result file to read is refused as well.
+        self.tearDown()
+        self.setUp()
+        self.assertEqual(self.stage(**{KNOB: "1"}).returncode, 0)
+        (self.run_dir / "EXAM_VERDICT.json").unlink()
+        (self.run_dir / "EXAM_VERDICT_PASS.json").unlink()
+        (self.run_dir / "arm.result.json").unlink()
+        result = self.stage(**{KNOB: "1"})
+        self.assertEqual(result.returncode, 7, result.stdout)
+        self.assertIn("no readable truncated_episodes record", result.stdout)
+
+    def test_a_verdict_already_on_disk_must_itself_record_no_cut_game(self):
+        # A passing verdict from before the condition existed (its cells carry
+        # no truncated_episodes) is not success for a stage under the rule.
+        self.assertEqual(self.stage(**{KNOB: "1"}).returncode, 0)
+        for mutate, message in (
+            (lambda cells: cells[3].pop("truncated_episodes"),
+             "'exam cell s43 contact_away': None"),
+            (lambda cells: cells[5].__setitem__("truncated_episodes", 0.0005),
+             "'exam cell s43 offense_away': 0.0005"),
+            (lambda cells: cells.__setitem__(5, dict(cells[4])),
+             "exam cells are missing or repeated"),
+        ):
+            for name in ("EXAM_VERDICT.json", "EXAM_VERDICT_PASS.json"):
+                path = self.run_dir / name
+                verdict = json.loads(path.read_text())
+                mutate(verdict["cells"])
+                path.write_text(json.dumps(verdict))
+            result = self.stage(**{KNOB: "1"})
+            self.assertEqual(result.returncode, 7, result.stdout)
+            self.assertIn(message, result.stdout)
+            self.assertNotIn("verdict already registered and passed", result.stdout)
+            # Put a clean verdict back for the next case.
+            for name in ("EXAM_VERDICT.json", "EXAM_VERDICT_PASS.json"):
+                path = self.run_dir / name
+                verdict = json.loads(path.read_text())
+                clean = []
+                for seed in (42, 43):
+                    for cell in ("contact_away", "contact_home", "offense_away"):
+                        clean.append({**verdict["cells"][0], "seed": seed, "cell": cell,
+                                      "truncated_episodes": 0.0})
+                verdict["cells"] = clean
+                path.write_text(json.dumps(verdict))
+            self.assertEqual(self.stage(**{KNOB: "1"}).returncode, 0)
+        # Without the rule nothing of this is looked at.
+        self.tearDown()
+        self.setUp()
+        self.assertEqual(self.stage().returncode, 0)
+        verdict = json.loads((self.run_dir / "EXAM_VERDICT_PASS.json").read_text())
+        self.assertNotIn("truncated_episodes", json.dumps(verdict))
+        self.assertEqual(self.stage().returncode, 0)
 
     def test_bad_values_are_a_configuration_error(self):
         for bad in BAD_VALUES:
@@ -705,14 +785,14 @@ class ExamVerdictRuleTests(unittest.TestCase):
         self.write(rule_cells="all", truncated_cells=("s42/contact_home",))
         self.assert_no_verdict(
             self.run_tool("--no-early-end-turn", "1"),
-            "s42/contact_home.log: truncated_episodes is 0.01")
+            "s42/contact_home.log: window 1 of 1: truncated_episodes is 0.01")
         # The counter missing from one cell is a failure too, not a zero.
         cells = [f"s{seed}/{name}" for seed in (42, 43)
                  for name, _, _ in verdict_tests.CELLS]
         self.write(rule_cells="all", counted_cells=cells[:-1])
         self.assert_no_verdict(
             self.run_tool("--no-early-end-turn", "1"),
-            "s43/offense_away.log: the panel has no truncated_episodes")
+            "s43/offense_away.log: window 1 of 1: the panel has no truncated_episodes")
 
     def test_without_the_rule_cut_games_change_nothing(self):
         # A run that does not declare the rule is accepted as it always was:
@@ -821,7 +901,7 @@ class PanelEvidenceTests(unittest.TestCase):
             '            "phase": phase, "kind": "no_early_end_turn_evidence",\n',
             screen)
         self.assertIn(
-            "    reason = no_early_end_turn_truncation_failure(metrics, rule_declared)\n"
+            "    reason = no_early_end_turn_truncation_failure_in_log(log, phase, rule_declared)\n"
             "    if reason:\n"
             "        failures.append({\n"
             '            "phase": phase, "kind": "no_early_end_turn_truncated_episodes",\n',
@@ -829,8 +909,9 @@ class PanelEvidenceTests(unittest.TestCase):
         verdict = VERDICT.read_text(encoding="utf-8")
         self.assertIn("reason = no_early_end_turn_evidence_failure(values, rule_on)",
                       verdict)
-        self.assertIn("reason = no_early_end_turn_truncation_failure(values, rule_on)",
-                      verdict)
+        self.assertIn(
+            'reason = no_early_end_turn_truncation_failure_in_log(str(log), "auto", rule_on)',
+            verdict)
 
     def test_the_env_emits_the_counter_on_the_machine_panel(self):
         binding = (ROOT / "puffer/bloodbowl/binding.c").read_text(encoding="utf-8")
@@ -987,6 +1068,27 @@ class ScreenAcceptanceTests(unittest.TestCase):
             self.assert_refused(done, record, phase,
                                 "no_early_end_turn_truncated_episodes",
                                 "the panel has no truncated_episodes")
+
+    def test_a_window_without_the_counter_cannot_hide_behind_one_that_has_it(self):
+        # The phase aggregate averages a key over the windows that carry it,
+        # so it reads 0.0 here. The condition is held against every window.
+        done, record = self.accept(declared=True, eval_="clean", train_first="clean",
+                                   train={"end_turn_removed": 120.0})
+        self.assertEqual(record["train_metrics"]["truncated_episodes"], 0.0)
+        self.assert_refused(done, record, "train",
+                            "no_early_end_turn_truncated_episodes",
+                            "window 2 of 2: the panel has no truncated_episodes")
+        # The other way round, and a cut game in the first window only.
+        done, record = self.accept(declared=True, eval_="clean", train="clean",
+                                   train_first={"end_turn_removed": 120.0})
+        self.assert_refused(done, record, "train",
+                            "no_early_end_turn_truncated_episodes", "window 1 of 2")
+        done, record = self.accept(
+            declared=True, eval_="clean", train="clean",
+            train_first={"end_turn_removed": 120.0, "truncated_episodes": 0.002})
+        self.assert_refused(done, record, "train",
+                            "no_early_end_turn_truncated_episodes",
+                            "window 1 of 2: truncated_episodes is 0.002")
 
     def test_an_arm_that_does_not_declare_the_rule_is_unaffected(self):
         # Counters absent (a build from before them), zero, or showing cut

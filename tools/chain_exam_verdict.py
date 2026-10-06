@@ -27,7 +27,7 @@ must agree as well (game_stats.no_early_end_turn_evidence_failure):
 end_turn_removed above zero under the rule, zero or absent without it. Under the rule a cell is also refused
 unless its panel carries truncated_episodes and it is exactly zero: a game cut
 by the env's decision cap is not an error episode, and the exam must not read
-one (game_stats.no_early_end_turn_truncation_failure). When the exam ran under
+one (game_stats.no_early_end_turn_truncation_failure_in_log). When the exam ran under
 the rule, the verdict and each cell record no_early_end_turn: 1, and each cell
 its end_turn_removed and its truncated_episodes.
 
@@ -60,8 +60,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from contact_bot_stats import bot_perspective  # noqa: E402
 from game_stats import (  # noqa: E402
-    no_early_end_turn_evidence_failure, no_early_end_turn_truncation_failure,
-    weighted_dashboard)
+    no_early_end_turn_evidence_failure,
+    no_early_end_turn_truncation_failure_in_log, weighted_dashboard)
 
 SCHEMA_VERSION = 1
 MANIFEST_PREFIX = "BB_EVAL_MANIFEST "
@@ -185,7 +185,7 @@ def read_cell(exam_dir: Path, seed: int, name: str, bot_type: int,
         raise VerdictError(f"{log}: {reason}")
     # Under the rule a cell with a game cut by the decision cap is no evidence
     # (D416 amendment); a cell without the rule is not judged on this.
-    reason = no_early_end_turn_truncation_failure(values, rule_on)
+    reason = no_early_end_turn_truncation_failure_in_log(str(log), "auto", rule_on)
     if reason:
         raise VerdictError(f"{log}: {reason}")
     if rule_on:
