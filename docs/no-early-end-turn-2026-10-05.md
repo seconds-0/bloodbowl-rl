@@ -198,16 +198,16 @@ and this branch's, given the same inputs:
 |---|---|
 | trainer argv, chain 42's recipe (111 words) | identical; with the knob, the same plus `--env.no-early-end-turn 1` |
 | run-manifest pairs (88 keys) | identical; with the knob, the same plus `no_early_end_turn 1` |
-| `SCREEN_MANIFEST` contract, rung plan on the tests' stand-in build (78 fields) | identical except `implementation.screen_script_sha256` and `implementation.checkpoint_lineage_sha256`; with the knob, plus `ladder.no_early_end_turn` |
-| same, graft plan with one declared old build (83 fields) | the same two fields differ; `contract.graft` identical |
+| `SCREEN_MANIFEST` contract, rung plan on the tests' stand-in build (78 fields) | identical except `implementation.screen_script_sha256`, `implementation.checkpoint_lineage_sha256` and `implementation.game_stats_sha256`; with the knob, plus `ladder.no_early_end_turn` |
+| same, graft plan with one declared old build (83 fields) | the same three fields differ; `contract.graft` identical |
 | `LADDER_RUNG_COMPLETE.json` | identical bytes |
 | `EXAM_VERDICT.json` (time masked) | identical bytes |
 | exam cell argv and `BB_EVAL_MANIFEST` line | identical |
 
-The two differing contract fields are recorded hashes of tool files this branch edits. On the rig the
-launcher's own hash and `game_stats.py`'s are recorded too and change for the same reason. So a contract
-written by this branch never has the same sha256 as one written before it, with or without the knob;
-nothing else in it moves.
+The three differing contract fields are recorded hashes of tool files this branch edits. On the rig the
+per-arm launcher's own hash is recorded too (the stand-in stubs that script) and changes for the same
+reason. So a contract written by this branch never has the same sha256 as one written before it, with or
+without the knob; nothing else in it moves.
 
 ## 6. Lineage: more than one old build
 
