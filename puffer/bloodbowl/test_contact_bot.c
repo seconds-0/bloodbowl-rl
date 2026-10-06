@@ -36,6 +36,55 @@ typedef struct {
     float tds_t1;
 } ContactHookStats;
 
+typedef struct {
+    long bot_decisions;
+    long bot_end_turn_beside_activate; // bot lists holding both types
+    long bot_early_end_turns;          // ... at which the bot picks END_TURN
+    long policy_removed;               // policy lists the rule shortened
+} ContactSeatStats;
+
+// Set by the no_early_end_turn tests; every other test runs with the flag off
+// and the contact bot (type 0).
+static int contact_no_early_end_turn = 0;
+static int contact_bot_type = 0;
+static ContactSeatStats* contact_seat_stats = NULL;
+
+// With the rule on, a scripted seat's list is the engine's own list and a
+// policy seat's list is that list without END_TURN beside an ACTIVATE.
+static void contact_check_seat_list(const Bloodbowl* env) {
+    static bb_action engine_legal[BB_LEGAL_MAX];
+    const bb_match* m = &env->match;
+    if (m->status != BB_STATUS_DECISION) return;
+    int n = bb_legal_actions(m, engine_legal);
+    int activates = 0, end_turns = 0;
+    for (int i = 0; i < n; i++) {
+        activates += engine_legal[i].type == BB_A_ACTIVATE;
+        end_turns += engine_legal[i].type == BB_A_END_TURN;
+    }
+    if (bbe_seat_is_scripted(env, m->decision_team)) {
+        BB_CHECK_EQ(env->legal_end_turn_removed, 0);
+        BB_CHECK_EQ(env->n_legal, n);
+        for (int i = 0; i < n && i < env->n_legal; i++) {
+            BB_CHECK(bb_action_eq(env->legal[i], engine_legal[i]));
+        }
+        contact_seat_stats->bot_decisions++;
+        if (activates > 0 && end_turns > 0) {
+            // The pick c_step is about to make: both bots are pure functions
+            // of the match and the list.
+            bb_action pick = env->scripted_opponent_type == 1
+                ? bbe_offense_bot_pick(m, env->legal, env->n_legal)
+                : bbe_contact_bot_pick(m, env->legal, env->n_legal);
+            contact_seat_stats->bot_end_turn_beside_activate++;
+            contact_seat_stats->bot_early_end_turns +=
+                pick.type == BB_A_END_TURN;
+        }
+    } else if (activates > 0 && end_turns > 0) {
+        BB_CHECK_EQ(env->legal_end_turn_removed, 1);
+        BB_CHECK_EQ(env->n_legal, n - end_turns);
+        contact_seat_stats->policy_removed++;
+    }
+}
+
 static ContactHookStats run_contact_hook_tagged(int scripted, int scripted_team,
                                                 uint64_t seed, int games,
                                                 int scripted_bank_tag,
@@ -44,6 +93,8 @@ static ContactHookStats run_contact_hook_tagged(int scripted, int scripted_team,
     memset(&env, 0, sizeof env);
     env.scripted_bank_tag = scripted_bank_tag;
     env.tag = env_tag;
+    env.no_early_end_turn = contact_no_early_end_turn;
+    env.scripted_opponent_type = contact_bot_type;
     static uint8_t obs[BBE_AGENTS * BBE_OBS_SIZE];
     static float actions[BBE_AGENTS * 3];
     static unsigned char masks[BBE_AGENTS * BBE_MASK_SIZE];
@@ -69,6 +120,7 @@ static ContactHookStats run_contact_hook_tagged(int scripted, int scripted_team,
     int episode_decisions = 0;
     while (out.completed < games &&
            out.decisions < (long)games * CONTACT_DECISION_CAP) {
+        if (contact_seat_stats) contact_check_seat_list(&env);
         for (int a = 0; a < BBE_AGENTS; a++) {
             bbe_sample_joint_uniform(&env, a, env.action_ptr[a], &pol);
         }
@@ -192,4 +244,161 @@ BB_TEST(contact_bot_scripted_bank_tag_gates_the_bot_on_the_env_tag) {
     // Tag 0 = global semantics, unchanged: every env is scripted.
     ContactHookStats global_tagged_env = run_contact_hook_tagged(1, BB_AWAY, seed, 6, 0, 3);
     BB_CHECK(global_tagged_env.digest == scripted.digest);
+}
+
+// --- no_early_end_turn and scripted seats -----------------------------------
+// The rule is a restriction on POLICY seats. The contact bot ranks END_TURN
+// below every ACTIVATE and never ends a turn early; the offense bot does so
+// rarely. Neither may lose the option: the bot is handed the engine's list.
+
+BB_TEST(no_early_end_turn_hands_the_bot_the_engine_list_with_end_turn_in_it) {
+    ContactSeatStats seats = {0};
+    contact_seat_stats = &seats;
+    contact_no_early_end_turn = 1;
+    ContactHookStats away_bot = run_contact_hook(1, BB_AWAY, 0x0E0B07u, 12);
+    ContactSeatStats away = seats;
+    memset(&seats, 0, sizeof seats);
+    ContactHookStats home_bot = run_contact_hook(1, BB_HOME, 0x0E0B07u, 12);
+    ContactSeatStats home = seats;
+    contact_no_early_end_turn = 0;
+    contact_seat_stats = NULL;
+
+    BB_CHECK_EQ(away_bot.completed, 12);
+    BB_CHECK_EQ(home_bot.completed, 12);
+    // The bot was offered END_TURN beside an ACTIVATE (the choice the rule
+    // takes from a policy), and the policy seat in the same games was not.
+    BB_CHECK(away.bot_end_turn_beside_activate > 0);
+    BB_CHECK(home.bot_end_turn_beside_activate > 0);
+    BB_CHECK(away.policy_removed > 0);
+    BB_CHECK(home.policy_removed > 0);
+    printf("no_early_end_turn bot seats: away bot decisions=%ld with "
+           "END_TURN+ACTIVATE=%ld policy removals=%ld; home bot decisions=%ld "
+           "with END_TURN+ACTIVATE=%ld policy removals=%ld\n",
+           away.bot_decisions, away.bot_end_turn_beside_activate,
+           away.policy_removed, home.bot_decisions,
+           home.bot_end_turn_beside_activate, home.policy_removed);
+}
+
+BB_TEST(no_early_end_turn_leaves_bot_versus_bot_games_byte_identical) {
+    // scripted_opponent_team 2 seats a bot on both sides, so no seat is a
+    // policy seat and the flag must change nothing at all.
+    const uint64_t seed = 0xB07B07u;
+    ContactHookStats off = run_contact_hook(1, 2, seed, 8);
+    contact_no_early_end_turn = 1;
+    ContactHookStats on = run_contact_hook(1, 2, seed, 8);
+    contact_no_early_end_turn = 0;
+    BB_CHECK_EQ(off.completed, 8);
+    BB_CHECK_EQ(on.completed, off.completed);
+    BB_CHECK_EQ(on.decisions, off.decisions);
+    BB_CHECK(on.digest == off.digest);
+    BB_CHECK(on.tds == off.tds);
+    BB_CHECK(on.blocks_thrown == off.blocks_thrown);
+}
+
+BB_TEST(no_early_end_turn_still_lets_the_offense_bot_end_its_turn_early) {
+    // Offense bot on both seats, rule on: it ends team turns with a player
+    // still to activate, as it does with the rule off, in the same games.
+    const uint64_t seed = 0x0FFB07u;
+    const int games = 60;
+    contact_bot_type = 1;
+    ContactHookStats off = run_contact_hook(1, 2, seed, games);
+    ContactSeatStats seats = {0};
+    contact_seat_stats = &seats;
+    contact_no_early_end_turn = 1;
+    ContactHookStats on = run_contact_hook(1, 2, seed, games);
+    contact_no_early_end_turn = 0;
+    contact_seat_stats = NULL;
+    contact_bot_type = 0;
+    BB_CHECK_EQ(on.completed, games);
+    BB_CHECK(on.digest == off.digest);
+    BB_CHECK_EQ(on.decisions, off.decisions);
+    BB_CHECK(seats.bot_early_end_turns > 0);
+    BB_CHECK_EQ(seats.policy_removed, 0);
+    printf("no_early_end_turn offense bot both seats: games=%d decisions=%ld "
+           "lists with END_TURN+ACTIVATE=%ld early END_TURN picks=%ld\n",
+           games, on.decisions, seats.bot_end_turn_beside_activate,
+           seats.bot_early_end_turns);
+}
+
+BB_TEST(no_early_end_turn_changes_a_policy_seat_but_not_the_flag_off_run) {
+    // Same seed, bot AWAY: flag off twice is one trajectory; flag on is
+    // another, because the HOME policy seat lost END_TURN.
+    const uint64_t seed = 0x0E0FF0u;
+    ContactHookStats off = run_contact_hook(1, BB_AWAY, seed, 6);
+    ContactHookStats off_again = run_contact_hook(1, BB_AWAY, seed, 6);
+    contact_no_early_end_turn = 1;
+    ContactHookStats on = run_contact_hook(1, BB_AWAY, seed, 6);
+    contact_no_early_end_turn = 0;
+    BB_CHECK(off.digest == off_again.digest);
+    BB_CHECK(on.digest != off.digest);
+    BB_CHECK_EQ(on.completed, 6);
+}
+
+BB_TEST(no_early_end_turn_gives_a_late_tagged_bot_seat_its_end_turn_back) {
+    // Selfplay tags are assigned after the first reset. A scripted-bank seat
+    // can therefore meet a list that was shortened while the env was still
+    // untagged; the bot path restores the engine's list before it picks.
+    static Bloodbowl env;
+    static uint8_t obs[BBE_AGENTS * BBE_OBS_SIZE];
+    static float actions[BBE_AGENTS * 3];
+    static unsigned char masks[BBE_AGENTS * BBE_MASK_SIZE];
+    static float rewards[BBE_AGENTS];
+    static float terminals[BBE_AGENTS];
+    static bb_action engine_legal[BB_LEGAL_MAX];
+    memset(&env, 0, sizeof env);
+    env.num_agents = BBE_AGENTS;
+    env.seed = 0x7A61A7Eu;
+    env.scripted_opponent = 1;
+    env.scripted_opponent_team = BB_AWAY;
+    env.scripted_bank_tag = 2;
+    env.tag = 0;
+    env.no_early_end_turn = 1;
+    env.exclude_team = env.force_home_team = env.force_away_team = -1;
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        env.obs_ptr[a] = obs + a * BBE_OBS_SIZE;
+        env.action_ptr[a] = actions + a * 3;
+        env.action_mask_ptr[a] = masks + a * BBE_MASK_SIZE;
+        env.reward_ptr[a] = rewards + a;
+        env.terminal_ptr[a] = terminals + a;
+    }
+    c_reset(&env);
+    bb_rng pol;
+    bb_rng_seed(&pol, 0x7A6u, 5);
+    int guard = 0;
+    while (!(env.legal_end_turn_removed &&
+             env.match.decision_team == BB_AWAY) && guard++ < 50000) {
+        for (int a = 0; a < BBE_AGENTS; a++) {
+            bbe_sample_joint_uniform(&env, a, env.action_ptr[a], &pol);
+        }
+        c_step(&env);
+    }
+    BB_CHECK(env.legal_end_turn_removed);
+    BB_CHECK_EQ(env.match.decision_team, BB_AWAY);
+    BB_CHECK(!bbe_seat_is_scripted(&env, BB_AWAY));
+
+    env.tag = 2; // the env now belongs to the scripted bank
+    BB_CHECK(bbe_seat_is_scripted(&env, BB_AWAY));
+    BB_CHECK(!bbe_seat_is_scripted(&env, BB_HOME));
+    int n_engine = bb_legal_actions(&env.match, engine_legal);
+    BB_CHECK_EQ(env.n_legal, n_engine - 1);
+    bbe_unrestrict_legal(&env);
+    BB_CHECK_EQ(env.legal_end_turn_removed, 0);
+    BB_CHECK_EQ(env.n_legal, n_engine);
+    int end_turns = 0;
+    for (int i = 0; i < env.n_legal; i++) {
+        BB_CHECK(bb_action_eq(env.legal[i], engine_legal[i]));
+        end_turns += env.legal[i].type == BB_A_END_TURN;
+    }
+    BB_CHECK_EQ(end_turns, 1);
+
+    // And c_step takes that path itself: shorten the list again by hand, as
+    // the untagged refresh did, and step the bot seat through it.
+    bbe_restrict_end_turn(&env);
+    BB_CHECK(env.legal_end_turn_removed);
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        bbe_sample_joint_uniform(&env, a, env.action_ptr[a], &pol);
+    }
+    c_step(&env);
+    BB_CHECK(env.match.status != BB_STATUS_ERROR);
+    BB_CHECK(env.log.error_episodes == 0.0f);
 }

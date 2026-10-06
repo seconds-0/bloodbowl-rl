@@ -232,6 +232,15 @@ static void apply_kwargs(Env* env, Dict* kwargs) {
     // selfplay.py (set_env_tags), which the env cannot see at init: with
     // selfplay disabled or num_frozen_banks < tag no env is ever tagged and
     // the bot never plays. The trainer guard refuses those configurations.
+    // Fail closed on anything but 0/1: a typo must not silently train an
+    // unrestricted policy under a restricted label, or the reverse.
+    double no_early_end_turn = kw(kwargs, "no_early_end_turn", 0.0);
+    if (no_early_end_turn != 0.0 && no_early_end_turn != 1.0) {
+        fprintf(stderr, "bloodbowl: no_early_end_turn=%g must be 0 or 1\n",
+                no_early_end_turn);
+        exit(1);
+    }
+    env->no_early_end_turn = (int)no_early_end_turn;
     env->max_decisions = (int)kw(kwargs, "max_decisions", BBE_MAX_DECISIONS);
     if (env->max_decisions <= 0 || env->max_decisions > BBE_MAX_DECISIONS) {
         env->max_decisions = BBE_MAX_DECISIONS;

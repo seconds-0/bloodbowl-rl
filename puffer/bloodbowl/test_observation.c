@@ -1113,3 +1113,346 @@ BB_TEST(observation_v6_slack_bytes_stay_zero_at_every_window) {
         }
     }
 }
+
+// --- no_early_end_turn -------------------------------------------------------
+// An env-layer training restriction (docs/no-early-end-turn-2026-10-05.md):
+// at a policy seat's decision, END_TURN leaves the legal list while an
+// ACTIVATE is in it. These tests play whole procgen matches (random rosters
+// on both sides) through c_reset / c_step with uniform sampling from the
+// exact joint support.
+
+enum {
+    NEET_EPISODES_ON = 300,
+    NEET_EPISODES_OFF = 300,
+    NEET_OBS_CHECK_EPISODES = 30,
+};
+
+typedef struct {
+    long decisions;
+    long removed;          // decisions where END_TURN left the list
+    long end_turn_offered; // decisions whose list still holds END_TURN
+    long end_turn_taken;
+    long team_turns;       // completed team turns, both sides
+    int episodes;
+    int max_episode_decisions;
+    uint64_t rosters_seen; // bit per roster id, either side
+} NeetStats;
+
+static int neet_count_type(const bb_action* legal, int n, int type) {
+    int count = 0;
+    for (int i = 0; i < n; i++) count += legal[i].type == type;
+    return count;
+}
+
+// The marginal mask of the deciding agent is the union of the exact joint
+// support's conditional slices, head by head, and no slice is empty.
+static void neet_check_masks_match_joint_support(const Bloodbowl* env,
+                                                 int agent) {
+    const unsigned char* mask = env->action_mask_ptr[agent];
+    unsigned char type_support[BBE_HEAD_TYPE];
+    unsigned char arg_support[BBE_HEAD_ARG];
+    unsigned char sq_support[BBE_HEAD_SQ];
+    unsigned char arg_union[BBE_HEAD_ARG] = {0};
+    unsigned char sq_union[BBE_HEAD_SQ] = {0};
+    BB_CHECK(bbe_fill_joint_head_mask(env, agent, 0, 0, 32, type_support,
+                                      BBE_HEAD_TYPE) > 0);
+    BB_CHECK(memcmp(type_support, mask, BBE_HEAD_TYPE) == 0);
+    for (int t = 0; t < BBE_HEAD_TYPE; t++) {
+        if (!type_support[t]) continue;
+        BB_CHECK(bbe_fill_joint_head_mask(env, agent, 1, t, 32, arg_support,
+                                          BBE_HEAD_ARG) > 0);
+        for (int a = 0; a < BBE_HEAD_ARG; a++) {
+            if (!arg_support[a]) continue;
+            arg_union[a] = 1;
+            BB_CHECK(bbe_fill_joint_head_mask(env, agent, 2, t, a, sq_support,
+                                              BBE_HEAD_SQ) > 0);
+            for (int s = 0; s < BBE_HEAD_SQ; s++) sq_union[s] |= sq_support[s];
+        }
+    }
+    BB_CHECK(memcmp(arg_union, mask + BBE_HEAD_TYPE, BBE_HEAD_ARG) == 0);
+    BB_CHECK(memcmp(sq_union, mask + BBE_HEAD_TYPE + BBE_HEAD_ARG,
+                    BBE_HEAD_SQ) == 0);
+}
+
+// The same state with the flag off: observations are byte-identical for both
+// agents, and the masks differ only where END_TURN's own tuple was.
+static void neet_check_observation_is_flag_blind(const Bloodbowl* env) {
+    static Bloodbowl shadow;
+    static uint8_t obs[BBE_AGENTS * BBE_OBS_SIZE];
+    static unsigned char masks[BBE_AGENTS * BBE_MASK_SIZE];
+    shadow = *env;
+    memset(obs, 0, sizeof obs);
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        shadow.obs_ptr[a] = obs + a * BBE_OBS_SIZE;
+        shadow.action_mask_ptr[a] = masks + a * BBE_MASK_SIZE;
+        shadow.v4_dirty[a] = 1;
+    }
+    shadow.no_early_end_turn = 0;
+    bbe_refresh_legal(&shadow);
+    bbe_emit_all(&shadow);
+    int deciding = env->match.decision_team;
+    bb_action end_turn = {BB_A_END_TURN, 0, 0, 0};
+    int end_arg = BBE_HEAD_TYPE + bbe_action_arg(deciding, end_turn);
+    int end_sq = BBE_HEAD_TYPE + BBE_HEAD_ARG + bbe_action_sq(deciding, end_turn);
+    for (int a = 0; a < BBE_AGENTS; a++) {
+        BB_CHECK(memcmp(env->obs_ptr[a], shadow.obs_ptr[a], BBE_OBS_SIZE) == 0);
+        const unsigned char* on = env->action_mask_ptr[a];
+        const unsigned char* off = shadow.action_mask_ptr[a];
+        for (int i = 0; i < BBE_MASK_SIZE; i++) {
+            if (on[i] == off[i]) continue;
+            BB_CHECK(a == deciding);
+            BB_CHECK(on[i] == 0 && off[i] == 1);
+            BB_CHECK(i == BB_A_END_TURN || i == end_arg || i == end_sq);
+        }
+    }
+    BB_CHECK_EQ(env->action_mask_ptr[deciding][BB_A_END_TURN], 0);
+    BB_CHECK_EQ(shadow.action_mask_ptr[deciding][BB_A_END_TURN], 1);
+}
+
+static NeetStats neet_play(int flag, uint64_t seed, int episodes) {
+    static ObservationFixture f;
+    static bb_action engine_legal[BB_LEGAL_MAX];
+    observation_fixture_init(&f);
+    Bloodbowl* env = &f.env;
+    memset(&env->match, 0, sizeof env->match);
+    env->seed = seed;
+    env->no_early_end_turn = flag;
+    // The fixture's zero fill would pin roster 0 on both sides.
+    env->exclude_team = env->force_home_team = env->force_away_team = -1;
+    c_reset(env);
+    bb_rng pol;
+    bb_rng_seed(&pol, seed ^ 0x0E471ULL, 9);
+    NeetStats out = {0};
+    int episode_decisions = 0;
+    const bb_action end_turn = {BB_A_END_TURN, 0, 0, 0};
+    while (out.episodes < episodes) {
+        const bb_match* m = &env->match;
+        BB_CHECK_EQ(m->status, BB_STATUS_DECISION);
+        BB_CHECK(env->n_legal > 0);
+        if (m->status != BB_STATUS_DECISION || env->n_legal <= 0) break;
+        int agent = m->decision_team;
+        int n_engine = bb_legal_actions(m, engine_legal);
+        int activates = neet_count_type(engine_legal, n_engine, BB_A_ACTIVATE);
+        int end_turns = neet_count_type(engine_legal, n_engine, BB_A_END_TURN);
+        bool expect_removed = flag && activates > 0 && end_turns > 0;
+        BB_CHECK_EQ(env->legal_end_turn_removed, expect_removed ? 1 : 0);
+        // The env list is the engine list, in order, minus END_TURN when the
+        // rule applies; nothing else is added, dropped or reordered.
+        int j = 0;
+        for (int i = 0; i < n_engine; i++) {
+            if (expect_removed && engine_legal[i].type == BB_A_END_TURN) continue;
+            BB_CHECK(j < env->n_legal &&
+                     bb_action_eq(env->legal[j], engine_legal[i]));
+            j++;
+        }
+        BB_CHECK_EQ(j, env->n_legal);
+        int listed_end_turns =
+            neet_count_type(env->legal, env->n_legal, BB_A_END_TURN);
+        if (flag && activates > 0) BB_CHECK_EQ(listed_end_turns, 0);
+        if (activates == 0) BB_CHECK_EQ(listed_end_turns, end_turns);
+        out.removed += expect_removed;
+        out.end_turn_offered += listed_end_turns > 0;
+        neet_check_masks_match_joint_support(env, agent);
+        float end_turn_heads[3] = {
+            BB_A_END_TURN, (float)bbe_action_arg(agent, end_turn),
+            (float)bbe_action_sq(agent, end_turn)};
+        if (expect_removed) {
+            // Decode agrees with the reduced support: the removed tuple is
+            // rejected, which c_step turns into the abort-on-illegal path.
+            int illegal_before = env->illegal;
+            BB_CHECK_EQ(bbe_decode(env, agent, end_turn_heads).type, BB_A_NONE);
+            BB_CHECK_EQ(env->illegal, illegal_before + 1);
+            env->illegal = illegal_before;
+            if (out.episodes < NEET_OBS_CHECK_EPISODES) {
+                neet_check_observation_is_flag_blind(env);
+            }
+        } else if (listed_end_turns > 0) {
+            BB_CHECK_EQ(bbe_decode(env, agent, end_turn_heads).type,
+                        BB_A_END_TURN);
+        }
+        if (env->n_legal <= 64) {
+            for (int i = 0; i < env->n_legal; i++) {
+                float heads[3] = {(float)env->legal[i].type,
+                                  (float)env->legal_arg[i],
+                                  (float)env->legal_sq[i]};
+                BB_CHECK(bb_action_eq(bbe_decode(env, agent, heads),
+                                      env->legal[i]));
+            }
+        }
+        if (episode_decisions == 0) {
+            out.rosters_seen |= 1ULL << (m->team_id[BB_HOME] & 63);
+            out.rosters_seen |= 1ULL << (m->team_id[BB_AWAY] & 63);
+        }
+        for (int a = 0; a < BBE_AGENTS; a++) {
+            bbe_sample_joint_uniform(env, a, env->action_ptr[a], &pol);
+        }
+        out.end_turn_taken += (int)env->action_ptr[agent][0] == BB_A_END_TURN;
+        int turns_before = m->turns_completed[0] + m->turns_completed[1];
+        c_step(env);
+        out.decisions++;
+        episode_decisions++;
+        if (f.terminals[0] == 0.0f) {
+            int turns_after = m->turns_completed[0] + m->turns_completed[1];
+            if (turns_after > turns_before) out.team_turns += turns_after - turns_before;
+        }
+        if (f.terminals[0] != 0.0f) {
+            // Below the cap, so the episode ended at MATCH_OVER (or an error
+            // episode, counted below), not by the max_decisions truncation.
+            BB_CHECK(episode_decisions < env->max_decisions);
+            if (episode_decisions > out.max_episode_decisions) {
+                out.max_episode_decisions = episode_decisions;
+            }
+            out.episodes++;
+            episode_decisions = 0;
+        }
+    }
+    BB_CHECK_EQ((int)env->log.n, out.episodes);
+    BB_CHECK(env->log.error_episodes == 0.0f);
+    BB_CHECK(env->log.illegal_frac == 0.0f);
+    return out;
+}
+
+BB_TEST(no_early_end_turn_off_leaves_the_engine_list_untouched) {
+    NeetStats off = neet_play(0, 0x0FFE47ULL, NEET_EPISODES_OFF);
+    BB_CHECK_EQ(off.episodes, NEET_EPISODES_OFF);
+    BB_CHECK_EQ(off.removed, 0);
+    BB_CHECK(off.end_turn_taken > 0);
+    printf("no_early_end_turn off: episodes=%d decisions=%ld "
+           "mean_decisions=%.1f max=%d end_turn_taken=%ld team_turns=%ld\n",
+           off.episodes, off.decisions,
+           (double)off.decisions / off.episodes, off.max_episode_decisions,
+           off.end_turn_taken, off.team_turns);
+}
+
+BB_TEST(no_early_end_turn_on_removes_end_turn_exactly_beside_an_activate) {
+    NeetStats on = neet_play(1, 0x0FFE47ULL, NEET_EPISODES_ON);
+    BB_CHECK_EQ(on.episodes, NEET_EPISODES_ON);
+    BB_CHECK(on.removed > 0);
+    // The engine never asks a team with nobody left to activate: it ends the
+    // team turn itself (proc_turn.c). So under the rule a policy seat is in
+    // practice never offered END_TURN in a team turn, and turns still end.
+    BB_CHECK(on.end_turn_taken <= on.end_turn_offered);
+    BB_CHECK(on.team_turns > (long)on.episodes * 16);
+    // Random rosters: the property is not a one-matchup accident.
+    int rosters = 0;
+    for (int bit = 0; bit < 64; bit++) rosters += (on.rosters_seen >> bit) & 1;
+    BB_CHECK(rosters >= 20);
+    printf("no_early_end_turn on: episodes=%d decisions=%ld "
+           "mean_decisions=%.1f max=%d removed=%ld end_turn_offered=%ld "
+           "end_turn_taken=%ld team_turns=%ld rosters=%d\n",
+           on.episodes, on.decisions, (double)on.decisions / on.episodes,
+           on.max_episode_decisions, on.removed, on.end_turn_offered,
+           on.end_turn_taken, on.team_turns, rosters);
+}
+
+BB_TEST(no_early_end_turn_never_removes_the_last_action_or_another_type) {
+    static ObservationFixture f;
+    observation_fixture_init(&f);
+    Bloodbowl* env = &f.env;
+    const bb_action end_turn = {BB_A_END_TURN, 0, 0, 0};
+    const bb_action decline = {BB_A_DECLINE_REROLL, 0, 0, 0};
+
+    // END_TURN alone: nothing to remove it in favour of.
+    env->legal[0] = end_turn;
+    env->n_legal = 1;
+    env->legal_end_turn_removed = 0;
+    bbe_restrict_end_turn(env);
+    BB_CHECK_EQ(env->n_legal, 1);
+    BB_CHECK_EQ(env->legal[0].type, BB_A_END_TURN);
+    BB_CHECK_EQ(env->legal_end_turn_removed, 0);
+
+    // END_TURN beside something that is not an ACTIVATE: not this rule.
+    env->legal[0] = end_turn;
+    env->legal[1] = decline;
+    env->n_legal = 2;
+    bbe_restrict_end_turn(env);
+    BB_CHECK_EQ(env->n_legal, 2);
+    BB_CHECK_EQ(env->legal_end_turn_removed, 0);
+
+    // ACTIVATE without END_TURN: unchanged.
+    env->legal[0] = (bb_action){BB_A_ACTIVATE, 3, 0, 0};
+    env->n_legal = 1;
+    bbe_restrict_end_turn(env);
+    BB_CHECK_EQ(env->n_legal, 1);
+    BB_CHECK_EQ(env->legal_end_turn_removed, 0);
+
+    // END_TURN between ACTIVATEs: it alone goes, the order of the rest holds.
+    env->legal[0] = (bb_action){BB_A_ACTIVATE, 3, 0, 0};
+    env->legal[1] = end_turn;
+    env->legal[2] = (bb_action){BB_A_ACTIVATE, 5, 0, 0};
+    env->legal[3] = (bb_action){BB_A_ACTIVATE, 9, 0, 0};
+    env->n_legal = 4;
+    bbe_restrict_end_turn(env);
+    BB_CHECK_EQ(env->n_legal, 3);
+    BB_CHECK_EQ(env->legal_end_turn_removed, 1);
+    BB_CHECK(bb_action_eq(env->legal[0], (bb_action){BB_A_ACTIVATE, 3, 0, 0}));
+    BB_CHECK(bb_action_eq(env->legal[1], (bb_action){BB_A_ACTIVATE, 5, 0, 0}));
+    BB_CHECK(bb_action_eq(env->legal[2], (bb_action){BB_A_ACTIVATE, 9, 0, 0}));
+}
+
+BB_TEST(no_early_end_turn_covers_the_charge_window_and_keeps_a_lone_end_turn) {
+    // The other place the engine offers END_TURN beside ACTIVATE is the
+    // Charge! kickoff result (KICKOFF phase 7). The rule is by action type,
+    // as the play harness's mask m1 is, so it applies there too; and with no
+    // Open player to pick, the engine's lone END_TURN stays.
+    static ObservationFixture f;
+    observation_fixture_init(&f);
+    Bloodbowl* env = &f.env;
+    obs_clear_pitch(&f);
+    obs_place(&f, 3, 10, 7);  // HOME, in the open
+    obs_place(&f, 20, 20, 7); // AWAY, far away
+    env->match.status = BB_STATUS_DECISION;
+    env->match.decision_team = BB_HOME;
+    env->match.stack_top = 1;
+    env->match.stack[0] = (bb_frame){BB_PROC_KICKOFF, 7, BB_HOME, 0, 3, 0, 0};
+
+    bbe_refresh_legal(env);
+    BB_CHECK_EQ(env->n_legal, 2);
+    BB_CHECK_EQ(env->legal[0].type, BB_A_ACTIVATE);
+    BB_CHECK_EQ(env->legal[1].type, BB_A_END_TURN);
+
+    env->no_early_end_turn = 1;
+    bbe_refresh_legal(env);
+    BB_CHECK_EQ(env->n_legal, 1);
+    BB_CHECK_EQ(env->legal[0].type, BB_A_ACTIVATE);
+    BB_CHECK_EQ(env->legal_end_turn_removed, 1);
+
+    // The only HOME player is marked: nobody Open, so END_TURN is all there is.
+    env->match.players[20].x = 11;
+    env->match.grid[20][7] = 0;
+    env->match.grid[11][7] = (uint8_t)(20 + 1);
+    bbe_refresh_legal(env);
+    BB_CHECK_EQ(env->n_legal, 1);
+    BB_CHECK_EQ(env->legal[0].type, BB_A_END_TURN);
+    BB_CHECK_EQ(env->legal_end_turn_removed, 0);
+}
+
+BB_TEST(no_early_end_turn_marker_tracks_the_current_list_only) {
+    // The removal marker tracks the CURRENT list only: once the flag is
+    // cleared, the next refresh restores the engine's list.
+    static ObservationFixture f;
+    static bb_action engine_legal[BB_LEGAL_MAX];
+    observation_fixture_init(&f);
+    Bloodbowl* env = &f.env;
+    memset(&env->match, 0, sizeof env->match);
+    env->seed = 0x7E57ULL;
+    env->no_early_end_turn = 1;
+    c_reset(env);
+    bb_rng pol;
+    bb_rng_seed(&pol, 77, 9);
+    int guard = 0;
+    while (!env->legal_end_turn_removed && guard++ < 20000) {
+        for (int a = 0; a < BBE_AGENTS; a++) {
+            bbe_sample_joint_uniform(env, a, env->action_ptr[a], &pol);
+        }
+        c_step(env);
+    }
+    BB_CHECK(env->legal_end_turn_removed);
+    int n_engine = bb_legal_actions(&env->match, engine_legal);
+    BB_CHECK_EQ(env->n_legal, n_engine - 1);
+    env->no_early_end_turn = 0;
+    bbe_refresh_legal(env);
+    BB_CHECK_EQ(env->legal_end_turn_removed, 0);
+    BB_CHECK_EQ(env->n_legal, n_engine);
+    BB_CHECK_EQ(neet_count_type(env->legal, env->n_legal, BB_A_END_TURN), 1);
+}

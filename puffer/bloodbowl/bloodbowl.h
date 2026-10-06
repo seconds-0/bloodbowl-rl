@@ -678,6 +678,13 @@ typedef struct {
     // mechanism that excludes frozen-bank rows -- no CUDA change. 0 = global
     // scripted_opponent semantics (every env; only legal when not learning).
     int scripted_bank_tag;
+    // Env-layer TRAINING RESTRICTION, not a Blood Bowl rule: the rulebook lets
+    // a coach end the team turn at any time and the engine still offers it.
+    // When set, a policy-controlled seat's legal list loses END_TURN at every
+    // decision where an ACTIVATE is also legal (bbe_refresh_legal). Scripted
+    // bot seats are never restricted. 0 = off (default), which leaves the
+    // list exactly as the engine enumerated it.
+    int no_early_end_turn;
     int max_decisions;
     // Spectator rendering (bbe_render.h); NULL until c_render is first called.
     int render_fps;
@@ -785,6 +792,8 @@ typedef struct {
     float ep_reward_abs_max;
     bb_action legal[BB_LEGAL_MAX];
     int n_legal;
+    // 1 while legal[] is missing an END_TURN that no_early_end_turn removed.
+    uint8_t legal_end_turn_removed;
     int score_prev[2];
     // Scores at episode START (0-0 from kickoff; the banked scores on a demo
     // reset). The Log's tds/score_diff count only the DELTAS scored within
@@ -1104,10 +1113,60 @@ static void bbe_macro_reach(Bloodbowl* env, const bb_match* m, int mover,
                             int is_blitz);
 static bb_action bbe_macro_plan(Bloodbowl* env, int mover, int dst);
 
+// A seat the scripted bot plays: c_step ignores the policy heads there.
+// scripted_opponent_team: 0=HOME scripted, 1=AWAY scripted, 2=BOTH (bot-vs-bot,
+// for spectating/validation: no policy drives either side).
+static bool bbe_seat_is_scripted(const Bloodbowl* env, int agent) {
+    if (!env->scripted_opponent) return false;
+    if (env->scripted_bank_tag > 0 && env->tag != env->scripted_bank_tag) {
+        return false;
+    }
+    if (env->scripted_opponent_team == 2) return true;
+    return agent == (env->scripted_opponent_team == BB_HOME ? BB_HOME : BB_AWAY);
+}
+
+// no_early_end_turn: drop END_TURN from legal[] when an ACTIVATE is also in
+// it. Only whole-type removal, and only when another type remains, so the
+// list is never emptied and stays an exact joint support. The engine is not
+// consulted again: legal[] is the single source for the marginal masks, the
+// packed joint support and bbe_decode, so all three shrink together and a
+// sampled END_TURN outside the reduced list aborts like any other tuple
+// outside support.
+static void bbe_restrict_end_turn(Bloodbowl* env) {
+    bool has_activate = false, has_end_turn = false;
+    for (int i = 0; i < env->n_legal; i++) {
+        has_activate |= env->legal[i].type == BB_A_ACTIVATE;
+        has_end_turn |= env->legal[i].type == BB_A_END_TURN;
+    }
+    if (!has_activate || !has_end_turn) return;
+    int kept = 0;
+    for (int i = 0; i < env->n_legal; i++) {
+        if (env->legal[i].type == BB_A_END_TURN) continue;
+        env->legal[kept++] = env->legal[i];
+    }
+    env->n_legal = kept;
+    env->legal_end_turn_removed = 1;
+}
+
+// The scripted bot chooses from the engine's own list. This undoes a removal
+// made while the seat still read as policy-controlled: selfplay tags are
+// assigned after the first reset, so a scripted-bank seat can inherit a list
+// that was built for a policy.
+static void bbe_unrestrict_legal(Bloodbowl* env) {
+    if (!env->legal_end_turn_removed) return;
+    env->n_legal = bb_legal_actions(&env->match, env->legal);
+    env->legal_end_turn_removed = 0;
+}
+
 static void bbe_refresh_legal(Bloodbowl* env) {
     env->n_legal = env->match.status == BB_STATUS_DECISION
                        ? bb_legal_actions(&env->match, env->legal)
                        : 0;
+    env->legal_end_turn_removed = 0;
+    if (env->no_early_end_turn && env->n_legal > 0 &&
+        !bbe_seat_is_scripted(env, env->match.decision_team)) {
+        bbe_restrict_end_turn(env);
+    }
 }
 
 // --- Observation encoding ------------------------------------------------------
@@ -3457,15 +3516,9 @@ static void c_step(Bloodbowl* env) {
     bb_match* m = &env->match;
     if (m->status == BB_STATUS_DECISION && env->n_legal > 0) {
         int agent = m->decision_team;
-        // scripted_opponent_team: 0=HOME scripted, 1=AWAY scripted, 2=BOTH
-        // (bot-vs-bot, for spectating/validation — no policy drives either side).
-        int scripted_both = env->scripted_opponent_team == 2;
-        int scripted_team = env->scripted_opponent_team == BB_HOME
-                                ? BB_HOME : BB_AWAY;
         bb_action act;
-        int scripted_env = env->scripted_opponent &&
-            (env->scripted_bank_tag <= 0 || env->tag == env->scripted_bank_tag);
-        if (scripted_env && (scripted_both || agent == scripted_team)) {
+        if (bbe_seat_is_scripted(env, agent)) {
+            bbe_unrestrict_legal(env);
             act = env->scripted_opponent_type == 1
                       ? bbe_offense_bot_pick(m, env->legal, env->n_legal)
                       : bbe_contact_bot_pick(m, env->legal, env->n_legal);
