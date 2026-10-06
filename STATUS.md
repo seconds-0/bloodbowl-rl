@@ -326,3 +326,5 @@ Rig checkout `/home/rache/bloodbowl-rl-qualification-candidate-10619e2` at
 `8ecf8a6` (clean `--float` rebuild, drift check OK, genesis root and pool
 re-validated against the rebuilt module). BBTV production checkout untouched.
 Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
+
+**Update 2026-10-05 22:45 PDT (D418 amendments): the b3 build passed its identity check on the third attempt; the canary is running.** Two failed attempts came from the stage script asking the trace probe for more than the trainer's 64 MiB snapshot cap; fixed without changing the pass criteria. Chains 55 (plain), 56 (rule) and 57 (bot seat) from chain 49 follow. The registration was tightened after review: a candidate must also beat chain 49 on the held-out opponents, and a positive chain 57 makes the seat change a candidate, not an adopted change.
