@@ -91,6 +91,34 @@ def no_early_end_turn_evidence_failure(metrics, declared):
     return None
 
 
+def no_early_end_turn_truncation_failure(metrics, declared):
+    """Whether a panel of a run under no_early_end_turn shows a game cut short.
+
+    `truncated_episodes` is the share of episodes the env ended at its
+    max_decisions cap instead of at the end of the match. Such a game is
+    scored from the score at the cap and counted like a full one, and it is
+    not an error episode. The rule makes games longer, so a run that declares
+    it is accepted only with the counter present and exactly zero (D416
+    amendment). A run that does not declare the rule is not judged here: its
+    acceptance is what it was before the counter existed.
+
+    Returns None when the panel is acceptable, otherwise the reason.
+    """
+    if not declared:
+        return None
+    observed = metrics.get("truncated_episodes")
+    if observed is None:
+        return ("the panel has no truncated_episodes: under no_early_end_turn "
+                "a run is accepted only when the env reports that no game was "
+                "cut by the decision cap")
+    if (isinstance(observed, bool) or not isinstance(observed, (int, float))
+            or not math.isfinite(observed) or observed != 0):
+        return (f"truncated_episodes is {observed!r}: games were cut by the "
+                "max_decisions cap, and a run under no_early_end_turn is "
+                "accepted only with none")
+    return None
+
+
 def strip_ansi(s):
     s = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", s)
     return s.replace("\u2502", " ").replace("\u2503", " ")  # box verticals

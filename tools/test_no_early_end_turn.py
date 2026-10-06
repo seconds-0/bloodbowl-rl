@@ -439,14 +439,19 @@ STUB_EVAL_RULE = chain_tests.STUB_EVAL.replace(
     'echo "$SEED $BOT_TYPE $BOT_TEAM $STEPS $LOG omp=').replace(
     'echo "validated scripted eval: 2010 games; cumulative gate 2010"',
     'if [ "${STUB_EVAL_RULE-${' + KNOB + ':-0}}" = "1" ]; then\n'
-    '  python3 - "$LOG" <<\'PY\'\n'
+    '  STUB_CELL="$SEED $BOT_TYPE $BOT_TEAM" python3 - "$LOG" <<\'PY\'\n'
     'import json, sys\n'
     'lines = open(sys.argv[1], encoding="utf-8").read().split("\\n", 1)\n'
     'prefix = "BB_EVAL_MANIFEST "\n'
     'manifest = json.loads(lines[0][len(prefix):])\n'
     'manifest["no_early_end_turn"] = 1\n'
     'manifest["command"] += ["--env.no-early-end-turn", "1"]\n'
-    'panels = lines[1].replace(\'"n": \', \'"end_turn_removed": 250.0, "n": \')\n'
+    'import os\n'
+    'cut = 0.01 if os.environ.get("STUB_EVAL_TRUNCATED") == os.environ["STUB_CELL"] else 0.0\n'
+    'extra = \'"end_turn_removed": 250.0, \'\n'
+    'if os.environ.get("STUB_EVAL_NO_COUNTER") != os.environ["STUB_CELL"]:\n'
+    '    extra += \'"truncated_episodes": %r, \' % cut\n'
+    'panels = lines[1].replace(\'"n": \', extra + \'"n": \')\n'
     'open(sys.argv[1], "w", encoding="utf-8").write(\n'
     '    prefix + json.dumps(manifest, sort_keys=True) + "\\n" + panels)\n'
     'PY\n'
@@ -592,6 +597,22 @@ class ChainStageRuleTests(unittest.TestCase):
         self.assertIn("the cell ran with no_early_end_turn on, the stage needs it off",
                       result.stdout)
 
+    def test_a_cut_game_in_one_exam_cell_registers_no_verdict(self):
+        # D416 amendment: under the rule every exam cell must show zero
+        # truncated_episodes, and the counter must be there.
+        for knob, message in (
+            ("STUB_EVAL_TRUNCATED", "truncated_episodes is 0.01"),
+            ("STUB_EVAL_NO_COUNTER", "the panel has no truncated_episodes"),
+        ):
+            with self.subTest(knob=knob):
+                self.tearDown()
+                self.setUp()
+                result = self.stage(**{KNOB: "1", knob: "43 1 1"})
+                self.assertEqual(result.returncode, 8, result.stdout)
+                self.assertIn("s43/offense_away.log: " + message, result.stdout)
+                self.assertFalse((self.run_dir / "EXAM_VERDICT.json").exists())
+                self.assertFalse((self.run_dir / "EXAM_VERDICT_PASS.json").exists())
+
     def test_bad_values_are_a_configuration_error(self):
         for bad in BAD_VALUES:
             result = self.stage(**{KNOB: bad})
@@ -612,9 +633,12 @@ class ExamVerdictRuleTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def write(self, rule_cells=(), command_cells=None, value=1,
-              panel_cells=None, removed=250.0):
+              panel_cells=None, removed=250.0, counted_cells="all",
+              truncated_cells=(), truncated=0.01):
         """Six valid cells; those named carry the rule in the manifest key,
-        the command and the env panel (end_turn_removed)."""
+        the command and the env panel (end_turn_removed). Every cell in
+        `counted_cells` carries truncated_episodes: zero, or `truncated` for
+        the cells in `truncated_cells`."""
         verdict_tests.write_exam(self.exam)
         command_cells = rule_cells if command_cells is None else command_cells
         panel_cells = rule_cells if panel_cells is None else panel_cells
@@ -628,6 +652,10 @@ class ExamVerdictRuleTests(unittest.TestCase):
                 manifest["command"] += FLAG
             if panel_cells == "all" or name in panel_cells:
                 rest = rest.replace('"n": ', f'"end_turn_removed": {removed}, "n": ')
+            if counted_cells == "all" or name in counted_cells:
+                cut = truncated if (truncated_cells == "all"
+                                    or name in truncated_cells) else 0.0
+                rest = rest.replace('"n": ', f'"truncated_episodes": {cut}, "n": ')
             log.write_text("BB_EVAL_MANIFEST " + json.dumps(manifest, sort_keys=True)
                            + "\n" + rest, encoding="utf-8")
 
@@ -669,6 +697,39 @@ class ExamVerdictRuleTests(unittest.TestCase):
         self.assertEqual({cell["no_early_end_turn"] for cell in verdict["cells"]}, {1})
         self.assertEqual({cell["end_turn_removed"] for cell in verdict["cells"]},
                          {250.0})
+        self.assertEqual({cell["truncated_episodes"] for cell in verdict["cells"]},
+                         {0.0})
+
+    def test_under_the_rule_one_cut_game_in_one_cell_is_no_verdict(self):
+        # D416 amendment. One cell out of six is enough.
+        self.write(rule_cells="all", truncated_cells=("s42/contact_home",))
+        self.assert_no_verdict(
+            self.run_tool("--no-early-end-turn", "1"),
+            "s42/contact_home.log: truncated_episodes is 0.01")
+        # The counter missing from one cell is a failure too, not a zero.
+        cells = [f"s{seed}/{name}" for seed in (42, 43)
+                 for name, _, _ in verdict_tests.CELLS]
+        self.write(rule_cells="all", counted_cells=cells[:-1])
+        self.assert_no_verdict(
+            self.run_tool("--no-early-end-turn", "1"),
+            "s43/offense_away.log: the panel has no truncated_episodes")
+
+    def test_without_the_rule_cut_games_change_nothing(self):
+        # A run that does not declare the rule is accepted as it always was:
+        # with the counter absent (a build from before it), zero, or not zero.
+        outcomes = []
+        for kwargs in ({"counted_cells": ()}, {}, {"truncated_cells": "all"}):
+            for path in self.out.iterdir():
+                path.unlink()
+            self.write(**kwargs)
+            result = self.run_tool()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            verdict = json.loads((self.out / "EXAM_VERDICT.json").read_text())
+            self.assertNotIn("truncated_episodes", json.dumps(verdict))
+            verdict.pop("written_utc")
+            outcomes.append(verdict)
+        self.assertEqual(outcomes[0], outcomes[1])
+        self.assertEqual(outcomes[0], outcomes[2])
 
     def test_cells_and_stage_must_agree_in_both_directions(self):
         self.write(rule_cells="all")
@@ -736,6 +797,19 @@ class PanelEvidenceTests(unittest.TestCase):
             self.assertIn("never removed END_TURN",
                           failure({"end_turn_removed": bad}, True), repr(bad))
 
+    def test_cut_games_fail_only_a_run_that_declares_the_rule(self):
+        from game_stats import no_early_end_turn_truncation_failure as failure
+        self.assertIsNone(failure({"truncated_episodes": 0.0}, True))
+        self.assertIsNone(failure({"truncated_episodes": 0}, True))
+        self.assertIn("has no truncated_episodes", failure({"n": 2000.0}, True))
+        for bad in (0.004, 1, -0.5, float("nan"), float("inf"), True, "0"):
+            self.assertIn("accepted only with none",
+                          failure({"truncated_episodes": bad}, True), repr(bad))
+        # Undeclared: never judged, whatever the panel says.
+        for panel in ({}, {"truncated_episodes": 0.0}, {"truncated_episodes": 0.3},
+                      {"truncated_episodes": float("nan")}):
+            self.assertIsNone(failure(panel, False), panel)
+
     def test_screen_acceptance_and_exam_verdict_both_apply_it(self):
         screen = SCREEN.read_text(encoding="utf-8")
         self.assertIn(
@@ -746,8 +820,16 @@ class PanelEvidenceTests(unittest.TestCase):
             "        failures.append({\n"
             '            "phase": phase, "kind": "no_early_end_turn_evidence",\n',
             screen)
+        self.assertIn(
+            "    reason = no_early_end_turn_truncation_failure(metrics, rule_declared)\n"
+            "    if reason:\n"
+            "        failures.append({\n"
+            '            "phase": phase, "kind": "no_early_end_turn_truncated_episodes",\n',
+            screen)
         verdict = VERDICT.read_text(encoding="utf-8")
         self.assertIn("reason = no_early_end_turn_evidence_failure(values, rule_on)",
+                      verdict)
+        self.assertIn("reason = no_early_end_turn_truncation_failure(values, rule_on)",
                       verdict)
 
     def test_the_env_emits_the_counter_on_the_machine_panel(self):
@@ -757,6 +839,163 @@ class PanelEvidenceTests(unittest.TestCase):
         # Not an integrity counter: it is above zero by design under the rule.
         from live_integrity_guard import HARD_INTEGRITY_KEYS
         self.assertNotIn("end_turn_removed", HARD_INTEGRITY_KEYS)
+
+
+class ScreenAcceptanceTests(unittest.TestCase):
+    """The screen's real acceptance step (materialize_result), run on a finished
+    arm: a real trainer log, status, run manifest and final checkpoint."""
+
+    FINAL_STEPS = 131072
+
+    @classmethod
+    def setUpClass(cls):
+        source = SCREEN.read_text(encoding="utf-8")
+        match = re.search(
+            r'"\$MIN_TRAIN_GAMES" "\$MIN_EVAL_GAMES" "\$ARM_DETACH" <<\'PY\'\n(.*?)\nPY\n\}',
+            source, re.S)
+        assert match, "materialize_result heredoc not found"
+        cls.block = match.group(1)
+        from reward_manifest import load_manifest
+        cls.reward = ROOT / "puffer/config/rewards/r0_poss_half.json"
+        _, cls.reward_sha = load_manifest(cls.reward)
+
+    def setUp(self):
+        import checkpoint_lineage
+        self.temp = tempfile.TemporaryDirectory()
+        self.root, _, _ = rung_tests.stand_in_checkout(self.temp.name)
+        self.run_dir = self.root / "vendor/PufferLib/checkpoints/bloodbowl/run1"
+        self.run_dir.mkdir(parents=True)
+        self.checkpoint = self.run_dir / f"{self.FINAL_STEPS:016d}.bin"
+        with self.checkpoint.open("wb") as handle:
+            handle.write(b"accepted arm")
+            handle.truncate(checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES)
+        self.out = self.root / "screen"
+        self.out.mkdir()
+        self.log = self.out / "arm.log"
+        self.result = self.out / "arm.result.json"
+        self.build = {"source_sha256": "1" * 64, "compiled_module_sha256": "2" * 64,
+                      "puffer_patch_bundle_sha256": "3" * 64}
+        Path(str(self.log) + ".status.json").write_text(
+            json.dumps({"exit_code": 0, "pid": 4321}))
+        Path(str(self.log) + ".process.json").write_text(
+            json.dumps({"pid": 4321, "process_group": 4321}))
+        Path(str(self.log) + ".run_dir").write_text(str(self.run_dir) + "\n")
+        Path(str(self.log) + ".manifest.json").write_text(json.dumps({
+            "schema_version": 1, "mode": "native_static_pool_reward_ablation",
+            "seed": "42", "observation_abi": "obs-v6", "observation_version": "6",
+            "action_abi": "exact-joint-v1", "initialization": "lineage-v6",
+            "qualification_only": "0", "policy_hidden_size": "512",
+            "policy_num_layers": "3", "policy_expansion_factor": "1",
+            "expected_checkpoint_bytes": str(checkpoint_lineage.EXPECTED_CHECKPOINT_BYTES),
+            **self.build, "screen_manifest_sha256": "4" * 64,
+            "warm_lineage_sha256": "5" * 64, "pool_lineage_bundle_sha256": "6" * 64,
+            "reward_sha256": self.reward_sha, "final_steps": str(self.FINAL_STEPS),
+        }, sort_keys=True) + "\n")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def accept(self, *, declared, train=None, eval_=None, train_first=None):
+        """Run acceptance. `train` and `eval_` are the extra panel metrics of
+        the two phases; None leaves the phase without the two rule counters.
+        `train_first` replaces them in the first of the two training intervals."""
+        from live_integrity_guard import HARD_INTEGRITY_KEYS
+        base = {"tds": 1.6, "perf": 0.6, "possession_rate": 0.4,
+                "blocks_thrown": 9.0, "block_2d_frac": 0.5, "block_2dred_frac": 0.1,
+                **{key: 0.0 for key in HARD_INTEGRITY_KEYS}}
+
+        def panel(n, phase_eval, cumulative, final, extra):
+            payload = {"_puffer_schema": 2, "_puffer_phase_eval": phase_eval,
+                       "_puffer_env_cumulative": cumulative,
+                       "_puffer_final_reprint": final, "n": float(n), **base,
+                       **(extra or {})}
+            return "PufferLib 4.0\nPUFFER_ENV_JSON " + json.dumps(payload) + "\n"
+
+        clean = {"end_turn_removed": 120.0 if declared else 0.0,
+                 "truncated_episodes": 0.0}
+        train = clean if train == "clean" else train
+        eval_ = clean if eval_ == "clean" else eval_
+        train_first = clean if train_first == "clean" else (train_first or train)
+        # Two training intervals: a cut game in one must not be averaged away.
+        self.log.write_text(
+            panel(500, 0, 0, 0, train_first)
+            + panel(700, 0, 0, 0, train)
+            + panel(6000, 1, 1, 0, eval_) + panel(12000, 1, 1, 0, eval_)
+            + panel(12000, 1, 1, 1, eval_), encoding="utf-8")
+        ladder = {"reset_pct": 0.0, "endzone_maxdist": 0}
+        if declared:
+            ladder["no_early_end_turn"] = 1
+        manifest = self.out / "SCREEN_MANIFEST.json"
+        manifest.write_text(json.dumps({"contract": {
+            "final_steps": self.FINAL_STEPS, "qualification_only": False,
+            "settings": {"expected_checkpoint_bytes": "16066560"},
+            "implementation": self.build, "ladder": ladder}}))
+        for stale in (self.result, Path(str(self.checkpoint) + ".lineage.json")):
+            if stale.exists():
+                stale.unlink()
+        done = subprocess.run(
+            [sys.executable, "-", str(self.root), "write", "r0_poss_half", "42", "arm",
+             str(self.reward), str(self.log), str(self.result), str(manifest),
+             "4" * 64, "1", "10000", "1"],
+            input=self.block, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False, timeout=300)
+        record = json.loads(self.result.read_text()) if self.result.exists() else None
+        return done, record
+
+    def assert_accepted(self, done, record):
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIs(record["acceptance_pass"], True)
+        self.assertEqual(record["acceptance_failures"], [])
+        self.assertTrue(Path(str(self.checkpoint) + ".lineage.json").exists())
+
+    def assert_refused(self, done, record, phase, kind, message):
+        self.assertNotEqual(done.returncode, 0)
+        self.assertIn("arm completed but failed screen acceptance", done.stderr)
+        self.assertIs(record["acceptance_pass"], False)
+        failures = [f for f in record["acceptance_failures"] if f["kind"] == kind]
+        self.assertEqual([f["phase"] for f in failures], [phase], record)
+        self.assertIn(message, failures[0]["reason"])
+        # A refused arm publishes no lineage: it cannot warm-start anything.
+        self.assertFalse(Path(str(self.checkpoint) + ".lineage.json").exists())
+
+    def test_a_clean_rule_arm_is_accepted(self):
+        self.assert_accepted(*self.accept(declared=True, train="clean", eval_="clean"))
+
+    def test_a_cut_game_in_training_fails_a_rule_arm(self):
+        # One game of 700 in the second interval; the first interval is clean.
+        done, record = self.accept(
+            declared=True, eval_="clean", train_first="clean",
+            train={"end_turn_removed": 120.0, "truncated_episodes": 1 / 700})
+        self.assert_refused(done, record, "train",
+                            "no_early_end_turn_truncated_episodes",
+                            "games were cut by the max_decisions cap")
+
+    def test_a_cut_game_in_the_final_evaluation_fails_a_rule_arm(self):
+        done, record = self.accept(
+            declared=True, train="clean",
+            eval_={"end_turn_removed": 120.0, "truncated_episodes": 1 / 12000})
+        self.assert_refused(done, record, "eval",
+                            "no_early_end_turn_truncated_episodes",
+                            "games were cut by the max_decisions cap")
+
+    def test_a_missing_counter_fails_a_rule_arm(self):
+        for phase, kwargs in (
+            ("train", {"train": {"end_turn_removed": 120.0}, "eval_": "clean"}),
+            ("eval", {"train": "clean", "eval_": {"end_turn_removed": 120.0}}),
+        ):
+            done, record = self.accept(declared=True, **kwargs)
+            self.assert_refused(done, record, phase,
+                                "no_early_end_turn_truncated_episodes",
+                                "the panel has no truncated_episodes")
+
+    def test_an_arm_that_does_not_declare_the_rule_is_unaffected(self):
+        # Counters absent (a build from before them), zero, or showing cut
+        # games: acceptance is what it always was.
+        cut = {"end_turn_removed": 0.0, "truncated_episodes": 0.02}
+        for kwargs in ({"train": None, "eval_": None},
+                       {"train": "clean", "eval_": "clean"},
+                       {"train": cut, "eval_": cut}):
+            self.assert_accepted(*self.accept(declared=False, **kwargs))
 
 
 class EvalScriptTests(unittest.TestCase):

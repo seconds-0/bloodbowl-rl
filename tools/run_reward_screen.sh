@@ -1335,6 +1335,7 @@ from game_stats import (
     completed_game_requirement_met,
     dashboard_windows,
     no_early_end_turn_evidence_failure,
+    no_early_end_turn_truncation_failure,
     weighted_dashboard,
 )
 from reward_manifest import load_manifest
@@ -1471,6 +1472,15 @@ for phase, metrics in phase_metrics.items():
         failures.append({
             "phase": phase, "kind": "no_early_end_turn_evidence",
             "declared": rule_declared, "reason": reason,
+        })
+    # Under the rule a game cut by the decision cap fails the arm, in training
+    # and in the end-of-run evaluation alike (D416 amendment). A run that does
+    # not declare the rule is not judged on this.
+    reason = no_early_end_turn_truncation_failure(metrics, rule_declared)
+    if reason:
+        failures.append({
+            "phase": phase, "kind": "no_early_end_turn_truncated_episodes",
+            "observed": metrics.get("truncated_episodes"), "reason": reason,
         })
 counted_windows = [
     window for window in dashboard_windows(log)
