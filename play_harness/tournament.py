@@ -50,6 +50,8 @@ import subprocess
 import sys
 import time
 
+import numpy as np
+
 from . import engine as E
 from .policy import (NONE_TUPLE, PolicySeat, batched_forward, check_temperature,
                      load_checkpoint)
@@ -161,6 +163,35 @@ def library_sha256(path=None):
         return hashlib.sha256(f.read()).hexdigest()
 
 
+BEHAVIOUR_KEYS = (
+    "activations", "declared_move", "declared_block", "declared_blitz", "declared_pass",
+    "declared_handoff", "declared_foul", "declared_other", "end_turn",
+    "end_turn_with_player_left", "block_targets", "block_targets_block",
+    "block_targets_blitz", "ended_at_once", "ended_with_block_target_on_offer",
+    "pass_targets", "handoff_targets", "foul_targets")
+
+
+def new_behaviour():
+    """Per-side action counts of one match (HOME, AWAY each get one).
+
+    Counted from the tuples the runner applies, for policy and bot seats alike:
+      activations                       ACTIVATE actions
+      declared_<kind>                   DECLARE actions by kind
+      end_turn                          END_TURN actions
+      end_turn_with_player_left         ... chosen while an ACTIVATE was legal
+      block_targets[_block|_blitz]      BLOCK_TARGET actions, and those inside a
+                                        declared Block or Blitz
+      ended_at_once                     END_ACTIVATION as the first action after a
+                                        declaration
+      ended_with_block_target_on_offer  END_ACTIVATION chosen while a BLOCK_TARGET
+                                        was legal
+      pass_targets, handoff_targets, foul_targets
+    record() adds the engine's own per-team counters: team_turns,
+    team_turns_holding_ball, turnovers.
+    """
+    return {key: 0 for key in BEHAVIOUR_KEYS}
+
+
 class Match:
     """One natural match in flight: the engine, both seats, the action trail and
     every per-step contract check.
@@ -199,6 +230,9 @@ class Match:
         self.c_steps = 0
         self.trail = hashlib.sha256()
         self.logprob = [0.0, 0.0]
+        self.behaviour = [new_behaviour(), new_behaviour()]
+        self._kind = [None, None]            # the kind each side last declared
+        self._declared = [False, False]      # its last action was that declaration
 
     def close(self):
         self.eng.close()
@@ -236,6 +270,7 @@ class Match:
                                      f"{c_steps}: rc={idx}")
             tup = eng.legal()[idx].tuple
             self.trail.update(struct.pack("<Biii", team, *tup))
+            self.count(team, tup)
             rc = eng.step_scripted(bots[team].bot_type, team)
         else:
             tup = tuple(int(v) for v in outs[team]["tuple"])
@@ -243,12 +278,48 @@ class Match:
                 raise IntegrityError(f"seat {team} tuple {tup} outside exact support")
             self.logprob[team] += float(outs[team]["logprob"])
             self.trail.update(struct.pack("<Biii", team, *tup))
+            self.count(team, tup)
             rc = eng.step(*tup)
         if rc == E.STEP_TERMINAL:
             return True
         if rc < 0:
             raise IntegrityError(f"engine refused seat {team} tuple {tup}: rc={rc}")
         return False
+
+    def count(self, team, tup):
+        """Tally one applied action for `team`. Reads the engine, changes nothing."""
+        b, kind_of = self.behaviour[team], E.ACT_KINDS
+        t, arg = int(tup[0]), int(tup[1])
+        name = E.ACTION_TYPES[t]
+        first_after_declaration = self._declared[team]
+        self._declared[team] = name == "DECLARE"
+        if name == "ACTIVATE":
+            b["activations"] += 1
+        elif name == "DECLARE":
+            self._kind[team] = kind_of[arg].lower() if arg < len(kind_of) else "other"
+            key = "declared_" + self._kind[team]
+            b[key if key in b else "declared_other"] += 1
+        elif name == "END_TURN":
+            b["end_turn"] += 1
+            if self._legal_types(team) & {E.A["ACTIVATE"]}:
+                b["end_turn_with_player_left"] += 1
+        elif name == "BLOCK_TARGET":
+            b["block_targets"] += 1
+            if self._kind[team] == "blitz":
+                b["block_targets_blitz"] += 1
+            elif self._kind[team] == "block":
+                b["block_targets_block"] += 1
+        elif name == "END_ACTIVATION":
+            if first_after_declaration:
+                b["ended_at_once"] += 1
+            if self._legal_types(team) & {E.A["BLOCK_TARGET"]}:
+                b["ended_with_block_target_on_offer"] += 1
+        elif name in ("PASS_TARGET", "HANDOFF_TARGET", "FOUL_TARGET"):
+            b[name.lower() + "s"] += 1
+
+    def _legal_types(self, team):
+        packed = np.asarray(self.eng.joint_support(team), dtype=np.int64)
+        return set(int(t) for t in np.unique(packed & 1023))
 
     def check_step_budget(self):
         if self.c_steps >= self.max_c_steps:
@@ -276,6 +347,11 @@ class Match:
             raise IntegrityError("decision budget reached at the terminal step")
         modes = tuple(s.mode for s in seats)
         temperatures = tuple(s.temperature for s in seats)
+        for side in (0, 1):
+            self.behaviour[side].update(
+                team_turns=int(final.turns_completed[side]),
+                team_turns_holding_ball=int(final.turns_completed_held[side]),
+                turnovers=int(final.turnovers_completed[side]))
         return {
             "engine_seed": int(self.engine_seed), "episode": int(self.episode),
             "mode": modes[0] if modes[0] == modes[1] else "mixed",
@@ -294,6 +370,7 @@ class Match:
             "logprob_sum": [round(logprob[0], 4), round(logprob[1], 4)],
             "integrity": integrity, "action_trail_sha256": self.trail.hexdigest(),
             "final_digest": f"{eng.digest():016x}", "seconds": round(time.time() - self.t0, 3),
+            "behaviour": self.behaviour,
         }
 
 
