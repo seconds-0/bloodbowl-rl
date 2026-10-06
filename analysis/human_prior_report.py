@@ -210,32 +210,62 @@ def audit_tables(run):
                 + [f"{k}: legal / declared per turn" for k in ("Block", "Blitz", "Pass", "Hand-off", "Foul")],
                 rows))
     print("### D. Added after the first read of the gate (not pre-registered)\n")
-    h1, o1 = (a["D1_declared_block_then_no_block_human_states"],
-              a["D1_declared_block_then_no_block_own_states"])
-    print("D1. After a Block declaration with a target available, ending the "
-          "activation without throwing the block:\n")
-    print(table(["states", "n", "what was done", "prior", "chain 41", "chain 36", "chain 9"], [
-        ["human (held-out)", f"{h1['n']:,}", "humans " + iv(h1["human_rate"])]
-        + [f"{h1[k]['rate_t1']['value']:.3f}" for k in ("prior", "chain41", "chain36", "chain9")],
-        ["chain 41's own", f"{o1['n']:,}", f"chain 41 {o1['chain41_sampled_rate']:.3f}"]
-        + [f"{o1[k]['rate_t1']['value']:.3f}" for k in ("prior", "chain41", "chain36", "chain9")]]))
-    h2, o2 = a["D2_empty_activations_human"], a["D2_empty_activations_chain41"]
-    print("D2. Activations that end at once (the decision after the declaration "
-          "is END_ACTIVATION):\n")
-    print(table(["declared", "humans: n", "humans: ended at once", "chain 41: n",
-                 "chain 41: ended at once"],
-                [[k.title(), f"{h2[k]['n']:,}", pct(h2[k]["ended_at_once"]),
-                  f"{o2[k]['n']:,}", pct(o2[k]["ended_at_once"])] for k in h2]))
-    h3, o3 = a["D3_team_turn_human"], a["D3_team_turn_chain41"]
-    print("D3. The shape of a team turn:\n")
-    print(table(["", "team turns", "activations per turn",
-                 "turns ended by choice with a player still to activate"],
-                [["humans (held-out, default subset)", f"{h3['team_turns']:,}",
-                  f"{h3['activations_per_turn']:.2f}",
-                  pct(h3["voluntary_end_with_players_left_per_turn"])],
-                 ["chain 41 self-play", f"{o3['team_turns']:,}",
-                  f"{o3['activations_per_turn']:.2f}",
-                  pct(o3["voluntary_end_with_players_left_per_turn"])]]))
+    h, o = a["D_human"], a["D_chain41"]
+    print("D1. Decisions whose legal types are exactly BLOCK_TARGET and "
+          "END_ACTIVATION and whose declared kind (observation byte 807) is Block: "
+          "the activation was ended without a block.\n")
+    print(table(["", "decisions in the context", "of which declared Block", "ended without blocking"],
+                [["humans (held-out, default subset)", f"{h['D1']['context_decisions']:,}",
+                  f"{h['D1']['n']:,}", iv(h["D1"]["ended_without_blocking"])],
+                 ["chain 41 self-play", f"{o['D1']['context_decisions']:,}",
+                  f"{o['D1']['n']:,}", iv(o["D1"]["ended_without_blocking"])]]))
+    print("D2. The decision after a declaration is END_ACTIVATION by the same coach "
+          "(only declarations whose next decision is verified to be the next one "
+          "in the game):\n")
+    rows = []
+    for k in ("MOVE", "BLOCK", "BLITZ", "PASS"):
+        rows.append([k.title(), f"{h['D2'][k]['declarations']:,}",
+                     f"{h['D2'][k]['with_verified_next_decision']:,}",
+                     iv(h["D2"][k]["ended_at_once"]),
+                     f"{o['D2'][k]['declarations']:,}",
+                     f"{o['D2'][k]['with_verified_next_decision']:,}",
+                     iv(o["D2"][k]["ended_at_once"])])
+    print(table(["declared", "humans: declarations", "with a verified next decision",
+                 "ended at once", "chain 41: declarations", "with a verified next decision",
+                 "ended at once"], rows))
+    print("D3. Per team turn. Turns are counted from turn-level decisions, so a turn "
+          "with no declaration counts.\n")
+    fields = (("team_turns", "team turns", "{:,}"),
+              ("declarations_per_turn", "declarations (activations)", "{:.2f}"),
+              ("ended_by_choice_with_a_player_left", "ended by choice with a player left", "{:.3f}"),
+              ("block_legal_declarations_per_turn", "Block-legal declarations", "{:.2f}"),
+              ("block_declared_per_turn", "Block declared", "{:.2f}"),
+              ("block_targets_chosen_per_turn_block_action", "block targets chosen, Block action", "{:.2f}"),
+              ("blitz_declared_per_turn", "Blitz declared", "{:.2f}"),
+              ("block_targets_chosen_per_turn_blitz_action", "block targets chosen, Blitz action", "{:.2f}"),
+              ("pass_declared_per_turn", "Pass declared", "{:.3f}"),
+              ("pass_targets_chosen_per_turn", "pass targets chosen", "{:.3f}"),
+              ("foul_declared_per_turn", "Foul declared", "{:.3f}"),
+              ("foul_targets_chosen_per_turn", "foul targets chosen", "{:.3f}"))
+    cols = (("humans, whole turns (re-seated, closed equal)", h["D3_whole_turns"]),
+            ("humans, prefix records (last turn can be cut)", h["D3_other_rows"]),
+            ("chain 41 self-play", o["D3_whole_turns"]))
+    print(table(["per team turn"] + [c[0] for c in cols],
+                [[label] + [fmt.format(c[1][key]) for c in cols] for key, label, fmt in fields]))
+    print("D5. Ending the turn by how many players were already activated in it "
+          "(whole turns; decisions where both ACTIVATE and END_TURN are legal).\n")
+    rows = []
+    for hr, orow in zip(h["D5_end_turn_by_depth"], o["D5_end_turn_by_depth"]):
+        rows.append([hr["depth"], f"{hr['n']:,}",
+                     "n/a" if "ended_turn" not in hr else f"{hr['ended_turn']:.3f}",
+                     "n/a" if "chain41" not in hr else f"{hr['chain41']:.3f}",
+                     "n/a" if "prior" not in hr else f"{hr['prior']:.3f}",
+                     f"{orow['n']:,}",
+                     "n/a" if "ended_turn" not in orow else f"{orow['ended_turn']:.3f}",
+                     "n/a" if "prior" not in orow else f"{orow['prior']:.3f}"])
+    print(table(["players already activated", "human states: n", "humans ended",
+                 "chain 41 (zero state) would end", "prior would end",
+                 "chain 41's states: n", "chain 41 ended", "prior would end"], rows))
     d4 = a["D4_mean_p_of_chain41_action"]
     print("D4. Mean probability each net gives the action chain 41 took "
           "(chain 41's states):\n")

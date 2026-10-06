@@ -146,6 +146,84 @@ class SupportTests(unittest.TestCase):
         self.assertIsNone(audit.ratio_interval(np.zeros(0), np.zeros(0), np.zeros(0)))
 
 
+class TurnShapeTests(unittest.TestCase):
+    def test_one_turn_is_read_the_way_the_report_says(self):
+        t, k = hp.T, hp.K
+        turn_level = (1 << t["ACTIVATE"]) | (1 << t["END_TURN"])
+        declare = 1 << t["DECLARE"]
+        block_ctx = (1 << t["BLOCK_TARGET"]) | (1 << t["END_ACTIVATION"])
+        move_ctx = (1 << t["STEP"]) | (1 << t["END_ACTIVATION"])
+        # (legal types, type, arg, declared kind + 1)
+        rows = [
+            (turn_level, t["ACTIVATE"], 3, 0),
+            (declare, t["DECLARE"], k["BLOCK"], 0),
+            (block_ctx, t["END_ACTIVATION"], 32, k["BLOCK"] + 1),   # declared, not thrown
+            (turn_level, t["ACTIVATE"], 4, 0),
+            (declare, t["DECLARE"], k["BLOCK"], 0),
+            (block_ctx, t["BLOCK_TARGET"], 32, k["BLOCK"] + 1),     # thrown
+            (turn_level, t["ACTIVATE"], 5, 0),
+            (declare, t["DECLARE"], k["MOVE"], 0),
+            (move_ctx, t["STEP"], 32, k["MOVE"] + 1),
+            (move_ctx, t["END_ACTIVATION"], 32, k["MOVE"] + 1),
+            (turn_level, t["END_TURN"], 32, 0),
+        ]
+        n = len(rows)
+        st = {
+            "cluster": np.zeros(n, dtype=np.int64),
+            # The last declaration's successor is NOT verified.
+            "next_ok": np.asarray([True] * 7 + [False] + [True] * 2 + [False]),
+            "seat": np.zeros(n, dtype=np.int64),
+            "turn_key": np.full(n, 77), "turn": np.full(n, 2),
+            "whole": np.ones(n, dtype=bool),
+            "type": np.asarray([r[1] for r in rows]), "arg": np.asarray([r[2] for r in rows]),
+            "act_kind": np.asarray([r[3] for r in rows]),
+            "legal_types": np.asarray([r[0] for r in rows]),
+            "legal_block": np.asarray([r[0] == declare and r[2] == k["BLOCK"] for r in rows]),
+        }
+        got = audit.turn_shape(st, {"net": np.linspace(0.0, 1.0, n)})
+        self.assertEqual(got["D1"]["n"], 2)
+        self.assertAlmostEqual(got["D1"]["ended_without_blocking"]["value"], 0.5)
+        self.assertEqual(got["D2"]["BLOCK"]["with_verified_next_decision"], 2)
+        self.assertAlmostEqual(got["D2"]["BLOCK"]["ended_at_once"]["value"], 0.5)
+        self.assertEqual(got["D2"]["MOVE"]["declarations"], 1)
+        self.assertEqual(got["D2"]["MOVE"]["with_verified_next_decision"], 0)
+        self.assertIsNone(got["D2"]["MOVE"]["ended_at_once"])
+        whole = got["D3_whole_turns"]
+        self.assertEqual(whole["team_turns"], 1)
+        self.assertEqual(whole["declarations_per_turn"], 3.0)
+        self.assertEqual(whole["ended_by_choice_with_a_player_left"], 1.0)
+        self.assertEqual(whole["block_declared_per_turn"], 2.0)
+        self.assertEqual(whole["block_targets_chosen_per_turn_block_action"], 1.0)
+        self.assertEqual(got["D3_other_rows"]["team_turns"], 0)
+        by_depth = {r["depth"]: r for r in got["D5_end_turn_by_depth"]}
+        self.assertEqual([by_depth[d]["n"] for d in ("0", "1", "2", "3")], [1, 1, 1, 1])
+        self.assertEqual(by_depth["3"]["ended_turn"], 1.0)
+        self.assertEqual(by_depth["0"]["ended_turn"], 0.0)
+        self.assertAlmostEqual(by_depth["3"]["net"], 1.0)
+
+
+class DumpCheckTests(unittest.TestCase):
+    def test_a_dump_must_match_its_manifest_and_the_loaded_checkpoints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            np.savez(os.path.join(tmp, "chunk_0000.npz"), action=np.zeros((3, 3)))
+            manifest = {"chunks": 1, "decisions": 3, "games": 1,
+                        "records": [{"natural": True}],
+                        "actor": {"checkpoint_sha256": "a"},
+                        "shadows": {"chain9": {"checkpoint_sha256": "b"}}}
+            shas = {"chain41": "a", "chain9": "b"}
+            audit.check_dump(tmp, manifest, shas)
+            with self.assertRaises(SystemExit):      # another acting checkpoint
+                audit.check_dump(tmp, manifest, {"chain41": "x", "chain9": "b"})
+            with self.assertRaises(SystemExit):      # decisions do not add up
+                audit.check_dump(tmp, dict(manifest, decisions=4), shas)
+            with self.assertRaises(SystemExit):      # content changed since the dump
+                audit.check_dump(tmp, dict(manifest, chunk_files=[
+                    {"name": "chunk_0000.npz", "sha256": "0" * 64}]), shas)
+            np.savez(os.path.join(tmp, "chunk_0001.npz"), action=np.zeros((1, 3)))
+            with self.assertRaises(SystemExit):      # a stale chunk from another run
+                audit.check_dump(tmp, manifest, shas)
+
+
 class WindowTests(unittest.TestCase):
     def test_windows_never_cross_a_hole_a_segment_or_a_coach(self):
         import human_prior_seq as seq
@@ -251,8 +329,12 @@ class PriorPolicyTests(unittest.TestCase):
             self.assertEqual(scored["train"]["records"], {"prefix": 12, "reseat": 0})
             self.assertEqual(scored["eval"]["prefix+closed_equal"]["records"],
                              {"prefix": 120, "reseat": 60})
+            narrow = hp.main(common + ["--out-dir", str(Path(tmp) / "d"),
+                                       "--reseat-dir", str(reseat)])
+            # Held-out scoring widens to every stamp only when asked by name.
+            self.assertEqual(list(narrow["eval"]), ["prefix", "prefix+closed_equal"])
             asked = hp.main(common + ["--out-dir", str(Path(tmp) / "b"),
-                                      "--reseat-dir", str(reseat)])
+                                      "--reseat-dir", str(reseat), "--eval-all-stamps"])
             self.assertIn("closed equal", asked["subset"])
             self.assertEqual(asked["reseat_stamps"], (1,))
             self.assertEqual(asked["train"]["records"], {"prefix": 12, "reseat": 6})

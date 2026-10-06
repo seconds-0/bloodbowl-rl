@@ -26,6 +26,7 @@ load_checkpoint from a native flat blob and run with its forward.
 import argparse
 import ctypes
 import glob
+import hashlib
 import json
 import os
 import sys
@@ -66,9 +67,12 @@ def ratio_interval(num, den, clusters, seed=0):
     n_sum, d_sum = _cluster_sums(clusters, num, den)
     rng = np.random.default_rng(seed)
     pick = rng.integers(0, len(n_sum), size=(N_BOOT, len(n_sum)))
-    boot = n_sum[pick].sum(axis=1) / np.maximum(d_sum[pick].sum(axis=1), 1e-300)
+    boot_den = d_sum[pick].sum(axis=1)
+    usable = boot_den > 0
+    boot = n_sum[pick].sum(axis=1)[usable] / boot_den[usable]
     lo, hi = np.percentile(boot, [2.5, 97.5])
-    return {"value": float(np.sum(num) / np.sum(den)), "lo": float(lo), "hi": float(hi)}
+    return {"value": float(np.sum(num) / np.sum(den)), "lo": float(lo), "hi": float(hi),
+            "resamples_with_zero_denominator": int((~usable).sum())}
 
 
 def mean_interval(values, clusters, seed=0):
@@ -153,6 +157,115 @@ class Support:
 
 def context_name(bits):
     return "|".join(hp.ACTION_NAMES[i] for i in range(30) if (int(bits) >> i) & 1)
+
+
+# ---- section D: the shape of a turn (added after the first read; not registered) --
+
+OBS_ACT_KIND = 807          # BBE_S_ACT_KIND: declared bb_act_kind + 1, 0 = none
+DEPTHS = ((0, 0), (1, 1), (2, 2), (3, 3), (4, 5), (6, 7), (8, 99))
+
+
+def turn_shape(st, p_end):
+    """One set of definitions for humans and for chain 41.
+
+    `st` holds aligned arrays in decision order: cluster, stream (the game, or
+    replay and coach-independent file run), next_ok (the next row is the next
+    decision of the same stream, nothing missing between), seat, turn_key,
+    turn, whole (the row lies in a team turn recorded from its first decision
+    to its last), type, arg, act_kind, legal_types (bitmask), legal_block
+    (Block legal at a declaration). `p_end` maps a net to its probability of
+    END_TURN at every row.
+    """
+    out = {}
+    typ, arg, seat = st["type"], st["arg"], st["seat"]
+    bits = st["legal_types"]
+    is_declare = bits == (1 << T["DECLARE"])
+    turn_level = ((bits >> T["ACTIVATE"]) & 1 | (bits >> T["END_TURN"]) & 1).astype(bool)
+    both = ((bits >> T["ACTIVATE"]) & 1 & (bits >> T["END_TURN"]) & 1).astype(bool)
+    in_turn = st["turn"] >= 1
+
+    # D1: a declared Block with a target on offer, then the choice to throw it.
+    ctx = bits == ((1 << T["BLOCK_TARGET"]) | (1 << T["END_ACTIVATION"]))
+    block = ctx & (st["act_kind"] == K["BLOCK"] + 1)
+    out["D1"] = {
+        "context_decisions": int(ctx.sum()),
+        "of_which_declared_kind": {
+            hp.ACT_KINDS[k - 1] if k else "none": int((st["act_kind"][ctx] == k).sum())
+            for k in np.unique(st["act_kind"][ctx])},
+        "n": int(block.sum()),
+        "ended_without_blocking": mean_interval(
+            (typ[block] == T["END_ACTIVATION"]).astype(float), st["cluster"][block])}
+
+    # D2: the decision after a declaration. Only verified successors count.
+    nxt = st["next_ok"]
+    next_type = np.r_[typ[1:], -1]
+    next_seat = np.r_[seat[1:], -1]
+    d2 = {}
+    for kind in ("MOVE", "BLOCK", "BLITZ", "PASS"):
+        decl = is_declare & (arg == K[kind])
+        ok = decl & nxt
+        ended = ok & (next_seat == seat) & (next_type == T["END_ACTIVATION"])
+        d2[kind] = {
+            "declarations": int(decl.sum()),
+            "with_verified_next_decision": int(ok.sum()),
+            "next_decision_by_other_coach": int((ok & (next_seat != seat)).sum()),
+            "ended_at_once": (mean_interval(ended[ok].astype(float), st["cluster"][ok])
+                              if ok.any() else None)}
+    out["D2"] = d2
+
+    # D3: per team turn. Turns are counted from turn-level decisions (a turn
+    # with no declaration still counts), whole turns only.
+    def per_turn(rows):
+        keys = st["turn_key"]
+        turns = len(np.unique(keys[rows & turn_level & in_turn]))
+        if not turns:
+            return {"team_turns": 0}
+        r = rows & in_turn
+        decl = r & is_declare
+        thrown = r & (typ == T["BLOCK_TARGET"])
+        return {
+            "team_turns": int(turns),
+            "declarations_per_turn": float(decl.sum() / turns),
+            "ended_by_choice_with_a_player_left": float(
+                (r & both & (typ == T["END_TURN"])).sum() / turns),
+            "block_legal_declarations_per_turn": float((decl & st["legal_block"]).sum() / turns),
+            "block_declared_per_turn": float((decl & (arg == K["BLOCK"])).sum() / turns),
+            "blitz_declared_per_turn": float((decl & (arg == K["BLITZ"])).sum() / turns),
+            "pass_declared_per_turn": float((decl & (arg == K["PASS"])).sum() / turns),
+            "foul_declared_per_turn": float((decl & (arg == K["FOUL"])).sum() / turns),
+            "block_targets_chosen_per_turn_block_action": float(
+                (thrown & (st["act_kind"] == K["BLOCK"] + 1)).sum() / turns),
+            "block_targets_chosen_per_turn_blitz_action": float(
+                (thrown & (st["act_kind"] == K["BLITZ"] + 1)).sum() / turns),
+            "pass_targets_chosen_per_turn": float((r & (typ == T["PASS_TARGET"])).sum() / turns),
+            "foul_targets_chosen_per_turn": float((r & (typ == T["FOUL_TARGET"])).sum() / turns),
+        }
+
+    out["D3_whole_turns"] = per_turn(st["whole"])
+    out["D3_other_rows"] = per_turn(~st["whole"])
+
+    # D5: how the choice to end the turn depends on how many players have
+    # already been activated in it (whole turns; depth = turn-level decisions
+    # already taken this turn).
+    rows = np.flatnonzero(turn_level & in_turn & st["whole"])
+    order = rows[np.lexsort((rows, st["turn_key"][rows]))]
+    k = st["turn_key"][order]
+    start = np.r_[True, k[1:] != k[:-1]]
+    first = np.maximum.accumulate(np.where(start, np.arange(len(order)), 0))
+    depth = np.zeros(len(typ), dtype=np.int64)
+    depth[order] = np.arange(len(order)) - first
+    d5 = []
+    for lo, hi in DEPTHS:
+        sel = both & in_turn & st["whole"] & (depth >= lo) & (depth <= hi)
+        row = {"depth": f"{lo}" if lo == hi else (f"{lo}+" if hi == 99 else f"{lo}-{hi}"),
+               "n": int(sel.sum())}
+        if sel.any():
+            row["ended_turn"] = float((typ[sel] == T["END_TURN"]).mean())
+            for name, p in p_end.items():
+                row[name] = float(np.asarray(p)[sel].mean())
+        d5.append(row)
+    out["D5_end_turn_by_depth"] = d5
+    return out
 
 
 # ---- part A: human states ----------------------------------------------------
@@ -266,52 +379,64 @@ def audit_human(nets, data, out):
         key[in_turn], ref["mask_arg"][in_turn], human_arg[in_turn])
 
     # ---- D: added after the first read of the gate (NOT pre-registered) ----
-    # D1: follow-through. The decision right after a Block declaration: throw
-    # the block or end the activation without throwing it.
-    n_types = ref["mask_type"].sum(axis=1)
-    follow = (n_types == 2) & ref["mask_type"][:, T["BLOCK_TARGET"]] & ref[
-        "mask_type"][:, T["END_ACTIVATION"]]
-    d1 = {"n": int(follow.sum()),
-          "human_rate": mean_interval(
-              (human_type[follow] == T["END_ACTIVATION"]).astype(float), replay[follow])}
-    for k, s in scored.items():
-        d1[k] = {"rate_t1": mean_interval(
-            s["p_type"][follow, T["END_ACTIVATION"]].astype(np.float64), replay[follow])}
-    out["D1_declared_block_then_no_block_human_states"] = d1
-    # D2: an activation that ends at once: the record after a declaration, by
-    # the same coach in the same replay, is END_ACTIVATION.
-    nxt = np.r_[(replay[1:] == replay[:-1]) & (agent[1:] == agent[:-1]), False]
-    next_type = np.r_[human_type[1:], -1]
-    d2 = {}
-    for kind in ("MOVE", "BLOCK", "BLITZ", "PASS"):
-        sel = declare & (human_arg == K[kind]) & nxt
-        d2[kind] = {"n": int(sel.sum()), "ended_at_once": float(
-            (next_type[sel] == T["END_ACTIVATION"]).mean()) if sel.any() else None}
-    out["D2_empty_activations_human"] = d2
-    # D3: the shape of a team turn.
-    both = ref["mask_type"][:, T["ACTIVATE"]] & ref["mask_type"][:, T["END_TURN"]]
-    turns = len(np.unique(key[in_turn]))
-    out["D3_team_turn_human"] = {
-        "team_turns": int(turns),
-        "activations_per_turn": float(in_turn.sum() / turns),
-        "voluntary_end_with_players_left_per_turn": float(
-            ((human_type == T["END_TURN"]) & both & (ref["turn"] >= 1)).sum() / turns),
-        "note": "turns are counted from the declarations present; a turn cut by a "
-                "lockstep stop is counted with the decisions it has"}
+    pos = record_positions(data, n)
+    bits = np.zeros(n, dtype=np.int64)
+    for t in range(30):
+        bits |= ref["mask_type"][:, t].astype(np.int64) << t
+    same_stream = (replay[1:] == replay[:-1]) & (pos["reseat"][1:] == pos["reseat"][:-1]) & (
+        pos["segment"][1:] == pos["segment"][:-1]) & (pos["physical"][1:] == pos["physical"][:-1] + 1)
+    st = {
+        "cluster": replay, "next_ok": np.r_[same_stream, False], "seat": agent,
+        "turn_key": key, "turn": ref["turn"],
+        # A re-seated record of this subset sits in a span that closed equal
+        # to the replay, which is a whole team turn. A prefix turn can be the
+        # one the lockstep stopped in.
+        "whole": pos["reseat"],
+        "type": human_type, "arg": human_arg, "act_kind": pos["act_kind"],
+        "legal_types": bits,
+        "legal_block": declare & ref["mask_arg"][:, K["BLOCK"]],
+    }
+    out["D_human"] = turn_shape(
+        st, {k: s["p_type"][:, T["END_TURN"]].astype(np.float64) for k, s in scored.items()})
+    out["D_human"]["note"] = (
+        "whole turns = turns made of re-seated records (span closed equal to the "
+        "replay); other rows = prefix records, where the last turn of a replay's "
+        "prefix can be cut by the lockstep stop")
     return scored
 
 
-_AGENT_CACHE = {}
+_POSITION_CACHE = {}
+
+
+def record_positions(data, n):
+    """Per record, in iteration order: coach, re-seat segment, declared-kind
+    byte, provenance and the record's physical row in its shard."""
+    if id(data) not in _POSITION_CACHE:
+        agent, segment, act_kind = [], [], []
+        for r in data.iter_record_batches(4096):
+            agent.append(np.asarray(r["agent"], dtype=np.int64))
+            segment.append(bc.record_segment(r).astype(np.int64))
+            act_kind.append(np.asarray(r["obs"][:, OBS_ACT_KIND], dtype=np.int64))
+        physical, reseat = [], []
+        for replay_id in data.replay_ids:
+            n_prefix = data.index.info(replay_id).record_count
+            info = data.index.reseat_info(replay_id)
+            rows = info.rows if info is not None else np.zeros(0, dtype=np.int64)
+            physical += [np.arange(n_prefix), np.asarray(rows, dtype=np.int64)]
+            reseat += [np.zeros(n_prefix, dtype=bool), np.ones(len(rows), dtype=bool)]
+        _POSITION_CACHE[id(data)] = {
+            "agent": np.concatenate(agent), "segment": np.concatenate(segment),
+            "act_kind": np.concatenate(act_kind), "physical": np.concatenate(physical),
+            "reseat": np.concatenate(reseat)}
+    pos = _POSITION_CACHE[id(data)]
+    assert all(len(v) == n for v in pos.values())
+    assert np.array_equal(pos["reseat"], pos["segment"] > 0)
+    return pos
 
 
 def ref_agent(data, n):
     """The agent byte of every record, in iteration order."""
-    if id(data) not in _AGENT_CACHE:
-        _AGENT_CACHE[id(data)] = np.concatenate(
-            [np.asarray(r["agent"], dtype=np.int64) for r in data.iter_record_batches(4096)])
-    agent = _AGENT_CACHE[id(data)]
-    assert len(agent) == n
-    return agent
+    return record_positions(data, n)["agent"]
 
 
 def opportunity(turn_key, kind_mask, declared):
@@ -329,9 +454,40 @@ def opportunity(turn_key, kind_mask, declared):
 
 # ---- parts B and C: chain 41's own states --------------------------------------
 
-def audit_selfplay(prior, chain41, dump_dir, out, harness):
+def check_dump(dump_dir, manifest, shas):
+    """Refuse a dump that is not exactly what its manifest describes, or that
+    was not made by the checkpoints this audit loaded."""
+    chunks = sorted(glob.glob(os.path.join(dump_dir, "chunk_*.npz")))
+    if len(chunks) != manifest["chunks"]:
+        raise SystemExit(f"{dump_dir}: {len(chunks)} chunk files, manifest says "
+                         f"{manifest['chunks']} (stale chunks from another run?)")
+    if manifest["actor"]["checkpoint_sha256"] != shas["chain41"]:
+        raise SystemExit("the dump's acting checkpoint is not the chain 41 loaded here")
+    for name, prov in manifest["shadows"].items():
+        if prov["checkpoint_sha256"] != shas.get(name):
+            raise SystemExit(f"the dump's shadow {name} is not the checkpoint loaded here")
+    if len(manifest["records"]) != manifest["games"] or not all(
+            r["natural"] for r in manifest["records"]):
+        raise SystemExit("the dump does not hold every game to its natural end")
+    listed = manifest.get("chunk_files")
+    if listed is not None:
+        for row in listed:
+            path = os.path.join(dump_dir, row["name"])
+            if hashlib.sha256(open(path, "rb").read()).hexdigest() != row["sha256"]:
+                raise SystemExit(f"{path}: content does not match the manifest")
+    total = 0
+    for path in chunks:
+        with np.load(path) as z:
+            total += len(z["action"])
+    if total != manifest["decisions"]:
+        raise SystemExit(f"{dump_dir}: {total} decisions in chunks, manifest says "
+                         f"{manifest['decisions']}")
+
+
+def audit_selfplay(prior, chain41, dump_dir, out, harness, shas):
     manifest = json.load(open(os.path.join(dump_dir, "manifest.json")))
     names = manifest["policies"]              # actor, then the shadows
+    check_dump(dump_dir, manifest, shas)
     E = harness.E
     match_size = manifest["match_size"]
     assert match_size == ctypes.sizeof(E.BbMatch)
@@ -365,6 +521,7 @@ def audit_selfplay(prior, chain41, dump_dir, out, harness):
         add("context", bits)
         add("game", meta[:, 0].astype(np.int64))
         add("c_step", meta[:, 1].astype(np.int64))
+        add("act_kind", obs[:, OBS_ACT_KIND].astype(np.int64))
         add("seat", meta[:, 2].astype(np.int64))
         match = z["match"]
         seat = meta[:, 2].astype(np.int64)
@@ -473,32 +630,21 @@ def audit_selfplay(prior, chain41, dump_dir, out, harness):
     out["B5_opportunity"]["decisions_per_game"] = float(n / len(np.unique(game)))
 
     # ---- D: added after the first read of the gate (NOT pre-registered) ----
-    follow = c["context"] == ((1 << T["BLOCK_TARGET"]) | (1 << T["END_ACTIVATION"]))
-    d1 = {"n": int(follow.sum()),
-          "chain41_sampled_rate": float(
-              (c["action_type"][follow] == T["END_ACTIVATION"]).mean())}
-    for name in ["chain41"] + others:
-        d1[name] = {"rate_t1": mean_interval(
-            c[f"p_end_activation_{name}"][follow], game[follow])}
-    out["D1_declared_block_then_no_block_own_states"] = d1
     order = np.lexsort((c["c_step"], game))
-    g_s, seat_s = game[order], c["seat"][order]
-    type_s, arg_s = c["action_type"][order], c["action_arg"][order]
-    ctx_s = c["context"][order]
-    nxt = np.r_[(g_s[1:] == g_s[:-1]) & (seat_s[1:] == seat_s[:-1]), False]
-    next_type = np.r_[type_s[1:], -1]
-    d2 = {}
-    for kind in ("MOVE", "BLOCK", "BLITZ", "PASS"):
-        sel = (ctx_s == (1 << T["DECLARE"])) & (arg_s == K[kind]) & nxt
-        d2[kind] = {"n": int(sel.sum()), "ended_at_once": float(
-            (next_type[sel] == T["END_ACTIVATION"]).mean()) if sel.any() else None}
-    out["D2_empty_activations_chain41"] = d2
-    turns = len(np.unique(key[in_turn]))
-    out["D3_team_turn_chain41"] = {
-        "team_turns": int(turns),
-        "activations_per_turn": float(in_turn.sum() / turns),
-        "voluntary_end_with_players_left_per_turn": float(
-            ((c["action_type"] == T["END_TURN"]) & both & (c["turn"] >= 1)).sum() / turns)}
+    g_s, step_s = game[order], c["c_step"][order]
+    st = {
+        "cluster": g_s,
+        # Every decision of a game is in the dump, so the next row of the same
+        # game is the next decision.
+        "next_ok": np.r_[(g_s[1:] == g_s[:-1]) & (step_s[1:] == step_s[:-1] + 1), False],
+        "seat": c["seat"][order], "turn_key": key[order], "turn": c["turn"][order],
+        "whole": np.ones(n, dtype=bool),
+        "type": c["action_type"][order], "arg": c["action_arg"][order],
+        "act_kind": c["act_kind"][order], "legal_types": c["context"][order],
+        "legal_block": (declare_ctx & c["legal_BLOCK"])[order],
+    }
+    out["D_chain41"] = turn_shape(
+        st, {name: c[f"p_end_turn_{name}"][order] for name in ["chain41"] + others})
     # D4: how much probability each net gives the action chain 41 took. KL
     # against a near-deterministic policy is dominated by its logit scale;
     # this is the bounded reading of the same comparison.
@@ -695,7 +841,7 @@ def main(argv=None):
     print(f"human states: {index.subset_label}; {data.provenance_counts}", flush=True)
     audit_human(nets, data, out)
     index.close()
-    audit_selfplay(nets["prior"], nets["chain41"], args.selfplay, out, harness)
+    audit_selfplay(nets["prior"], nets["chain41"], args.selfplay, out, harness, shas)
     out["verdict"] = verdict(out)
     out["seconds"] = round(time.time() - t0, 1)
     with open(os.path.join(args.out_dir, "audit.json"), "w") as f:
