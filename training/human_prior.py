@@ -352,6 +352,10 @@ def main(argv=None):
                     help="re-seated shards for HELD-OUT SCORING only (default: "
                          "--reseat-dir). Lets a prefix-only net be scored on the "
                          "same held-out sets as the others; never trained on")
+    ap.add_argument("--eval-all-stamps", action="store_true",
+                    help="also score the held-out replays on re-seated records of "
+                         "EVERY span stamp (0 to 4). A named measurement (the "
+                         "subset comparison), never a default")
     ap.add_argument("--replay-ids", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--harness-root", default=DEFAULT_HARNESS)
@@ -397,9 +401,10 @@ def main(argv=None):
         eval_indexes["prefix+closed_equal"] = bc.ShardIndex.from_directory(
             args.pairs_dir, replay_ids=replay_ids, cache_size=64,
             reseat_dir=eval_reseat)
-        eval_indexes["everything"] = bc.ShardIndex.from_directory(
-            args.pairs_dir, replay_ids=replay_ids, cache_size=64,
-            reseat_dir=eval_reseat, reseat_stamps=bc.KNOWN_STAMPS)
+        if args.eval_all_stamps:
+            eval_indexes["everything"] = bc.ShardIndex.from_directory(
+                args.pairs_dir, replay_ids=replay_ids, cache_size=64,
+                reseat_dir=eval_reseat, reseat_stamps=bc.KNOWN_STAMPS)
 
     train_order, holdout = holdout_split(replay_ids)
     dev_ids = train_order[len(train_order) - args.dev_replays:] if args.dev_replays else ()
@@ -484,6 +489,8 @@ def main(argv=None):
         for eval_index in eval_indexes.values():
             eval_index.close()
         eval_indexes = {}
+    if args.eval_all_stamps and "everything" not in eval_indexes and not args.skip_holdout_eval:
+        raise SystemExit("--eval-all-stamps needs --reseat-dir or --eval-reseat-dir")
     for name, eval_index in eval_indexes.items():
         ids = [r for r in holdout if r in set(eval_index.nonempty_replay_ids)]
         data = bc.LazyReplayDataset(eval_index, ids)
