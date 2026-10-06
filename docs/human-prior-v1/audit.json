@@ -1370,6 +1370,12 @@
     "hi": 0.015497465693673353,
     "resamples_with_zero_denominator": 0,
     "n": 2163
+   },
+   "net_probability_of_ending": {
+    "prior": 0.011148760197311884,
+    "chain41": 0.19508123281731896,
+    "chain9": 0.2323870474134191,
+    "chain36": 0.21894576235753102
    }
   },
   "D2": {
@@ -1424,6 +1430,8 @@
   },
   "D3_whole_turns": {
    "team_turns": 899,
+   "rows_outside_counted_turns": 299,
+   "declarations_outside_counted_turns": 0,
    "declarations_per_turn": 7.1635150166852055,
    "ended_by_choice_with_a_player_left": 0.23915461624026696,
    "block_legal_declarations_per_turn": 2.1790878754171303,
@@ -1438,6 +1446,8 @@
   },
   "D3_other_rows": {
    "team_turns": 323,
+   "rows_outside_counted_turns": 3,
+   "declarations_outside_counted_turns": 0,
    "declarations_per_turn": 7.993808049535604,
    "ended_by_choice_with_a_player_left": 0.2476780185758514,
    "block_legal_declarations_per_turn": 2.3808049535603715,
@@ -4571,6 +4581,13 @@
     "hi": 0.4139054375577398,
     "resamples_with_zero_denominator": 0,
     "n": 5929
+   },
+   "net_probability_of_ending": {
+    "chain41": 0.3917279737380488,
+    "prior": 0.009181235904835956,
+    "chain9": 0.4220160579591039,
+    "chain36": 0.36710939647372487,
+    "chain41_zero_state": 0.3848477183197207
    }
   },
   "D2": {
@@ -4625,6 +4642,8 @@
   },
   "D3_whole_turns": {
    "team_turns": 9491,
+   "rows_outside_counted_turns": 104,
+   "declarations_outside_counted_turns": 0,
    "declarations_per_turn": 2.966599936782215,
    "ended_by_choice_with_a_player_left": 0.6194289326730587,
    "block_legal_declarations_per_turn": 0.7766304920450954,
@@ -5181,5 +5200,5 @@
   },
   "anchor_C_prior_gap_is_larger_than_lineage_drift": false
  },
- "seconds": 44.4
+ "seconds": 51.7
 }

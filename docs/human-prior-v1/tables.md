@@ -215,6 +215,10 @@ D1. Decisions whose legal types are exactly BLOCK_TARGET and END_ACTIVATION and 
 | humans (held-out, default subset) | 2,163 | 2,163 | 0.009 [0.003, 0.015] |
 | chain 41 self-play | 5,929 | 5,929 | 0.391 [0.368, 0.414] |
 
+Each net's mean probability of ending the activation on those human decisions: prior 0.011, chain41 0.195, chain9 0.232, chain36 0.219.
+
+Each net's mean probability of ending the activation on those chain 41's decisions: chain41 0.392, prior 0.009, chain9 0.422, chain36 0.367, chain41_zero_state 0.385.
+
 D2. The decision after a declaration is END_ACTIVATION by the same coach (only declarations whose next decision is verified to be the next one in the game):
 
 | declared | humans: declarations | with a verified next decision | ended at once | chain 41: declarations | with a verified next decision | ended at once |

@@ -10,11 +10,12 @@ the Blitz gap it shows there (0.24 against 0.14) fails the cross-check on
 human states. Chain 41 is not shy of declaring blocks. What differs is the
 shape of its turns: 3.0 activations a team turn against the humans' 7.2, a
 turn ended by choice with players still to activate in 62% of team turns
-against 24%, 39% of its declared Blocks ended without a block against the
-humans' 0.9%, and three in four of its Blitz declarations never reaching a
-block. Those were measured after the gate was read and were not registered.
-They reconcile with the style panel: 0.45 block targets chosen a team turn
-(7 a game) against the humans' 2.49 (40 a game). A term that asks for more
+against 24%, 39% of its Block activations that had a target on offer ended
+without a block against the humans' 0.9%, and three in four of its Blitz
+declarations never reaching a block. Those were measured after the gate was
+read and were not registered. They reconcile with the style panel: 0.45
+block targets chosen a team turn against the humans' 2.49, which times 16
+turns is about 7 and about 40 a game. A term that asks for more
 block declarations would push a decision that is already at the human rate.
 
 ## 0. Thresholds, written before any audit number was computed
@@ -290,9 +291,10 @@ flattening between 200 and 339. The budget is fixed in passes, so the larger
 sets also get more optimizer steps (420, 854, 1,438). The selection runs say
 the steps are not what helps: on a fixed set the dev NLL bottoms out near
 four passes and rises after (1.339 at 4.6 passes, 1.442 at ten, while the
-training batches go from about 0.50 to 0.69 exact). So the net is short of data,
-not of capacity or steps. This is one seed per point and three points: it
-says more replays should help, not by how much. D172's saturation at 0.45
+training batches go from about 0.50 to 0.69 exact). That is consistent with
+a net short of data rather than of capacity or steps; it does not isolate
+it. One seed per point and three points: the reading is that more replays
+should help, not by how much. D172's saturation at 0.45
 to 0.51 was measured on prefix-only data; this is a different, deeper record
 mix and the comparison is not like for like. 11,580 BB2025 replays exist;
 these are 399 of them.
@@ -476,8 +478,9 @@ prior 0.009, chain 36 0.367, chain 9 0.422. The habit is as old as chain 9.
 D2. The decision after a declaration is END_ACTIVATION by the same coach.
 Only declarations whose next record is verified to be the next decision of
 the game are counted (same shard, same re-seat segment, consecutive row; in
-self-play every decision is in the dump). No next decision belonged to the
-other coach.
+self-play every decision is in the dump). One of chain 41's 1,797 Pass
+declarations was followed by a decision of the other coach; no other
+declaration in either data set was.
 
 | declared | humans: declarations | verified next | ended at once | chain 41: declarations | ended at once |
 |---|---|---|---|---|---|
@@ -508,10 +511,12 @@ turn in which the alignment stopped, which need not be a random sample.
 | Foul declared | 0.048 | 0.025 | 0.001 |
 | foul targets chosen | 0.046 | 0.025 | 0.000 |
 
-These are counts of actions, not a product of rates. They reconcile with the
-style panel: block targets chosen are 2.49 a team turn for humans (40 a
-16-turn game; the panel's human figure is 40.1) and 0.45 for chain 41 (7 a
-game; the panel says 6 to 7). For Block actions the 4.4-fold gap (1.68
+These are counts of actions, not a product of rates. Actions are counted
+only in turns that are in the denominator. They reconcile with the style
+panel: block targets chosen are 2.49 a team turn for humans and 0.45 for
+chain 41, which multiplied by 16 turns is about 40 and about 7 a game (the
+panel measured 40.1 and 6 to 7; the multiplication is an extrapolation, not
+a per-game average). For Block actions the 4.4-fold gap (1.68
 against 0.38) factors exactly into: 2.4 times fewer declarations a turn,
 1.16 times lower share of them with Block legal (0.26 against 0.30), 0.96
 times in declaring Block when legal (0.82 against 0.79), and 1.65 times in
@@ -533,8 +538,9 @@ D5. Ending the turn, by how many players were already activated in it
 | 6-7 | 1,130 | 0.050 | 0.853 | 0.057 | 2,345 | 0.368 | 0.017 |
 | 8+ | 741 | 0.155 | 0.917 | 0.063 | 900 | 0.349 | 0.023 |
 
-Three things. Chain 41 stops at a steady 15 to 25% per decision from its
-second activation on; humans almost never stop before the sixth. Put on
+Three things. Chain 41 stops at 15 to 25% per decision from its second
+to its sixth activation and at 35 to 37% after; humans almost never stop
+before the sixth. Put on
 human states, chain 41 would stop far more often than on its own at the
 same depth (0.34 against 0.03 before any activation), so depth is not the
 whole reason it says "end turn" at 63% of human decisions (A4): human
@@ -621,7 +627,7 @@ declarations, movement and the block-target choice. It is **not** a usable
 target for the Blitz declaration, pass, hand-off, foul, the block die, push
 and follow-up, re-roll and skill use, or the choice to end a turn early. The
 "would act" half of the rule (KL at least 0.10 nats) is met in every context
-with a real choice and decides nothing.
+with a real choice and 500 or more decisions, and decides nothing.
 
 ## 5. What the numbers say a trainer term could and could not change
 
@@ -658,11 +664,12 @@ paired run to test.
   0.05 times a team turn; chain 41 never did.
 - **Turn ending: the largest disagreement, with one caveat.** Humans end a
   turn early in 24% of turns and almost never before the sixth activation
-  (D5); chain 41 in 62%, at 15 to 25% per decision from the second
-  activation. The prior says 1 to 2% on chain 41's states at every depth.
-  It cannot tell when a human would stop (0% of human early endings
-  predicted, p 0.079), so a term here says "never stop early", which is past
-  human.
+  (D5); chain 41 in 62%, at 15 to 25% per decision from the second to the
+  sixth activation. The prior gives stopping 1 to 2% on chain 41's states
+  at every depth and 2 to 6% on human states. Stopping is never its top
+  choice, and it gives the human early endings it was tested on a mean
+  probability of 0.079. A term built on it would push toward stopping less
+  often than humans do.
 - **Empty activations: a clear disagreement.** 18% of chain 41's Move
   activations and 38% of its Block activations end at once; humans 0.2% and
   0.9%.
@@ -723,8 +730,9 @@ flag that suppresses them existed; the budget was chosen on dev NLL
    activated; no END_ACTIVATION as the first decision after a declaration;
    no END_ACTIVATION while a declared Block has a target), paired seeds,
    and the same masked copy against the scripted bots and an older chain.
-   A masked copy that is clearly weaker says chain 41 stops early for a
-   reason. One that is no weaker is evidence the habits are not
+   Register a non-inferiority margin and the interval before running it. A
+   masked copy that is clearly weaker says chain 41 stops early for a
+   reason. One inside the margin is evidence the habits are not
    load-bearing; it is not proof that a learned regularizer is safe, since
    a hard mask and a penalty are different interventions.
 2. **Ask the trainer why turns are three activations long** before
