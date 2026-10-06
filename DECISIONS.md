@@ -2264,3 +2264,46 @@ The contrast script (`paired_contrasts.py`, sha256 `722ece95...`, 2,000 replicat
 - **Operator notes.** The campaign halted at the attempt cap after attempt 2 and was resumed by resetting the stage's attempt count, as in D416. The rig was idle from 22:09 to 22:34 PDT because a leftover shell of mine carried the stage's file name in its command line, which made both the recovery script and the supervisor's process check read the stage as still running. The canary started at 22:45 PDT.
 - **Canary and launch (added 2026-10-05 23:08 PDT).** The 50M canary under the rule (warm chain 41, checkpoint `e2fb2843...` at 49,938,432 steps, never continued from) passed its stage at 23:04 PDT: completion marker written with the rule declared, and all six exam cells with zero truncated episodes (2,000 to 2,024 games each, END_TURN removed 115 to 125 times per episode, champion TDs 0.526 to 0.614; the canary's exam rule is none, so these numbers gate nothing). Chain 55 launched at 23:07 PDT with warm `a2d1d10d...`, pool `2ae7448e...`, seed 42, bot on tag 4 and no rule flag on the trainer's command line.
 
+**D419 - CHAIN 55 READS INCONCLUSIVE: IT BEATS CHAIN 49 DIRECTLY BUT NOT ON BOTH HELD-OUT OPPONENTS; CHAIN 49 STAYS THE WARM START AND CHAIN 55 IS THE ACCEPTED CONTROL FOR CHAINS 56 AND 57 (2026-10-06 08:52 PDT; chain 56 is training, its gate has not been played)**
+
+Chain 55 (`f6ba3b44...`, plain continuation from chain 49 on the b3 build) completed 3B steps. Stage, from the rig's `EXAM_VERDICT.json` and `LADDER_RUNG_COMPLETE.json` in the run directory as read at 08:27 PDT: completion marker written, chain 30 drift guard not fired (offense AWAY champion TDs 0.588 / 0.601 against floors 0.541 / 0.551, mean 0.595 against 0.546), all six cells at 2,000 games or more. Gate `c55-gate-20261006` as registered in D418: harness `b0099fb`, seed block 22400000, seven pairs, `GATE-ACCEPTED 22400 games, 7 pairs, seed0 22400000, games_per_worker 32, commit b0099fb`, every integrity counter zero. Plan `PLAN.json` sha256 `adedc604...`; contrasts by `paired_contrasts.py` sha256 `722ece95...`, 2,000 replicates, generator seed 0. By the gate agent's report it ran on four droplets (about $0.19) and all four were destroyed.
+
+| Pair | W / D / L | Decisive-Elo [95% seed-cluster] |
+|---|---|---|
+| chain 55 vs chain 49 | 1419 / 989 / 792 | +101.3 [+87.8, +114.9] |
+| chain 55 vs chain 37 | 1611 / 1005 / 584 | +176.3 [+161.1, +191.8] |
+| chain 49 vs chain 37 | 1557 / 1084 / 559 | +178.0 [+163.1, +193.9] |
+| chain 55 vs chain 46 | 1619 / 1005 / 576 | +179.5 [+164.3, +194.6] |
+| chain 49 vs chain 46 | 1346 / 1174 / 680 | +118.6 [+105.1, +133.1] |
+| chain 55 vs offense bot | 858 / 1798 / 544 | +79.2 [+60.3, +98.1] |
+| chain 49 vs offense bot | 937 / 1712 / 551 | +92.2 [+72.6, +111.7] |
+
+| Paired contrast, (chain 55 vs X) minus (chain 49 vs X) | Decisive-Elo [95%] |
+|---|---|
+| X = chain 37 | -1.7 [-21.9, +19.3] |
+| X = chain 46 | +60.9 [+40.2, +81.5] |
+| X = offense bot | -13.1 [-35.8, +8.6] |
+
+**Reading, labels applied in the registered order: Inconclusive.**
+- Not Negative: the interval against chain 49 is entirely above zero and the guard did not fire.
+- Not Positive: the pair against chain 49 clears +40 with its interval above zero, but Positive also needs both held-out contrasts entirely above zero and the chain 37 contrast is -1.7 with an interval that spans zero.
+- Not Flat: Flat is the pair against chain 49 within plus or minus 40 inclusive, and it is +101.3.
+- So Inconclusive.
+
+**Consequences.**
+- Chain 55 is not a warm-start candidate. Chain 49 stays the warm start.
+- Chain 55 is the accepted control for chains 56 and 57: its trainer, marker, guard and gate acceptance all hold, which is what D418's first amendment (item 4) requires of the control. Its label does not enter their readings.
+- Nothing is concluded about the plain recipe in general from this one rung.
+
+**Descriptive, not part of the reading.**
+- Chain 55 measures above its own parent directly and above it against chain 46. No improvement is established against chain 37 or the offense bot: both intervals include gains and losses. The two held-out contrasts differ by 62.6 and their intervals do not overlap.
+- Touchdowns per game head to head: chain 55 1.200, chain 49 0.878. Against the offense bot: chain 55 scores 0.372 and concedes 0.281; chain 49 scores 0.419 and concedes 0.306.
+- Mean log-probability per decision: chain 55 -0.178, chain 49 -0.159, chain 37 -0.157, chain 46 -0.153.
+- Raw roster-conditioned decisive share of chain 55 against chain 49: bash 0.543, agile 0.800, hybrid 0.658, stunty 0.719.
+- The Bradley-Terry fit rejects transitivity (chi-square 85 on 3 degrees of freedom).
+- The same pair on two seed blocks: chain 49 against chain 46 is +118.6 here and was +107.4 on block 22300000; chain 49 against chain 37 is +178.0 here and was +181.5.
+
+**What this means for the gates of chains 56 and 57 (no rule changes).** Each arm's primary pair is against chain 55. Chain 55 carries a +101 direct edge over chain 49 that does not show against chain 37, so an arm can lose to chain 55 directly and still be no worse on held-out opponents, or the reverse. This is an explanation and shows nothing about either arm. The registered rules are unchanged: chain 57 must be Positive against chain 55 and clear both retention contrasts against chain 49; chain 56, played under m1, must be Positive against chain 55 + m1 and clear both retention contrasts against chain 49 + m1; each on its own gate's seed block (amendment item 6).
+
+**Process change for the next two gates.** The gate plan's sha256 is committed to this ledger and pushed before the shards are launched, and acceptance is run against that same plan file, so that "written before launch" rests on the remote's push time and no longer on local file times.
+- Reviewed by Codex before this entry was written (`.codex-reviews/d419-review.md`): no other label is defensible; every number matches the artifacts; three wording corrections applied above.
