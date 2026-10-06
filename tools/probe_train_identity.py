@@ -64,16 +64,23 @@ def run(options: argparse.Namespace, overrides: Sequence[str]) -> int:
     log = _C.log(pufferl)
     losses = {key: float(value).hex() for key, value in dict(log.get("loss", {})).items()
               if isinstance(value, (int, float))}
+    env = dict(log["env"])
     payload = {
         "schema_version": SCHEMA_VERSION, "mode": "train-identity",
         "overrides": list(overrides), "config": _json_safe(args), "identity": identity,
         "cuda_runtime_preflight": evidence, "skip": skip, "epochs": options.epochs,
         "checkpoints": checkpoints, "final_loss_hex": losses,
-        "hard_integrity": integrity_verdict(dict(log["env"])),
+        "hard_integrity": integrity_verdict(env),
+        # The env's own panel, so a run can show what the env did and not only
+        # what it was asked to do (end_turn_removed under no_early_end_turn).
+        "env": _json_safe(env),
     }
     _write_json(pathlib.Path(options.output), payload)
     print(json.dumps({"output": options.output, "skip": skip, "checkpoints": checkpoints,
-                      "hard_integrity_zero": payload["hard_integrity"].get("zero")}))
+                      "hard_integrity_zero": payload["hard_integrity"].get("zero"),
+                      "episodes": env.get("n"),
+                      "end_turn_removed": env.get("end_turn_removed"),
+                      "truncated_episodes": env.get("truncated_episodes")}))
     return 0
 
 
