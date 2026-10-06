@@ -165,7 +165,7 @@ OBS_ACT_KIND = 807          # BBE_S_ACT_KIND: declared bb_act_kind + 1, 0 = none
 DEPTHS = ((0, 0), (1, 1), (2, 2), (3, 3), (4, 5), (6, 7), (8, 99))
 
 
-def turn_shape(st, p_end):
+def turn_shape(st, p_end, p_end_activation):
     """One set of definitions for humans and for chain 41.
 
     `st` holds aligned arrays in decision order: cluster, stream (the game, or
@@ -173,8 +173,8 @@ def turn_shape(st, p_end):
     decision of the same stream, nothing missing between), seat, turn_key,
     turn, whole (the row lies in a team turn recorded from its first decision
     to its last), type, arg, act_kind, legal_types (bitmask), legal_block
-    (Block legal at a declaration). `p_end` maps a net to its probability of
-    END_TURN at every row.
+    (Block legal at a declaration). `p_end` and `p_end_activation` map a net
+    to its probability of END_TURN and of END_ACTIVATION at every row.
     """
     out = {}
     typ, arg, seat = st["type"], st["arg"], st["seat"]
@@ -194,7 +194,10 @@ def turn_shape(st, p_end):
             for k in np.unique(st["act_kind"][ctx])},
         "n": int(block.sum()),
         "ended_without_blocking": mean_interval(
-            (typ[block] == T["END_ACTIVATION"]).astype(float), st["cluster"][block])}
+            (typ[block] == T["END_ACTIVATION"]).astype(float), st["cluster"][block]),
+        "net_probability_of_ending": {
+            name: float(np.asarray(p)[block].mean()) if block.any() else None
+            for name, p in p_end_activation.items()}}
 
     # D2: the decision after a declaration. Only verified successors count.
     nxt = st["next_ok"]
@@ -217,14 +220,21 @@ def turn_shape(st, p_end):
     # with no declaration still counts), whole turns only.
     def per_turn(rows):
         keys = st["turn_key"]
-        turns = len(np.unique(keys[rows & turn_level & in_turn]))
+        admitted = np.unique(keys[rows & turn_level & in_turn])
+        turns = len(admitted)
         if not turns:
             return {"team_turns": 0}
-        r = rows & in_turn
+        # Count actions only in turns that are in the denominator: a turn cut
+        # so that none of its turn-level decisions survives contributes
+        # nothing to either side of the ratio.
+        r = rows & in_turn & np.isin(keys, admitted)
+        left_out = rows & in_turn & ~np.isin(keys, admitted)
         decl = r & is_declare
         thrown = r & (typ == T["BLOCK_TARGET"])
         return {
             "team_turns": int(turns),
+            "rows_outside_counted_turns": int(left_out.sum()),
+            "declarations_outside_counted_turns": int((left_out & is_declare).sum()),
             "declarations_per_turn": float(decl.sum() / turns),
             "ended_by_choice_with_a_player_left": float(
                 (r & both & (typ == T["END_TURN"])).sum() / turns),
@@ -397,7 +407,9 @@ def audit_human(nets, data, out):
         "legal_block": declare & ref["mask_arg"][:, K["BLOCK"]],
     }
     out["D_human"] = turn_shape(
-        st, {k: s["p_type"][:, T["END_TURN"]].astype(np.float64) for k, s in scored.items()})
+        st, {k: s["p_type"][:, T["END_TURN"]].astype(np.float64) for k, s in scored.items()},
+        {k: s["p_type"][:, T["END_ACTIVATION"]].astype(np.float64)
+         for k, s in scored.items()})
     out["D_human"]["note"] = (
         "whole turns = turns made of re-seated records (span closed equal to the "
         "replay); other rows = prefix records, where the last turn of a replay's "
@@ -458,30 +470,44 @@ def check_dump(dump_dir, manifest, shas):
     """Refuse a dump that is not exactly what its manifest describes, or that
     was not made by the checkpoints this audit loaded."""
     chunks = sorted(glob.glob(os.path.join(dump_dir, "chunk_*.npz")))
-    if len(chunks) != manifest["chunks"]:
-        raise SystemExit(f"{dump_dir}: {len(chunks)} chunk files, manifest says "
-                         f"{manifest['chunks']} (stale chunks from another run?)")
+    listed = manifest.get("chunk_files")
+    if listed is None:
+        raise SystemExit(f"{dump_dir}: the manifest lists no chunk files; "
+                         "make the dump again with the current tools/selfplay_dump.py")
+    names = [row["name"] for row in listed]
+    if names != [os.path.basename(path) for path in chunks] or len(names) != manifest["chunks"]:
+        raise SystemExit(f"{dump_dir}: chunk files on disk are not exactly the "
+                         "manifest's (stale chunks from another run?)")
+    for row in listed:
+        path = os.path.join(dump_dir, row["name"])
+        if hashlib.sha256(open(path, "rb").read()).hexdigest() != row["sha256"]:
+            raise SystemExit(f"{path}: content does not match the manifest")
+    # Logit columns are read by position: the actor, then the shadows in
+    # the manifest's order.
+    if manifest["policies"] != ["actor"] + list(manifest["shadows"]):
+        raise SystemExit("the manifest's policy order is not actor, then its shadows")
     if manifest["actor"]["checkpoint_sha256"] != shas["chain41"]:
         raise SystemExit("the dump's acting checkpoint is not the chain 41 loaded here")
     for name, prov in manifest["shadows"].items():
         if prov["checkpoint_sha256"] != shas.get(name):
             raise SystemExit(f"the dump's shadow {name} is not the checkpoint loaded here")
-    if len(manifest["records"]) != manifest["games"] or not all(
-            r["natural"] for r in manifest["records"]):
+    records = manifest["records"]
+    if len(records) != manifest["games"] or not all(r["natural"] for r in records):
         raise SystemExit("the dump does not hold every game to its natural end")
-    listed = manifest.get("chunk_files")
-    if listed is not None:
-        for row in listed:
-            path = os.path.join(dump_dir, row["name"])
-            if hashlib.sha256(open(path, "rb").read()).hexdigest() != row["sha256"]:
-                raise SystemExit(f"{path}: content does not match the manifest")
-    total = 0
+    per_game = {}
     for path in chunks:
         with np.load(path) as z:
-            total += len(z["action"])
-    if total != manifest["decisions"]:
-        raise SystemExit(f"{dump_dir}: {total} decisions in chunks, manifest says "
-                         f"{manifest['decisions']}")
+            if z["logits"].shape[1] != len(manifest["policies"]):
+                raise SystemExit(f"{path}: logit columns do not match the manifest's policies")
+            games, counts = np.unique(z["meta"][:, 0], return_counts=True)
+        for game, count in zip(games, counts):
+            per_game[int(game)] = per_game.get(int(game), 0) + int(count)
+    # One recorded decision per engine step of every game, and no other game.
+    if per_game != {int(r["game"]): int(r["c_steps"]) for r in records}:
+        raise SystemExit(f"{dump_dir}: the chunks do not hold exactly the decisions "
+                         "of the manifest's games")
+    if sum(per_game.values()) != manifest["decisions"]:
+        raise SystemExit(f"{dump_dir}: decision total does not match the manifest")
 
 
 def audit_selfplay(prior, chain41, dump_dir, out, harness, shas):
@@ -644,7 +670,8 @@ def audit_selfplay(prior, chain41, dump_dir, out, harness, shas):
         "legal_block": (declare_ctx & c["legal_BLOCK"])[order],
     }
     out["D_chain41"] = turn_shape(
-        st, {name: c[f"p_end_turn_{name}"][order] for name in ["chain41"] + others})
+        st, {name: c[f"p_end_turn_{name}"][order] for name in ["chain41"] + others},
+        {name: c[f"p_end_activation_{name}"][order] for name in ["chain41"] + others})
     # D4: how much probability each net gives the action chain 41 took. KL
     # against a near-deterministic policy is dominated by its logit scale;
     # this is the bounded reading of the same comparison.

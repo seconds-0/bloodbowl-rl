@@ -180,8 +180,17 @@ class TurnShapeTests(unittest.TestCase):
             "legal_types": np.asarray([r[0] for r in rows]),
             "legal_block": np.asarray([r[0] == declare and r[2] == k["BLOCK"] for r in rows]),
         }
-        got = audit.turn_shape(st, {"net": np.linspace(0.0, 1.0, n)})
+        got = audit.turn_shape(st, {"net": np.linspace(0.0, 1.0, n)},
+                               {"net": np.full(n, 0.25)})
         self.assertEqual(got["D1"]["n"], 2)
+        self.assertEqual(got["D1"]["net_probability_of_ending"], {"net": 0.25})
+        # A row of a turn with no turn-level decision is in no ratio.
+        cut = dict(st, turn_key=np.r_[np.full(n - 1, 77), 99],
+                   legal_types=np.r_[st["legal_types"][:-1], declare],
+                   type=np.r_[st["type"][:-1], t["DECLARE"]])
+        got_cut = audit.turn_shape(cut, {}, {})
+        self.assertEqual(got_cut["D3_whole_turns"]["declarations_per_turn"], 3.0)
+        self.assertEqual(got_cut["D3_whole_turns"]["declarations_outside_counted_turns"], 1)
         self.assertAlmostEqual(got["D1"]["ended_without_blocking"]["value"], 0.5)
         self.assertEqual(got["D2"]["BLOCK"]["with_verified_next_decision"], 2)
         self.assertAlmostEqual(got["D2"]["BLOCK"]["ended_at_once"]["value"], 0.5)
@@ -204,21 +213,43 @@ class TurnShapeTests(unittest.TestCase):
 
 class DumpCheckTests(unittest.TestCase):
     def test_a_dump_must_match_its_manifest_and_the_loaded_checkpoints(self):
+        import hashlib
+
+        def sha(path):
+            return hashlib.sha256(open(path, "rb").read()).hexdigest()
+
         with tempfile.TemporaryDirectory() as tmp:
-            np.savez(os.path.join(tmp, "chunk_0000.npz"), action=np.zeros((3, 3)))
-            manifest = {"chunks": 1, "decisions": 3, "games": 1,
-                        "records": [{"natural": True}],
+            chunk = os.path.join(tmp, "chunk_0000.npz")
+            meta = np.asarray([[5, 1, 0, 2], [5, 2, 1, 2], [6, 1, 0, 2]])
+            np.savez(chunk, action=np.zeros((3, 3)), meta=meta,
+                     logits=np.zeros((3, 2, 4)))
+            manifest = {"chunks": 1, "decisions": 3, "games": 2,
+                        "policies": ["actor", "chain9"],
+                        "chunk_files": [{"name": "chunk_0000.npz", "sha256": sha(chunk)}],
+                        "records": [{"natural": True, "game": 5, "c_steps": 2},
+                                    {"natural": True, "game": 6, "c_steps": 1}],
                         "actor": {"checkpoint_sha256": "a"},
                         "shadows": {"chain9": {"checkpoint_sha256": "b"}}}
             shas = {"chain41": "a", "chain9": "b"}
             audit.check_dump(tmp, manifest, shas)
-            with self.assertRaises(SystemExit):      # another acting checkpoint
-                audit.check_dump(tmp, manifest, {"chain41": "x", "chain9": "b"})
-            with self.assertRaises(SystemExit):      # decisions do not add up
-                audit.check_dump(tmp, dict(manifest, decisions=4), shas)
-            with self.assertRaises(SystemExit):      # content changed since the dump
-                audit.check_dump(tmp, dict(manifest, chunk_files=[
-                    {"name": "chunk_0000.npz", "sha256": "0" * 64}]), shas)
+            bad = [
+                (dict(manifest, chunk_files=None), shas),            # no chunk list
+                (dict(manifest, chunk_files=[]), shas),              # empty chunk list
+                (dict(manifest, chunk_files=[{"name": "chunk_0000.npz",
+                                              "sha256": "0" * 64}]), shas),
+                (manifest, {"chain41": "x", "chain9": "b"}),         # another actor
+                (manifest, {"chain41": "a", "chain9": "x"}),         # another shadow
+                (dict(manifest, policies=["chain9", "actor"]), shas),  # column order
+                (dict(manifest, decisions=4), shas),
+                (dict(manifest, records=[{"natural": True, "game": 5, "c_steps": 3},
+                                         {"natural": True, "game": 6, "c_steps": 1}]), shas),
+                (dict(manifest, records=[{"natural": True, "game": 5, "c_steps": 2},
+                                         {"natural": False, "game": 6, "c_steps": 1}]), shas),
+            ]
+            for broken, loaded in bad:
+                broken = {k: v for k, v in broken.items() if v is not None}
+                with self.assertRaises(SystemExit):
+                    audit.check_dump(tmp, broken, loaded)
             np.savez(os.path.join(tmp, "chunk_0001.npz"), action=np.zeros((1, 3)))
             with self.assertRaises(SystemExit):      # a stale chunk from another run
                 audit.check_dump(tmp, manifest, shas)

@@ -219,6 +219,10 @@ def audit_tables(run):
                   f"{h['D1']['n']:,}", iv(h["D1"]["ended_without_blocking"])],
                  ["chain 41 self-play", f"{o['D1']['context_decisions']:,}",
                   f"{o['D1']['n']:,}", iv(o["D1"]["ended_without_blocking"])]]))
+    for label, d in (("human decisions", h["D1"]), ("chain 41's decisions", o["D1"])):
+        print(f"Each net's mean probability of ending the activation on those {label}: "
+              + ", ".join(f"{k} {v:.3f}" for k, v in d["net_probability_of_ending"].items())
+              + ".\n")
     print("D2. The decision after a declaration is END_ACTIVATION by the same coach "
           "(only declarations whose next decision is verified to be the next one "
           "in the game):\n")
