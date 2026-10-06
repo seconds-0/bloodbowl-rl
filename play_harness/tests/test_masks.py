@@ -267,3 +267,108 @@ def test_cli_unmasked_manifest_has_no_mask_key(tmp_path, monkeypatch):
     assert manifest["players"] == {"c": {"bot": "contact"}, "o": {"bot": "offense"}}
     recs = [json.loads(line) for line in open(out / "games.jsonl")]
     assert all(r["masks"] == [None, None] and len(r["behaviour"]) == 2 for r in recs)
+
+
+# ---- the activation log and the sampling offset -------------------------------------------
+def test_every_activation_is_filed_once_and_agrees_with_the_counts(policies):
+    from play_harness import activations as AC
+    p = policies["plain"]
+    for masks in ((("m1",), ("m1",)), (MASKS, None)):
+        rec, _ = T.play_match(p, p, 2024, masks=masks)
+        for side in (0, 1):
+            b = rec["behaviour"][side]
+            assert sum(b["act_" + c] for c in AC.CLASSES) == b["activations"]
+            # Same definition as the flat counter: END_ACTIVATION as the first choice.
+            assert b["act_empty"] == b["ended_at_once"]
+            assert b["act_block"] + b["act_blitz"] <= b["block_targets"]
+            assert b["act_foul"] <= b["foul_targets"]
+            assert b["act_pass_handoff"] <= b["pass_targets"] + b["handoff_targets"]
+            assert 0 <= b["moved_measured"] <= b["act_moved"]
+            assert b["act_turnover"] <= b["turnovers"]
+            assert b["neg_failed"] + b["neg_empty"] <= 2 * b["neg_activations"] <= 2 * b["activations"]
+            assert set(AC.KEYS) <= set(b)
+    assert sum(rec["behaviour"][0]["act_" + c] for c in AC.CLASSES) > 20      # the m123 side played
+
+
+def test_the_activation_log_reads_positions_and_traits():
+    from play_harness import activations as AC
+
+    class P:
+        def __init__(self, x, y, location=AC.ON_PITCH, flags=0, skills=()):
+            self.x, self.y, self.location, self.flags, self._skills = x, y, location, flags, skills
+
+    class M:
+        def __init__(self, players, ball, turnovers=(0, 0)):
+            self.players, self.turnovers_completed = players, list(turnovers)
+            self.ball = type("B", (), {"state": E.BALL_STATES.index("on_ground"),
+                                       "x": ball[0], "y": ball[1], "carrier": 255})()
+
+    class Eng:
+        lib = E.load_library()
+
+        def __init__(self):
+            self.m = None
+            self.slot = 0
+
+        def match(self):
+            return self.m
+
+        def legal(self):
+            return [type("L", (), {"arg": self.slot, "tuple": (A["ACTIVATE"], 0, NONE_SQ)})()]
+
+    traits = sorted(AC.negative_trait_ids(Eng.lib))
+    assert len(traits) == len(AC.NEGATIVE_TRAITS)
+    real_skills_of = E.skills_of
+    E.skills_of = lambda p: list(p._skills)
+    try:
+        eng = Eng()
+        log = AC.ActivationLog(eng)
+        activate = (A["ACTIVATE"], 0, NONE_SQ)
+        # HOME player 0 walks from (5,5) to (8,5): 3 squares upfield, 3 nearer a ball at (12,5).
+        eng.m = M({0: P(5, 5), 1: P(9, 9, skills=traits[:1])}, ball=(12, 5))
+        log.on_action(0, "ACTIVATE", activate)
+        log.on_action(0, "DECLARE", (A["DECLARE"], E.ACT_KINDS.index("MOVE"), NONE_SQ))
+        log.on_action(0, "STEP", (A["STEP"], NONE_ARG, 1))
+        log.on_action(0, "END_ACTIVATION", (A["END_ACTIVATION"], NONE_ARG, NONE_SQ))
+        # Player 1 has a negative trait, ends at once and comes out Distracted.
+        eng.m = M({0: P(8, 5), 1: P(9, 9, skills=traits[:1])}, ball=(12, 5))
+        eng.slot = 1
+        log.on_action(0, "ACTIVATE", activate)
+        log.on_action(0, "DECLARE", (A["DECLARE"], E.ACT_KINDS.index("BLOCK"), NONE_SQ))
+        log.on_action(0, "END_ACTIVATION", (A["END_ACTIVATION"], NONE_ARG, NONE_SQ))
+        final = M({0: P(8, 5), 1: P(9, 9, flags=AC.FLAG["distracted"], skills=traits[:1])},
+                  ball=(12, 5), turnovers=(1, 0))
+        home, away = log.finish(final)
+    finally:
+        E.skills_of = real_skills_of
+    assert home["act_moved"] == 1 and home["act_empty"] == 1 and home["moved_measured"] == 1
+    assert home["moved_d_own_endzone"] == 3 and home["moved_d_ball"] == -3
+    assert home["moved_displacement"] == 3
+    assert (home["neg_activations"], home["neg_failed"], home["neg_empty"]) == (1, 1, 1)
+    assert home["act_turnover"] == 1 and home["neg_turnover"] == 1    # the turn's last activation
+    assert not any(away.values())
+
+
+def test_a_sampling_offset_separates_the_legs_of_one_checkpoint():
+    from .test_batched_tournament import RowwisePolicy
+    inner = random_policy(seed=11, scale=0.05)
+    players = {"a": RowwisePolicy(inner), "b": RowwisePolicy(inner)}
+    tasks = [("a", "b", 0, leg) for leg in T.LEGS]
+    forced = {"a": ("m1",), "b": ("m1",)}                 # m1 on both, so the games have play
+    same = T.player_specs(["a", "b"], "sample", masks=forced)
+    legs = [T.pair_game(players, *t, seed0=77, specs=same) for t in tasks]
+    assert legs[0]["action_trail_sha256"] == legs[1]["action_trail_sha256"]
+    assert legs[0]["seed_offsets"] == [0, 0] and "seed_offset" not in same["b"]
+    shifted = T.player_specs(["a", "b"], "sample", masks=forced, seed_offsets={"b": 1})
+    assert shifted["b"]["seed_offset"] == 1 and "seed_offset" not in shifted["a"]
+    legs = [T.pair_game(players, *t, seed0=77, specs=shifted) for t in tasks]
+    assert legs[0]["action_trail_sha256"] != legs[1]["action_trail_sha256"]
+    assert legs[0]["seed_offsets"] == [0, 1] and legs[1]["seed_offsets"] == [1, 0]
+    assert legs[0]["sampling_seeds"][1] - T.sampling_seed(77, 1) == T.SEED_OFFSET_STRIDE
+    batched = {(r["leg"]): r["action_trail_sha256"]
+               for r in T.run_batched(players, tasks, 77, slots=2, specs=shifted)}
+    assert batched == {r["leg"]: r["action_trail_sha256"] for r in legs}
+    with pytest.raises(ValueError):
+        T.player_specs(["a", "bot"], "sample", bots={"bot": "contact"}, seed_offsets={"bot": 1})
+    with pytest.raises(ValueError):
+        T.player_specs(["a", "b"], "sample", seed_offsets={"a": -1})

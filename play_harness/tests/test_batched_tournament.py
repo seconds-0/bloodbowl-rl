@@ -618,6 +618,7 @@ def test_unbatched_path_still_reproduces_the_reference_run():
         rec = _essential(T.pair_game(players, *task, manifest["seed0"], specs=manifest["players"]))
         # Records gained keys after the reference was played; every key the
         # reference has must come out the same, and nothing else may be new.
-        assert set(rec) - set(ref[task]) == {"behaviour", "masks", "mask_stats"}
+        assert set(rec) - set(ref[task]) == {"behaviour", "masks", "mask_stats", "seed_offsets"}
         assert {k: rec[k] for k in ref[task]} == ref[task]
         assert rec["masks"] == [None, None] and rec["mask_stats"] == [None, None]
+        assert rec["seed_offsets"] == [0, 0]
