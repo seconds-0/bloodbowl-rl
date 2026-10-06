@@ -261,6 +261,30 @@ class B3RecipeTests(unittest.TestCase):
                 old_patch_bundle_sha256=b3["GRAFT_FROM_PATCH_BUNDLE_SHA256"] + "," + "b" * 64)
 
 
+class InheritedRuleFlagTests(unittest.TestCase):
+    """A control rung must not train under the rule because the caller's environment had the flag set."""
+
+    WANT = {"b3_chain55.sh": "unset", "b3_chain57.sh": "unset", "b3_chain56.sh": "1", "b3_canary54.sh": "1"}
+
+    def flag_after_preamble(self, name: str) -> str:
+        lines = (B3 / name).read_text(encoding="utf-8").splitlines()
+        sets = [line for line in lines if line.startswith("export LADDER_NO_EARLY_END_TURN=")]
+        source = [i for i, line in enumerate(lines) if "b3_common_env.sh" in line and line.startswith("source ")]
+        self.assertEqual(len(source), 1, name)
+        for line in sets:
+            self.assertGreater(lines.index(line), source[0], f"{name} sets the flag before sourcing the shared env")
+        script = "\n".join([f"source {B3 / 'b3_common_env.sh'}", *sets,
+                            'echo "${LADDER_NO_EARLY_END_TURN:-unset}"'])
+        out = subprocess.run(["bash", "-c", script], env={**os.environ, "LADDER_NO_EARLY_END_TURN": "1"},
+                             capture_output=True, text=True, check=True)
+        return out.stdout.strip().splitlines()[-1]
+
+    def test_inherited_flag_reaches_only_the_rule_stages(self):
+        for name, want in self.WANT.items():
+            with self.subTest(stage=name):
+                self.assertEqual(self.flag_after_preamble(name), want)
+
+
 class FakeCheckouts(unittest.TestCase):
     """A b3 checkout and a long-run checkout, as far as the stages look."""
 

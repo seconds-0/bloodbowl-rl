@@ -19,6 +19,9 @@ export GRAFT_FROM_SOURCE_SHA256=3ed6899e121bbc084568d03687be79b8ce1bb0f375c5f9cd
 export GRAFT_FROM_PATCH_BUNDLE_SHA256=de77f6c0a01304292dba21ada627d535f0ccb8629bc5a96d8ddc8df1d710a3ad,c1174af6b4a6c6a6b91df353678c69846b5c66a2f08997d18a141a5062a60bda
 export GRAFT_REASON="b3 build (no_early_end_turn) over the original and long-run builds"
 export PUFFER_SKIP_SCRIPTED_BANK_FORWARD=1 BBE_DECIDING_ROW_TELEMETRY=1
+# The rule is off unless a stage turns it on after sourcing this file. An inherited value must not reach a
+# control rung (chains 55 and 57).
+unset LADDER_NO_EARLY_END_TURN
 export CUDA_VISIBLE_DEVICES=0
 # What the b3 stages share.
 export B3_IDENTITY_PASS="$C/runs/b3-identity-20261006/B3_IDENTITY_PASS.json"
