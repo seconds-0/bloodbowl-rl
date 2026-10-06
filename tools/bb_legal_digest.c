@@ -9,6 +9,15 @@
 //                 legal list and its projections, actions, rewards, terminals.
 //
 // Usage: bb_legal_digest [--games N] [--episodes N] [--seed S]
+//                        [--mixed-rosters] [--no-early-end-turn]
+//
+// --mixed-rosters draws both rosters per env episode (the trainer's default).
+// Without it the env episodes are roster 0 against roster 0, because a
+// zero-filled env pins both sides; that is what this tool always printed.
+// --no-early-end-turn runs the env episodes with that env flag on. Without it
+// the output is the flag-off digest, which must equal the output of this file
+// built against a tree that predates the flag: compile there with
+// -DBB_DIGEST_PRE_FLAG_TREE, which only drops the option.
 #include "bloodbowl.h"
 #include "bb_fixtures.h"
 #include <stdio.h>
@@ -61,7 +70,8 @@ static uint64_t engine_games(int games, uint64_t seed) {
     return total;
 }
 
-static uint64_t env_episodes(int episodes, uint64_t seed) {
+static uint64_t env_episodes(int episodes, uint64_t seed, int mixed_rosters,
+                             int no_early_end_turn) {
     static Bloodbowl env;
     static uint8_t obs[BBE_AGENTS * BBE_OBS_SIZE];
     static float actions[BBE_AGENTS * 3];
@@ -70,6 +80,14 @@ static uint64_t env_episodes(int episodes, uint64_t seed) {
     static float terminals[BBE_AGENTS];
     env.num_agents = BBE_AGENTS;
     env.seed = seed;
+    if (mixed_rosters) {
+        env.exclude_team = env.force_home_team = env.force_away_team = -1;
+    }
+#ifndef BB_DIGEST_PRE_FLAG_TREE
+    env.no_early_end_turn = no_early_end_turn;
+#else
+    (void)no_early_end_turn;
+#endif
     for (int a = 0; a < BBE_AGENTS; a++) {
         env.obs_ptr[a] = obs + a * BBE_OBS_SIZE;
         env.action_ptr[a] = actions + a * 3;
@@ -120,17 +138,23 @@ static uint64_t env_episodes(int episodes, uint64_t seed) {
 int main(int argc, char** argv) {
     int games = 200, episodes = 200;
     uint64_t seed = 42;
+    int no_early_end_turn = 0, mixed_rosters = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--games") == 0 && i + 1 < argc) games = atoi(argv[++i]);
         else if (strcmp(argv[i], "--episodes") == 0 && i + 1 < argc) episodes = atoi(argv[++i]);
         else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) seed = strtoull(argv[++i], 0, 10);
+        else if (strcmp(argv[i], "--mixed-rosters") == 0) mixed_rosters = 1;
+#ifndef BB_DIGEST_PRE_FLAG_TREE
+        else if (strcmp(argv[i], "--no-early-end-turn") == 0) no_early_end_turn = 1;
+#endif
         else {
-            fprintf(stderr, "usage: %s [--games N] [--episodes N] [--seed S]\n", argv[0]);
+            fprintf(stderr, "usage: %s [--games N] [--episodes N] [--seed S] "
+                            "[--mixed-rosters] [--no-early-end-turn]\n", argv[0]);
             return 2;
         }
     }
     uint64_t eg = engine_games(games, seed);
-    uint64_t ee = env_episodes(episodes, seed);
+    uint64_t ee = env_episodes(episodes, seed, mixed_rosters, no_early_end_turn);
     printf("engine total fnv %016llx\n", (unsigned long long)eg);
     printf("env total fnv %016llx\n", (unsigned long long)ee);
     return 0;
