@@ -285,6 +285,21 @@ class InheritedRuleFlagTests(unittest.TestCase):
                 self.assertEqual(self.flag_after_preamble(name), want)
 
 
+class TraceSizeTests(unittest.TestCase):
+    """The trace probe copies each rollout off the GPU and the trainer refuses a copy over 64 MiB. The first
+    real run asked for 512 agents x 64 steps (about 440 MiB) and the stand-in probe in these tests cannot see it."""
+
+    def test_trace_rollout_fits_the_snapshot_cap_and_still_covers_whole_games(self):
+        text = (B3 / "b3_identity.sh").read_text(encoding="utf-8")
+        trace = re.search(r"^TRACE=\((.*)\)$", text, re.M).group(1).split()
+        value = dict(zip(trace[::2], trace[1::2]))
+        agents, horizon = int(value["--vec.total-agents"]), int(value["--train.horizon"])
+        rollouts = int(re.search(r"^TRACE_ROLLOUTS=(\d+)$", text, re.M).group(1))
+        self.assertLessEqual(agents * horizon, 512 * 8, "measured: 512 agents x 8 steps is about 55 MiB of 64")
+        self.assertGreaterEqual(horizon * rollouts, 2048, "about 2,000 decisions an env, several whole games")
+        self.assertIn('--rollouts "$TRACE_ROLLOUTS"', text)
+
+
 class FakeCheckouts(unittest.TestCase):
     """A b3 checkout and a long-run checkout, as far as the stages look."""
 

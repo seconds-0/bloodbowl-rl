@@ -169,8 +169,11 @@ for flag, value in pairs:
 PY
 mapfile -t ARGS < "$A/chain42-full.args"
 [ "${#ARGS[@]}" -gt 0 ] || { log "chain 42's trainer arguments came back empty"; phase exited 1; exit 1; }
-# Whole games for the trace: 512 agents, 32 rollouts of 64 steps, about 2,000 decisions an env.
-TRACE=(--vec.total-agents 512 --vec.num-threads 8 --train.horizon 64 --train.minibatch-size 4096)
+# Whole games for the trace: 512 agents, 256 rollouts of 8 steps, about 2,000 decisions an env. The probe
+# copies each rollout's buffers off the GPU and the trainer caps that copy at 64 MiB: 512 agents x 8 steps is
+# about 55 MiB, and a 64-step horizon is refused ("snapshot exceeds qualification byte limit").
+TRACE=(--vec.total-agents 512 --vec.num-threads 8 --train.horizon 8 --train.minibatch-size 4096)
+TRACE_ROLLOUTS=256
 
 # --- GPU lock --------------------------------------------------------------------
 LOCK_HELD=0
@@ -222,7 +225,7 @@ phase trace-flag-on
 log "flag ON: rollout trace of whole games"
 timeout --signal=TERM --kill-after=60 "$PROBE_TIMEOUT_SECONDS" \
   "$PY" "$C/tools/probe_scripted_bank_skip.py" trace --puffer-root "$PUFFER" \
-  --output "$A/trace-flag-on.json" --rollouts 32 -- \
+  --output "$A/trace-flag-on.json" --rollouts "$TRACE_ROLLOUTS" -- \
   "${ARGS[@]}" "${TRACE[@]}" --env.no-early-end-turn 1 --load-model-path "$WARM" --checkpoint-dir "$A/ckpt" \
   > "$A/trace-flag-on.out" 2>&1
 echo "$?" > "$A/trace-flag-on.rc"
