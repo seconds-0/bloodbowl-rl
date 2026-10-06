@@ -6,8 +6,11 @@
 // untimed driver (bloodbowl.c), this file explains WHERE the time goes.
 //
 // Build: clang -O2 -Ipuffer/bloodbowl puffer/bloodbowl/bbe_profile.c -o bbe_profile
-// glibc hides clock_gettime under -std=c11 unless POSIX is requested.
+// glibc hides clock_gettime under -std=c11 unless POSIX is requested. Darwin
+// is the opposite: any _POSIX_C_SOURCE hides CLOCK_MONOTONIC_RAW.
+#if !defined(__APPLE__)
 #define _POSIX_C_SOURCE 200809L
+#endif
 #include "bloodbowl.h"
 #include <stdio.h>
 #include <time.h>
