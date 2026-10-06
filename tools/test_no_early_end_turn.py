@@ -529,15 +529,47 @@ class ChainStageRuleTests(unittest.TestCase):
         evals_before = len(self.calls("eval_calls"))
         result = self.stage()
         self.assertEqual(result.returncode, 7, result.stdout)
-        self.assertIn("RULE MISMATCH: the rung marker records no_early_end_turn=1, "
+        self.assertIn("LADDER_RUNG_COMPLETE.json records no_early_end_turn=1, "
                       "this stage declares 0", result.stdout)
         self.assertEqual(len(self.calls("eval_calls")), evals_before)
         self.assertFalse((self.run_dir / "EXAM_VERDICT.json").exists())
 
+    def test_a_finished_stage_relaunched_under_the_other_rule_is_refused(self):
+        # Nothing is left to run, and the launch still has to describe the
+        # stage that ran: a registered verdict is not "success" for a wrapper
+        # that declares the other rule.
+        for first, second, recorded, declared in (({KNOB: "1"}, {}, 1, 0),
+                                                  ({}, {KNOB: "1"}, 0, 1)):
+            with self.subTest(first=first):
+                self.tearDown()
+                self.setUp()
+                result = self.stage(**first)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                evals = len(self.calls("eval_calls"))
+                again = self.stage(**first)
+                self.assertEqual(again.returncode, 0, again.stdout)
+                self.assertIn("verdict already registered and passed", again.stdout)
+                for extra in ({}, {"PLAN_ONLY": "1"}):
+                    other = self.stage(**second, **extra)
+                    self.assertEqual(other.returncode, 7, other.stdout)
+                    self.assertIn(
+                        f"LADDER_RUNG_COMPLETE.json records no_early_end_turn="
+                        f"{recorded}, this stage declares {declared}", other.stdout)
+                    self.assertNotIn("verdict already registered", other.stdout)
+                # A verdict alone (its marker lost) is checked as well.
+                (self.run_dir / "LADDER_RUNG_COMPLETE.json").unlink()
+                other = self.stage(**second)
+                self.assertEqual(other.returncode, 7, other.stdout)
+                self.assertIn(f"EXAM_VERDICT.json records no_early_end_turn="
+                              f"{recorded}, this stage declares {declared}",
+                              other.stdout)
+                self.assertEqual(len(self.calls("eval_calls")), evals)
+                self.assertEqual(self.calls("ladder_calls"), ["train"])
+
     def test_a_rung_that_did_not_train_under_the_rule_is_not_examined_under_it(self):
         result = self.stage(**{KNOB: "1", "STUB_MARKER_RULE": "0"})
         self.assertEqual(result.returncode, 7, result.stdout)
-        self.assertIn("RULE MISMATCH: the rung marker records no_early_end_turn=0, "
+        self.assertIn("LADDER_RUNG_COMPLETE.json records no_early_end_turn=0, "
                       "this stage declares 1", result.stdout)
         self.assertEqual(self.calls("eval_calls"), [])
 

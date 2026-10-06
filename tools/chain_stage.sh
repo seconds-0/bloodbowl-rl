@@ -64,7 +64,8 @@
 # with the rule on for the champion's seat (the bot's seat is never
 # restricted), and EXAM_VERDICT.json records no_early_end_turn: 1. Which exam
 # to run is read from the rung marker, i.e. from what the trainer received,
-# and must agree with this variable.
+# and must agree with this variable: a launch that disagrees with the marker
+# or with a registered verdict exits 7, also when nothing is left to run.
 #
 # Exit status:
 #   0  verdict registered and passed (or PLAN_ONLY=1 verified)
@@ -76,7 +77,8 @@
 #   6  the pool identity does not match EXPECTED_POOL_HASH, or the plan-only
 #      pass did not verify. Nothing was trained by this launch.
 #   7  the rung marker or its checkpoint is unusable (missing file, sha256
-#      mismatch)
+#      mismatch), or LADDER_NO_EARLY_END_TURN disagrees with the rule the rung
+#      marker or a registered verdict records
 #   8  the verdict tool could not produce a verdict (missing or malformed
 #      evidence). The next launch runs the exam again in a new directory.
 #   143, 130, 129  stopped by TERM, INT or HUP, between steps
@@ -279,7 +281,38 @@ else:
 PY
 }
 
+# The rule a stage declares must be the rule its records carry. The rung marker
+# says what the trainer received and the verdict says how the exam ran; a
+# launch whose LADDER_NO_EARLY_END_TURN says otherwise is describing a
+# different rung, whether or not anything is left to run.
+check_rule_records() {
+  python3 - "$NO_EARLY_END_TURN_SEEN" "$MARKER" "$VERDICT" "$VERDICT_PASS" <<'PY'
+import json, os, sys
+
+declared = int(sys.argv[1])
+for path in sys.argv[2:]:
+    if not os.path.isfile(path):
+        continue
+    try:
+        record = json.load(open(path, encoding="utf-8"))
+        recorded = record.get("no_early_end_turn", 0)
+    except (OSError, ValueError, AttributeError) as exc:
+        print(f"unreadable record {path}: {exc!r}", file=sys.stderr)
+        raise SystemExit(7)
+    if recorded not in (0, 1) or isinstance(recorded, bool):
+        print(f"{path}: no_early_end_turn={recorded!r} is not 0 or 1",
+              file=sys.stderr)
+        raise SystemExit(7)
+    if recorded != declared:
+        print(f"RULE MISMATCH: {path} records no_early_end_turn={recorded}, "
+              f"this stage declares {declared} (LADDER_NO_EARLY_END_TURN)",
+              file=sys.stderr)
+        raise SystemExit(7)
+PY
+}
+
 terminal_checks() {
+  check_rule_records || exit 7
   if [ -f "$VERDICT_PASS" ]; then
     log "verdict already registered and passed: $VERDICT_PASS"
     exit 0
@@ -436,28 +469,19 @@ check_pool_identity
 
 # --- exam --------------------------------------------------------------------
 phase exam
-CKPT="$(python3 - "$MARKER" "$WANT_POOL_HASH" "$NO_EARLY_END_TURN_SEEN" <<'PY'
+# The marker now exists whichever launch trained the rung: its record of the
+# rule decides how the rung is examined.
+check_rule_records || exit 7
+CKPT="$(python3 - "$MARKER" "$WANT_POOL_HASH" <<'PY'
 import hashlib, json, os, sys
 
-marker_path, want_pool, want_rule = sys.argv[1], sys.argv[2], sys.argv[3]
+marker_path, want_pool = sys.argv[1], sys.argv[2]
 try:
     marker = json.load(open(marker_path, encoding="utf-8"))
     checkpoint = marker["checkpoint"]
     recorded = marker["checkpoint_sha256"]
 except (OSError, ValueError, KeyError, TypeError) as exc:
     print(f"unusable rung marker {marker_path}: {exc!r}", file=sys.stderr)
-    raise SystemExit(7)
-# The rung's own record of the rule decides how it is examined. A stage whose
-# environment says otherwise is describing a different rung.
-trained_rule = marker.get("no_early_end_turn", 0)
-if trained_rule not in (0, 1) or isinstance(trained_rule, bool):
-    print(f"rung marker no_early_end_turn={trained_rule!r} is not 0 or 1: "
-          f"{marker_path}", file=sys.stderr)
-    raise SystemExit(7)
-if str(trained_rule) != want_rule:
-    print(f"RULE MISMATCH: the rung marker records no_early_end_turn="
-          f"{trained_rule}, this stage declares {want_rule} "
-          f"(LADDER_NO_EARLY_END_TURN): {marker_path}", file=sys.stderr)
     raise SystemExit(7)
 if marker.get("trainer_exit") != 0:
     print(f"rung marker is not an accepted result: {marker_path}", file=sys.stderr)
@@ -502,9 +526,9 @@ log "exam start: $EXAM_DIR"
 # derives the thread count as it did for the as-run exams (16 on the rig).
 # `timeout` signals the cell's whole process group, so a hung eval is stopped
 # with its trainer process and reads as a failed cell (status 124).
-# The rule reaches the cell by this assignment alone: the marker check above
-# has already tied NO_EARLY_END_TURN_SEEN to what the rung trained with, and an
-# inherited value must not decide an exam.
+# The rule reaches the cell by this assignment alone: check_rule_records has
+# tied NO_EARLY_END_TURN_SEEN to what the rung trained with, and an inherited
+# value must not decide an exam.
 VERDICT_EXAM_ARGS=()
 if [ "$NO_EARLY_END_TURN_SEEN" = "1" ]; then
   VERDICT_EXAM_ARGS=(--no-early-end-turn 1)
