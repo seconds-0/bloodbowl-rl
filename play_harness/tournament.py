@@ -53,6 +53,7 @@ import time
 import numpy as np
 
 from . import engine as E
+from .activations import ActivationLog
 from .policy import (MASK_HELP, MASKS, NONE_TUPLE, MaskedPolicySeat, PolicySeat,
                      batched_forward, check_masks, check_temperature, load_checkpoint)
 
@@ -248,6 +249,7 @@ class Match:
         self.behaviour = [new_behaviour(), new_behaviour()]
         self._kind = [None, None]            # the kind each side last declared
         self._declared = [False, False]      # its last action was that declaration
+        self.activations = ActivationLog(self.eng)
 
     def close(self):
         self.eng.close()
@@ -306,6 +308,7 @@ class Match:
         b, kind_of = self.behaviour[team], E.ACT_KINDS
         t, arg = int(tup[0]), int(tup[1])
         name = E.ACTION_TYPES[t]
+        self.activations.on_action(team, name, tup)
         first_after_declaration = self._declared[team]
         self._declared[team] = name == "DECLARE"
         if name == "ACTIVATE":
@@ -362,7 +365,9 @@ class Match:
             raise IntegrityError("decision budget reached at the terminal step")
         modes = tuple(s.mode for s in seats)
         temperatures = tuple(s.temperature for s in seats)
+        activation_stats = self.activations.finish(final)
         for side in (0, 1):
+            self.behaviour[side].update(activation_stats[side])
             self.behaviour[side].update(
                 team_turns=int(final.turns_completed[side]),
                 team_turns_holding_ball=int(final.turns_completed_held[side]),
