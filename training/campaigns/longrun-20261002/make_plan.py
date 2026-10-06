@@ -34,6 +34,25 @@ ARM = ("0.5", "2.0")       # restart learning-rate scale, entropy scale (entropy
 STANDARD = ("1.0", "1.0")
 
 
+# D416: the b3 stages run from their own checkout (hand-written wrappers under {HOME}/b3, from branch
+# feat/no-early-end-turn-20261005). They sit right after chain 50: identity check, canary, then chain 54.
+B3 = "/home/rache/bloodbowl-rl-b3-20261006/runs"
+B3_STAGES = [
+    {"name": "b3_identity", "launch": f"bash {HOME}/b3/b3_identity.sh",
+     "success": f"{B3}/b3-identity-20261006/B3_IDENTITY_PASS.json",
+     "progress": f"{B3}/b3-identity-20261006/B3_IDENTITY_STATUS.json",
+     "max_attempts": 2, "max_stale_seconds": 6000},
+    {"name": "b3_canary54", "launch": f"bash {HOME}/b3/b3_canary54.sh",
+     "success": f"{B3}/ladder-d0-canary54-noearlyend-from41-s42-20261006/EXAM_VERDICT_PASS.json",
+     "progress": f"{B3}/ladder-d0-canary54-noearlyend-from41-s42-20261006/SCREEN_STATUS.json",
+     "max_attempts": 3, "max_stale_seconds": 6000},
+    {"name": "b3_chain54", "launch": f"bash {HOME}/b3/b3_chain54.sh",
+     "success": f"{B3}/ladder-d0-r0chain54-noearlyend-from41-s42-20261006/EXAM_VERDICT_PASS.json",
+     "progress": f"{B3}/ladder-d0-r0chain54-noearlyend-from41-s42-20261006/SCREEN_STATUS.json",
+     "max_attempts": 3, "max_stale_seconds": 6000},
+]
+
+
 def marker(stamp):
     return f"{C}/runs/ladder-d0-{stamp}/LADDER_RUNG_COMPLETE.json"
 
@@ -112,7 +131,8 @@ def main():
     assert len(set(stamps)) == len(stamps), "duplicate STAMP"
     plan = {"schema_version": 1, "campaign_id": CAMPAIGN, "root": C,
             "trainer_pgrep": "[p]uffer_cuda_runtime.py train|[p]uffer train|[c]hain_stage.sh|"
-                             "[l]adder_stage.sh|[r]un_reward_screen.sh|[e]val_vs_contact_bot.sh",
+                             "[l]adder_stage.sh|[r]un_reward_screen.sh|[e]val_vs_contact_bot.sh|"
+                             "[b]3_identity.sh",
             "stages": []}
     for stage in STAGES:
         path = out / f"{stage['name']}.sh"
@@ -123,6 +143,8 @@ def main():
             "success": f"runs/ladder-d0-{stage['stamp']}/EXAM_VERDICT_PASS.json",
             "progress": f"runs/ladder-d0-{stage['stamp']}/SCREEN_STATUS.json",
             "max_attempts": 3, "max_stale_seconds": 6000})
+        if stage["name"] == "s10_chain50":
+            plan["stages"].extend(B3_STAGES)
     (out / "CAMPAIGN_PLAN.json").write_text(json.dumps(plan, indent=2) + "\n")
     for stage in STAGES:
         print(stage["name"], stage["stamp"], "<-", stage["prev"].split("/runs/")[1].split("/")[0], stage["rule"])
