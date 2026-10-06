@@ -78,7 +78,7 @@ try:
     marker = json.load(open(run + "/LADDER_RUNG_COMPLETE.json", encoding="utf-8"))
     lineage = json.load(open(marker["checkpoint_lineage"], encoding="utf-8"))
     built = lineage["implementation"]
-except (OSError, ValueError, KeyError, TypeError) as exc:
+except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
     print(f"the canary has no usable passing verdict under {run}: {exc!r}; run b3_canary54.sh first",
           file=sys.stderr)
     raise SystemExit(1)
@@ -101,11 +101,16 @@ try:
     cells = verdict["cells"]
     for cell in cells:
         counts[f"exam cell s{cell['seed']} {cell['cell']}"] = cell.get("truncated_episodes")
-except (OSError, ValueError, KeyError, TypeError) as exc:
+    examined = sorted((cell["seed"], cell["cell"]) for cell in cells)
+except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
     print(f"the canary under {run} has no readable truncation record: {exc!r}", file=sys.stderr)
     raise SystemExit(1)
-if result.get("acceptance_pass") is not True or len(cells) != 6:
-    print(f"the canary under {run} is not an accepted arm with six exam cells", file=sys.stderr)
+expected = sorted((seed, name) for seed in (42, 43)
+                  for name in ("contact_away", "contact_home", "offense_away"))
+if result.get("acceptance_pass") is not True or examined != expected \
+        or result.get("checkpoint_sha256") != marker.get("checkpoint_sha256"):
+    print(f"the canary under {run} is not an accepted arm with six exam cells for its marker's "
+          "checkpoint", file=sys.stderr)
     raise SystemExit(1)
 bad = {where: count for where, count in counts.items()
        if isinstance(count, bool) or not isinstance(count, (int, float)) or count != 0}

@@ -439,7 +439,10 @@ class WrapperTests(FakeCheckouts):
         (self.out / "B3_IDENTITY_PASS.json").write_text(json.dumps(marker))
 
     def pass_canary(self, rule=1, verdict_pass=True, train_cut=0.0, eval_cut=0.0,
-                    cell_cut=0.0, accepted=True, cells=6, **built):
+                    cell_cut=0.0, accepted=True, cells=6,
+                    result_checkpoint="c" * 64,
+                    cell_names=("contact_away", "contact_home", "offense_away"),
+                    **built):
         """The canary's records as the real stage leaves them. A *_cut of None
         leaves that truncation count out."""
         run = self.c / "runs/ladder-d0-canary54-noearlyend-from41-s42-20261006"
@@ -455,11 +458,12 @@ class WrapperTests(FakeCheckouts):
                                                        "truncated_episodes": cut}
         result = run / "arm.result.json"
         result.write_text(json.dumps({"acceptance_pass": accepted,
+                                      "checkpoint_sha256": result_checkpoint,
                                       "train_metrics": panel(train_cut),
                                       "eval_metrics": panel(eval_cut)}))
         exam = []
         for seed in (42, 43):
-            for name in ("contact_away", "contact_home", "offense_away"):
+            for name in cell_names:
                 cell = {"seed": seed, "cell": name, "no_early_end_turn": 1,
                         "truncated_episodes": 0.0}
                 exam.append(cell)
@@ -584,6 +588,13 @@ class WrapperTests(FakeCheckouts):
         self.pass_canary(accepted=False)
         self.refused("b3_chain54.sh", "is not an accepted arm with six exam cells")
         self.pass_canary(cells=5)
+        self.refused("b3_chain54.sh", "is not an accepted arm with six exam cells")
+        # Six entries that are not the six cells: a repeated cell could hide
+        # a missing one.
+        self.pass_canary(cell_names=("contact_away", "contact_home", "contact_home"))
+        self.refused("b3_chain54.sh", "is not an accepted arm with six exam cells")
+        # A result file that belongs to another checkpoint is not this canary's.
+        self.pass_canary(result_checkpoint="d" * 64)
         self.refused("b3_chain54.sh", "is not an accepted arm with six exam cells")
         # The rebuild itself: both markers were good until the module changed.
         self.pass_canary()
