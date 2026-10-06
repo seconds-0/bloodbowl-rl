@@ -1131,12 +1131,19 @@ typedef struct {
     long decisions;
     long removed;          // decisions where END_TURN left the list
     long end_turn_offered; // decisions whose list still holds END_TURN
+    long team_turn_end_turn_offered; // ... inside a team turn (not Charge!)
     long end_turn_taken;
     long team_turns;       // completed team turns, both sides
+    long truncated;        // episodes cut by the max_decisions cap
     int episodes;
     int max_episode_decisions;
     uint64_t rosters_seen; // bit per roster id, either side
 } NeetStats;
+
+// How the test policy picks. UNIFORM samples the exact joint support head by
+// head. PROLONG never ends an activation or a turn while anything else is
+// legal, which is the longest a policy can make a game under the rule.
+enum { NEET_UNIFORM = 0, NEET_PROLONG = 1 };
 
 static int neet_count_type(const bb_action* legal, int n, int type) {
     int count = 0;
@@ -1209,7 +1216,8 @@ static void neet_check_observation_is_flag_blind(const Bloodbowl* env) {
     BB_CHECK_EQ(shadow.action_mask_ptr[deciding][BB_A_END_TURN], 1);
 }
 
-static NeetStats neet_play(int flag, uint64_t seed, int episodes) {
+static NeetStats neet_play_as(int flag, uint64_t seed, int episodes,
+                              int macro_moves, int policy) {
     static ObservationFixture f;
     static bb_action engine_legal[BB_LEGAL_MAX];
     observation_fixture_init(&f);
@@ -1217,6 +1225,9 @@ static NeetStats neet_play(int flag, uint64_t seed, int episodes) {
     memset(&env->match, 0, sizeof env->match);
     env->seed = seed;
     env->no_early_end_turn = flag;
+    env->macro_moves = macro_moves;
+    env->reach_mover = -1;
+    env->macro_mover = -1;
     // The fixture's zero fill would pin roster 0 on both sides.
     env->exclude_team = env->force_home_team = env->force_away_team = -1;
     c_reset(env);
@@ -1252,7 +1263,14 @@ static NeetStats neet_play(int flag, uint64_t seed, int episodes) {
         if (activates == 0) BB_CHECK_EQ(listed_end_turns, end_turns);
         out.removed += expect_removed;
         out.end_turn_offered += listed_end_turns > 0;
-        neet_check_masks_match_joint_support(env, agent);
+        out.team_turn_end_turn_offered +=
+            listed_end_turns > 0 && m->stack_top > 0 &&
+            m->stack[m->stack_top - 1].proc == BB_PROC_TEAM_TURN;
+        // With macro moves the STEP head also carries virtual destinations,
+        // which the marginal mask marks from a different condition than the
+        // joint support does; that surface is not this rule's. The list
+        // checks above and the decode checks below still run.
+        if (!macro_moves) neet_check_masks_match_joint_support(env, agent);
         float end_turn_heads[3] = {
             BB_A_END_TURN, (float)bbe_action_arg(agent, end_turn),
             (float)bbe_action_sq(agent, end_turn)};
@@ -1286,6 +1304,25 @@ static NeetStats neet_play(int flag, uint64_t seed, int episodes) {
         for (int a = 0; a < BBE_AGENTS; a++) {
             bbe_sample_joint_uniform(env, a, env->action_ptr[a], &pol);
         }
+        if (policy == NEET_PROLONG) {
+            int keep = 0;
+            for (int i = 0; i < env->n_legal; i++) {
+                keep += env->legal[i].type != BB_A_END_ACTIVATION &&
+                        env->legal[i].type != BB_A_END_TURN;
+            }
+            if (keep > 0) {
+                int pick = (int)(bb_rng_next(&pol) % (uint32_t)keep);
+                for (int i = 0; i < env->n_legal; i++) {
+                    if (env->legal[i].type == BB_A_END_ACTIVATION ||
+                        env->legal[i].type == BB_A_END_TURN) continue;
+                    if (pick-- != 0) continue;
+                    env->action_ptr[agent][0] = (float)env->legal[i].type;
+                    env->action_ptr[agent][1] = (float)env->legal_arg[i];
+                    env->action_ptr[agent][2] = (float)env->legal_sq[i];
+                    break;
+                }
+            }
+        }
         out.end_turn_taken += (int)env->action_ptr[agent][0] == BB_A_END_TURN;
         int turns_before = m->turns_completed[0] + m->turns_completed[1];
         c_step(env);
@@ -1296,9 +1333,16 @@ static NeetStats neet_play(int flag, uint64_t seed, int episodes) {
             if (turns_after > turns_before) out.team_turns += turns_after - turns_before;
         }
         if (f.terminals[0] != 0.0f) {
-            // Below the cap, so the episode ended at MATCH_OVER (or an error
-            // episode, counted below), not by the max_decisions truncation.
-            BB_CHECK(episode_decisions < env->max_decisions);
+            // Below the cap, the episode ended at MATCH_OVER (or as an error
+            // episode, counted below); at the cap it was cut. One macro
+            // decision can apply several engine steps, so only the plain
+            // action space gives this loop its own count of the cap.
+            if (!macro_moves && episode_decisions >= env->max_decisions) {
+                out.truncated++;
+            }
+            if (policy == NEET_UNIFORM) {
+                BB_CHECK(episode_decisions < env->max_decisions);
+            }
             if (episode_decisions > out.max_episode_decisions) {
                 out.max_episode_decisions = episode_decisions;
             }
@@ -1314,7 +1358,16 @@ static NeetStats neet_play(int flag, uint64_t seed, int episodes) {
     // not been logged.
     BB_CHECK(env->log.end_turn_removed + (float)env->ep_end_turn_removed ==
              (float)out.removed);
+    if (!macro_moves) {
+        BB_CHECK(env->log.truncated_episodes == (float)out.truncated);
+    } else {
+        out.truncated = (long)env->log.truncated_episodes;
+    }
     return out;
+}
+
+static NeetStats neet_play(int flag, uint64_t seed, int episodes) {
+    return neet_play_as(flag, seed, episodes, 0, NEET_UNIFORM);
 }
 
 BB_TEST(no_early_end_turn_off_leaves_the_engine_list_untouched) {
@@ -1322,6 +1375,8 @@ BB_TEST(no_early_end_turn_off_leaves_the_engine_list_untouched) {
     BB_CHECK_EQ(off.episodes, NEET_EPISODES_OFF);
     BB_CHECK_EQ(off.removed, 0);
     BB_CHECK(off.end_turn_taken > 0);
+    BB_CHECK(off.team_turn_end_turn_offered > 0);
+    BB_CHECK_EQ(off.truncated, 0);
     printf("no_early_end_turn off: episodes=%d decisions=%ld "
            "mean_decisions=%.1f max=%d end_turn_taken=%ld team_turns=%ld\n",
            off.episodes, off.decisions,
@@ -1334,10 +1389,11 @@ BB_TEST(no_early_end_turn_on_removes_end_turn_exactly_beside_an_activate) {
     BB_CHECK_EQ(on.episodes, NEET_EPISODES_ON);
     BB_CHECK(on.removed > 0);
     // The engine never asks a team with nobody left to activate: it ends the
-    // team turn itself (proc_turn.c). So under the rule a policy seat is in
-    // practice never offered END_TURN in a team turn, and turns still end.
-    BB_CHECK(on.end_turn_taken <= on.end_turn_offered);
+    // team turn itself (proc_turn.c). So under the rule a policy seat is
+    // never offered END_TURN inside a team turn, and turns still end.
+    BB_CHECK_EQ(on.team_turn_end_turn_offered, 0);
     BB_CHECK(on.team_turns > (long)on.episodes * 16);
+    BB_CHECK_EQ(on.truncated, 0);
     // Random rosters: the property is not a one-matchup accident.
     int rosters = 0;
     for (int bit = 0; bit < 64; bit++) rosters += (on.rosters_seen >> bit) & 1;
@@ -1348,6 +1404,70 @@ BB_TEST(no_early_end_turn_on_removes_end_turn_exactly_beside_an_activate) {
            on.episodes, on.decisions, (double)on.decisions / on.episodes,
            on.max_episode_decisions, on.removed, on.end_turn_offered,
            on.end_turn_taken, on.team_turns, rosters);
+}
+
+BB_TEST(no_early_end_turn_holds_with_macro_moves) {
+    // macro_moves adds virtual STEP destinations to the support and routes
+    // them itself; the rule is about END_TURN and must hold beside it.
+    NeetStats off = neet_play_as(0, 0x3AC20ULL, 60, 1, NEET_UNIFORM);
+    NeetStats on = neet_play_as(1, 0x3AC20ULL, 60, 1, NEET_UNIFORM);
+    BB_CHECK_EQ(off.episodes, 60);
+    BB_CHECK_EQ(on.episodes, 60);
+    BB_CHECK_EQ(off.removed, 0);
+    BB_CHECK(on.removed > 0);
+    BB_CHECK_EQ(on.team_turn_end_turn_offered, 0);
+    printf("no_early_end_turn macro_moves=1: off mean_decisions=%.1f on "
+           "mean_decisions=%.1f max=%d removed=%ld truncated=%ld\n",
+           (double)off.decisions / off.episodes,
+           (double)on.decisions / on.episodes, on.max_episode_decisions,
+           on.removed, on.truncated);
+}
+
+BB_TEST(no_early_end_turn_under_a_policy_that_never_stops_by_choice) {
+    // The longest games the rule allows: every player is activated, and no
+    // activation or turn ends while anything else is legal. This is a
+    // measurement of how close that comes to the max_decisions cap, and a
+    // check that the panel's truncation counter agrees with a direct count.
+    NeetStats off = neet_play_as(0, 0x10C6ULL, 100, 0, NEET_PROLONG);
+    NeetStats on = neet_play_as(1, 0x10C6ULL, 100, 0, NEET_PROLONG);
+    BB_CHECK_EQ(off.episodes, 100);
+    BB_CHECK_EQ(on.episodes, 100);
+    BB_CHECK_EQ(on.team_turn_end_turn_offered, 0);
+    // The rule only binds a policy that would have stopped: this one never
+    // does, so the two runs are the same games.
+    BB_CHECK_EQ(on.decisions, off.decisions);
+    BB_CHECK_EQ(on.team_turns, off.team_turns);
+    BB_CHECK(on.removed > 0);
+    printf("no_early_end_turn never-stop policy: off mean_decisions=%.1f "
+           "max=%d truncated=%ld/100; on mean_decisions=%.1f max=%d "
+           "truncated=%ld/100 (cap %d)\n",
+           (double)off.decisions / off.episodes, off.max_episode_decisions,
+           off.truncated, (double)on.decisions / on.episodes,
+           on.max_episode_decisions, on.truncated, BBE_MAX_DECISIONS);
+}
+
+BB_TEST(truncated_episodes_counts_games_cut_by_the_decision_cap) {
+    static ObservationFixture f;
+    observation_fixture_init(&f);
+    Bloodbowl* env = &f.env;
+    memset(&env->match, 0, sizeof env->match);
+    env->seed = 0x7C47ULL;
+    env->exclude_team = env->force_home_team = env->force_away_team = -1;
+    env->max_decisions = 40; // far short of a match
+    c_reset(env);
+    bb_rng pol;
+    bb_rng_seed(&pol, 5, 9);
+    int episodes = 0;
+    while (episodes < 5) {
+        for (int a = 0; a < BBE_AGENTS; a++) {
+            bbe_sample_joint_uniform(env, a, env->action_ptr[a], &pol);
+        }
+        c_step(env);
+        episodes += f.terminals[0] != 0.0f;
+    }
+    BB_CHECK(env->log.n == 5.0f);
+    BB_CHECK(env->log.truncated_episodes == 5.0f);
+    BB_CHECK(env->log.error_episodes == 0.0f);
 }
 
 BB_TEST(no_early_end_turn_never_removes_the_last_action_or_another_type) {

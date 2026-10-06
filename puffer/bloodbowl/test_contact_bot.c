@@ -122,6 +122,9 @@ static ContactHookStats run_contact_hook_tagged(int scripted, int scripted_team,
     while (out.completed < games &&
            out.decisions < (long)games * CONTACT_DECISION_CAP) {
         if (contact_seat_stats) contact_check_seat_list(&env);
+        // Everything a policy is shown, as well as what was played.
+        hash_bytes(&out.digest, obs, sizeof obs);
+        hash_bytes(&out.digest, masks, sizeof masks);
         for (int a = 0; a < BBE_AGENTS; a++) {
             bbe_sample_joint_uniform(&env, a, env.action_ptr[a], &pol);
         }
