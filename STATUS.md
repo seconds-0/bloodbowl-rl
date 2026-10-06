@@ -67,6 +67,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-10-05 21:30 (D417): chain 49 is Negative by its exam veto and the strongest checkpoint by tournament.** The third seat context beats its control by +62.7 decisive-Elo and reads +182.6 against chain 37, but its exam veto fires, so the registered reading is Negative and the seat change stays not adopted. The exam veto is retired from future gates. A confirmatory gate on fresh seeds and held-out opponents decides whether chain 49 replaces chain 41 as the warm start.
 
+**Update 2026-10-05 21:50 (D418): chain 49 is the warm start.** On fresh seeds chain 49 does better than chain 41 against three opponents neither ever met, by +60.2, +75.4 and +41.1 decisive-Elo with every interval above zero. Chain 54 is withdrawn and the compounding test is stopped unread. Three rungs from chain 49 run next on the third build: chain 55 (plain continuation and control), chain 56 (trained under the no-early-end-turn rule) and chain 57 (bot in the anchor's seat), after an identity check and a canary.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

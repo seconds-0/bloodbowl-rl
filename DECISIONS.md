@@ -2194,3 +2194,51 @@ Exam, champion / bot touchdowns per game at seeds 42 and 43. Chain 47: contact A
 - **Winner's curse.** Chain 49 is being confirmed because its first gate looked strong. The decision uses the new gate only, and the entry that reports it gives the shrinkage from the discovery numbers (+66.5 paired against chain 37).
 - **What it cannot show.** It does not replicate the training run, and it does not identify why chain 49 is strong: the seat, the seed and chance are all candidates. The pairs against chain 41 and chain 42 are descriptive (chain 41 was in chain 49's pool).
 - **Rig preference if it passes, not a prediction.** I would prefer to spend rig time continuing from chain 49 over finishing the compounding test. That would be decided in a later entry; the compounding test's outcome is unread until it is run or stopped.
+
+
+**D418 - THE CONFIRMATORY GATE PASSES AND CHAIN 49 IS THE WARM START; CHAIN 54 IS WITHDRAWN AND THE COMPOUNDING TEST IS STOPPED UNREAD; CHAINS 55, 56 AND 57 FROM CHAIN 49 ARE PRE-REGISTERED ON THE b3 BUILD (2026-10-05 21:50 PDT by the session's clock, before chain 50 is stopped and before any b3 stage has run)**
+
+**A correction first.** D417 and its amendment carry in-text times of 21:30 and 21:40 PDT. They were committed at 21:15:39 and 21:17:59 PDT, and the confirmatory shards were launched at 21:19:43. The order stated there is right (the amendment was committed before any game was played); the in-text times were written from memory and are wrong.
+
+**Confirmatory gate** (D417 amendment), four droplets: `GATE-ACCEPTED 25600 games, 8 pairs, seed0 22300000, games_per_worker 32, commit b0099fb`, unchanged merge, every game naturally completed, integrity counters zero, about $0.19, droplets verified destroyed (as reported by the session that ran them). All six checkpoint hashes matched the registration.
+
+| Pair | W / D / L | Decisive-Elo [95% seed-cluster] |
+|---|---|---|
+| chain 49 vs chain 37 | 1626 / 1002 / 572 | +181.5 [+167.1, +196.5] |
+| chain 41 vs chain 37 | 1421 / 1072 / 707 | +121.3 [+107.4, +134.9] |
+| chain 49 vs chain 46 | 1345 / 1130 / 725 | +107.4 [+93.5, +122.1] |
+| chain 41 vs chain 46 | 1077 / 1227 / 896 | +32.0 [+18.2, +46.0] |
+| chain 49 vs chain 38 | 1892 / 817 / 491 | +234.3 [+218.8, +251.9] |
+| chain 41 vs chain 38 | 1673 / 977 / 550 | +193.3 [+179.2, +209.3] |
+| chain 49 vs chain 41 (descriptive, in pool) | 1361 / 1113 / 726 | +109.2 [+94.8, +123.2] |
+| chain 49 vs chain 42 (descriptive) | 1203 / 1134 / 863 | +57.7 [+44.6, +70.9] |
+
+| Paired contrast, (chain 49 vs X) minus (chain 41 vs X) | Decisive-Elo [95%] |
+|---|---|
+| X = chain 37 | +60.2 [+41.9, +79.7] |
+| X = chain 46 | +75.4 [+56.4, +94.3] |
+| X = chain 38 | +41.1 [+20.5, +63.2] |
+
+The contrast script (`paired_contrasts.py`, sha256 `722ece95...`, 2,000 replicates, generator seed 0) was written and hashed before the shards were launched and reproduces the discovery contrast on chain 49's gate.
+
+**Reading under D417's amended rule: chain 49 (`a2d1d10d...`) becomes the warm start in place of chain 41.** All three intervals are entirely above zero and all three point estimates are above +40 (the chain 38 one by 1.1; the rule needed two). No interval is below zero.
+- **Shrinkage.** Discovery: chain 49 minus chain 42 against chain 37, +66.5 [+47.3, +85.2]. Confirmation: chain 49 minus chain 41 against chain 37, +60.2 [+41.9, +79.7]. The comparator differs, so this is not the same quantity; chain 49 against chain 37 itself read +182.6 then and +181.5 now.
+- **Limits, carried forward from D417's amendment.** The three opponents are lineage relatives that never met either checkpoint, not arbitrary opponents. The exam veto that would have blocked this was retired after chain 49's tournament was read. The gate does not show why chain 49 is strong. The seat change stays not adopted.
+- Descriptive: raw roster-conditioned decisive share of chain 49 against chain 41 is bash 0.554, agile 0.810, hybrid 0.716, stunty 0.665. The Bradley-Terry fit rejects transitivity (p < 0.0001).
+
+**Consequences for what was queued.**
+- **Chain 54 is withdrawn before it ran.** It was a rule-trained rung from chain 41 with chain 42 as control. Its question moves to chain 56 below, from the new warm start. Nothing of chain 54 exists; its 50M canary is kept as the launch-path test for the rule.
+- **The compounding test (D414) is stopped during its first rung and is unread.** Chain 50 is killed part way through and chains 51 to 53 are not run. Reason: the test continues chain 42, which this gate puts +57.7 below chain 49; D414 allowed stopping for a better-founded stage. Nothing is concluded about whether small gains compound.
+
+**Chains 55, 56 and 57, pre-registered.** All three: warm chain 49, training seed 42, standard recipe at restart scale 1.0, 3B steps, pool `2ae7448e...` (the anchor, chain 40, chain 41, and chain 49 last; verified by plan-only preflight for each), on the b3 build in `/home/rache/bloodbowl-rl-b3-20261006` (env source `4c8a04b1...`, module `4156c9c3...`), declaring the original and long-run builds as old builds. One control and two one-factor arms on one build:
+- **Chain 55** (`r0chain55-cont49-s42-20261006`): the plain continuation. Rule flag off, bot on tag 4. Active learned opponents: the anchor, chain 40, chain 41.
+- **Chain 56** (`r0chain56-noearlyend-from49-s42-20261006`): chain 55's rung with `LADDER_NO_EARLY_END_TURN=1` (learner's seats only). Control: chain 55.
+- **Chain 57** (`r0chain57-botseat1-from49-s42-20261006`): chain 55's rung with `SCRIPTED_BANK_TAG=1`. Active learned opponents: chains 40, 41 and 49. Control: chain 55.
+- **Gates before any of them trains.** The b3 identity stage must pass on the installed build (flag off reproduces chain 42's stored checkpoints at 131,072 and 50,069,504 steps byte for byte; flag-on smoke clean). Chain 56 also needs the 50M canary under the rule to pass with zero truncated episodes. If the identity stage fails, none of the three runs on b3 and a later entry decides where the continuation runs.
+- **Declared differences.** Chain 56 from chain 55: the rule; its stage runs `EXAM_RULE=none` where chain 55's applies D405's chain 30 guard; fewer games per rung. Chain 57 from chain 55: the bot's seat, and with it which three checkpoints are active opponents. All three exams run on b3's module, the rule on the champion's seat for chain 56 only. No exam veto applies to any of them (D417).
+- **Statistic and acceptance, for all three gates.** Decisive-Elo with 95% seed-cluster intervals; paired contrasts by `paired_contrasts.py` (sha256 `722ece95...`, 2,000 replicates, generator seed 0); kick-off starts, both swapped legs, 3,200 naturally completed games per pair, 32 games per worker, T=1; scored only after acceptance against the registered plan with every integrity counter zero; missing or invalid evidence is unread. Held-out opponents are chain 37 and chain 46 (in none of these pools, never trained against chain 49 or its children).
+- **Chain 55's gate** (harness `b0099fb`, seed block 22400000): chain 55 against chain 49; chain 55 and chain 49 each against chain 37 and chain 46; chain 55 and chain 49 each against the offense bot. **Positive:** above +40 over chain 49 with that interval entirely above zero, and both held-out contrasts (chain 55 minus chain 49) with intervals entirely above zero. **Negative:** the interval against chain 49 entirely below zero, or the stage's chain 30 guard tripped. **Flat:** within plus or minus 40 inclusive. Otherwise Inconclusive. Chain 49 sits in the bot's seat in chain 55's pool and is not an opponent, so the pair against it is not in-pool.
+- **Chain 56's gate** (harness `7d0d547`, the mask branch; seed block 22500000). Chain 56 is always played under m1 and its control is played under m1 too: (1) chain 56 + m1 against chain 55 + m1; (2) each against chain 37; (3) each against chain 46; (4) chain 56 + m1 against chain 49 + m1; (5) chain 56 + m1 against plain chain 55; (6) each against the offense bot. No pair has the same checkpoint on both sides, so no sampling offsets. **Positive:** pair (1) above +40 with its interval entirely above zero, and both held-out contrasts (chain 56 + m1 minus chain 55 + m1) with intervals entirely above zero. **Negative:** pair (1)'s interval entirely below zero. **Flat:** within plus or minus 40 inclusive. Otherwise Inconclusive. A refused completion marker or a truncated episode is unread (D416's amendment). Registered diagnostics as in D416: empty activations, activations, blocks and turnovers per team turn and decisions per game for chain 56 + m1 against chain 55 + m1.
+- **Chain 57's gate** (harness `b0099fb`, seed block 22600000): chain 57 against chain 55; each against chain 37 and chain 46; chain 57 against chain 49 (in pool, descriptive); each against the offense bot. **Positive:** above +40 over chain 55 with that interval entirely above zero, and both held-out contrasts (chain 57 minus chain 55) with intervals entirely above zero. Negative, Flat and Inconclusive as for chain 55, against chain 55.
+- **What the readings decide.** Chain 55 Positive: it is a warm-start candidate. Chain 56 Positive: training under the rule is a candidate recipe component and chain 56 a warm-start candidate (played under m1). Chain 57 Positive: the seat change, which D414 left not adopted under the old rules, is adopted for continuation rungs from then on, and chain 57 is a warm-start candidate; any other reading leaves it not adopted. Where more than one checkpoint qualifies, a later entry picks the warm start by a registered direct comparison on held-out opponents, before anything is launched from any of them. If none qualifies, chain 49 stays and a later entry says what runs next.
+- **Order on the rig:** the b3 identity stage, the canary, chain 55, chain 56, chain 57. About 27 hours of training after the two checks.

@@ -34,8 +34,8 @@ ARM = ("0.5", "2.0")       # restart learning-rate scale, entropy scale (entropy
 STANDARD = ("1.0", "1.0")
 
 
-# D416: the b3 stages run from their own checkout (hand-written wrappers under {HOME}/b3, from branch
-# feat/no-early-end-turn-20261005). They sit right after chain 50: identity check, canary, then chain 54.
+# D416, D418: the b3 stages run from their own checkout (hand-written wrappers under {HOME}/b3, from branch
+# feat/no-early-end-turn-20261005): identity check, canary, then chains 55, 56 and 57 from chain 49.
 B3 = "/home/rache/bloodbowl-rl-b3-20261006/runs"
 B3_STAGES = [
     {"name": "b3_identity", "launch": f"bash {HOME}/b3/b3_identity.sh",
@@ -46,9 +46,17 @@ B3_STAGES = [
      "success": f"{B3}/ladder-d0-canary54-noearlyend-from41-s42-20261006/EXAM_VERDICT_PASS.json",
      "progress": f"{B3}/ladder-d0-canary54-noearlyend-from41-s42-20261006/SCREEN_STATUS.json",
      "max_attempts": 3, "max_stale_seconds": 6000},
-    {"name": "b3_chain54", "launch": f"bash {HOME}/b3/b3_chain54.sh",
-     "success": f"{B3}/ladder-d0-r0chain54-noearlyend-from41-s42-20261006/EXAM_VERDICT_PASS.json",
-     "progress": f"{B3}/ladder-d0-r0chain54-noearlyend-from41-s42-20261006/SCREEN_STATUS.json",
+    {"name": "b3_chain55", "launch": f"bash {HOME}/b3/b3_chain55.sh",
+     "success": f"{B3}/ladder-d0-r0chain55-cont49-s42-20261006/EXAM_VERDICT_PASS.json",
+     "progress": f"{B3}/ladder-d0-r0chain55-cont49-s42-20261006/SCREEN_STATUS.json",
+     "max_attempts": 3, "max_stale_seconds": 6000},
+    {"name": "b3_chain56", "launch": f"bash {HOME}/b3/b3_chain56.sh",
+     "success": f"{B3}/ladder-d0-r0chain56-noearlyend-from49-s42-20261006/EXAM_VERDICT_PASS.json",
+     "progress": f"{B3}/ladder-d0-r0chain56-noearlyend-from49-s42-20261006/SCREEN_STATUS.json",
+     "max_attempts": 3, "max_stale_seconds": 6000},
+    {"name": "b3_chain57", "launch": f"bash {HOME}/b3/b3_chain57.sh",
+     "success": f"{B3}/ladder-d0-r0chain57-botseat1-from49-s42-20261006/EXAM_VERDICT_PASS.json",
+     "progress": f"{B3}/ladder-d0-r0chain57-botseat1-from49-s42-20261006/SCREEN_STATUS.json",
      "max_attempts": 3, "max_stale_seconds": 6000},
 ]
 
@@ -95,16 +103,8 @@ STAGES.append(dict(name="s09_chain49", stamp="r0chain49-botseat1-from41-s42-2026
                    extra=dict(GUARD_C30, SCRIPTED_BANK_TAG="1")))
 
 
-# D414: the compounding test. Chains 42 and 48 both read Flat against chain 41 (+12.5 and +11.0), so a single
-# further rung is not retained. Chains 50 to 53 continue from chain 42 on the standard recipe and only chain 53,
-# five rungs past chain 41, is gated against chain 41.
-previous = "r0chain42-cont41-rr1-20261003"
-for number in range(50, 54):
-    stamp = f"r0chain{number}-compound-cont{42 if number == 50 else number - 1}-20261005"
-    STAGES.append(dict(name=f"s{number - 40:02d}_chain{number}", stamp=stamp, seed=42,
-                       prev=marker(previous), pool=None, rule="drift-guard", scales=STANDARD,
-                       extra=dict(GUARD_MEAN)))
-    previous = stamp
+# D418: chain 49 is the warm start. The compounding test (chains 50 to 53, D414) is stopped unread and its
+# stages are dropped. The b3 stages follow chain 49 directly (see B3_STAGES).
 
 
 def wrapper(stage):
@@ -143,8 +143,7 @@ def main():
             "success": f"runs/ladder-d0-{stage['stamp']}/EXAM_VERDICT_PASS.json",
             "progress": f"runs/ladder-d0-{stage['stamp']}/SCREEN_STATUS.json",
             "max_attempts": 3, "max_stale_seconds": 6000})
-        if stage["name"] == "s10_chain50":
-            plan["stages"].extend(B3_STAGES)
+    plan["stages"].extend(B3_STAGES)
     (out / "CAMPAIGN_PLAN.json").write_text(json.dumps(plan, indent=2) + "\n")
     for stage in STAGES:
         print(stage["name"], stage["stamp"], "<-", stage["prev"].split("/runs/")[1].split("/")[0], stage["rule"])
