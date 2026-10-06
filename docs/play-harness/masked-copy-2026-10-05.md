@@ -215,8 +215,9 @@ Each cell's interval is about plus or minus 0.03 (bash) to 0.05.
   turn. m1 does not force play: 44% of the masked copy's activations end at
   once, which in Blood Bowl is the same as not activating that player. What
   m1 removes is the wholesale decision to stop. Made to decide player by
-  player, chain 41 uses about half of the extra activations and is stronger
-  for it. The share is up for every roster class.
+  player, chain 41 uses about two in five of the extra activations (of 3.8
+  more a team turn, 2.3 end at once) and is stronger for it. The share is
+  up for bash, agile and hybrid rosters and level for stunty.
 - **m2, no activation ended at once: worse.** About 25 Elo. Blocks go from
   6.8 to 10.1 a game and turnovers from 0.31 to 0.39 a team turn; it scores
   less and concedes more.
@@ -229,8 +230,8 @@ Each cell's interval is about plus or minus 0.03 (bash) to 0.05.
   end. 15.5 blocks a game against 6.5, 5.9 activations a team turn against
   3.1, and 0.57 turnovers a team turn against 0.31.
 - The roster split says where forced blocks hurt: bash rosters lose nothing
-  under m2 or m3 (0.38 against the control's 0.39), agile and stunty rosters
-  lose 0.04 to 0.10 of decisive share. Descriptive only.
+  under m2 or m3 (0.38 against the control's 0.39), agile, hybrid and stunty
+  rosters lose 0.03 to 0.10 of decisive share. Descriptive only.
 
 ## 5. Reading, with chain 41's reward ledger
 
