@@ -2147,3 +2147,36 @@ Exam, champion / bot touchdowns per game at seeds 42 and 43. Chain 47: contact A
 - **Wording.** A higher rate of empty activations than the mask alone would be consistent with training having learned filler; changed trajectories and opponents could also raise it. The 0.58 against 0.74 touchdowns per side is from games with both players under m1; the exam restricts only the champion, so that figure does not measure the exam's expected drop.
 - **Scope of the learner-only claim.** A frozen-bank seat can play one restricted decision when a banked start hands it the move before env tags are assigned, and the trainer's untagged `match` mode restricts both players. Chain 54 trains from kick-off starts only and is evaluated through the exam and the harness, so neither applies to it.
 - **Guard, tightened** (follow-up commit): only `historical_winrate_bank_<integer>` counts as a league key.
+
+
+**D417 - CHAIN 49'S REGISTERED READING IS NEGATIVE ON THE EXAM VETO WHILE ITS TOURNAMENT IS THE STRONGEST OF THE CAMPAIGN; THE EXAM VETO IS RETIRED FROM FUTURE GATES; A CONFIRMATORY HELD-OUT GATE FOR CHAIN 49 AS A WARM START IS PRE-REGISTERED (2026-10-05 21:30 PDT, before any game of that gate is played)**
+
+**Chain 49's gate** (D413), three droplets: `GATE-ACCEPTED 22400 games, 7 pairs, seed0 22000000, games_per_worker 32, commit b0099fb`, unchanged merge, every game ended naturally, integrity counters zero, about $0.17, droplets verified destroyed (as reported by the session that ran them).
+
+| Pair | W / D / L | Decisive-Elo [95% seed-cluster] |
+|---|---|---|
+| chain 49 vs chain 42 (control) | 1202 / 1160 / 838 | +62.7 [+49.1, +76.0] |
+| chain 49 vs chain 41 (parent, in chain 49's pool) | 1336 / 1157 / 707 | +110.6 [+96.8, +124.1] |
+| chain 49 vs chain 37 | 1619 / 1015 / 566 | +182.6 [+168.0, +197.9] |
+| chain 49 vs chain 27 | 1792 / 973 / 435 | +245.9 [+229.2, +262.6] |
+| chain 49 vs offense bot | 966 / 1697 / 537 | +102.0 [+82.3, +120.4] |
+| chain 42 vs chain 37 | 1369 / 1129 / 702 | +116.0 [+101.6, +130.8] |
+| chain 42 vs offense bot | 924 / 1694 / 582 | +80.3 [+61.9, +98.7] |
+
+**Registered reading against the control: Negative.** The exam veto fires (offense AWAY 0.585 / 0.585 against thresholds of below 0.594 and below 0.615), and Negative is the first clause of D413's ordered rule. That reading stands. With D412 (Positive), D414 (Flat) and this, the seat change is not adopted, and under D413 chain 49 is not a warm-start candidate.
+
+**What the tournament half shows, stated without changing that reading.**
+- Against the control: +62.7 with the interval above zero, and the paired contrast against chain 37, which is in neither pool, is +66.5 [+47.3, +85.2] in chain 49's favour. Against the offense bot the paired contrast is +21.7 [-0.2, +43.5], and chain 49 scores more touchdowns a game against that bot in the harness (0.435 against 0.400) on the same seeds on which the rig exam put it lower.
+- Chain 49 against chain 37 is +182.6. On other seed blocks plain chain 41 read +112.2 and +132.5 against chain 37, chain 42 read +116.0 to +123.2, and chain 41 playing under the m1 mask read +155.1. These are cross-block comparisons and are descriptive.
+- The three seat pairs' tournament halves are +42.2 (seed 42, parent chain 36), +9.0 (seed 2042, parent chain 41) and +62.7 (seed 42, parent chain 41).
+- Raw roster-conditioned decisive share against chain 42: bash 0.473, agile 0.785, hybrid 0.639, stunty 0.644.
+
+**The exam veto is retired from gates registered after this entry.** Reasons, all on the record before chain 49's tournament was read: every exam value since chain 37 came from the original build's module with a manifest naming another (D416 item 2 and its amendment); the exam's direction has disagreed with the tournament's on several rungs (D404, D410's amendment, D412); and D414 and D416 had already dropped it for their own gates. The veto has fired once in this campaign, here, against a pair whose tournament and held-out contrast both favour the arm. From now on the exam is reported with every rung, D405's drift guard pinned to chain 30 stays as a collapse stop, and no gate uses a parent or control exam veto. Readings already made are not re-read.
+
+**A confirmatory gate for chain 49 as the warm start, registered now.** This is motivated by the table above, which is why it uses a fresh seed block, held-out opponents only for the decision, and a stricter bar than the parent rule.
+- **Question.** Is chain 49 stronger than chain 41, the current warm start, against opponents neither trained against?
+- **Held-out opponents:** chain 37, chain 47 and chain 48. None is in chain 49's pool (`cc9b201e...`: the anchor, chain 36, chain 40, chain 41) or in chain 41's.
+- **Pairs,** harness commit b0099fb, seed block 22300000, 3,200 games per pair, 32 games per worker, T=1, no masks, no sampling offsets: chain 49 and chain 41 each against chain 37, chain 47 and chain 48 (six pairs), plus chain 49 against chain 41 and chain 49 against chain 42 (in-pool and control, descriptive).
+- **Decision rule.** For each held-out opponent X, the paired contrast is (chain 49 against X) minus (chain 41 against X) on shared seeds, with the seed-cluster 95% interval used for the paired offense-bot contrasts. **Chain 49 becomes the warm start in place of chain 41 if all three contrasts have intervals entirely above zero and at least two point estimates are above +40.** If any contrast's interval is entirely below zero, chain 49 is rejected as a warm start. Anything else: chain 41 stays, descriptive.
+- **What it does not decide.** The seat change stays not adopted: a continuation from chain 49 would use the registered recipe with the bot on tag 4. It says nothing about why chain 49 is strong; seed, the seat and chance are all candidates.
+- **Consequence for the rig if it passes.** Nothing changes for chain 54, whose pair is from chain 41 as registered. The compounding test (chains 50 to 53, from chain 42) would be the weaker use of the rig, and a later entry would decide whether to stop it in favour of a continuation from chain 49.

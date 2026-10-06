@@ -65,6 +65,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-10-05 21:00 (D416): the gap to human play is turn shape, and a no-training rule closes part of it.** Chain 41 activates about 3 players a team turn against a human 7 and ends its turn early in 62% of turns. Forbidding an early end of turn at play time, with no training, is worth +32 to +43 decisive-Elo on four checkpoints. Chain 54 trains one rung under that rule on a third build, with chain 42 as control, after an identity check and a canary. Also: an integrity-guard false positive halted the campaign for 27 minutes and is fixed; the exams of chains 37 to 49 ran on the original build's module because of an environment-copy defect.
 
+**Update 2026-10-05 21:30 (D417): chain 49 is Negative by its exam veto and the strongest checkpoint by tournament.** The third seat context beats its control by +62.7 decisive-Elo and reads +182.6 against chain 37, but its exam veto fires, so the registered reading is Negative and the seat change stays not adopted. The exam veto is retired from future gates. A confirmatory gate on fresh seeds and held-out opponents decides whether chain 49 replaces chain 41 as the warm start.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /
