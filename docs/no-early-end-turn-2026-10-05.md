@@ -212,6 +212,16 @@ both read the env's own `end_turn_removed`, which now counts the learner seats' 
 - exam verdict, for each of the six cells: the same two conditions against the cell's manifest, which must
   itself agree with `--no-early-end-turn`. Otherwise no verdict is registered.
 
+**A game cut by the decision cap fails a run under the rule** (D416 amendment). With the rule declared,
+`truncated_episodes` must be present and exactly zero in the train phase, in the eval phase
+(`no_early_end_turn_truncated_episodes` at screen acceptance) and in each of the six exam cells (no
+verdict otherwise); a missing counter is a failure, not a zero. A run that does not declare the rule is
+not judged on it at all, so every existing recipe's acceptance is what it was. One definition,
+`game_stats.no_early_end_turn_truncation_failure`, used by `run_reward_screen.sh` and
+`chain_exam_verdict.py`; both the canary and chain 54 go through those two, so it holds for both without
+the wrappers. `b3_chain54.sh` additionally reads the canary's own records and refuses unless they show
+zero in all eight places.
+
 In a rung the learner is on at least one seat of every env and in an exam cell the champion is on one, so
 "above zero" still holds under the learner-only rule; only the size of the number changed. That closes the
 case of an env module compiled before the flag existed, which would take the kwarg and ignore it.
@@ -407,8 +417,9 @@ Add them to `CAMPAIGN_PLAN.json` as the README gives them (absolute `success` an
    (`canary54-noearlyend-from41-s42-20261006`), about 10 minutes of training and 9 of exam. It is the first
    time the knob, the two-pair graft, acceptance, the six exam cells under the rule and the verdict run
    together on a real build. Pass: `EXAM_VERDICT_PASS.json` with `no_early_end_turn: 1` and six cells each
-   carrying `end_turn_removed` above zero; the arm's `.result.json` with `acceptance_pass: true`,
-   `end_turn_removed` above zero and `truncated_episodes` 0 in both phases; `LADDER_RUNG_COMPLETE.json` with
+   carrying `end_turn_removed` above zero and `truncated_episodes` 0; the arm's `.result.json` with
+   `acceptance_pass: true`, `end_turn_removed` above zero and `truncated_episodes` 0 in both phases (all
+   enforced: a cut game anywhere fails the stage and nothing is read); `LADDER_RUNG_COMPLETE.json` with
    `no_early_end_turn: 1`; a sidecar with `grafted_from` and one `grafted_from_also` entry. Never a warm
    start, a pool member or a result. If the owner's practice for a new module includes
    `tools/qualify_recurrent_cuda.py`, run it before this.
@@ -419,8 +430,16 @@ Add them to `CAMPAIGN_PLAN.json` as the README gives them (absolute `success` an
    `contract.ladder.no_early_end_turn` 1, `contract.graft.from_module_sha256` equal to
    `d63498f6...,3d8e5f72...`, the warm sha `b1830e23...`, learning rate 0.00028 and entropy 0.009.
 
+**A plan-only pass is bound to the tools that made it.** The screen contract records the sha256 of the
+screen script, the per-arm launcher, `game_stats.py`, the integrity guard and the lineage tool, and a
+launch into a directory whose `SCREEN_MANIFEST.json` holds a different contract is refused. So after any
+`git checkout` of the b3 checkout that changes one of those files, remove the plan-only
+`screen-attempt1` of the canary and of chain 54 and run the two plan-only passes again; otherwise the
+real launch fails on "already exists with a different contract" and burns the stage's attempts.
+
 The canary refuses to train unless the identity marker is a pass for the build installed now, and the rung
-unless that holds and the canary passed under the rule on the build installed now. The supervisor only
+unless that holds and the canary passed under the rule on the build installed now with zero
+`truncated_episodes` in training, in the end-of-run evaluation and in all six exam cells. The supervisor only
 looks for the marker files, so after any rebuild of the b3 checkout the identity stage and the canary (a
 new stamp) are run again by hand or by resetting their stages; the wrappers are what refuse otherwise. Put the DECISIONS entry number into `GRAFT_REASON` in `b3_common_env.sh` once it
 exists.
