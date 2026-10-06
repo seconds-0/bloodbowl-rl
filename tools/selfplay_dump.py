@@ -144,6 +144,9 @@ def main():
     from play_harness.policy import batched_forward, load_checkpoint
     from play_harness.tournament import Match
 
+    if os.path.isdir(a.out_dir) and os.listdir(a.out_dir):
+        raise SystemExit(f"{a.out_dir} is not empty; a dump never writes into "
+                         "another run's chunks")
     os.makedirs(a.out_dir, exist_ok=True)
     lib_path = build_shim(a.harness_root, os.path.join(ROOT, "build", "play_harness_probe"))
     lib = E.load_library(lib_path, build_if_missing=False)
@@ -247,6 +250,10 @@ def main():
         "kernel": a.kernel, "mode": "sample", "temperature": 1.0,
         "games": a.games, "seed0": a.seed0, "slots": a.slots,
         "decisions": writer.total, "chunks": writer.index,
+        "chunk_files": [
+            {"name": f"chunk_{i:04d}.npz",
+             "sha256": sha256_file(os.path.join(a.out_dir, f"chunk_{i:04d}.npz"))}
+            for i in range(writer.index)],
         "match_size": match_size,
         "shim": {"path": lib_path, "sha256": sha256_file(lib_path),
                  "engine_root": ROOT,
