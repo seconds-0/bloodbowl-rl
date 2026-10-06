@@ -615,5 +615,9 @@ def test_unbatched_path_still_reproduces_the_reference_run():
         players[name] = load_checkpoint(blob)[0]
     for task in [("chain34", "chain30", 0, "A_home"), ("chain34", "chain30", 1, "B_home"),
                  ("chain34", "offense", 0, "A_home")]:
-        rec = T.pair_game(players, *task, manifest["seed0"], specs=manifest["players"])
-        assert _essential(rec) == ref[task]
+        rec = _essential(T.pair_game(players, *task, manifest["seed0"], specs=manifest["players"]))
+        # Records gained keys after the reference was played; every key the
+        # reference has must come out the same, and nothing else may be new.
+        assert set(rec) - set(ref[task]) == {"behaviour", "masks", "mask_stats"}
+        assert {k: rec[k] for k in ref[task]} == ref[task]
+        assert rec["masks"] == [None, None] and rec["mask_stats"] == [None, None]
