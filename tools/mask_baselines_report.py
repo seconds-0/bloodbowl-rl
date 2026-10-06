@@ -130,6 +130,30 @@ def side_rows(games):
     return out
 
 
+def double_contrast(games, pairs, reps=REPS, seed=0):
+    """(Elo p0 - Elo p1) - (Elo p2 - Elo p3) on shared seeds, seed-cluster interval.
+
+    Not in the registered design: added after the first read, to ask whether
+    the mask helps one checkpoint more than another against a common opponent."""
+    _seeds, cells, counts = F.S.cluster_counts(games)
+    k = [cells.index(tuple(p)) for p in pairs]
+    boots = F.S.bootstrap_cluster_counts(counts, reps, seed)
+    point = counts.sum(axis=0)
+
+    def elo(c):
+        share, _score = F.S._shares(c)
+        return F.S.elo_from_share(share)
+
+    def combine(c):
+        return (elo(c[..., k[0], :]) - elo(c[..., k[1], :])) - (
+            elo(c[..., k[2], :]) - elo(c[..., k[3], :]))
+
+    diff = combine(boots)
+    diff = diff[np.isfinite(diff)]
+    lo, hi = (float(v) for v in np.percentile(diff, [2.5, 97.5]))
+    return {"pairs": [list(p) for p in pairs], "elo": float(combine(point)), "ci95": [lo, hi]}
+
+
 def fmt(x, d=3):
     return "n/a" if x is None or (isinstance(x, float) and not np.isfinite(x)) else f"{x:.{d}f}"
 
@@ -199,10 +223,17 @@ def main(argv=None):
     for name, (first, second, runs) in CONTRASTS.items():
         games = [g for run in runs for g in loaded[run][0]]
         out["contrasts"][name] = F.paired_contrast(games, first, second, args.reps)
+    games37 = loaded["c37-42"][0] + loaded["c37-41"][0]
+    out["post_hoc"] = {"mask gain v chain 37: chain 42's minus chain 41's": double_contrast(
+        games37, [("chain42m1", "chain37"), ("chain42", "chain37"),
+                  ("chain41m1", "chain37"), ("chain41", "chain37")], args.reps)}
     if args.json:
         with open(args.json, "w") as f:
             json.dump(out, f, indent=1)
     print_report(out)
+    for name, c in out["post_hoc"].items():
+        print(f"Post hoc, not registered. {name}: {fmt(c['elo'], 1)} "
+              f"[{fmt(c['ci95'][0], 1)}, {fmt(c['ci95'][1], 1)}]\n")
     return 0
 
 

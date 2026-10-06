@@ -113,3 +113,19 @@ def test_contrasts_name_registered_pairs():
         held = {tuple(p) for r in runs for p in L.RUNS[r][1]}
         assert first in held and second in held and held <= pairs
         assert len({L.RUNS[r][0] for r in runs}) == 1      # one seed block per contrast
+
+
+def test_double_contrast_is_a_difference_of_differences():
+    games = []
+    for i in range(200):
+        for leg in T.LEGS:
+            games.append(game("a1", "x", i, leg, int(i < 120), int(i >= 120)))
+            games.append(game("a0", "x", i, leg, int(i < 100), int(i >= 100)))
+            games.append(game("b1", "x", i, leg, int(i < 140), int(i >= 140)))
+            games.append(game("b0", "x", i, leg, int(i < 100), int(i >= 100)))
+    pairs = [("a1", "x"), ("a0", "x"), ("b1", "x"), ("b0", "x")]
+    got = B.double_contrast(games, pairs, reps=300)
+    first = B.F.paired_contrast(games, pairs[0], pairs[1], reps=50)["elo_contrast"]
+    second = B.F.paired_contrast(games, pairs[2], pairs[3], reps=50)["elo_contrast"]
+    assert got["elo"] == pytest.approx(first - second) and got["elo"] < 0
+    assert got["ci95"][0] < got["elo"] < got["ci95"][1]

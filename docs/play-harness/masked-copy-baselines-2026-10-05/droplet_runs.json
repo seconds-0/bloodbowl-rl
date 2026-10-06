@@ -1,0 +1,100 @@
+{
+ "total_cost": 0.3039,
+ "runs": [
+  {
+   "run": "c42-self",
+   "name": "maskb-c42-self-20261005",
+   "droplet_id": 606494192,
+   "size": "s-8vcpu-16gb-amd",
+   "region": "sfo3",
+   "price_hourly": 0.16667,
+   "games": 3200,
+   "games_per_second_wall": 5.861,
+   "lifetime_seconds": 773.9,
+   "cost": 0.0357,
+   "commit": "a6d5f3fc9d345f6ea4c6d4d8c5dd8868def66097",
+   "library_sha256": "f22b4b6211e18b2f972b904f6f2798df8e0860a670bcb792e80b86cdffe072b0",
+   "games_sha256": "34c8ec7319e5b2ba47683b16879fbf80de1c98328662b024c897021eb9e638e7"
+  },
+  {
+   "run": "c42-c41",
+   "name": "maskb-c42-c41-20261005",
+   "droplet_id": 606494188,
+   "size": "s-8vcpu-16gb-amd",
+   "region": "sfo3",
+   "price_hourly": 0.16667,
+   "games": 6400,
+   "games_per_second_wall": 4.825,
+   "lifetime_seconds": 1587.5,
+   "cost": 0.0734,
+   "commit": "a6d5f3fc9d345f6ea4c6d4d8c5dd8868def66097",
+   "library_sha256": "f22b4b6211e18b2f972b904f6f2798df8e0860a670bcb792e80b86cdffe072b0",
+   "games_sha256": "54f34855fbe9f2e146080c796cdfdaab5cc1d15a543b8048f989e02fba71000f"
+  },
+  {
+   "run": "c37-42",
+   "name": "maskb-c37-42-20261005",
+   "droplet_id": 606494190,
+   "size": "s-8vcpu-16gb-amd",
+   "region": "sfo3",
+   "price_hourly": 0.16667,
+   "games": 6400,
+   "games_per_second_wall": 6.181,
+   "lifetime_seconds": 1303.6,
+   "cost": 0.0603,
+   "commit": "a6d5f3fc9d345f6ea4c6d4d8c5dd8868def66097",
+   "library_sha256": "f22b4b6211e18b2f972b904f6f2798df8e0860a670bcb792e80b86cdffe072b0",
+   "games_sha256": "7570348eb84ef3bfcef13189aac31d46884205c1ea8c35d43650e4eb3c40b30e"
+  },
+  {
+   "run": "c37-41",
+   "name": "maskb-c37-41-20261005",
+   "droplet_id": 606494193,
+   "size": "s-8vcpu-16gb-amd",
+   "region": "sfo3",
+   "price_hourly": 0.16667,
+   "games": 6400,
+   "games_per_second_wall": 6.264,
+   "lifetime_seconds": 1273.0,
+   "cost": 0.0588,
+   "commit": "a6d5f3fc9d345f6ea4c6d4d8c5dd8868def66097",
+   "library_sha256": "f22b4b6211e18b2f972b904f6f2798df8e0860a670bcb792e80b86cdffe072b0",
+   "games_sha256": "48efd99784a5af686147e9f173fb152cf81fcd1792254daeb2abdc92fa5588e3"
+  },
+  {
+   "run": "c47-self",
+   "name": "maskb-c47-self-20261005",
+   "droplet_id": 606494189,
+   "size": "s-8vcpu-16gb-amd",
+   "region": "sfo3",
+   "price_hourly": 0.16667,
+   "games": 3200,
+   "games_per_second_wall": 5.763,
+   "lifetime_seconds": 807.6,
+   "cost": 0.0373,
+   "commit": "a6d5f3fc9d345f6ea4c6d4d8c5dd8868def66097",
+   "library_sha256": "f22b4b6211e18b2f972b904f6f2798df8e0860a670bcb792e80b86cdffe072b0",
+   "games_sha256": "903869b3e47645d1f1ceaeafe8b36ddeabf92070bc977ad9202eab02fb8f3f85"
+  },
+  {
+   "run": "c48-self",
+   "name": "maskb-c48-self-20261005",
+   "droplet_id": 606494191,
+   "size": "s-8vcpu-16gb-amd",
+   "region": "sfo3",
+   "price_hourly": 0.16667,
+   "games": 3200,
+   "games_per_second_wall": 5.494,
+   "lifetime_seconds": 837.4,
+   "cost": 0.0384,
+   "commit": "a6d5f3fc9d345f6ea4c6d4d8c5dd8868def66097",
+   "library_sha256": "f22b4b6211e18b2f972b904f6f2798df8e0860a670bcb792e80b86cdffe072b0",
+   "games_sha256": "67ec2b60378548d4a938c04d3588111b08b892e8d44871b552a13eb3e3e99cbf"
+  }
+ ],
+ "leak_check_after": {
+  "tagged_droplets": 0,
+  "ssh_keys": 0,
+  "local_state_with_live_droplet": 0
+ }
+}

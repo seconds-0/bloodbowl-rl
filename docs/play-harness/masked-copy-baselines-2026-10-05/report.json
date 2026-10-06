@@ -1,0 +1,699 @@
+{
+ "schema": "mask-baselines-report-v1",
+ "noninferior_elo": -20.0,
+ "reps": 2000,
+ "checkpoint_sha256": {
+  "chain37": "268f1db08ca0c2bad88293ea56b3048a2a1c3a0ea9acdf0365fc023186c0f73f",
+  "chain41": "b1830e2312a6252006de71f2835f3459f0a13f664d83ae3128182c48cb0b303b",
+  "chain42": "3de171872f670f937245db647512af2fe19ffd1ad620a49ed331945148b471cf",
+  "chain47": "b171f3b60e69576a87f06aaf43af70689669c39eccbf81a4ee81c4099f00fae7",
+  "chain48": "4b8d83826bc20c380bb0d21ad66b02bfcf2d7e206395aa0bb7bcfdbcbe38c94f"
+ },
+ "harness_git_head": [
+  "a6d5f3fc9d345f6ea4c6d4d8c5dd8868def66097"
+ ],
+ "pairs": [
+  {
+   "run": "c42-self",
+   "seed0": 24500000,
+   "strength": {
+    "a": "chain42m1s",
+    "b": "chain42",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 1030,
+    "D": 1339,
+    "L": 831,
+    "decisive_share": 0.553465878559914,
+    "decisive_share_ci95": [
+     0.5331194812362031,
+     0.5740153654704958
+    ],
+    "score_rate": 0.53109375,
+    "score_rate_ci95": [
+     0.51921875,
+     0.5428125
+    ],
+    "elo_decisive": 37.29448036842447,
+    "elo_decisive_ci95": [
+     23.047520008422243,
+     51.81183349998495
+    ],
+    "elo_decisive_se": 7.216818509152338,
+    "elo_score": 21.634067663282845,
+    "elo_score_ci95": [
+     13.361138012501018,
+     29.822196928715137
+    ],
+    "elo_score_se": 4.150080669778784,
+    "p_a_ahead": 1.0,
+    "valid_reps": 2000
+   },
+   "behaviour": {
+    "a": {
+     "activations_per_turn": 6.705470122589178,
+     "empties_per_turn": 2.812957735357404,
+     "blocks_per_game": 10.7309375,
+     "turnovers_per_turn": 0.41873778549854906,
+     "td_per_game": 0.801875
+    },
+    "b": {
+     "activations_per_turn": 3.182661744091923,
+     "empties_per_turn": 0.6757615841740539,
+     "blocks_per_game": 8.3325,
+     "turnovers_per_turn": 0.3440405914986871,
+     "td_per_game": 0.7109375
+    },
+    "decisions_per_game": 979.785,
+    "draw_rate": 0.4184375
+   },
+   "verdict": [
+    "better",
+    "non-inferior"
+   ],
+   "mask_stats": {
+    "m1": {
+     "held": 106.1496875,
+     "applied": 106.1496875,
+     "fallback": 0.0,
+     "mass": 60.39925318749992
+    }
+   }
+  },
+  {
+   "run": "c42-c41",
+   "seed0": 24600000,
+   "strength": {
+    "a": "chain42m1",
+    "b": "chain41m1",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 891,
+    "D": 1465,
+    "L": 844,
+    "decisive_share": 0.5135446685878963,
+    "decisive_share_ci95": [
+     0.4942246417085753,
+     0.5337196281144408
+    ],
+    "score_rate": 0.50734375,
+    "score_rate_ci95": [
+     0.496875,
+     0.51844140625
+    ],
+    "elo_decisive": 9.414102964487912,
+    "elo_decisive_ci95": [
+     -4.013308471244947,
+     23.46641624392726
+    ],
+    "elo_decisive_se": 6.9466795541238096,
+    "elo_score": 5.103327151238703,
+    "elo_score_ci95": [
+     -2.171500684559295,
+     12.820216990233758
+    ],
+    "elo_score_se": 3.7712399222208304,
+    "p_a_ahead": 0.918,
+    "valid_reps": 2000
+   },
+   "behaviour": {
+    "a": {
+     "activations_per_turn": 6.679159680441858,
+     "empties_per_turn": 2.7404083242923365,
+     "blocks_per_game": 11.03625,
+     "turnovers_per_turn": 0.4291152973666042,
+     "td_per_game": 0.6553125
+    },
+    "b": {
+     "activations_per_turn": 6.85448879772799,
+     "empties_per_turn": 2.8939136951719786,
+     "blocks_per_game": 10.3925,
+     "turnovers_per_turn": 0.41403045124645,
+     "td_per_game": 0.640625
+    },
+    "decisions_per_game": 1204.23375,
+    "draw_rate": 0.4578125
+   }
+  },
+  {
+   "run": "c42-c41",
+   "seed0": 24600000,
+   "strength": {
+    "a": "chain42",
+    "b": "chain41",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 1004,
+    "D": 1279,
+    "L": 917,
+    "decisive_share": 0.5226444560124935,
+    "decisive_share_ci95": [
+     0.503084612728669,
+     0.5419068490342627
+    ],
+    "score_rate": 0.51359375,
+    "score_rate_ci95": [
+     0.5018710937499999,
+     0.52515625
+    ],
+    "elo_decisive": 15.745750855591792,
+    "elo_decisive_ci95": [
+     2.1434356599929276,
+     29.188336565725173
+    ],
+    "elo_decisive_se": 6.913163210638878,
+    "elo_score": 9.448233359643625,
+    "elo_score_ci95": [
+     1.300175177437176,
+     17.49512495581381
+    ],
+    "elo_score_se": 4.1429904163080264,
+    "p_a_ahead": 0.9855,
+    "valid_reps": 2000
+   },
+   "behaviour": {
+    "a": {
+     "activations_per_turn": 3.072836974524805,
+     "empties_per_turn": 0.6790559192365329,
+     "blocks_per_game": 8.3275,
+     "turnovers_per_turn": 0.335988642637432,
+     "td_per_game": 0.8015625
+    },
+    "b": {
+     "activations_per_turn": 3.0174072467768007,
+     "empties_per_turn": 0.6540630051650042,
+     "blocks_per_game": 7.2221875,
+     "turnovers_per_turn": 0.31514410755825417,
+     "td_per_game": 0.7509375
+    },
+    "decisions_per_game": 716.9640625,
+    "draw_rate": 0.3996875
+   }
+  },
+  {
+   "run": "c37-42",
+   "seed0": 24700000,
+   "strength": {
+    "a": "chain42m1",
+    "b": "chain37",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 1386,
+    "D": 1205,
+    "L": 609,
+    "decisive_share": 0.6947368421052632,
+    "decisive_share_ci95": [
+     0.6758375753810971,
+     0.7126568011287115
+    ],
+    "score_rate": 0.62140625,
+    "score_rate_ci95": [
+     0.60921875,
+     0.6325
+    ],
+    "elo_decisive": 142.85837505716506,
+    "elo_decisive_ci95": [
+     127.63186482703307,
+     157.7918048388622
+    ],
+    "elo_decisive_se": 7.822711672399082,
+    "elo_score": 86.0808707393897,
+    "elo_score_ci95": [
+     77.1358173829933,
+     94.3212745710567
+    ],
+    "elo_score_se": 4.477780754012994,
+    "p_a_ahead": 1.0,
+    "valid_reps": 2000
+   },
+   "behaviour": {
+    "a": {
+     "activations_per_turn": 6.5930014785608675,
+     "empties_per_turn": 2.7405027106949236,
+     "blocks_per_game": 10.971875,
+     "turnovers_per_turn": 0.41553474618038444,
+     "td_per_game": 1.12125
+    },
+    "b": {
+     "activations_per_turn": 3.1184521931208584,
+     "empties_per_turn": 0.7458583149258441,
+     "blocks_per_game": 7.271875,
+     "turnovers_per_turn": 0.34332597033764595,
+     "td_per_game": 0.7178125
+    },
+    "decisions_per_game": 963.12,
+    "draw_rate": 0.3765625
+   }
+  },
+  {
+   "run": "c37-42",
+   "seed0": 24700000,
+   "strength": {
+    "a": "chain42",
+    "b": "chain37",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 1384,
+    "D": 1135,
+    "L": 681,
+    "decisive_share": 0.6702179176755448,
+    "decisive_share_ci95": [
+     0.6513772059650044,
+     0.6891054289798418
+    ],
+    "score_rate": 0.60984375,
+    "score_rate_ci95": [
+     0.59734375,
+     0.6221875
+    ],
+    "elo_decisive": 123.19559128318156,
+    "elo_decisive_ci95": [
+     108.59071133841617,
+     138.269013314316
+    ],
+    "elo_decisive_se": 7.581114503507153,
+    "elo_score": 77.59200357196038,
+    "elo_score_ci95": [
+     68.51595178724932,
+     86.65798366665507
+    ],
+    "elo_score_se": 4.634903210954759,
+    "p_a_ahead": 1.0,
+    "valid_reps": 2000
+   },
+   "behaviour": {
+    "a": {
+     "activations_per_turn": 2.92655344970251,
+     "empties_per_turn": 0.5706292604121518,
+     "blocks_per_game": 8.315625,
+     "turnovers_per_turn": 0.33360258481421645,
+     "td_per_game": 1.1875
+    },
+    "b": {
+     "activations_per_turn": 2.9917223437592386,
+     "empties_per_turn": 0.6843453753522931,
+     "blocks_per_game": 7.349375,
+     "turnovers_per_turn": 0.34176865921677607,
+     "td_per_game": 0.8128125
+    },
+    "decisions_per_game": 717.730625,
+    "draw_rate": 0.3546875
+   }
+  },
+  {
+   "run": "c37-41",
+   "seed0": 24700000,
+   "strength": {
+    "a": "chain41m1",
+    "b": "chain37",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 1443,
+    "D": 1166,
+    "L": 591,
+    "decisive_share": 0.7094395280235988,
+    "decisive_share_ci95": [
+     0.6916335530797152,
+     0.727
+    ],
+    "score_rate": 0.633125,
+    "score_rate_ci95": [
+     0.62124609375,
+     0.644375
+    ],
+    "elo_decisive": 155.0715400848955,
+    "elo_decisive_ci95": [
+     140.32357489427764,
+     170.1487055273127
+    ],
+    "elo_decisive_se": 7.603682604811292,
+    "elo_score": 94.78853764506643,
+    "elo_score_ci95": [
+     85.96262039064261,
+     103.25855955537817
+    ],
+    "elo_score_se": 4.446920900942969,
+    "p_a_ahead": 1.0,
+    "valid_reps": 2000
+   },
+   "behaviour": {
+    "a": {
+     "activations_per_turn": 6.706404115664361,
+     "empties_per_turn": 2.8865826976524156,
+     "blocks_per_game": 10.566875,
+     "turnovers_per_turn": 0.41201978988035404,
+     "td_per_game": 1.0871875
+    },
+    "b": {
+     "activations_per_turn": 3.0792905478722354,
+     "empties_per_turn": 0.750488290883264,
+     "blocks_per_game": 7.3478125,
+     "turnovers_per_turn": 0.34951762779410894,
+     "td_per_game": 0.6678125
+    },
+    "decisions_per_game": 951.0396875,
+    "draw_rate": 0.364375
+   }
+  },
+  {
+   "run": "c37-41",
+   "seed0": 24700000,
+   "strength": {
+    "a": "chain41",
+    "b": "chain37",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 1339,
+    "D": 1159,
+    "L": 702,
+    "decisive_share": 0.6560509554140127,
+    "decisive_share_ci95": [
+     0.6370030055817947,
+     0.6752303610275339
+    ],
+    "score_rate": 0.59953125,
+    "score_rate_ci95": [
+     0.5871875,
+     0.6118828124999999
+    ],
+    "elo_decisive": 112.17738595288147,
+    "elo_decisive_ci95": [
+     97.69538094316373,
+     127.15061564988078
+    ],
+    "elo_decisive_se": 7.529845563004554,
+    "elo_score": 70.0972772056289,
+    "elo_score_ci95": [
+     61.20958499439934,
+     79.08215227931747
+    ],
+    "elo_score_se": 4.5307149036588426,
+    "p_a_ahead": 1.0,
+    "valid_reps": 2000
+   },
+   "behaviour": {
+    "a": {
+     "activations_per_turn": 2.837687669937345,
+     "empties_per_turn": 0.572506600464988,
+     "blocks_per_game": 7.4821875,
+     "turnovers_per_turn": 0.3117192733577649,
+     "td_per_game": 1.1446875
+    },
+    "b": {
+     "activations_per_turn": 2.9787817238863363,
+     "empties_per_turn": 0.7002622705133008,
+     "blocks_per_game": 7.556875,
+     "turnovers_per_turn": 0.34797184042909823,
+     "td_per_game": 0.7915625
+    },
+    "decisions_per_game": 696.970625,
+    "draw_rate": 0.3621875
+   }
+  },
+  {
+   "run": "c47-self",
+   "seed0": 24800000,
+   "strength": {
+    "a": "chain47m1s",
+    "b": "chain47",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 1031,
+    "D": 1319,
+    "L": 850,
+    "decisive_share": 0.5481127060074429,
+    "decisive_share_ci95": [
+     0.5293146903754437,
+     0.5672127754684023
+    ],
+    "score_rate": 0.52828125,
+    "score_rate_ci95": [
+     0.51703125,
+     0.53953125
+    ],
+    "elo_decisive": 33.53589582768955,
+    "elo_decisive_ci95": [
+     20.393321431712284,
+     46.9886286852569
+    ],
+    "elo_decisive_se": 6.891102216578906,
+    "elo_score": 19.67282309706852,
+    "elo_score_ci95": [
+     11.839104838619283,
+     27.526576999811663
+    ],
+    "elo_score_se": 4.025699476249195,
+    "p_a_ahead": 1.0,
+    "valid_reps": 2000
+   },
+   "behaviour": {
+    "a": {
+     "activations_per_turn": 6.668493798923438,
+     "empties_per_turn": 2.646883687915295,
+     "blocks_per_game": 9.568125,
+     "turnovers_per_turn": 0.42439418735335294,
+     "td_per_game": 0.773125
+    },
+    "b": {
+     "activations_per_turn": 3.1118297805209916,
+     "empties_per_turn": 0.6763621305042299,
+     "blocks_per_game": 7.255625,
+     "turnovers_per_turn": 0.3477154857920372,
+     "td_per_game": 0.6921875
+    },
+    "decisions_per_game": 967.365625,
+    "draw_rate": 0.4121875
+   },
+   "verdict": [
+    "better",
+    "non-inferior"
+   ],
+   "mask_stats": {
+    "m1": {
+     "held": 105.689375,
+     "applied": 105.689375,
+     "fallback": 0.0,
+     "mass": 62.334043500000014
+    }
+   }
+  },
+  {
+   "run": "c48-self",
+   "seed0": 24900000,
+   "strength": {
+    "a": "chain48m1s",
+    "b": "chain48",
+    "seeds": 1600,
+    "games": 3200,
+    "W": 1013,
+    "D": 1398,
+    "L": 789,
+    "decisive_share": 0.5621531631520533,
+    "decisive_share_ci95": [
+     0.5418060200668896,
+     0.5822500411827757
+    ],
+    "score_rate": 0.535,
+    "score_rate_ci95": [
+     0.5234375,
+     0.54640625
+    ],
+    "elo_decisive": 43.41297686034408,
+    "elo_decisive_ci95": [
+     29.117778954489655,
+     57.67724486946677
+    ],
+    "elo_decisive_se": 7.050479244256253,
+    "elo_score": 24.36033165250982,
+    "elo_score_ci95": [
+     16.297987076023777,
+     32.3394385910284
+    ],
+    "elo_score_se": 3.926915455057424,
+    "p_a_ahead": 1.0,
+    "valid_reps": 2000
+   },
+   "behaviour": {
+    "a": {
+     "activations_per_turn": 6.6423669992507,
+     "empties_per_turn": 2.7381393697992666,
+     "blocks_per_game": 10.703125,
+     "turnovers_per_turn": 0.426706629333123,
+     "td_per_game": 0.7578125
+    },
+    "b": {
+     "activations_per_turn": 3.0773007828676224,
+     "empties_per_turn": 0.643134625623632,
+     "blocks_per_game": 8.1390625,
+     "turnovers_per_turn": 0.3483070734160241,
+     "td_per_game": 0.655
+    },
+    "decisions_per_game": 954.911875,
+    "draw_rate": 0.436875
+   },
+   "verdict": [
+    "better",
+    "non-inferior"
+   ],
+   "mask_stats": {
+    "m1": {
+     "held": 105.2690625,
+     "applied": 105.2690625,
+     "fallback": 0.0,
+     "mass": 61.5018964374999
+    }
+   }
+  }
+ ],
+ "contrasts": {
+  "42 v 41: both under m1 minus both plain": {
+   "masked": [
+    "chain42m1",
+    "chain41m1"
+   ],
+   "plain": [
+    "chain42",
+    "chain41"
+   ],
+   "elo_contrast": -6.331647891103881,
+   "ci95": [
+    -24.448623474892123,
+    12.380612724098773
+   ],
+   "verdict": [
+    "inconclusive"
+   ],
+   "valid_reps": 2000,
+   "score_rate_contrast": -0.006249999999999978,
+   "score_rate_ci95": [
+    -0.020937499999999998,
+    0.009062499999999973
+   ]
+  },
+  "chain 42 v chain 37: m1 minus plain": {
+   "masked": [
+    "chain42m1",
+    "chain37"
+   ],
+   "plain": [
+    "chain42",
+    "chain37"
+   ],
+   "elo_contrast": 19.662783773983506,
+   "ci95": [
+    0.6263646883382669,
+    37.84013765625966
+   ],
+   "verdict": [
+    "better",
+    "non-inferior"
+   ],
+   "valid_reps": 2000,
+   "score_rate_contrast": 0.011562500000000031,
+   "score_rate_ci95": [
+    -0.0035976562500000613,
+    0.026562499999999937
+   ]
+  },
+  "chain 41 v chain 37: m1 minus plain": {
+   "masked": [
+    "chain41m1",
+    "chain37"
+   ],
+   "plain": [
+    "chain41",
+    "chain37"
+   ],
+   "elo_contrast": 42.89415413201404,
+   "ci95": [
+    23.178878571207456,
+    61.61372022538587
+   ],
+   "verdict": [
+    "better",
+    "non-inferior"
+   ],
+   "valid_reps": 2000,
+   "score_rate_contrast": 0.03359375000000009,
+   "score_rate_ci95": [
+    0.017656250000000036,
+    0.04844140625
+   ]
+  },
+  "v chain 37: chain 42 minus chain 41, both under m1": {
+   "masked": [
+    "chain42m1",
+    "chain37"
+   ],
+   "plain": [
+    "chain41m1",
+    "chain37"
+   ],
+   "elo_contrast": -12.21316502773044,
+   "ci95": [
+    -32.508971342414945,
+    7.982788096547129
+   ],
+   "verdict": [
+    "inconclusive"
+   ],
+   "valid_reps": 2000,
+   "score_rate_contrast": -0.01171875,
+   "score_rate_ci95": [
+    -0.027031250000000062,
+    0.003750000000000031
+   ]
+  },
+  "v chain 37: chain 42 minus chain 41, both plain": {
+   "masked": [
+    "chain42",
+    "chain37"
+   ],
+   "plain": [
+    "chain41",
+    "chain37"
+   ],
+   "elo_contrast": 11.018205330300091,
+   "ci95": [
+    -9.677949101089906,
+    30.665525065048097
+   ],
+   "verdict": [
+    "non-inferior"
+   ],
+   "valid_reps": 2000,
+   "score_rate_contrast": 0.010312500000000058,
+   "score_rate_ci95": [
+    -0.006722656249999994,
+    0.026718750000000013
+   ]
+  }
+ },
+ "post_hoc": {
+  "mask gain v chain 37: chain 42's minus chain 41's": {
+   "pairs": [
+    [
+     "chain42m1",
+     "chain37"
+    ],
+    [
+     "chain42",
+     "chain37"
+    ],
+    [
+     "chain41m1",
+     "chain37"
+    ],
+    [
+     "chain41",
+     "chain37"
+    ]
+   ],
+   "elo": -23.23137035803053,
+   "ci95": [
+    -49.93624491134866,
+    2.3641440614064604
+   ]
+  }
+ }
+}
