@@ -54,8 +54,9 @@ supervisor paused.
   venv's `puffer` entrypoint runs in this checkout's venv; the warm start, chain 42's two reference
   checkpoints and the pool copy have their pinned sha256; the flag-off run reproduces both reference files
   byte for byte with `end_turn_removed` exactly 0; both flag-on runs show `end_turn_removed` above zero; the
-  forward skip is routed to bank 4; hard-integrity counters are zero; no episode was truncated; no
-  out-of-support abort; and every probe imported this checkout's compiled module. A relaunch after a pass
+  forward skip is routed to bank 4; hard-integrity counters are zero; no out-of-support abort; and every
+  probe imported this checkout's compiled module. `truncated_episodes` is recorded in the marker and
+  printed when it is not zero, not judged. A relaunch after a pass
   exits 0 at once. A pass marker for a different build than the installed one exits 4.
 - `b3_canary54.sh` refuses to train without the identity pass marker.
 - `b3_chain54.sh` refuses to train without the identity pass marker and the canary's passing verdict.

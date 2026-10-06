@@ -390,8 +390,8 @@ Add them to `CAMPAIGN_PLAN.json` as the README gives them (absolute `success` an
      `end_turn_removed` exactly 0.
    - flag on: a rollout trace of whole games (512 agents, 32 rollouts of 64 steps) and 24 epochs of rollout
      plus PPO at the full layout with the real pool. Both must show `end_turn_removed` above zero, the
-     forward skip routed to bank 4, zero hard-integrity counters, no truncated episode and no
-     out-of-support abort.
+     forward skip routed to bank 4, zero hard-integrity counters and no out-of-support abort.
+     `truncated_episodes` is recorded and printed, not judged.
    - every probe must have imported the b3 checkout's module, the drift check must pass, and the warm
      start, the two reference checkpoints and the pool copy must have their pinned sha256.
    It writes `runs/b3-identity-20261006/B3_IDENTITY_PASS.json` only if all of that held, exits non-zero

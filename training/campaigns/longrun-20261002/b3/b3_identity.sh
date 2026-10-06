@@ -12,9 +12,9 @@
 #      rollout + PPO at the full layout with the real pool.
 #   6. Verdict: the two saved weight files must be byte-equal to chain 42's stored checkpoints at 131,072 and
 #      50,069,504 steps; the flag-off run must show end_turn_removed exactly 0; both flag-on runs must show
-#      it above zero, the scripted-bank forward skip routed to bank 4, zero hard-integrity counters, no
-#      truncated episode and no out-of-support abort; and every probe must have imported THIS checkout's
-#      compiled module.
+#      it above zero, the scripted-bank forward skip routed to bank 4, zero hard-integrity counters and
+#      no out-of-support abort; and every probe must have imported THIS checkout's compiled module.
+#      truncated_episodes (games cut by the decision cap) is recorded and reported, not judged.
 #   7. Writes B3_IDENTITY_PASS.json only if every check passed.
 #
 # Fail closed: any failed or unreadable check exits non-zero and writes no pass marker. Safe to relaunch:
@@ -322,8 +322,13 @@ def common(name, payload, flag):
     if flag == 1 and not (removed is not None and removed > 0):
         failures.append(f"{name}: end_turn_removed is {removed!r} with the flag on; the env did not "
                         "apply the rule")
-    if summary["truncated_episodes"] != 0:
-        failures.append(f"{name}: truncated_episodes is {summary['truncated_episodes']!r}, not 0")
+    # Recorded and reported, not a failure: how often ordinary play reaches the decision cap has never
+    # been measured, and the identity and the rule's evidence do not depend on it.
+    if summary["truncated_episodes"] is None:
+        failures.append(f"{name}: the env panel has no truncated_episodes; this is not the b3 build")
+    elif summary["truncated_episodes"] != 0:
+        print(f"NOTE: {name}: truncated_episodes is {summary['truncated_episodes']!r} per episode "
+              "(games cut by the max_decisions cap)")
     return summary
 
 

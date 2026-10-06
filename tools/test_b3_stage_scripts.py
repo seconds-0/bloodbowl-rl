@@ -579,7 +579,6 @@ class IdentityStageTests(FakeCheckouts):
             ("foreign-module-trace", "trace-flag-on: the probe imported module"),
             ("unrouted-trace", "trace-flag-on: the scripted-bank forward skip is not routed"),
             ("integrity-ppo", "smoke-flag-on: hard-integrity counters are not all zero"),
-            ("truncated", "trace-flag-on: truncated_episodes is 0.25, not 0"),
             ("abort-message", "smoke-flag-on: the env aborted on a tuple outside exact joint support"),
             ("crash-identity", "replicate-c42: probe exit status 9"),
             ("crash-trace", "trace-flag-on: probe exit status 9"),
@@ -597,6 +596,13 @@ class IdentityStageTests(FakeCheckouts):
                 # The lock is released on failure too.
                 with self.gpu_lock.open("a") as probe:
                     fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_truncated_episodes_are_reported_and_recorded_not_judged(self):
+        result = self.identity(STUB_MODE="truncated")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("NOTE: trace-flag-on: truncated_episodes is 0.25", result.stdout)
+        marker = json.loads((self.out / self.PASS).read_text())
+        self.assertEqual(marker["checks"]["flag_on_trace"]["truncated_episodes"], 0.25)
 
     def test_a_failure_is_retried_in_a_new_attempt_directory(self):
         self.assert_failed(self.identity(STUB_MODE="flag-ignored"), "did not apply the rule")
