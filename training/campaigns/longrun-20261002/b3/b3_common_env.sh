@@ -26,6 +26,8 @@ export B3_CHAIN41_MARKER="$LONGRUN/runs/ladder-d0-r0chain41-cont40-rr1-20261003/
 export B3_POOL_HASH=cc9b201e619aab3dedb2577eeac273a3b70a346a5e87d30fa9ab432c068d3be6
 export B3_CANARY_STAMP=canary54-noearlyend-from41-s42-20261006
 export B3_RUNG_STAMP=r0chain54-noearlyend-from41-s42-20261006
+# D418: the pool every child of chain 49 builds (the anchor, chain 40, chain 41, and chain 49 last).
+export B3_POOL49_HASH=2ae7448e9aab6a64f9fe949adf6737bb29f65043b16f2460b9fa7bb4a6696e57
 
 # The build the stages are about to use: the installed env source digest and the compiled module's sha256.
 # Prints "<source> <module>", or fails.
