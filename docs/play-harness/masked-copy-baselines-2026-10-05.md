@@ -91,21 +91,22 @@ action; activation has side effects that m1 forces.
 
 The free gain replicates on all three further checkpoints: the masked copy
 beats its own plain checkpoint by +37.3 (chain 42), +33.5 (chain 47) and +43.4
-(chain 48), every interval above zero, as chain 41's did (+32.5). The mask
-does not change the chain 42 against chain 41 comparison beyond noise: +9.4
-[-4.0, 23.5] with both under m1, +15.7 [2.1, 29.2] with both plain on the
-same seeds, contrast -6.3 [-24.4, 12.4]. Against chain 37 the mask lifts both
-(chain 42 by +19.7, chain 41 by +42.9). The consequence for the rung: about
-35 Elo comes from the mask alone, so a rule-trained rung must be read against
-masked baselines.
+(chain 48), every interval above zero, as chain 41's did (+32.5). No change
+was detected in the chain 42 against chain 41 comparison: +9.4 [-4.0, 23.5]
+with both under m1, +15.7 [2.1, 29.2] with both plain on the same seeds,
+contrast -6.3 [-24.4, 12.4]; a shift of more than 20 Elo against chain 42
+remains compatible with the data. Against chain 37 the mask lifts both
+(chain 42 by +19.7, chain 41 by +42.9). The consequence for the rung: each of
+these four checkpoints gains 30 to 45 Elo over itself from the play-time mask
+alone, so a rule-trained rung must be read against masked baselines.
 
 ## 2. Each pair
 
 | run | A | B | W / D / L | decisive share | decisive-Elo of A [95%] | verdict |
 |---|---|---|---|---|---|---|
-| c42-self | chain 42 + m1 | chain 42 | 1030 / 1339 / 831 | 0.553 | **+37.3 [23.0, 51.8]** | better |
-| c47-self | chain 47 + m1 | chain 47 | 1031 / 1319 / 850 | 0.548 | **+33.5 [20.4, 47.0]** | better |
-| c48-self | chain 48 + m1 | chain 48 | 1013 / 1398 / 789 | 0.562 | **+43.4 [29.1, 57.7]** | better |
+| c42-self | chain 42 + m1 | chain 42 | 1030 / 1339 / 831 | 0.553 | **+37.3 [23.0, 51.8]** | better, non-inferior |
+| c47-self | chain 47 + m1 | chain 47 | 1031 / 1319 / 850 | 0.548 | **+33.5 [20.4, 47.0]** | better, non-inferior |
+| c48-self | chain 48 + m1 | chain 48 | 1013 / 1398 / 789 | 0.562 | **+43.4 [29.1, 57.7]** | better, non-inferior |
 | c42-c41 | chain 42 + m1 | chain 41 + m1 | 891 / 1465 / 844 | 0.514 | +9.4 [-4.0, 23.5] | |
 | c42-c41 | chain 42 | chain 41 | 1004 / 1279 / 917 | 0.523 | +15.7 [2.1, 29.2] | |
 | c37-42 | chain 42 + m1 | chain 37 | 1386 / 1205 / 609 | 0.695 | +142.9 [127.6, 157.8] | |
@@ -114,15 +115,23 @@ masked baselines.
 | c37-41 | chain 41 | chain 37 | 1339 / 1159 / 702 | 0.656 | +112.2 [97.7, 127.2] | |
 
 The plain chain 42 against chain 41 pair (+15.7 [2.1, 29.2]) agrees with the
-registered gate's +12.5 [-1.1, 26.1] on another seed block.
++12.5 [-1.1, 26.1] quoted with the task for the registered gate on another
+seed block.
+
+In the three self-pairs the masked copy also carries the sampling offset. The
+offset alone is not the source of the gain: the follow-up's null control
+(chain 41, offset on one side, no mask) read -11.1 [-25.4, 2.8], and chain
+41's masked copy without an offset read +32.5. No unmasked offset control was
+run for chains 42, 47 and 48. These are four checkpoints of one lineage, not
+four independent training runs.
 
 ## 3. Paired contrasts
 
 | contrast | decisive-Elo [95%] | by the thresholds |
 |---|---|---|
 | 1. chain 42 v chain 41: both under m1 minus both plain | -6.3 [-24.4, 12.4] | inconclusive |
-| 2. chain 42 v chain 37: m1 minus plain | +19.7 [0.6, 37.8] | better |
-| 3. chain 41 v chain 37: m1 minus plain | +42.9 [23.2, 61.6] | better |
+| 2. chain 42 v chain 37: m1 minus plain | +19.7 [0.6, 37.8] | better, non-inferior |
+| 3. chain 41 v chain 37: m1 minus plain | +42.9 [23.2, 61.6] | better, non-inferior |
 | 4. v chain 37: chain 42 minus chain 41, both under m1 | -12.2 [-32.5, 8.0] | inconclusive |
 | 5. v chain 37: chain 42 minus chain 41, both plain | +11.0 [-9.7, 30.7] | non-inferior |
 
@@ -151,7 +160,7 @@ and does not establish it.
 | chain 41 v chain 37 | 2.84 / 2.98 | 0.57 / 0.70 | 7.5 / 7.6 | 0.312 / 0.348 | 1.145 / 0.792 | 0.362 | 697 |
 
 "Blocks" are block targets chosen. Under m1 every checkpoint looks the same:
-6.6 to 6.9 activations a team turn, 2.7 to 2.9 of them ended at once, 0.41
+6.6 to 6.9 activations a team turn, 2.6 to 2.9 of them ended at once, 0.41
 to 0.43 turnovers a team turn. With both sides under the rule a game is
 1,204 decisions against 717 and scoring falls from 0.78 a side to 0.65. The
 fallback never fired (m1 has none); m1 removed END_TURN at about 106
@@ -165,20 +174,22 @@ outside (-20, 20)). The gain is general across the four checkpoints tried,
 which strengthens the case for the rung. It adds one condition and sharpens
 one risk.
 
-- **The rung must be judged against masked baselines.** A rule-trained rung
-  played under the rule would beat plain chain 42 by about 37 Elo and plain
-  chain 41 by about 32 without having learned anything. The comparisons that
-  measure training are against chain 42 + m1 (the control, played under the
-  rule) and chain 41 + m1 (its parent, played under the rule). Against chain
-  37 the levels to beat are +143 [128, 158] (chain 42 + m1) and +155 [140,
-  170] (chain 41 + m1), not the plain +123 and +112.
-- **Under the rule the control has no visible edge over its parent.** Chain
-  42 + m1 against chain 41 + m1 is +9.4 [-4.0, 23.5], and against chain 37
-  the parent under the rule is level with or ahead of the control under the
-  rule (155 against 143; contrast 4 is -12.2 [-32.5, 8.0]). A rung trained
-  under the rule therefore starts from a parent that, with the mask, is
-  already as good as the control with the mask. To read Positive it has to
-  add something on top of what the mask gives for nothing.
+- **The rung must be judged against masked baselines.** The masked copies
+  of chain 42 and chain 41 beat their own plain checkpoints by about 37 and
+  32 Elo with no training. That is a property of those copies, not a bonus
+  any rule-trained policy is sure to carry, but it shows the size of what
+  the mask alone can give. The comparisons that measure training are against
+  chain 42 + m1 (the control, played under the rule) and chain 41 + m1 (the
+  parent, played under the rule). Against chain 37 the levels to beat are
+  +143 [128, 158] (chain 42 + m1) and +155 [140, 170] (chain 41 + m1), not
+  the plain +123 and +112.
+- **Under the rule, neither comparison establishes an edge for the control
+  over its parent.** Chain 42 + m1 against chain 41 + m1 is +9.4 [-4.0,
+  23.5], which still allows a real advantage; against chain 37 the parent
+  under the rule reads 155 and the control under the rule 143 (contrast 4:
+  -12.2 [-32.5, 8.0]). A rung trained under the rule starts from a parent
+  whose masked copy is not shown to be behind the masked control, so to
+  read Positive it has to add something on top of what the mask gives.
 
 ## 6. Cost, commits, review
 
@@ -191,3 +202,14 @@ one risk.
   state; the account's five other droplets were not touched.
 - All runs at commit `a6d5f3f`. No harness code changed for this round; only
   a launcher and a report were added.
+- **Codex, read-only, on the numbers:** no P1. Section 0 is unchanged since
+  its commit; the thresholds and the weakened / complicated rule were applied
+  as registered; all nine pair rows equal the droplets' own
+  `tournament_stats` rows; the five contrasts and the post hoc one
+  reproduce; the two chain 37 runs share seeds 24700000 to 24701599 and
+  merge soundly; every self-pair has the offset on exactly one side and no
+  seed with identical legs. Its findings, all taken in the text above: "no
+  change detected" in place of "does not change"; the 37 and 32 Elo are
+  those copies' gains, not a transferable bonus; "no edge established" in
+  place of "level with or ahead"; the sampling-offset caveat; both labels
+  shown where both apply; one range corrected.
