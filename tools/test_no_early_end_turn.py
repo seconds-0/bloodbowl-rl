@@ -824,5 +824,25 @@ class EvalScriptTests(unittest.TestCase):
         self.assertIn("its default must be 0", source)
 
 
+class DocumentationTests(unittest.TestCase):
+    def test_the_doc_says_what_the_rule_is_and_is_not(self):
+        doc = (ROOT / "docs/no-early-end-turn-2026-10-05.md").read_text(
+            encoding="utf-8")
+        for phrase in ("not a Blood Bowl rule", "--mask chain54=m1", KNOB,
+                       "GRAFT_FROM_SOURCE_SHA256", "probe_train_identity.py",
+                       "end_turn_removed", "truncated_episodes"):
+            self.assertIn(phrase, doc, phrase)
+        self.assertNotIn("\u2014", doc)
+
+    def test_the_runbook_quotes_the_rule_as_the_header_has_it(self):
+        # The doc's code block is the header's two functions, verbatim.
+        doc = (ROOT / "docs/no-early-end-turn-2026-10-05.md").read_text(
+            encoding="utf-8")
+        header = (ROOT / "puffer/bloodbowl/bloodbowl.h").read_text(encoding="utf-8")
+        quoted = doc.split("```c\n", 1)[1].split("```", 1)[0]
+        for function in quoted.strip().split("\n\n"):
+            self.assertIn(function, header, function.splitlines()[0])
+
+
 if __name__ == "__main__":
     unittest.main()
