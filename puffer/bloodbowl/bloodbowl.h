@@ -381,6 +381,11 @@ typedef struct {
     // legal set at a DECISION). Should stay at 0.0 on the dashboard; anything
     // else means the engine/binding contract broke mid-training.
     float error_episodes;
+    // Episodes ended by the max_decisions cap, not by the match ending. Such
+    // an episode is scored from the score at the cap and counted in n like a
+    // full game, so anything above 0.0 means the panel's per-game numbers
+    // include cut games. Not a hard-integrity counter.
+    float truncated_episodes;
     // Demo-state reset curriculum: episodes started from a banked mid-game
     // state (should track demo_reset_pct when the bank is staged), and bank
     // draws that failed validation and silently fell back to procgen
@@ -4118,6 +4123,7 @@ static void c_step(Bloodbowl* env) {
         episode_finished = true;
     } else if (m->status == BB_STATUS_MATCH_OVER ||
                env->decisions >= env->max_decisions) {
+        if (m->status != BB_STATUS_MATCH_OVER) env->log.truncated_episodes += 1;
         bbe_finish_episode(env);
         episode_finished = true;
     }
