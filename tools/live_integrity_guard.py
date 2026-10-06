@@ -28,12 +28,14 @@ from typing import Any
 # whose first game ends before its neighbours (one episode at epoch 2, none at
 # epochs 3 and 4) therefore emits panels that carry only these keys.
 NON_EPISODE_PANEL_KEYS = frozenset({"elo", "historical_winrate"})
-NON_EPISODE_PANEL_KEY_PREFIXES = ("historical_winrate_bank_",)
+NON_EPISODE_PANEL_BANK_KEY = "historical_winrate_bank_"
 
 
 def is_non_episode_key(key: str) -> bool:
-    return (key.startswith("_") or key in NON_EPISODE_PANEL_KEYS
-            or key.startswith(NON_EPISODE_PANEL_KEY_PREFIXES))
+    if key.startswith("_") or key in NON_EPISODE_PANEL_KEYS:
+        return True
+    return (key.startswith(NON_EPISODE_PANEL_BANK_KEY)
+            and key[len(NON_EPISODE_PANEL_BANK_KEY):].isdecimal())
 
 
 HARD_INTEGRITY_KEYS = (
