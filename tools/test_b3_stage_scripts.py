@@ -438,7 +438,10 @@ class WrapperTests(FakeCheckouts):
         marker.update(over)
         (self.out / "B3_IDENTITY_PASS.json").write_text(json.dumps(marker))
 
-    def pass_canary(self, rule=1, verdict_pass=True, **built):
+    def pass_canary(self, rule=1, verdict_pass=True, train_cut=0.0, eval_cut=0.0,
+                    cell_cut=0.0, accepted=True, cells=6, **built):
+        """The canary's records as the real stage leaves them. A *_cut of None
+        leaves that truncation count out."""
         run = self.c / "runs/ladder-d0-canary54-noearlyend-from41-s42-20261006"
         run.mkdir(parents=True, exist_ok=True)
         lineage = run / "final.bin.lineage.json"
@@ -446,13 +449,32 @@ class WrapperTests(FakeCheckouts):
                           "compiled_module_sha256": sha(self.module)}
         implementation.update(built)
         lineage.write_text(json.dumps({"implementation": implementation}))
+
+        def panel(cut):
+            return {"n": 12000.0} if cut is None else {"n": 12000.0,
+                                                       "truncated_episodes": cut}
+        result = run / "arm.result.json"
+        result.write_text(json.dumps({"acceptance_pass": accepted,
+                                      "train_metrics": panel(train_cut),
+                                      "eval_metrics": panel(eval_cut)}))
+        exam = []
+        for seed in (42, 43):
+            for name in ("contact_away", "contact_home", "offense_away"):
+                cell = {"seed": seed, "cell": name, "no_early_end_turn": 1,
+                        "truncated_episodes": 0.0}
+                exam.append(cell)
+        exam = exam[:cells]
+        if cell_cut is None:
+            exam[-1].pop("truncated_episodes")
+        else:
+            exam[-1]["truncated_episodes"] = cell_cut
         record = {"checkpoint_sha256": "c" * 64}
         if rule:
             record["no_early_end_turn"] = 1
         (run / "LADDER_RUNG_COMPLETE.json").write_text(json.dumps(
-            {**record, "checkpoint_lineage": str(lineage)}))
+            {**record, "checkpoint_lineage": str(lineage), "result": str(result)}))
         (run / "EXAM_VERDICT_PASS.json").write_text(json.dumps(
-            {**record, "pass": verdict_pass}))
+            {**record, "pass": verdict_pass, "cells": exam}))
 
     def check_common(self, handed):
         marker = (self.longrun / "runs/ladder-d0-r0chain41-cont40-rr1-20261003"
@@ -546,6 +568,23 @@ class WrapperTests(FakeCheckouts):
         ):
             self.pass_canary(**canary)
             self.refused("b3_chain54.sh", message)
+        # D416 amendment: a game cut by the decision cap anywhere in the
+        # canary, or a count that is not there, and chain 54 does not train.
+        for canary, where in (
+            ({"train_cut": 0.002}, "'training': 0.002"),
+            ({"eval_cut": 0.0001}, "'end-of-run evaluation': 0.0001"),
+            ({"cell_cut": 0.0005}, "'exam cell s43 offense_away': 0.0005"),
+            ({"train_cut": None}, "'training': None"),
+            ({"eval_cut": None}, "'end-of-run evaluation': None"),
+            ({"cell_cut": None}, "'exam cell s43 offense_away': None"),
+        ):
+            self.pass_canary(**canary)
+            self.refused("b3_chain54.sh", "does not record zero truncated_episodes everywhere")
+            self.refused("b3_chain54.sh", where)
+        self.pass_canary(accepted=False)
+        self.refused("b3_chain54.sh", "is not an accepted arm with six exam cells")
+        self.pass_canary(cells=5)
+        self.refused("b3_chain54.sh", "is not an accepted arm with six exam cells")
         # The rebuild itself: both markers were good until the module changed.
         self.pass_canary()
         self.assertEqual(self.run_script("b3_chain54.sh").returncode, 0)

@@ -63,11 +63,25 @@ supervisor paused.
 - `b3_canary54.sh` refuses to train unless the identity pass marker is a pass against the pinned digests
   for the build installed now (source digest and module sha256).
 - `b3_chain54.sh` refuses to train unless that holds and the canary passed under the rule on the build
-  installed now (read from the canary checkpoint's lineage sidecar).
+  installed now (read from the canary checkpoint's lineage sidecar) as an accepted arm with six exam
+  cells and zero `truncated_episodes` in training, in the end-of-run evaluation and in every cell.
+- A game cut by the decision cap fails the canary and the rung themselves (D416 amendment): the screen's
+  acceptance step for the train and eval phases, the exam verdict for each cell. That lives in
+  `tools/run_reward_screen.sh` and `tools/chain_exam_verdict.py`, for any run that declares the rule.
 - So after any rebuild of the b3 checkout: move `B3_IDENTITY_PASS.json` away, run `b3_identity.sh`
   again, and run the canary again under a new stamp. The supervisor only looks for the files; the wrappers
   are what notice a rebuild.
 - `PLAN_ONLY=1` is allowed through both guards: it trains nothing.
+
+## After changing the b3 checkout's tools
+
+A plan-only pass writes `screen-attempt1/SCREEN_MANIFEST.json`, whose contract records the sha256 of the
+screen script, the launcher, `game_stats.py`, the integrity guard and the lineage tool. After a
+`git checkout` that changes any of them, the real launch into that directory is refused ("already exists
+with a different contract") and the stage burns its attempts. So: remove
+`runs/ladder-d0-<stamp>/screen-attempt1` for the canary and for chain 54, re-copy this directory to
+`/home/rache/longrun/b3/`, and run both plan-only passes again. A tools-only change needs no rebuild; a
+change under `puffer/`, `engine/` or the patch list does, and then the identity stage and the canary too.
 
 ## Read before launching the rung
 

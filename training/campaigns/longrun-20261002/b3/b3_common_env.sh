@@ -63,7 +63,9 @@ PY
 }
 
 # The canary must have passed on the installed build too: its accepted checkpoint's lineage sidecar binds
-# the build that produced it.
+# the build that produced it. And it must record no game cut by the decision cap, in training, in the
+# end-of-run evaluation and in every exam cell (D416 amendment). The screen and the verdict tool refuse
+# such a run themselves; this reads their records, so a canary accepted by older tools does not count.
 b3_canary_holds() {
   local build run
   build="$(b3_current_build)" || { echo "cannot read the installed build under $C" >&2; return 1; }
@@ -91,6 +93,25 @@ if built.get("source_sha256") != source or built.get("compiled_module_sha256") !
     print(f"the canary under {run} ran on build source {built.get('source_sha256')} module "
           f"{built.get('compiled_module_sha256')}; the installed build is source {source} module "
           f"{module}. Run the canary on this build (a new stamp).", file=sys.stderr)
+    raise SystemExit(1)
+try:
+    result = json.load(open(marker["result"], encoding="utf-8"))
+    counts = {"training": result["train_metrics"].get("truncated_episodes"),
+              "end-of-run evaluation": result["eval_metrics"].get("truncated_episodes")}
+    cells = verdict["cells"]
+    for cell in cells:
+        counts[f"exam cell s{cell['seed']} {cell['cell']}"] = cell.get("truncated_episodes")
+except (OSError, ValueError, KeyError, TypeError) as exc:
+    print(f"the canary under {run} has no readable truncation record: {exc!r}", file=sys.stderr)
+    raise SystemExit(1)
+if result.get("acceptance_pass") is not True or len(cells) != 6:
+    print(f"the canary under {run} is not an accepted arm with six exam cells", file=sys.stderr)
+    raise SystemExit(1)
+bad = {where: count for where, count in counts.items()
+       if isinstance(count, bool) or not isinstance(count, (int, float)) or count != 0}
+if bad:
+    print(f"the canary under {run} does not record zero truncated_episodes everywhere: {bad}. "
+          "A game cut by the decision cap fails the canary; nothing is read from it.", file=sys.stderr)
     raise SystemExit(1)
 PY
 }
