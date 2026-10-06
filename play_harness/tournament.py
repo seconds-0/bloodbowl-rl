@@ -193,6 +193,15 @@ def new_behaviour():
     return {key: 0 for key in BEHAVIOUR_KEYS}
 
 
+SEED_OFFSET_STRIDE = 1_000_000_007
+
+
+def pair_seed_offsets(home, away, specs=None):
+    """(HOME, AWAY) sampling-seed offsets from the player specs; 0 when unset."""
+    return tuple(int((specs or {}).get(name, {}).get("seed_offset") or 0)
+                 for name in (home, away))
+
+
 def pair_masks(home, away, specs=None):
     """(HOME masks, AWAY masks) from the player specs; None for an unmasked player."""
     return tuple((specs or {}).get(name, {}).get("masks") or None for name in (home, away))
@@ -212,13 +221,19 @@ class Match:
     def __init__(self, home_policy, away_policy, engine_seed, mode="sample", episode=0,
                  max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
                  max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0),
-                 allow_decision_cap=False, masks=(None, None)):
+                 allow_decision_cap=False, masks=(None, None), seed_offsets=(0, 0)):
         modes = tuple(modes) if modes is not None else (mode, mode)
         temperatures = tuple(float(t) for t in temperatures)
         self.masks = tuple(check_masks(m) for m in masks)
+        self.seed_offsets = tuple(int(o or 0) for o in seed_offsets)
 
         def seat_for(policy, side):
             seed = sampling_seed(engine_seed, side, episode)
+            if self.seed_offsets[side]:
+                # A player-keyed shift of the sampling stream. Without it the seed
+                # is keyed by side only, so one checkpoint on both seats plays the
+                # same game in both legs of a seed.
+                seed = (seed + self.seed_offsets[side] * SEED_OFFSET_STRIDE) % (1 << 62)
             if isinstance(policy, ScriptedBot):
                 if self.masks[side]:
                     raise ValueError("a scripted bot takes no action mask")
@@ -398,13 +413,15 @@ class Match:
             "behaviour": self.behaviour,
             "masks": [list(m) if m else None for m in self.masks],
             "mask_stats": mask_stats,
+            "seed_offsets": list(self.seed_offsets),
         }
 
 
 def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
                max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
                max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0),
-               step_limit=None, allow_decision_cap=False, masks=(None, None)):
+               step_limit=None, allow_decision_cap=False, masks=(None, None),
+               seed_offsets=(0, 0)):
     """One natural match between two players. Returns (record, seats).
 
     A player is a policy (seated through seat_factory) or a ScriptedBot (seated
@@ -422,7 +439,8 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
     match = Match(home_policy, away_policy, engine_seed, mode=mode, episode=episode,
                   max_decisions=max_decisions, lib=lib, seat_factory=seat_factory,
                   max_c_steps=max_c_steps, modes=modes, temperatures=temperatures,
-                  allow_decision_cap=allow_decision_cap, masks=masks)
+                  allow_decision_cap=allow_decision_cap, masks=masks,
+                  seed_offsets=seed_offsets)
     seats = match.seats
     try:
         while True:
@@ -469,7 +487,8 @@ def pair_game(policies, a, b, index, leg, seed0, mode="sample", lib=None,
     home, away, seed, modes, temperatures = pair_seating(a, b, index, leg, seed0, mode, specs)
     record, _ = play_match(policies[home], policies[away], seed, lib=lib,
                            seat_factory=seat_factory, modes=modes, temperatures=temperatures,
-                           masks=pair_masks(home, away, specs))
+                           masks=pair_masks(home, away, specs),
+                           seed_offsets=pair_seed_offsets(home, away, specs))
     return pair_record(a, b, index, leg, home, away, record)
 
 
@@ -528,7 +547,8 @@ class BatchedGames:
         slot.match = Match(self.policies[home], self.policies[away], seed, lib=self.lib,
                            seat_factory=self.seat_factory, modes=modes,
                            temperatures=temperatures,
-                           masks=pair_masks(home, away, self.specs))
+                           masks=pair_masks(home, away, self.specs),
+                           seed_offsets=pair_seed_offsets(home, away, self.specs))
         slot.team, slot.inputs = None, None
         self.games.append(slot)
         self.current_task = None
@@ -675,17 +695,19 @@ def parse_masks(text):
     return masks
 
 
-def player_specs(names, mode, player_modes=None, temperatures=None, bots=None, masks=None):
+def player_specs(names, mode, player_modes=None, temperatures=None, bots=None, masks=None,
+                 seed_offsets=None):
     """Per-player specs. Checkpoints get {mode, temperature}; bots get {bot: kind}
     and refuse mode, temperature or mask overrides. A masked checkpoint also gets
     {masks: [...]}; an unmasked one carries no such key, so a run without masks
     writes the manifest it always wrote."""
     player_modes, temperatures, bots = player_modes or {}, temperatures or {}, bots or {}
-    masks = masks or {}
-    unknown = (set(player_modes) | set(temperatures) | set(bots) | set(masks)) - set(names)
+    masks, seed_offsets = masks or {}, seed_offsets or {}
+    unknown = (set(player_modes) | set(temperatures) | set(bots) | set(masks)
+               | set(seed_offsets)) - set(names)
     if unknown:
         raise ValueError(f"mode/temperature/bot/mask for unknown players {sorted(unknown)}")
-    tuned_bots = (set(player_modes) | set(temperatures) | set(masks)) & set(bots)
+    tuned_bots = (set(player_modes) | set(temperatures) | set(masks) | set(seed_offsets)) & set(bots)
     if tuned_bots:
         raise ValueError(f"scripted bots take no mode, temperature or mask: {sorted(tuned_bots)}")
     specs = {}
@@ -702,6 +724,10 @@ def player_specs(names, mode, player_modes=None, temperatures=None, bots=None, m
         specs[name] = {"mode": m, "temperature": check_temperature(temperatures.get(name, 1.0))}
         if masks.get(name):
             specs[name]["masks"] = list(check_masks(masks[name]))
+        if seed_offsets.get(name):
+            if int(seed_offsets[name]) < 0:
+                raise ValueError(f"sampling offset for {name} must be positive")
+            specs[name]["seed_offset"] = int(seed_offsets[name])
     return specs
 
 
@@ -992,6 +1018,11 @@ def main(argv=None):
                          + "; ".join(f"{k} = {v}" for k, v in MASK_HELP.items())
                          + ". Its policy is renormalized over the actions left. "
                            "A diagnostic, never a registered gate")
+    ap.add_argument("--sampling-offset", action="append", default=[], metavar="NAME=K",
+                    help="repeatable; shift player NAME's sampling seed by K (a positive "
+                         "integer). Sampling seeds are keyed by side, so one checkpoint "
+                         "under two names plays identical legs unless one name is shifted. "
+                         "A diagnostic, never a registered gate")
     ap.add_argument("--kernel", default="native", choices=["native", "torch"])
     ap.add_argument("--workers", type=int, default=MAX_WORKERS)
     ap.add_argument("--games-per-worker", type=int, default=None, metavar="N",
@@ -1035,7 +1066,8 @@ def main(argv=None):
         specs = player_specs(names, args.mode,
                              parse_assignments(args.player_mode),
                              parse_assignments(args.temperature, float), bots=bots,
-                             masks=parse_assignments(args.mask, parse_masks))
+                             masks=parse_assignments(args.mask, parse_masks),
+                             seed_offsets=parse_assignments(args.sampling_offset, int))
         tasks = schedule(names, args.games_per_pair, args.seed0, pairs=pairs)
     except ValueError as exc:
         raise SystemExit(str(exc))
