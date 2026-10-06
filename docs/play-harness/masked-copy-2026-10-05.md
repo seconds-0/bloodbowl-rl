@@ -116,9 +116,9 @@ Not being allowed to end the turn early makes chain 41 **stronger**: m1 is
 are a different matter: forbidding an activation that ends at once (m2,
 -25.4 [-38.3, -12.2]) or a declared block that is not thrown (m3, -24.5
 [-36.7, -11.8]) makes it **weaker**. All three together are **non-inferior**
-(+14.0 [-0.4, 28.2]) with 2.4 times the blocks. So the short turn is not
-load-bearing; the unthrown blocks are, or at least the policy cannot throw
-them well when made to.
+(+14.0 [-0.4, 28.2]) with 2.4 times the blocks. So, against itself, the
+short turn is not load-bearing; the unthrown blocks are, or at least the
+policy cannot throw them well when made to.
 
 ## 2. Control
 
@@ -152,6 +152,7 @@ seeds each:
 Behaviour in the same games, masked side / plain side. Every masked-minus-plain
 difference shown has a seed-cluster interval that excludes zero unless marked
 "ns" (`docs/play-harness/masked-copy-2026-10-05/tables.md` has the intervals).
+The last row is one number per arm: both sides share the game.
 
 | | m1 | m2 | m3 | m1 + m2 + m3 |
 |---|---|---|---|---|
@@ -212,74 +213,90 @@ Each cell's interval is about plus or minus 0.03 (bash) to 0.05.
   early; it gains about 32 Elo against itself. It concedes fewer touchdowns
   (0.61 against the 0.75 chain 41 concedes to itself in the control arm) and
   scores slightly fewer (0.68 against 0.75), with 0.09 more turnovers a team
-  turn. m1 does not force play: 44% of the masked copy's activations end at
-  once, which in Blood Bowl is the same as not activating that player. What
-  m1 removes is the wholesale decision to stop. Made to decide player by
-  player, chain 41 uses about two in five of the extra activations (of 3.8
-  more a team turn, 2.3 end at once) and is stronger for it. The share is
-  up for bash, agile and hybrid rosters and level for stunty.
+  turn. m1 does not force a move or a block: 44% of the masked copy's
+  activations end at once. That is close to not using the player, but it is
+  not the same thing as not activating it: an activation clears Distracted,
+  a declaration can trigger a negative-trait roll and spends the turn's
+  Blitz, Pass, Hand-off or Foul allowance, and Stalling is timed by the
+  carrier's activation. So m1 changes more than the decision to stop. With
+  that said: made to decide player by player, chain 41 uses about two in
+  five of the extra activations (of 3.8 more a team turn, 2.3 end at once)
+  and is stronger against itself. The raw share is higher than the
+  control's in the bash, agile and hybrid rows and level in the stunty row.
 - **m2, no activation ended at once: worse.** About 25 Elo. Blocks go from
   6.8 to 10.1 a game and turnovers from 0.31 to 0.39 a team turn; it scores
   less and concedes more.
-- **m3, no unthrown block: worse.** About 25 Elo, and nearly the same game as
-  m2: after a Block declaration with a target, the first decision is the
-  block, so m2 forces the same blocks m3 does (10.1 and 10.0 block targets a
-  game). The cost of m2 is therefore mostly the forced blocks; this test has
-  no arm that isolates the forced first step of a Move.
+- **m3, no unthrown block: worse.** About 25 Elo. The two masks overlap: after
+  a Block declaration with a target, the first decision is the block, so m2
+  forces those blocks too (10.1 and 10.0 block targets a game). They are not
+  the same mask: m3 also acts later inside a Blitz (1.53 Blitz blocks a game
+  against m2's 1.34) and m2 still lets 0.49 activations a game end with a
+  target on offer. The results are consistent with forced blocks carrying
+  most of m2's cost, and do not show it: no arm isolates the forced first
+  step of a Move.
 - **All three: non-inferior**, short of "better" by 0.4 Elo at the lower
   end. 15.5 blocks a game against 6.5, 5.9 activations a team turn against
   3.1, and 0.57 turnovers a team turn against 0.31.
-- The roster split says where forced blocks hurt: bash rosters lose nothing
-  under m2 or m3 (0.38 against the control's 0.39), agile, hybrid and stunty
-  rosters lose 0.03 to 0.10 of decisive share. Descriptive only.
+- The roster split, as point estimates only: under m2 and m3 the bash row is
+  0.38 against the control's 0.39, and the agile, hybrid and stunty rows are
+  0.03 to 0.10 below the control's. No interval was computed for those
+  contrasts, the arms use different seeds (so different rosters, skills and
+  matchups), and a decisive share depends on a draw rate the masks change.
+  A pattern to test, not a finding.
 
 ## 5. Reading, with chain 41's reward ledger
 
-The training reward's dense terms pay for advancing the ball (distance to the
-end zone +1.24 a game, ball gain +0.16, distance to the ball +0.13) and
-charge blocks and rushes (block sequence -0.18, block turnover -0.13, block
-exposure -0.10, rush -0.14); nothing dense pays for using the other players,
-and win/loss is +0.23.
+The ledger figures here were supplied with the task and are not in this
+branch's artifacts: mean emitted reward per game on the learner's side over
+25,611 training games of chain 41. Distance to the end zone +1.24, touchdown
++0.29, win/loss +0.23, ball gain +0.16, distance to the ball +0.13; block
+sequence -0.18, rush -0.14, block turnover -0.13, block exposure -0.10. These
+are contributions, not coefficients. Nothing dense pays for using the
+players who are not moving the ball.
 
-- **m1 and the ledger point in opposite directions.** Under m1 the copy makes
-  2.7 more blocks a game and 0.09 more turnovers a team turn, both of which
-  the dense terms charge, and it wins more. So at the margin where chain 41
-  chooses to stop, the dense reward says "stop" and the match says
-  "continue". That is consistent with the short turn being a product of the
-  reward, not of strength. It is not proof: the test is self-play, and the
-  masked copy is off its own distribution.
-- **m2 and m3 and the ledger point the same way.** The blocks chain 41
-  declares and does not throw are, as it plays them, bad for it. Two
-  readings, which this test cannot separate (section 0): they are bad blocks
-  and it is right to decline them, or it has never learned to block well
-  because blocks were charged throughout training, so a forced block is a
-  poor one (wrong target, no assists set up, wrong die). The roster split
-  leans toward the second being at least part of it: with rosters built to
-  block, forcing the block costs nothing.
-- **The masks interact with the reward in one more way.** Declaring Block
-  and then ending the activation is free under the reward and legal under
-  the rules, so it is the cheapest way to "skip" a player next to an
-  opponent. Under m1 that is exactly what the copy does with many of its
-  extra activations: Block declarations go from 0.63 to 1.13 a team turn and
+- **m1: a hypothesis the ledger suggests and this test is consistent with.**
+  Under m1 the copy chooses 2.7 more block targets a game and has 0.09 more
+  turnovers a team turn, and it wins more. The dense terms that exist charge
+  blocks and rushes, and none pays for an extra activation, so the reward
+  gives chain 41 little reason to continue a turn and some reason to stop.
+  Whether the extra m1 actions actually have negative net dense reward was
+  not measured (it needs the reward ledger run on the m1 games, or a reward
+  ablation), and total turnovers are not block turnovers. So: the short turn
+  may be a product of the reward and not of strength. Not shown.
+- **m2 and m3: the charge on blocks and the match result point the same
+  way** for the blocks chain 41 declares and does not throw. Two readings,
+  which this test cannot separate (section 0): they are bad blocks and it
+  is right to decline them, or it blocks poorly because blocks were charged
+  throughout training (target, assists, die). Nothing here decides between
+  them.
+- **One direct interaction.** Declaring Block and then ending the activation
+  costs nothing under those terms and is legal, so it is a cheap way to
+  pass over a player who stands next to an opponent. Under m1 the copy does
+  much more of it: Block declarations go from 0.63 to 1.13 a team turn and
   activations ended with a target on offer from 3.8 to 8.9 a game.
 - **What a forced action does to the reading.** A forced action is one the
   policy gave low probability, taken with recurrent state that never saw
-  such a history in training. "Worse" under m2 and m3 may understate what a
-  policy trained under the rule could do. "Better" under m1 is the robust
-  direction: it holds despite that handicap.
+  such a history in training. That can make a masked copy play worse than a
+  policy trained under the rule would, or differently in ways this test
+  cannot sign. It is a reason not to read m2 and m3 as "blocking is bad",
+  and not a reason to discount m1.
 
 ## 6. What a training-time version would look like
 
 Only m1 survives as a candidate. m2 and m3 do not, as hard rules.
 
 1. **An env-side legality rule: END_TURN is legal only when no ACTIVATE is.**
-   It removes no freedom the rules give (an activation that ends at once is
-   the skip), needs no coefficient, and is exactly what was tested. Behind a
-   flag, default off, one paired rung against a control. What could go
-   wrong: a policy trained under it can learn to make every extra activation
-   an empty one, since nothing in the dense reward pays for using it and
-   blocks and rushes are charged, and then the gain measured here does not
-   appear; games get about 38% longer in engine steps (961 against 697), so
+   It is exactly what was tested and needs no coefficient. It is a
+   restriction the rulebook does not make: a coach may stop, and an empty
+   activation is not a free substitute (it clears Distracted, can roll a
+   negative trait, spends per-turn action allowances and moves the Stalling
+   check). Behind a flag, default off, one paired rung against a control.
+   What could go wrong: those activation side effects become forced, which
+   matters most for rosters with negative-trait players; a policy trained
+   under the rule can learn to make every extra activation an empty one,
+   since nothing in the dense reward pays for using it and blocks and
+   rushes are charged, and then the gain measured here does not appear;
+   games get about 38% longer in engine steps (961 against 697), so
    throughput per game falls and a per-step discount reaches less far into a
    turn; frozen opponents in the pool were not trained under the rule, so
    the flag must apply per seat or to the learner only; and it changes the
@@ -292,15 +309,15 @@ Only m1 survives as a candidate. m2 and m3 do not, as hard rules.
 3. **A human-prior term scoped to the turn-level decision** (ACTIVATE or
    END_TURN, type head only). Softer than the rule and it can be decayed,
    but it costs a second forward at those decisions and brings the
-   calibration questions of the audit. This test says the direction is safe
-   for strength as a hard rule at play time; it says nothing about a
-   penalty's dynamics.
+   calibration questions of the audit. This test says the hard rule at play
+   time improved strength against plain chain 41 on sampled procgen rosters;
+   it says nothing about a penalty's dynamics or about other opponents.
 
 For m2 and m3 the order of work is the other way round: before any rule or
 prior asks for more blocks, find out whether chain 41 blocks badly because
-blocks were charged. The cheap check is the same harness with the masks on
-bash rosters only against the scripted bots and an older chain, and a look
-at the block terms in the reward manifest.
+blocks were charged. Cheap checks: the same masks against the scripted bots
+and an older chain, a roster-standardized read with intervals, and the
+reward ledger run on masked games.
 
 The exit test for any of this is the normal gate with no loss, with the
 style panel next to it. A result here against a copy of itself is not a gate
@@ -311,7 +328,7 @@ result.
 - **Where it ran.** Five `s-8vcpu-16gb-amd` droplets in sfo3, one an arm, at
   the same time, each created and destroyed by `tools/droplet_tournament.py`;
   every run verified its files by sha256 and its games against the manifest
-  with zero integrity counters. Lifetimes 10.0 to 12.6 minutes; **total cost
+  with zero integrity counters. Lifetimes 10.1 to 12.6 minutes; **total cost
   $0.15** (`docs/play-harness/masked-copy-2026-10-05/droplet_runs.json`).
   The leak check after the last teardown shows no tagged droplet, no
   `bb-harness-*` ssh key and no local state with a live droplet. The
@@ -327,6 +344,15 @@ result.
   the "ended with a block target on offer" row is named for what it counts
   (Block and Blitz); the mask sum is called a summed removed-type
   probability, with the m2-before-m3 crediting stated.
+- **Codex, read-only, on the numbers:** no P1. The strength table agrees with
+  the droplets' own `tournament_stats` output and the thresholds were applied
+  as registered; section 0 is unchanged apart from a trailing newline. Seven
+  findings, all taken in the text above: an empty activation is not a skip
+  (activation side effects), so m1 is a restriction and not a free rule; the
+  reward reading is a hypothesis and the ledger figures are not in this
+  branch; m2 and m3 overlap but are not the same; the roster rows are point
+  estimates; a lifetime rounding; the shared engine-steps row; the scope of
+  "improved strength".
 
 ## 8. Where this test's design was wrong
 
@@ -335,9 +361,10 @@ result.
    so the decisive share is 0.5 exactly. A useful null would have given one
    side a different sampling seed. The intervals above come from the
    seed-cluster bootstrap instead.
-2. **m1 does not make the policy play.** It makes it decide player by
-   player. "At least one action with every player" is m1 with m2, which was
-   only run together with m3.
+2. **m1 does not make the policy play, and it is not a pure "no stopping"
+   rule either.** It makes the policy activate every player, with the side
+   effects an activation has. "At least one action with every player" is m1
+   with m2, which was only run together with m3.
 3. **m2 contains most of m3.** No arm isolates the forced first step of a
    Move from the forced block of a Block.
 4. **Self-play only.** Masked against plain, both chain 41. Whether m1's
