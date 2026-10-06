@@ -75,7 +75,7 @@ Same prior on every held-out re-seated record, by span stamp: stamp 0: n 13,400,
 
 With biases (not convertible): exact 51.6%, NLL 1.283, against bias-free 51.3%, NLL 1.283.
 
-Sequences of 16 with carried state: exact 55.6% [54.6%, 56.8%], NLL 1.161; by position in the window {'0': 0.45669633166919904, '1-3': 0.5773641102010424, '4+': 0.5595972133247918}; the same net at zero state: exact 49.1%, NLL 1.323.
+Sequences of 16 with carried state: exact 55.7% [54.7%, 56.9%], NLL 1.160; by position in the window {'0': 0.46212285652268287, '1-3': 0.5757259865971706, '4+': 0.5610786354900704}; the same net at zero state: exact 49.5%, NLL 1.322.
 
 Human states: prefix records + re-seated records in spans that closed equal to the replay (span stamp 1); {'prefix': 20267, 'reseat': 47722} records from 60 held-out replays.
 
@@ -208,28 +208,50 @@ Mean log-probability of the action chain 41 took: chain41 -0.11, prior -3.05, ch
 
 ### D. Added after the first read of the gate (not pre-registered)
 
-D1. After a Block declaration with a target available, ending the activation without throwing the block:
+D1. Decisions whose legal types are exactly BLOCK_TARGET and END_ACTIVATION and whose declared kind (observation byte 807) is Block: the activation was ended without a block.
 
-| states | n | what was done | prior | chain 41 | chain 36 | chain 9 |
-|---|---|---|---|---|---|---|
-| human (held-out) | 2,163 | humans 0.009 [0.003, 0.015] | 0.011 | 0.195 | 0.219 | 0.232 |
-| chain 41's own | 5,929 | chain 41 0.391 | 0.009 | 0.392 | 0.367 | 0.422 |
-
-D2. Activations that end at once (the decision after the declaration is END_ACTIVATION):
-
-| declared | humans: n | humans: ended at once | chain 41: n | chain 41: ended at once |
-|---|---|---|---|---|
-| Move | 5,642 | 0.2% | 17,078 | 17.8% |
-| Block | 2,190 | 0.9% | 6,083 | 38.3% |
-| Blitz | 1,052 | 0.5% | 2,732 | 14.9% |
-| Pass | 29 | 0.0% | 1,796 | 19.8% |
-
-D3. The shape of a team turn:
-
-|  | team turns | activations per turn | turns ended by choice with a player still to activate |
+|  | decisions in the context | of which declared Block | ended without blocking |
 |---|---|---|---|
-| humans (held-out, default subset) | 1,206 | 7.48 | 24.5% |
-| chain 41 self-play | 9,170 | 3.07 | 64.1% |
+| humans (held-out, default subset) | 2,163 | 2,163 | 0.009 [0.003, 0.015] |
+| chain 41 self-play | 5,929 | 5,929 | 0.391 [0.368, 0.414] |
+
+D2. The decision after a declaration is END_ACTIVATION by the same coach (only declarations whose next decision is verified to be the next one in the game):
+
+| declared | humans: declarations | with a verified next decision | ended at once | chain 41: declarations | with a verified next decision | ended at once |
+|---|---|---|---|---|---|---|
+| Move | 5,652 | 5,642 | 0.002 [0.001, 0.005] | 17,078 | 17,078 | 0.178 [0.168, 0.188] |
+| Block | 2,192 | 2,189 | 0.009 [0.003, 0.015] | 6,083 | 6,083 | 0.383 [0.360, 0.405] |
+| Blitz | 1,053 | 1,052 | 0.005 [0.001, 0.010] | 2,732 | 2,732 | 0.149 [0.132, 0.165] |
+| Pass | 30 | 29 | 0.000 [0.000, 0.000] | 1,797 | 1,797 | 0.198 [0.176, 0.219] |
+
+D3. Per team turn. Turns are counted from turn-level decisions, so a turn with no declaration counts.
+
+| per team turn | humans, whole turns (re-seated, closed equal) | humans, prefix records (last turn can be cut) | chain 41 self-play |
+|---|---|---|---|
+| team turns | 899 | 323 | 9,491 |
+| declarations (activations) | 7.16 | 7.99 | 2.97 |
+| ended by choice with a player left | 0.239 | 0.248 | 0.619 |
+| Block-legal declarations | 2.18 | 2.38 | 0.78 |
+| Block declared | 1.72 | 1.99 | 0.64 |
+| block targets chosen, Block action | 1.68 | 1.95 | 0.38 |
+| Blitz declared | 0.86 | 0.85 | 0.28 |
+| block targets chosen, Blitz action | 0.81 | 0.79 | 0.07 |
+| Pass declared | 0.024 | 0.025 | 0.189 |
+| pass targets chosen | 0.017 | 0.012 | 0.000 |
+| Foul declared | 0.048 | 0.025 | 0.001 |
+| foul targets chosen | 0.046 | 0.025 | 0.000 |
+
+D5. Ending the turn by how many players were already activated in it (whole turns; decisions where both ACTIVATE and END_TURN are legal).
+
+| players already activated | human states: n | humans ended | chain 41 (zero state) would end | prior would end | chain 41's states: n | chain 41 ended | prior would end |
+|---|---|---|---|---|---|---|---|
+| 0 | 899 | 0.012 | 0.341 | 0.024 | 9,491 | 0.034 | 0.010 |
+| 1 | 858 | 0.003 | 0.395 | 0.027 | 7,133 | 0.147 | 0.012 |
+| 2 | 832 | 0.006 | 0.492 | 0.031 | 5,383 | 0.228 | 0.013 |
+| 3 | 787 | 0.004 | 0.598 | 0.036 | 3,843 | 0.223 | 0.014 |
+| 4-5 | 1,408 | 0.016 | 0.726 | 0.045 | 4,940 | 0.253 | 0.015 |
+| 6-7 | 1,130 | 0.050 | 0.853 | 0.057 | 2,345 | 0.368 | 0.017 |
+| 8+ | 741 | 0.155 | 0.917 | 0.063 | 900 | 0.349 | 0.023 |
 
 D4. Mean probability each net gives the action chain 41 took (chain 41's states):
 
@@ -278,14 +300,16 @@ D4. Mean probability each net gives the action chain 41 took (chain 41's states)
   "gate_B_ratio": {
    "value": 0.7139011989916128,
    "lo": 0.6982709369551583,
-   "hi": 0.7301431869056776
+   "hi": 0.7301431869056776,
+   "resamples_with_zero_denominator": 0
   },
   "gate_B_gap": -0.23599221897158862,
   "gate_A": false,
   "gate_A_ratio": {
    "value": 0.8656212784510012,
    "lo": 0.8344854153424157,
-   "hi": 0.8965592038440652
+   "hi": 0.8965592038440652,
+   "resamples_with_zero_denominator": 0
   },
   "gate_A_gap": -0.12473799677044839,
   "prior_over_human": 0.8606586987764513,
@@ -297,14 +321,16 @@ D4. Mean probability each net gives the action chain 41 took (chain 41's states)
   "gate_B_ratio": {
    "value": 1.6904231848667248,
    "lo": 1.6138928654407703,
-   "hi": 1.7743281072713153
+   "hi": 1.7743281072713153,
+   "resamples_with_zero_denominator": 0
   },
   "gate_B_gap": 0.09662637077163194,
   "gate_A": false,
   "gate_A_ratio": {
    "value": 0.585562435398493,
    "lo": 0.5399384274591493,
-   "hi": 0.6388719671273297
+   "hi": 0.6388719671273297,
+   "resamples_with_zero_denominator": 0
   },
   "gate_A_gap": -0.13070345348367954,
   "prior_over_human": 0.9516263083333251,

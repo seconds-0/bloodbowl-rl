@@ -26,10 +26,56 @@
  "slots": 64,
  "decisions": 208428,
  "chunks": 11,
+ "chunk_files": [
+  {
+   "name": "chunk_0000.npz",
+   "sha256": "08523298747f7c8b1f9ca3c1b79b41e0c5fb0cc1e831ab964c2b6c725323a8c3"
+  },
+  {
+   "name": "chunk_0001.npz",
+   "sha256": "3409a45c31d4638ac288e9b603e07762d6eb96b35c5e6295477d1a232d4e914e"
+  },
+  {
+   "name": "chunk_0002.npz",
+   "sha256": "aa97de0f859d6b1018268bc9443fc934b1a37c0c3eff5a4f2804d4ea258b6a55"
+  },
+  {
+   "name": "chunk_0003.npz",
+   "sha256": "0e500a2642e110f4c25f53865ec0a6c9f7fbdce5a3b60e6c59a02c3cab8b60be"
+  },
+  {
+   "name": "chunk_0004.npz",
+   "sha256": "10441e7babdfa5788df64b095b20491a5f55b9924c6c3cc5f0442b606861410d"
+  },
+  {
+   "name": "chunk_0005.npz",
+   "sha256": "7c352819d1073bb75ef1787357dbd27cadb916b4b5be49464e820b7f1b82901f"
+  },
+  {
+   "name": "chunk_0006.npz",
+   "sha256": "1760135ff73adcf44ad042befad26024f50a5e56bd214735fa213ef621d6c2b2"
+  },
+  {
+   "name": "chunk_0007.npz",
+   "sha256": "63b4ec084dcd55c6ce78623898079d55b17f28cb7db75cccd21cecd115ffbb2a"
+  },
+  {
+   "name": "chunk_0008.npz",
+   "sha256": "6482eabd0d5faefc743ce40075a256e7d9b4a12856055b097c2b6f2dcbe18efa"
+  },
+  {
+   "name": "chunk_0009.npz",
+   "sha256": "077d3cd92296326b17279076b9c51d4345dbb19a98ac52fe5bc012e7175bc84b"
+  },
+  {
+   "name": "chunk_0010.npz",
+   "sha256": "afb5759f137174ed985166c5fa8a6b2912d6bf8d951e68f4a8570cf3f99a8ad9"
+  }
+ ],
  "match_size": 2240,
  "shim": {
   "path": "build/play_harness_probe/libbbplay.dylib",
-  "sha256": "568046e8408e1b4e975f511bd88b87b9b8e89d7b27f5acbb22f87baef5250139",
+  "sha256": "cd8546f4b0e8a3a1b2d9319fd38c72067f286dab5c423887e13460e46b22dd5b",
   "engine_root": "this worktree",
   "bbplay_c_sha256": "756c32c925cd7b9d803248299a3e74fb3bdc9bebee05316c41da1e3b04a73456"
  },
@@ -47,12 +93,13 @@
   "proj_arg",
   "proj_sq"
  ],
- "seconds": 145.8,
+ "seconds": 134.8,
  "summary": {
   "games": 300,
   "natural": 300,
   "touchdowns_per_team_game": 0.705,
   "c_steps_per_game": 694.76,
-  "action_trail_sha256_of_all_games": "51e10ea519c6e34d6d352f0089c188e0e09bc4e87520a20e1096f5e6dd9fbdce"
+  "action_trail_sha256_of_all_games": "51e10ea519c6e34d6d352f0089c188e0e09bc4e87520a20e1096f5e6dd9fbdce",
+  "note": "the dump was made twice from the same seeds; all 300 action trails were identical"
  }
 }

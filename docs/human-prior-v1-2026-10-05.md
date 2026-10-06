@@ -7,13 +7,15 @@ registered in section 0 the answer to the roadmap's gate is **stop**: on
 chain 41's own states the human prior puts *less* weight on Block
 declarations than chain 41 does (0.59 against 0.83 where Block is legal), and
 the Blitz gap it shows there (0.24 against 0.14) fails the cross-check on
-human states. Chain 41 is not shy of declaring blocks. It throws few because
-of the shape of its turns: 3.1 activations a team turn against the humans'
-7.5, a turn ended by choice with players still to activate in 64% of team
-turns against 24%, and 39% of its declared Blocks ended without a block
-against the humans' 0.9%. Those three were measured after the gate was read
-and were not registered. A term that asks for more block declarations would
-push the wrong decision.
+human states. Chain 41 is not shy of declaring blocks. What differs is the
+shape of its turns: 3.0 activations a team turn against the humans' 7.2, a
+turn ended by choice with players still to activate in 62% of team turns
+against 24%, 39% of its declared Blocks ended without a block against the
+humans' 0.9%, and three in four of its Blitz declarations never reaching a
+block. Those were measured after the gate was read and were not registered.
+They reconcile with the style panel: 0.45 block targets chosen a team turn
+(7 a game) against the humans' 2.49 (40 a game). A term that asks for more
+block declarations would push a decision that is already at the human rate.
 
 ## 0. Thresholds, written before any audit number was computed
 
@@ -171,23 +173,30 @@ matches.
    each on the same held-out records: 51.3% exact and NLL 1.283 bias-free
    against 51.6% and 1.283 with biases. D172 measured about 1.3 points; here
    it is 0.3 points and nothing in likelihood.
-2. **Zero-state i.i.d. for v1, with a measured cost.** A net trained on
-   windows of 16 consecutive decisions of one coach, state carried, scores
-   55.6% [54.6, 56.8] exact and NLL 1.161 on the same held-out records:
-   4.3 points and 0.12 nats better. So recent history carries real
-   information about the next human action. v1 still runs stateless for
-   three reasons. The audit needs one function of the observation that can
-   be put on chain 41's states without deciding whose history to feed it.
-   On the policy's states that history would be the policy's own non-human
-   decisions. And the pairs cannot give the stream the policy sees in play,
-   where the net is stepped on every engine step, the waiting coach's
-   included. Sequence state is the first thing to revisit in a v2
-   (section 6).
+2. **Zero-state i.i.d. for v1, with a measured cost.** A second recipe
+   (`training/human_prior_seq.py`: windows of up to 16 consecutive decisions
+   of one coach, state carried, same optimizer settings, same number of
+   sampled records) scores 55.7% [54.7, 56.9] exact and NLL 1.160 on the same
+   held-out records, against 51.3% and 1.283. The two recipes differ in more
+   than recurrence (a replay-then-window sampler weights records differently
+   from a replay-then-record sampler), so 4.4 points is a comparison of two
+   recipes. The one-variable evidence is inside the sequence net: the same
+   weights score 55.7% with the state carried and 49.5% (NLL 1.322) with it
+   zeroed. Recent history carries real information about the next human
+   action. v1 still runs stateless for three reasons. The audit needs one
+   function of the observation that can be put on chain 41's states without
+   deciding whose history to feed it. On the policy's states that history
+   would be the policy's own non-human decisions. And the pairs cannot give
+   the stream the policy sees in play, where the net is stepped on every
+   engine step, the waiting coach's included. Sequence state is the first
+   thing to revisit in a v2 (section 6).
 3. **Subset: the contract default** (prefix plus closed-equal). Measured
-   against the alternatives below. Training on everything is 1.2 points and
-   0.04 nats better on every held-out subset, including held-out prefix
-   records, so the excluded stamps are useful data and the default costs
-   something.
+   against the alternatives below (the every-stamp held-out column is the
+   named measurement `--eval-all-stamps`). Training on everything is 0.6
+   points better on held-out prefix records and 1.2 points better on the
+   other two held-out sets, and 0.04 nats better on all three, so the
+   excluded stamps look like useful data and the default costs something.
+   One seed each.
 
 ### Training subset against held-out subset (60 replays never trained on)
 
@@ -211,10 +220,13 @@ from 60 replays. Overall exact 51.3% [50.1, 52.6] (replay-clustered).
 | arg | 84.6% | 25,311 | 58.7% | 0.513 | 0.601 |
 | square | 70.9% | 27,914 | 29.2% | 0.233 | 0.371 |
 
-Calibration: mean probability on the human's joint action 0.455; NLL 1.283
-nats; the type head's expected calibration error is 0.007 (its confidence
-matches its accuracy in every bin). The arg and square heads are slightly
-overconfident (top probability 0.60 and 0.37 against accuracy 0.59 and 0.29).
+"Exact" is teacher-forced: each head is scored under the masks that follow
+from the human's own choice in the heads before it. Calibration: mean
+probability on the human's joint action 0.455; NLL 1.283 nats; the type
+head's expected calibration error is 0.007 (confidence within 0.03 of
+accuracy in the five bins that hold 99.9% of its rows). The arg and square
+heads are slightly overconfident (top probability 0.60 and 0.37 against
+accuracy 0.59 and 0.29).
 
 ### By action family
 
@@ -274,12 +286,16 @@ records.
 | 339 | 368,117 | 51.3% | 1.283 | 0.455 |
 
 Each step up still buys about 1.6 points and 0.06 to 0.09 nats, with no
-flattening between 200 and 339. The net fits its training set far better
-than the held-out set (batch exact near 0.69 against 0.51 on dev after ten
-passes), so it is limited by data, not by capacity. D172's saturation at
-0.45 to 0.51 was measured on prefix-only data; this is a different, deeper
-record mix and the comparison is not like for like. 11,580 BB2025 replays
-exist; these are 399 of them.
+flattening between 200 and 339. The budget is fixed in passes, so the larger
+sets also get more optimizer steps (420, 854, 1,438). The selection runs say
+the steps are not what helps: on a fixed set the dev NLL bottoms out near
+four passes and rises after (1.339 at 4.6 passes, 1.442 at ten, while the
+training batches go from about 0.50 to 0.69 exact). So the net is short of data,
+not of capacity or steps. This is one seed per point and three points: it
+says more replays should help, not by how much. D172's saturation at 0.45
+to 0.51 was measured on prefix-only data; this is a different, deeper record
+mix and the comparison is not like for like. 11,580 BB2025 replays exist;
+these are 399 of them.
 
 ## 3. The audit
 
@@ -292,9 +308,10 @@ Thresholds: section 0. Nets: the default prior, chain 41 (`b1830e23`), chain
 - **Chain 41's own states (B, C):** 300 self-play games on CPU
   (`tools/selfplay_dump.py`, seeds 20261005 to 20261304, sampled at
   temperature 1, all 300 ended naturally, 0.705 touchdowns per team per
-  game), 208,428 decisions, 695 a game. The engine shim was compiled from
-  this worktree's engine and env; two seeds replayed on the harness's own
-  older engine gave identical action trails. Chain 41's probabilities are
+  game), 208,428 decisions, 695 a game. The dump was made twice from the
+  same seeds and all 300 action trails were identical. The engine shim was
+  compiled from this worktree's engine and env; two seeds replayed on the
+  harness's own older engine gave identical action trails. Chain 41's probabilities are
   the ones it played with; chain 9 and chain 36 were stepped on the same
   stream with their own carried state.
 
@@ -381,7 +398,7 @@ B1. Declarations where the kind is legal (28,430 declarations).
 | Hand-off | 27,499 | 0.025 | 0.026 | 1.04 [0.95, 1.16] | 0.041 | 1.66 [1.44, 1.90] | 0.021 | 0.019 |
 | Foul | 2,855 | 0.003 | 0.087 | 27.1 [13.9, 75.3] | 0.001 | 0.26 [0.04, 0.99] | 0.002 | 0.003 |
 
-Chain 41's sampled rates equal its T = 1 rates to three decimals.
+Chain 41's sampled rates equal its T = 1 rates to within 0.001.
 
 B2. Ending the turn while a player could still be activated: 34,312
 decisions. Chain 41 0.172 (sampled 0.171); prior 0.013; chain 9 0.414; chain
@@ -419,8 +436,10 @@ B4. Mean KL by decision context, nats, largest summed symmetric KL first.
 | PUSH_SQUARE | 3,017 | 1.4% | 67.0 | 1.06 | 27.1 | 22.3 | 8.1 | 0.1 |
 | all | 208,428 | 100% | 78.7 [77.6, 79.8] | 2.94 [2.89, 2.99] | 25.7 [25.3, 26.1] | 19.7 [19.4, 20.0] | 8.3 [8.1, 8.4] | 9.4 [9.1, 9.6] |
 
-`KL(prior, c41)` is at least 19 nats in every context, so the registered
-"would act" threshold of 0.10 nats is met everywhere and separates nothing.
+`KL(prior, c41)` is at least 10 nats in every context that has a real
+choice and 500 or more decisions (the lowest is STAND_UP, END_ACTIVATION at
+10.1), so the registered "would act" threshold of 0.10 nats is met in all of
+them and separates nothing.
 The cause is chain 41's logit scale, not the size of the behavioural gap:
 chain 41 gives one action 0.94 on average and the rest e^-100. The bounded
 reading of the same comparison is D4.
@@ -436,45 +455,93 @@ RL policies pay 10 nats whenever they differ.
 ### D. Added after the first read of the gate (not pre-registered)
 
 The gate numbers said the block gap is not in the declaration, so I measured
-where it is. These four were chosen after seeing A and B.
+where it is. These were chosen after seeing A and B. Humans are measured on
+human states and chain 41 on its own self-play states: different rosters,
+boards, clocks and opponents. The tables describe two populations; they do
+not isolate a cause.
 
-D1. After a Block declaration with a target available, ending the activation
-without throwing the block.
+D1. Decisions whose legal types are exactly BLOCK_TARGET and END_ACTIVATION.
+In both data sets every one of them has declared kind Block (observation
+byte 807). Share that ended the activation without a block:
 
-| states | n | observed | prior | chain 41 | chain 36 | chain 9 |
-|---|---|---|---|---|---|---|
-| human (held-out) | 2,163 | humans 0.009 [0.003, 0.015] | 0.011 | 0.195 | 0.219 | 0.232 |
-| chain 41's own | 5,929 | chain 41 0.391 | 0.009 | 0.392 | 0.367 | 0.422 |
+| | decisions | ended without blocking |
+|---|---|---|
+| humans (held-out, default subset) | 2,163 | 0.009 [0.003, 0.015] |
+| chain 41 self-play | 5,929 | 0.391 [0.368, 0.414] |
 
-D2. Activations that end at once (the decision after the declaration is
-END_ACTIVATION).
+On the human decisions the nets' probabilities of ending are: prior 0.011,
+chain 41 0.195, chain 36 0.219, chain 9 0.232. On chain 41's decisions:
+prior 0.009, chain 36 0.367, chain 9 0.422. The habit is as old as chain 9.
 
-| declared | humans: n | humans | chain 41: n | chain 41 |
-|---|---|---|---|---|
-| Move | 5,642 | 0.2% | 17,078 | 17.8% |
-| Block | 2,190 | 0.9% | 6,083 | 38.3% |
-| Blitz | 1,052 | 0.5% | 2,732 | 14.9% |
-| Pass | 29 | 0.0% | 1,796 | 19.8% |
+D2. The decision after a declaration is END_ACTIVATION by the same coach.
+Only declarations whose next record is verified to be the next decision of
+the game are counted (same shard, same re-seat segment, consecutive row; in
+self-play every decision is in the dump). No next decision belonged to the
+other coach.
 
-D3. The shape of a team turn, and what is on offer in it.
+| declared | humans: declarations | verified next | ended at once | chain 41: declarations | ended at once |
+|---|---|---|---|---|---|
+| Move | 5,652 | 5,642 | 0.002 [0.001, 0.005] | 17,078 | 0.178 [0.168, 0.188] |
+| Block | 2,192 | 2,189 | 0.009 [0.003, 0.015] | 6,083 | 0.383 [0.360, 0.405] |
+| Blitz | 1,053 | 1,052 | 0.005 [0.001, 0.010] | 2,732 | 0.149 [0.132, 0.165] |
+| Pass | 30 | 29 | 0.000 | 1,797 | 0.198 [0.176, 0.219] |
 
-| | team turns | activations per turn | turns ended by choice with a player still to activate | Block: legal / declared per turn | Blitz: legal / declared per turn | Pass declared per turn | Foul: legal / declared per turn |
+D3. Per team turn. Turns are counted from turn-level decisions (ACTIVATE or
+END_TURN legal), so a turn with no declaration counts. Human "whole turns"
+are the turns made of re-seated records, whose span closed equal to the
+replay; the prefix column is shown apart because the last turn of a replay's
+prefix can be cut by the lockstep stop. Both human columns leave out every
+turn in which the alignment stopped, which need not be a random sample.
+
+| per team turn | humans, whole turns | humans, prefix records | chain 41 self-play |
+|---|---|---|---|
+| team turns | 899 | 323 | 9,491 |
+| declarations (one per activation) | 7.16 | 7.99 | 2.97 |
+| ended by choice with a player still to activate | 0.239 | 0.248 | 0.619 |
+| Block-legal declarations | 2.18 | 2.38 | 0.78 |
+| Block declared | 1.72 | 1.99 | 0.64 |
+| block targets chosen in a Block action | 1.68 | 1.95 | 0.38 |
+| Blitz declared | 0.86 | 0.85 | 0.28 |
+| block targets chosen in a Blitz action | 0.81 | 0.79 | 0.07 |
+| Pass declared | 0.024 | 0.025 | 0.189 |
+| pass targets chosen | 0.017 | 0.012 | 0.000 |
+| Foul declared | 0.048 | 0.025 | 0.001 |
+| foul targets chosen | 0.046 | 0.025 | 0.000 |
+
+These are counts of actions, not a product of rates. They reconcile with the
+style panel: block targets chosen are 2.49 a team turn for humans (40 a
+16-turn game; the panel's human figure is 40.1) and 0.45 for chain 41 (7 a
+game; the panel says 6 to 7). For Block actions the 4.4-fold gap (1.68
+against 0.38) factors exactly into: 2.4 times fewer declarations a turn,
+1.16 times lower share of them with Block legal (0.26 against 0.30), 0.96
+times in declaring Block when legal (0.82 against 0.79), and 1.65 times in
+choosing a target once Block is declared (0.59 against 0.98). For Blitz
+actions the 11-fold gap is 3.1 times fewer Blitz declarations a turn and 3.6
+times fewer of them reaching a block (0.26 against 0.94). Chain 41 threw no
+pass and no foul in 300 games.
+
+D5. Ending the turn, by how many players were already activated in it
+(whole turns; decisions where both ACTIVATE and END_TURN are legal).
+
+| players already activated | human states: n | humans ended | chain 41 at zero state would end | prior would end | chain 41's states: n | chain 41 ended | prior would end |
 |---|---|---|---|---|---|---|---|
-| humans (held-out, default subset) | 1,206 | 7.48 | 24.5% | 2.26 / 1.82 | 4.72 / 0.87 | 0.02 | 1.29 / 0.04 |
-| chain 41 self-play | 9,170 | 3.07 | 64.1% | 0.80 / 0.66 | 2.13 / 0.29 | 0.20 | 0.31 / 0.00 |
+| 0 | 899 | 0.012 | 0.341 | 0.024 | 9,491 | 0.034 | 0.010 |
+| 1 | 858 | 0.003 | 0.395 | 0.027 | 7,133 | 0.147 | 0.012 |
+| 2 | 832 | 0.006 | 0.492 | 0.031 | 5,383 | 0.228 | 0.013 |
+| 3 | 787 | 0.004 | 0.598 | 0.036 | 3,843 | 0.223 | 0.014 |
+| 4-5 | 1,408 | 0.016 | 0.726 | 0.045 | 4,940 | 0.253 | 0.015 |
+| 6-7 | 1,130 | 0.050 | 0.853 | 0.057 | 2,345 | 0.368 | 0.017 |
+| 8+ | 741 | 0.155 | 0.917 | 0.063 | 900 | 0.349 | 0.023 |
 
-Human turns are counted from the declarations present. Re-seated spans in
-this subset are whole team turns (they closed equal to the replay); the last
-prefix span of a replay can be cut by the lockstep stop, so at most 60 of
-the 1,206 turns are short and 7.48 is a slight underestimate. The subset
-also leaves out every turn in which the alignment stopped, which may not be
-a random sample of turns.
-
-Blocks thrown from Block actions per team turn: humans 2.26 x 0.804 x 0.991
-= 1.80; chain 41 0.80 x 0.825 x 0.609 = 0.40. The 4.5-fold gap splits into
-2.8 times fewer Block-legal declarations a turn (2.4 times fewer activations,
-1.15 times lower share of them next to an opponent), 0.97 times in the
-declaration itself, and 1.6 times in throwing the block once declared.
+Three things. Chain 41 stops at a steady 15 to 25% per decision from its
+second activation on; humans almost never stop before the sixth. Put on
+human states, chain 41 would stop far more often than on its own at the
+same depth (0.34 against 0.03 before any activation), so depth is not the
+whole reason it says "end turn" at 63% of human decisions (A4): human
+positions are ones it does not play on from, and its zero-state numbers on
+them are those of a policy outside its own distribution. And the prior
+follows the humans' rise with depth on human states (0.02 to 0.06) but stays
+flat on chain 41's (0.01 to 0.02).
 
 D4. Mean probability each net gives the action chain 41 took.
 
@@ -489,12 +556,15 @@ D4. Mean probability each net gives the action chain 41 took.
 | CHOOSE_DIE | 4,490 | 1.00 | 1.00 | 1.00 | 0.99 | 0.61 |
 | FOLLOW_UP | 2,353 | 1.00 | 1.00 | 1.00 | 1.00 | 0.51 |
 
-Two readings. At declarations the prior agrees with chain 41 exactly as much
-as chain 9 does (0.60); everywhere else it is further away than any RL
-ancestor. And chain 41 at zero state gives its own played action only 0.61 at
-movement decisions: it leans on recurrent state to walk a path, so its
-zero-state numbers on human states (part A) are sound for declarations, turn
-ending and block targets (0.90 to 0.96) and weak for movement.
+Two readings. At declarations the prior agrees with chain 41 as much as
+chain 9 does (0.60). In the other contexts of this table it is further from
+chain 41 than either ancestor; the exceptions are small contexts not shown
+(Stand Up: prior 0.73, chain 9 0.68; Touchback; Apothecary). And chain 41 at
+zero state gives its own played action 0.61 at movement decisions and 0.90
+to 0.96 at declarations, turn-level decisions and block targets. That is
+measured on chain 41's own states. It suggests, and does not show, that the
+zero-state scores of part A are closer to the played policy at type-level
+decisions than at movement; D5 says they are also out of distribution.
 
 ### The five examples (chosen by the registered rule)
 
@@ -551,48 +621,56 @@ declarations, movement and the block-target choice. It is **not** a usable
 target for the Blitz declaration, pass, hand-off, foul, the block die, push
 and follow-up, re-roll and skill use, or the choice to end a turn early. The
 "would act" half of the rule (KL at least 0.10 nats) is met in every context
-and decides nothing.
+with a real choice and decides nothing.
 
 ## 5. What the numbers say a trainer term could and could not change
 
+These are readings of offline probabilities. None of them is a measured
+effect on trajectories or on match results; each is a hypothesis for a
+paired run to test.
+
 - **Blocks: not through the declaration.** Chain 41 already declares Block
   at 0.83 where it is legal; the prior would pull that down to 0.59. The
-  block gap is turn shape (D3): 3.1 activations a team turn against 7.5, and
-  39% of declared Blocks not thrown against 0.9% (D1). A term acting on
-  `ACTIVATE, END_TURN` (prior 0.013 on ending, chain 41 0.172) and on
-  `BLOCK_TARGET, END_ACTIVATION` (prior 0.009, chain 41 0.392) is aimed at
-  the two factors that carry the gap. The prior is a usable target for both
-  decisions when the human continues or blocks, which is nearly always.
-- **Blitzes: probably, as a side effect.** Humans blitz in 0.87 of team
-  turns, chain 41 in 0.29. Per Blitz-legal declaration the rates are close
-  (0.185 human, 0.140 chain 41); the difference is how many declarations a
-  turn has. Longer turns should bring blitzes with them. The prior is not a
-  usable target for the Blitz declaration itself.
-- **Passing: no.** Humans declare Pass at 0.3% of declarations, 0.02 a team
-  turn. The prior's probability on the human passes it was tested on is
-  0.006. Chain 41 declares Pass ten times as often as humans (0.20 a turn)
-  and then does not throw; chain 36 declared it at 38% of human declaration
-  states. A human prior would remove those declarations and add no throws.
-- **Hand-offs: no.** 47 held-out examples; the prior over-declares it 4.6
-  times against humans and both rates are under 3%.
+  counted gap (D3) sits in how many players a turn activates (2.97 against
+  7.16) and in whether a declared Block is thrown (0.59 against 0.98). The
+  prior disagrees with chain 41 at exactly those decisions: ending the turn
+  with a player left (prior 0.013, chain 41 0.172) and ending a Block
+  activation with a target on offer (prior 0.009, chain 41 0.391). It is a
+  usable target there when the human continues or blocks, which is nearly
+  always.
+- **Blitzes: possibly, as a side effect.** Humans declare a Blitz in 0.86 of
+  team turns and 94% of those reach a block; chain 41 declares one in 0.28
+  and 26% reach a block. Per Blitz-legal declaration the declaring rates are
+  close (0.185 human, 0.140 chain 41). Longer turns and fewer empty
+  activations might bring blitz blocks with them; nothing here measures
+  that. The prior is not a usable target for the Blitz declaration itself.
+- **Passing: the prior gives no reason to expect it.** Humans declare Pass
+  at 0.3% of declarations, 0.02 a team turn. The prior's probability on the
+  human passes it was tested on is 0.006. Chain 41 declares Pass ten times
+  as often as humans (0.19 a turn) and threw none in 300 games; chain 36
+  would declare it at 38% of human declaration states. The prior's pressure
+  is toward fewer Pass declarations, and it has not learned when to throw.
+- **Hand-offs: no evidence either way.** 47 held-out examples; the prior
+  over-declares it 4.6 times against humans and both rates are under 3%.
 - **Fouls: a little, and badly calibrated.** The prior wants a foul at 8.7%
   of chain 41's foul-legal declarations against chain 41's 0.3%, but it
   over-declares fouls 1.8 times against humans on human states. Humans foul
-  0.04 times a team turn.
-- **Turn ending: yes, this is the largest lever, with one caveat.** Humans
-  end a turn early at 3.2% of activate-or-end decisions and in 24% of turns;
-  chain 41 at 17% and 64%. The prior says 1.3% on chain 41's states. But the
-  prior cannot tell when a human would stop (0% of human early endings
+  0.05 times a team turn; chain 41 never did.
+- **Turn ending: the largest disagreement, with one caveat.** Humans end a
+  turn early in 24% of turns and almost never before the sixth activation
+  (D5); chain 41 in 62%, at 15 to 25% per decision from the second
+  activation. The prior says 1 to 2% on chain 41's states at every depth.
+  It cannot tell when a human would stop (0% of human early endings
   predicted, p 0.079), so a term here says "never stop early", which is past
   human.
-- **Empty activations: yes.** 18% of chain 41's Move activations and 38% of
-  its Block activations end at once; humans 0.2% and 0.9%. The prior's
-  first-step probabilities (example 1) would act there.
+- **Empty activations: a clear disagreement.** 18% of chain 41's Move
+  activations and 38% of its Block activations end at once; humans 0.2% and
+  0.9%.
 - **Any full-distribution KL term is dominated by scale.** `KL(prior, chain
   41)` averages 79 nats a decision because chain 41 is near-deterministic.
-  D176's collapse under a full-strength CE anchor is what that does. A term
-  would have to be bounded, restricted to named contexts and probably to the
-  type head.
+  D176's collapse under a full-strength CE anchor is consistent with that.
+  A term would have to be bounded, restricted to named contexts and
+  probably to the type head.
 
 ## 6. Where the plan was wrong, what I missed, and what I would do next
 
@@ -601,62 +679,72 @@ and decides nothing.
 1. The gate asks about weight on block and blitz **declarations**. That is
    the one place the policy already looks human or more than human. The
    registered answer is stop, and it is the right answer to the question as
-   written, but the question does not reach the cause of the low block count.
-2. "Zero recurrent state for both nets" is fair to the prior and unfair to
-   chain 41 at movement decisions (D4: 0.61). The human-state table is
-   trustworthy for the type-level decisions and should not be read for paths.
-3. Human states and chain 41's states differ in a way that matters: a human
-   turn is 7.5 activations deep, so most human activate-or-end decisions sit
-   later in a turn than chain 41 ever gets. That is why chain 41 says "end
-   turn" at 63% of them. A comparison on human states alone would have
-   overstated every gap that depends on turn depth and hidden the one that
-   is turn depth.
+   written, but the question does not reach where the block counts differ.
+2. "Zero recurrent state for both nets" on human states compares the prior
+   in its trained regime with chain 41 outside its own. Chain 41 at zero
+   state gives its own played action 0.61 at movement decisions (D4), and
+   on human positions it would end a turn before any activation 34% of the
+   time against 3% on its own (D5). Part A says how chain 41 scores human
+   decisions; it is weak evidence about how chain 41 plays.
+3. Human states and chain 41's states differ in turn depth and in the
+   positions themselves. A comparison on human states alone would have
+   overstated the turn-ending gap (0.63 against a played 0.17) and shown
+   nothing about empty activations.
 4. KL in nats is the wrong unit against a near-deterministic policy. Both my
    0.10-nat "would act" threshold and the anchor's factor-of-two rule were
    swamped by logit scale. Probability on the taken action (D4) and rates
    are the readable measures.
 5. "Pass legal" is true at 98% of declarations, and a Pass declaration is
-   not a pass: the RL chains use it as another way to move.
-6. The default subset is not free: training on every stamp is 1.2 points
-   better on every held-out subset, held-out prefix records included.
+   not a pass: the RL chains use it as another way to move. The same holds
+   for three in four of chain 41's Blitz declarations.
+6. The default subset is not free: training on every stamp is 0.6 to 1.2
+   points better on the three held-out sets.
+7. My own section 0 was wrong in two places. Its verdict rule did not name
+   the case that happened (gate B passes, gate A fails). And "a declaration
+   term cannot change how often the opportunity arises" is too strong: it
+   has no direct loss there, but changed actions and shared weights can
+   change which states are visited.
 
 **What I missed until the numbers showed it.** The engine can list the same
 push square twice (one decision in 60,000); the sampler is unaffected, a
-joint computed by summing tuples is not, and the audit now deduplicates.
-The three RL chains agree with each other at 99.5% on the block die and
-with humans at 53%: either the replay's die index is arbitrary when faces
-tie, or the chains share a non-human rule. I did not chase it. That family
-fails U2 either way.
+joint computed by summing tuples is not, and the audit deduplicates. The
+three RL chains agree with each other at 99.5% on the block die and with
+humans at 53%: either the replay's die index is arbitrary when faces tie,
+or the chains share a non-human rule. I did not chase it; that family fails
+U2 either way. The first selection run printed held-out scores before the
+flag that suppresses them existed; the budget was chosen on dev NLL
+(`docs/human-prior-v1/selection.json`), but I had seen them.
 
 **What I would do next, in order.**
 
-1. **Do not build the declaration term.** Instead test whether the turn
-   shape is a leak or a choice, with no training: in the harness, chain 41
-   against a copy of itself with three masks (no END_TURN while a player can
-   be activated; no END_ACTIVATION as the first decision after a
-   declaration; no END_ACTIVATION while a declared Block has a target), 400
-   paired games on CPU, plus the style panel. If the masked copy is no
-   weaker, the habits are free to remove and a narrow term is safe. If it is
-   clearly weaker, chain 41 stops early for a reason and a human prior would
-   be paying strength for looks.
+1. **Do not build the declaration term.** First ask whether the turn shape
+   is load-bearing, with no training: in the harness, chain 41 against a
+   copy of itself with three masks (no END_TURN while a player can be
+   activated; no END_ACTIVATION as the first decision after a declaration;
+   no END_ACTIVATION while a declared Block has a target), paired seeds,
+   and the same masked copy against the scripted bots and an older chain.
+   A masked copy that is clearly weaker says chain 41 stops early for a
+   reason. One that is no weaker is evidence the habits are not
+   load-bearing; it is not proof that a learned regularizer is safe, since
+   a hard mask and a penalty are different interventions.
 2. **Ask the trainer why turns are three activations long** before
-   prescribing a cure: the per-decision discount (gamma 0.999 and lambda
-   0.95 are per engine step, so a 60-decision turn discounts and blurs
-   credit more than a 25-decision one), any per-step cost in the reward
-   manifest, and the decision cap. If the cause is in the objective, a prior
-   term fights the trainer every step.
+   prescribing a cure. Candidates to check, none tested here: the
+   per-decision discount (gamma 0.999 and lambda 0.95 apply per engine
+   step, so a 60-decision turn discounts and blurs credit more than a
+   25-decision one), any per-step cost in the reward manifest, and the
+   decision cap. If the cause is in the objective, a prior term fights the
+   trainer every step.
 3. **If a term is built,** scope it to three contexts (`ACTIVATE, END_TURN`;
    the first decision after a declaration; `BLOCK_TARGET, END_ACTIVATION`),
-   type head only, bounded, decayed, against a paired control, with the
-   style panel's blocks per game and activations per team turn as the exit
-   test. This audit is the offline evidence for those three contexts and for
-   no others.
+   type head only, bounded, decayed, against a paired control. Its exit
+   test is the roadmap's: the normal gate with no loss, and next to it the
+   style panel plus declarations per team turn and block targets per turn.
+   This audit is offline evidence that the prior and the policy disagree in
+   those three contexts; it is not evidence about match results.
 4. **Prior v2 is cheap and worth doing before any term:** all 11,580 BB2025
-   replays through the re-seat pipeline (399 take 14 seconds to align; the
-   curve gains 1.6 points per 70% more data and has not bent), the wider
-   stamp set if the owner agrees (1.2 points), and sequence state (4.3
-   points) once it is decided what history the prior should see on policy
-   states.
+   replays through the re-seat pipeline (399 take 14 seconds to align), the
+   wider stamp set if the owner agrees, and sequence state once it is
+   decided what history the prior should see on policy states.
 
 ## 7. Reproduction and artifacts
 
@@ -671,7 +759,7 @@ $PY tools/selfplay_dump.py --checkpoint <ckpts>/chain41/0000002999975936.bin \
     --games 300 --slots 64 --out-dir $R/selfplay41
 $PY training/human_prior.py --pairs-dir $R/shards/pairs \
     --reseat-dir $R/shards/pairs_reseat --replay-ids runs/reseat-20261005/ids.txt \
-    --epochs 4 --weight-decay 0.3 --out-dir $R/final_default
+    --epochs 4 --weight-decay 0.3 --eval-all-stamps --out-dir $R/final_default
 $PY analysis/human_prior_audit.py --prior $R/final_default/prior.bin \
     --pairs-dir $R/shards/pairs --reseat-dir $R/shards/pairs_reseat \
     --replay-ids runs/reseat-20261005/ids.txt --selfplay $R/selfplay41 \
@@ -681,7 +769,8 @@ python3 analysis/human_prior_report.py $R
 
 Variants: `--reseat-stamps 0,1,2,3,4` (everything); no `--reseat-dir` plus
 `--eval-reseat-dir` (prefix only, scored on the same held-out sets);
-`--train-replays 100|200`; `--with-bias`; `training/human_prior_seq.py`.
+`--train-replays 100|200`; `--with-bias`;
+`training/human_prior_seq.py --epochs 4 --weight-decay 0.3`.
 
 Tracked result files: `docs/human-prior-v1/` (`audit.json`, `prior_*.json`,
 `selection.json`, `selfplay41_manifest.json`, `tables.md`). Untracked, under
@@ -689,5 +778,8 @@ Tracked result files: `docs/human-prior-v1/` (`audit.json`, `prior_*.json`,
 (2.2 GB), the checkpoints.
 
 Limits. One training seed per net. One prior (zero-state, 339 replays). 60
-held-out replays. Human turn counts are floors. Self-play is chain 41 against
-itself, not against the pool it trains in. Section D was not registered.
+held-out replays. Humans are measured on human states and chain 41 on
+self-play states. Human turns leave out every turn the alignment stopped
+in. Self-play is chain 41 against itself, not against the pool it trains
+in. Section D was not registered. Reviewed read-only by Codex; its findings
+and what was done about them are in the commit history after `e98233a`.
