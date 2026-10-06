@@ -348,6 +348,10 @@ def main(argv=None):
                     help="re-seated BBR1 shards; without it none is read")
     ap.add_argument("--reseat-stamps", default=None,
                     help="comma-separated span stamps (default 1, closed-equal)")
+    ap.add_argument("--eval-reseat-dir", default=None,
+                    help="re-seated shards for HELD-OUT SCORING only (default: "
+                         "--reseat-dir). Lets a prefix-only net be scored on the "
+                         "same held-out sets as the others; never trained on")
     ap.add_argument("--replay-ids", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--harness-root", default=DEFAULT_HARNESS)
@@ -388,13 +392,14 @@ def main(argv=None):
     bc.require_exact_action_lineage(index)
     eval_indexes = {"prefix": bc.ShardIndex.from_directory(
         args.pairs_dir, replay_ids=replay_ids, cache_size=64)}
-    if args.reseat_dir:
+    eval_reseat = args.eval_reseat_dir or args.reseat_dir
+    if eval_reseat:
         eval_indexes["prefix+closed_equal"] = bc.ShardIndex.from_directory(
             args.pairs_dir, replay_ids=replay_ids, cache_size=64,
-            reseat_dir=args.reseat_dir)
+            reseat_dir=eval_reseat)
         eval_indexes["everything"] = bc.ShardIndex.from_directory(
             args.pairs_dir, replay_ids=replay_ids, cache_size=64,
-            reseat_dir=args.reseat_dir, reseat_stamps=bc.KNOWN_STAMPS)
+            reseat_dir=eval_reseat, reseat_stamps=bc.KNOWN_STAMPS)
 
     train_order, holdout = holdout_split(replay_ids)
     dev_ids = train_order[len(train_order) - args.dev_replays:] if args.dev_replays else ()
