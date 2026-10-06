@@ -1,0 +1,315 @@
+{
+ "note": "30-replay dev set (last 30 of the training order), trained on the other 309; default subset. The 10-epoch run also printed held-out numbers (it predates --skip-holdout-eval); they were not used to choose.",
+ "chosen": "epochs 4, weight decay 0.3 (lowest final dev NLL)",
+ "runs": {
+  "epochs10": {
+   "config": {
+    "epochs": 10.0,
+    "batch_size": 1024,
+    "lr": 0.001,
+    "weight_decay": 0.0,
+    "sampling": "replay-first",
+    "with_bias": false,
+    "seed": 0,
+    "train_replays": 0,
+    "dev_replays": 30
+   },
+   "dev_curve": [
+    {
+     "step": 300,
+     "epochs": 0.919,
+     "exact": 0.4796738394512967,
+     "nll": 1.414470911026001
+    },
+    {
+     "step": 600,
+     "epochs": 1.839,
+     "exact": 0.48991787112537166,
+     "nll": 1.3735078573226929
+    },
+    {
+     "step": 900,
+     "epochs": 2.758,
+     "exact": 0.48523740837773394,
+     "nll": 1.3474253416061401
+    },
+    {
+     "step": 1200,
+     "epochs": 3.677,
+     "exact": 0.4987194960407406,
+     "nll": 1.3575915098190308
+    },
+    {
+     "step": 1500,
+     "epochs": 4.597,
+     "exact": 0.5032822112978718,
+     "nll": 1.3386962413787842
+    },
+    {
+     "step": 1800,
+     "epochs": 5.516,
+     "exact": 0.5078743634276295,
+     "nll": 1.373201608657837
+    },
+    {
+     "step": 2100,
+     "epochs": 6.436,
+     "exact": 0.5024579788643254,
+     "nll": 1.3799256086349487
+    },
+    {
+     "step": 2400,
+     "epochs": 7.355,
+     "exact": 0.5054016661269907,
+     "nll": 1.3982367515563965
+    },
+    {
+     "step": 2700,
+     "epochs": 8.274,
+     "exact": 0.5069912572488299,
+     "nll": 1.423673391342163
+    },
+    {
+     "step": 3000,
+     "epochs": 9.194,
+     "exact": 0.5099938182567484,
+     "nll": 1.437969446182251
+    },
+    {
+     "step": 3263,
+     "epochs": 10.0,
+     "exact": 0.5097288864031085,
+     "nll": 1.4420182704925537
+    }
+   ]
+  },
+  "epochs3": {
+   "config": {
+    "epochs": 3.0,
+    "batch_size": 1024,
+    "lr": 0.001,
+    "weight_decay": 0.0,
+    "sampling": "replay-first",
+    "with_bias": false,
+    "seed": 0,
+    "train_replays": 0,
+    "dev_replays": 30
+   },
+   "dev_curve": [
+    {
+     "step": 200,
+     "epochs": 0.613,
+     "exact": 0.471608136351594,
+     "nll": 1.4184792041778564
+    },
+    {
+     "step": 400,
+     "epochs": 1.226,
+     "exact": 0.47475788172264577,
+     "nll": 1.3926877975463867
+    },
+    {
+     "step": 600,
+     "epochs": 1.839,
+     "exact": 0.48768066880574606,
+     "nll": 1.3618290424346924
+    },
+    {
+     "step": 800,
+     "epochs": 2.452,
+     "exact": 0.49268493715227696,
+     "nll": 1.3479033708572388
+    },
+    {
+     "step": 979,
+     "epochs": 3.0,
+     "exact": 0.4930087427511701,
+     "nll": 1.3459010124206543
+    }
+   ]
+  },
+  "epochs4": {
+   "config": {
+    "epochs": 4.0,
+    "batch_size": 1024,
+    "lr": 0.001,
+    "weight_decay": 0.0,
+    "sampling": "replay-first",
+    "with_bias": false,
+    "seed": 0,
+    "train_replays": 0,
+    "dev_replays": 30
+   },
+   "dev_curve": [
+    {
+     "step": 200,
+     "epochs": 0.613,
+     "exact": 0.4704306614465279,
+     "nll": 1.4169303178787231
+    },
+    {
+     "step": 400,
+     "epochs": 1.226,
+     "exact": 0.4726973006387801,
+     "nll": 1.3912084102630615
+    },
+    {
+     "step": 600,
+     "epochs": 1.839,
+     "exact": 0.48364781725589473,
+     "nll": 1.3707666397094727
+    },
+    {
+     "step": 800,
+     "epochs": 2.452,
+     "exact": 0.4894468811633452,
+     "nll": 1.3494648933410645
+    },
+    {
+     "step": 1000,
+     "epochs": 3.065,
+     "exact": 0.4959524300138353,
+     "nll": 1.3369711637496948
+    },
+    {
+     "step": 1200,
+     "epochs": 3.677,
+     "exact": 0.49736539989991463,
+     "nll": 1.3344695568084717
+    },
+    {
+     "step": 1305,
+     "epochs": 3.999,
+     "exact": 0.49866062229548735,
+     "nll": 1.3345394134521484
+    }
+   ]
+  },
+  "epochs5": {
+   "config": {
+    "epochs": 5.0,
+    "batch_size": 1024,
+    "lr": 0.001,
+    "weight_decay": 0.0,
+    "sampling": "replay-first",
+    "with_bias": false,
+    "seed": 0,
+    "train_replays": 0,
+    "dev_replays": 30
+   },
+   "dev_curve": [
+    {
+     "step": 200,
+     "epochs": 0.613,
+     "exact": 0.4688410703246887,
+     "nll": 1.4160957336425781
+    },
+    {
+     "step": 400,
+     "epochs": 1.226,
+     "exact": 0.4762297253539784,
+     "nll": 1.3974884748458862
+    },
+    {
+     "step": 600,
+     "epochs": 1.839,
+     "exact": 0.4869741838627064,
+     "nll": 1.3648990392684937
+    },
+    {
+     "step": 800,
+     "epochs": 2.452,
+     "exact": 0.48947631803597186,
+     "nll": 1.3483154773712158
+    },
+    {
+     "step": 1000,
+     "epochs": 3.065,
+     "exact": 0.49704159430102146,
+     "nll": 1.3470327854156494
+    },
+    {
+     "step": 1200,
+     "epochs": 3.677,
+     "exact": 0.5010744458508728,
+     "nll": 1.3476017713546753
+    },
+    {
+     "step": 1400,
+     "epochs": 4.29,
+     "exact": 0.5026934738453387,
+     "nll": 1.351370096206665
+    },
+    {
+     "step": 1600,
+     "epochs": 4.903,
+     "exact": 0.5009566983603662,
+     "nll": 1.3493496179580688
+    },
+    {
+     "step": 1632,
+     "epochs": 5.001,
+     "exact": 0.5027229107179654,
+     "nll": 1.3484783172607422
+    }
+   ]
+  },
+  "epochs4_wd0.3": {
+   "config": {
+    "epochs": 4.0,
+    "batch_size": 1024,
+    "lr": 0.001,
+    "weight_decay": 0.3,
+    "sampling": "replay-first",
+    "with_bias": false,
+    "seed": 0,
+    "train_replays": 0,
+    "dev_replays": 30
+   },
+   "dev_curve": [
+    {
+     "step": 200,
+     "epochs": 0.613,
+     "exact": 0.471608136351594,
+     "nll": 1.4198362827301025
+    },
+    {
+     "step": 400,
+     "epochs": 1.226,
+     "exact": 0.47296223249242003,
+     "nll": 1.3937214612960815
+    },
+    {
+     "step": 600,
+     "epochs": 1.839,
+     "exact": 0.48547290335874715,
+     "nll": 1.362666368484497
+    },
+    {
+     "step": 800,
+     "epochs": 2.452,
+     "exact": 0.49144858850195755,
+     "nll": 1.343406081199646
+    },
+    {
+     "step": 1000,
+     "epochs": 3.065,
+     "exact": 0.4983073798239675,
+     "nll": 1.3338505029678345
+    },
+    {
+     "step": 1200,
+     "epochs": 3.677,
+     "exact": 0.5005445821435931,
+     "nll": 1.3305686712265015
+    },
+    {
+     "step": 1305,
+     "epochs": 3.999,
+     "exact": 0.5023991051190722,
+     "nll": 1.330051302909851
+    }
+   ]
+  }
+ }
+}

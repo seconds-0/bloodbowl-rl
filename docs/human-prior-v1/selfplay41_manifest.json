@@ -1,0 +1,58 @@
+{
+ "schema": "selfplay-dump-v1",
+ "policies": [
+  "actor",
+  "chain9",
+  "chain36"
+ ],
+ "actor": {
+  "checkpoint_sha256": "b1830e2312a6252006de71f2835f3459f0a13f664d83ae3128182c48cb0b303b",
+  "kernel": "native",
+  "torch": "2.14.0"
+ },
+ "shadows": {
+  "chain9": {
+   "checkpoint_sha256": "4344e588c124f7df2c887a824e1847008a02be57e63bd423c3c0b02964258dcc"
+  },
+  "chain36": {
+   "checkpoint_sha256": "b7fb6dee98f4206689b08b5404539792366616a00a898f8e9c3ae78ca30962cc"
+  }
+ },
+ "kernel": "native",
+ "mode": "sample",
+ "temperature": 1.0,
+ "games": 300,
+ "seed0": 20261005,
+ "slots": 64,
+ "decisions": 208428,
+ "chunks": 11,
+ "match_size": 2240,
+ "shim": {
+  "path": "build/play_harness_probe/libbbplay.dylib",
+  "sha256": "568046e8408e1b4e975f511bd88b87b9b8e89d7b27f5acbb22f87baef5250139",
+  "engine_root": "this worktree",
+  "bbplay_c_sha256": "756c32c925cd7b9d803248299a3e74fb3bdc9bebee05316c41da1e3b04a73456"
+ },
+ "meta_columns": [
+  "game",
+  "c_step",
+  "seat",
+  "n_legal"
+ ],
+ "legal_columns": [
+  "type",
+  "arg",
+  "x",
+  "y",
+  "proj_arg",
+  "proj_sq"
+ ],
+ "seconds": 145.8,
+ "summary": {
+  "games": 300,
+  "natural": 300,
+  "touchdowns_per_team_game": 0.705,
+  "c_steps_per_game": 694.76,
+  "action_trail_sha256_of_all_games": "51e10ea519c6e34d6d352f0089c188e0e09bc4e87520a20e1096f5e6dd9fbdce"
+ }
+}
