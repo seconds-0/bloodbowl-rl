@@ -47,6 +47,13 @@
 #     forwarded to the screen, which refuses a ratio whose minibatch count is
 #     not whole, and, when set, recorded in LADDER_RUNG_COMPLETE.json from the
 #     run manifest the trainer launched with
+#   LADDER_NO_EARLY_END_TURN (default unset = off) -- 1 trains the rung under
+#     the env-layer restriction no_early_end_turn (a policy seat cannot choose
+#     END_TURN while it has a player to activate; not a Blood Bowl rule; see
+#     docs/no-early-end-turn-2026-10-05.md); forwarded to the screen and, when
+#     set, recorded in LADDER_RUNG_COMPLETE.json from the run manifest the
+#     trainer launched with. A checkpoint trained under it must be examined
+#     and played under it.
 #   PREFIX (default ladder-d<RUNG>-s<SEED>-<STAMP>)  STAMP  OUT  C
 #   DEADLINE_HOURS (default 36)
 #   SCRIPTED_BANK_TAG (default 0)  SCRIPTED_BOT_TYPE (default 0)
@@ -95,6 +102,11 @@ DEADLINE_HOURS="${DEADLINE_HOURS:-36}"
 SCRIPTED_BANK_TAG="${SCRIPTED_BANK_TAG:-0}"
 SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-0}"
 LADDER_PROFILE="${LADDER_PROFILE:-ladder-rung}"
+case "${LADDER_NO_EARLY_END_TURN:-}" in
+  ''|0|1) ;;
+  *) echo "LADDER_NO_EARLY_END_TURN must be 0 or 1, got '${LADDER_NO_EARLY_END_TURN}'" >&2
+     exit 1 ;;
+esac
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
 GRAFT_REASON="${GRAFT_REASON:-}"
@@ -216,6 +228,8 @@ echo "  bot    scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_
   echo "  horizon gamma=${LADDER_GAMMA:-contract} gae_lambda=${LADDER_GAE_LAMBDA:-contract}"
 [ -z "${LADDER_REPLAY_RATIO:-}" ] || \
   echo "  update replay_ratio=$LADDER_REPLAY_RATIO"
+[ "${LADDER_NO_EARLY_END_TURN:-}" != "1" ] || \
+  echo "  rule   no_early_end_turn=1 (training restriction on policy seats; not a Blood Bowl rule)"
 echo "  profile $LADDER_PROFILE"
 [ "$LADDER_PROFILE" != "graft" ] || \
   echo "  graft  from source=$GRAFT_FROM_SOURCE_SHA256 patch=$GRAFT_FROM_PATCH_BUNDLE_SHA256 reason=$GRAFT_REASON"
@@ -241,6 +255,7 @@ timeout --signal=TERM --kill-after=120 "$((DEADLINE_HOURS * 3600))" \
       LADDER_ARM="$LADDER_ARM" \
       LADDER_GAMMA="${LADDER_GAMMA:-}" LADDER_GAE_LAMBDA="${LADDER_GAE_LAMBDA:-}" \
       LADDER_REPLAY_RATIO="${LADDER_REPLAY_RATIO:-}" \
+      LADDER_NO_EARLY_END_TURN="${LADDER_NO_EARLY_END_TURN:-}" \
       SCRIPTED_BANK_TAG="$SCRIPTED_BANK_TAG" \
       SCRIPTED_BOT_TYPE="$SCRIPTED_BOT_TYPE" \
       bash "$C/tools/run_reward_screen.sh"
@@ -363,6 +378,29 @@ if os.environ.get("LADDER_REPLAY_RATIO"):
             f"LADDER_REPLAY_RATIO={declared} but the run trained "
             f"replay_ratio={trained['replay_ratio']}; refusing to publish this rung")
     payload["replay_ratio"] = float(trained["replay_ratio"])
+# The rule is read from what the trainer received, never from the knob alone,
+# and in both directions: a rung asked to train under it that did not, or one
+# that trained under it unasked, publishes no marker.
+declared_rule = os.environ.get("LADDER_NO_EARLY_END_TURN", "") == "1"
+run_manifest_path = result["log"] + ".manifest.json"
+if declared_rule or os.path.isfile(run_manifest_path):
+    trained = json.load(open(run_manifest_path, encoding="utf-8"))
+    command = trained.get("command", [])
+    trained_rule = (trained.get("no_early_end_turn") == "1"
+                    and any(command[i:i + 2] == ["--env.no-early-end-turn", "1"]
+                            for i in range(len(command) - 1)))
+    if (trained_rule != ("no_early_end_turn" in trained)
+            or trained_rule != ("--env.no-early-end-turn" in command)):
+        raise SystemExit(
+            "the run manifest's no_early_end_turn key and its trainer command "
+            "disagree; refusing to publish this rung")
+    if declared_rule != trained_rule:
+        raise SystemExit(
+            f"LADDER_NO_EARLY_END_TURN={'1' if declared_rule else 'unset'} but "
+            f"the run trained with no_early_end_turn "
+            f"{'on' if trained_rule else 'off'}; refusing to publish this rung")
+    if trained_rule:
+        payload["no_early_end_turn"] = 1
 with open(out_path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2, sort_keys=True)
     handle.write("\n")

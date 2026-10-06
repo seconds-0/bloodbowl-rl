@@ -19,6 +19,15 @@ checkpoints, too few games, a non-finite number or an existing verdict all
 exit 2 and write nothing. The stage then retries the exam in a new attempt
 directory, up to the supervisor's attempt cap.
 
+The env-layer restriction no_early_end_turn (docs/no-early-end-turn-2026-10-05.md)
+is read from every cell's eval manifest. A checkpoint trained under it must be
+examined under it, so the cells must all agree with --no-early-end-turn (off
+when the option is not given); a mismatch is no verdict. Each cell's own panel
+must agree as well (game_stats.no_early_end_turn_evidence_failure):
+end_turn_removed above zero under the rule, zero or absent without it. When the exam ran under the rule, the
+verdict and each cell record no_early_end_turn: 1, and each cell its
+end_turn_removed.
+
 Rules:
 
   none         passes whenever every cell is valid. For pre-registered paired
@@ -47,7 +56,8 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from contact_bot_stats import bot_perspective  # noqa: E402
-from game_stats import weighted_dashboard  # noqa: E402
+from game_stats import (  # noqa: E402
+    no_early_end_turn_evidence_failure, weighted_dashboard)
 
 SCHEMA_VERSION = 1
 MANIFEST_PREFIX = "BB_EVAL_MANIFEST "
@@ -93,6 +103,25 @@ def manifest_threads(manifest: dict) -> int | None:
     return None
 
 
+def manifest_no_early_end_turn(log: Path, manifest: dict) -> bool:
+    """Whether this cell ran under the rule, from its key AND its command."""
+    recorded = manifest.get("no_early_end_turn", 0)
+    if recorded not in (0, 1) or isinstance(recorded, bool):
+        raise VerdictError(
+            f"{log}: manifest no_early_end_turn={recorded!r} is not 0 or 1")
+    command = manifest.get("command")
+    words = command if isinstance(command, list) else []
+    flagged = [words[index + 1] if index + 1 < len(words) else None
+               for index, word in enumerate(words)
+               if word == "--env.no-early-end-turn"]
+    in_command = flagged == ["1"]
+    if (flagged and not in_command) or in_command != bool(recorded):
+        raise VerdictError(
+            f"{log}: manifest no_early_end_turn={recorded!r} disagrees with "
+            f"its command (--env.no-early-end-turn {flagged})")
+    return bool(recorded)
+
+
 def read_cell(exam_dir: Path, seed: int, name: str, bot_type: int,
               bot_team: int, min_games: int) -> dict:
     log = exam_dir / f"s{seed}" / f"{name}.log"
@@ -132,7 +161,7 @@ def read_cell(exam_dir: Path, seed: int, name: str, bot_type: int,
     if games < min_games:
         raise VerdictError(
             f"{log}: {games:g} completed games, fewer than {min_games}")
-    return {
+    cell = {
         "seed": seed,
         "cell": name,
         "bot_type": bot_type,
@@ -144,6 +173,16 @@ def read_cell(exam_dir: Path, seed: int, name: str, bot_type: int,
         "num_threads": manifest_threads(manifest),
         **numbers,
     }
+    rule_on = manifest_no_early_end_turn(log, manifest)
+    # The manifest says what the cell was asked to run; the env's own panel
+    # says what it ran.
+    reason = no_early_end_turn_evidence_failure(values, rule_on)
+    if reason:
+        raise VerdictError(f"{log}: {reason}")
+    if rule_on:
+        cell["no_early_end_turn"] = 1
+        cell["end_turn_removed"] = values["end_turn_removed"]
+    return cell
 
 
 def drift_guard(cells: list[dict], guard_cell: str, floors: dict) -> dict:
@@ -212,6 +251,16 @@ def build_verdict(args: argparse.Namespace) -> dict:
             f"cells examined checkpoint {checkpoints[0]}, the stage expected "
             f"{args.checkpoint_sha256}")
 
+    expected_rule = bool(args.no_early_end_turn)
+    for cell in cells:
+        if bool(cell.get("no_early_end_turn", 0)) != expected_rule:
+            raise VerdictError(
+                f"{cell['log']}: the cell ran with no_early_end_turn "
+                f"{'on' if cell.get('no_early_end_turn') else 'off'}, the "
+                f"stage needs it {'on' if expected_rule else 'off'} (a "
+                "checkpoint trained under the rule is examined under it, and "
+                "only then)")
+
     guard = None
     passed = True
     if args.rule == "drift-guard":
@@ -227,7 +276,7 @@ def build_verdict(args: argparse.Namespace) -> dict:
         guard = drift_guard(cells, args.guard_cell, floors)
         passed = not guard["fired"]
 
-    return {
+    verdict = {
         "schema_version": SCHEMA_VERSION,
         "tool": "tools/chain_exam_verdict.py",
         "rule": args.rule,
@@ -241,6 +290,11 @@ def build_verdict(args: argparse.Namespace) -> dict:
         "written_utc": datetime.datetime.now(
             datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    if expected_rule:
+        # Present only when the exam ran under the rule, so every other
+        # verdict keeps the keys it always had.
+        verdict["no_early_end_turn"] = 1
+    return verdict
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -258,6 +312,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="completed games every cell must reach")
     parser.add_argument("--checkpoint-sha256",
                         help="sha256 every cell manifest must name")
+    parser.add_argument("--no-early-end-turn", type=int, choices=(0, 1),
+                        default=0,
+                        help="1 when the rung trained under the rule: every "
+                             "cell must then have run under it (default 0: "
+                             "none may have)")
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
 

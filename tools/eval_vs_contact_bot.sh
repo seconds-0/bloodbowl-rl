@@ -15,6 +15,14 @@
 #                     retain the Puffer config value.
 #       MIN_EVAL_GAMES acceptance floor; defaults to EVAL_EPISODES when that
 #                     override is set, otherwise 1.
+#       LADDER_NO_EARLY_END_TURN  1 = run the exam under the env-layer
+#                     restriction no_early_end_turn: the champion's seat cannot
+#                     choose END_TURN while it has a player to activate; the
+#                     bot's seat is never restricted. For a checkpoint trained
+#                     under the rule, which must also be examined under it
+#                     (docs/no-early-end-turn-2026-10-05.md). Unset or 0 = off:
+#                     the command and the eval manifest are what they were
+#                     before the knob existed.
 set -euo pipefail
 CKPT="${1:?usage: eval_vs_contact_bot.sh <checkpoint.bin> [steps] [log]}"
 STEPS="${2:-8000000}"
@@ -24,6 +32,11 @@ BOT_TEAM="${BOT_TEAM:-1}"
 SEED="${SEED:-42}"
 EVAL_EPISODES="${EVAL_EPISODES:-}"
 MIN_EVAL_GAMES="${MIN_EVAL_GAMES:-${EVAL_EPISODES:-1}}"
+NO_EARLY_END_TURN="${LADDER_NO_EARLY_END_TURN:-0}"
+case "$NO_EARLY_END_TURN" in
+  0|1) ;;
+  *) echo "LADDER_NO_EARLY_END_TURN must be 0 or 1, got '$NO_EARLY_END_TURN'" >&2; exit 1 ;;
+esac
 for _ in 1 2 3; do [ $# -gt 0 ] && shift; done
 if [ $# -ne 0 ]; then
   echo "trailing Puffer overrides are not allowed by this scripted-eval contract" >&2
@@ -89,6 +102,17 @@ if ! "$ROOT/tools/install_puffer_env.sh" --check "$ROOT/vendor/PufferLib"; then
   echo "  $ROOT/tools/install_puffer_env.sh $ROOT/vendor/PufferLib" >&2
   exit 1
 fi
+# An eval manifest without no_early_end_turn says the rule was off, which is
+# only true while the installed default is 0.
+INSTALLED_CONFIG="$ROOT/vendor/PufferLib/config/bloodbowl.ini"
+if grep -Eq '^no_early_end_turn[[:space:]]*=' "$INSTALLED_CONFIG" 2>/dev/null; then
+  grep -Eq '^no_early_end_turn[[:space:]]*=[[:space:]]*0[[:space:]]*$' "$INSTALLED_CONFIG" || {
+    echo "installed config sets no_early_end_turn itself; its default must be 0 (use LADDER_NO_EARLY_END_TURN=1 so the eval manifest records the rule)" >&2
+    exit 1; }
+elif [ "$NO_EARLY_END_TURN" = "1" ]; then
+  echo "LADDER_NO_EARLY_END_TURN=1 needs an installed config with the no_early_end_turn key; install and rebuild this checkout" >&2
+  exit 1
+fi
 grep -q 'if i == 160:' "$ROOT/vendor/PufferLib/pufferlib/pufferl.py" || {
   echo "Puffer dashboard patch missing; interval n/late metrics would be hidden" >&2
   exit 1
@@ -115,6 +139,20 @@ PY
   echo "torch evaluation requires the bloodbowl GPU fp32 build" >&2
   exit 1
 }
+if [ "$NO_EARLY_END_TURN" = "1" ]; then
+  # An env module compiled before the flag existed would read the kwarg as
+  # nothing and run the exam unrestricted under a restricted label.
+  "$PYBIN" - "$ROOT/vendor/PufferLib/ocean/bloodbowl/.content_hash" <<'PY' || {
+import pathlib, sys
+from pufferlib import _C
+installed = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").strip()
+compiled = getattr(_C, "environment_source_hash", "<missing>")
+assert compiled == installed, (compiled, installed)
+PY
+    echo "LADDER_NO_EARLY_END_TURN=1 requires the compiled env module to be built from the installed source; rebuild before the exam" >&2
+    exit 1
+  }
+fi
 
 . "$ROOT/tools/cpu_cap.sh"
 
@@ -158,20 +196,23 @@ else
 fi
 [ -n "$EVAL_EPISODES" ] && \
   CMD+=(--eval-episodes "$EVAL_EPISODES")
+if [ "$NO_EARLY_END_TURN" = "1" ]; then
+  CMD+=(--env.no-early-end-turn 1)
+fi
 
 CKPT_SHA="$(sha256sum "$CKPT" | awk '{print $1}')"
 "$PYBIN" - "$ROOT" "$CKPT" "$CKPT_SHA" "$STEPS" "$SEED" \
   "$BOT_TYPE" "$BOT_TEAM" "$EVAL_EPISODES" "$MIN_EVAL_GAMES" \
-  "${CMD[@]}" <<'PY' > "$LOG"
+  "$NO_EARLY_END_TURN" "${CMD[@]}" <<'PY' > "$LOG"
 import json, sys
 from pathlib import Path
 
 (root, checkpoint, checkpoint_sha, steps, seed, bot_type, bot_team,
- eval_episodes, min_eval_games, *command) = sys.argv[1:]
+ eval_episodes, min_eval_games, no_early_end_turn, *command) = sys.argv[1:]
 sys.path.insert(0, str(Path(root) / "tools"))
 from run_reward_candidate_transfer import implementation_identity
 
-print("BB_EVAL_MANIFEST " + json.dumps({
+manifest = {
     "schema_version": 1,
     "mode": "scripted_bot_frozen",
     "backend": "torch",
@@ -185,7 +226,12 @@ print("BB_EVAL_MANIFEST " + json.dumps({
     "eval_episodes": int(eval_episodes) if eval_episodes else None,
     "min_eval_games": int(min_eval_games),
     "command": command,
-}, sort_keys=True, allow_nan=False))
+}
+if no_early_end_turn == "1":
+    # Present only when the rule is on, so an exam without it writes the
+    # manifest it always did.
+    manifest["no_early_end_turn"] = 1
+print("BB_EVAL_MANIFEST " + json.dumps(manifest, sort_keys=True, allow_nan=False))
 PY
 "${CMD[@]}" >> "$LOG" 2>&1
 

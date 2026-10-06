@@ -50,6 +50,12 @@
 #                       training vs a bot at native SPS; see bloodbowl.h
 #                       scripted_bank_tag). 0 = no scripted opponent.
 #   SCRIPTED_BOT_TYPE=0 0 = contact bot, 1 = offense bot (with SCRIPTED_BANK_TAG)
+#   LADDER_NO_EARLY_END_TURN=1  train under the env-layer restriction
+#                       no_early_end_turn (docs/no-early-end-turn-2026-10-05.md):
+#                       a policy seat cannot choose END_TURN while it has a
+#                       player to activate. Not a Blood Bowl rule. Unset or 0 =
+#                       off, and then the trainer command and the run manifest
+#                       are exactly what they were before the knob existed.
 #   DRY_RUN=1           validate every artifact/build contract and print the
 #                       final command without starting a trainer
 #
@@ -133,6 +139,17 @@ case "$LADDER_RESET_PCT" in
       exit 1; }
     LADDER_STATE_BANK_SHA256="$(sha256sum "$LADDER_STATE_BANK" | awk '{print $1}')"
     ;;
+esac
+
+# The env-layer training restriction. 1 passes --env.no-early-end-turn 1 and
+# records no_early_end_turn in the run manifest. Off adds nothing to either,
+# so the ABSENCE of the key is the record that the rule was off; the installed
+# config default is checked below so that absence cannot mean anything else.
+LADDER_NO_EARLY_END_TURN="${LADDER_NO_EARLY_END_TURN:-0}"
+case "$LADDER_NO_EARLY_END_TURN" in
+  0|1) ;;
+  *) echo "LADDER_NO_EARLY_END_TURN must be 0 or 1, got '$LADDER_NO_EARLY_END_TURN'" >&2
+     exit 1 ;;
 esac
 
 : "${BOOTSTRAP_MODE:?BOOTSTRAP_MODE is required}"
@@ -640,6 +657,18 @@ fi
 SOURCE_HASH="$(cat ocean/bloodbowl/.content_hash)"
 grep -q '^league_preseed' config/bloodbowl.ini || {
   echo "installed config lacks league_preseed" >&2; exit 1; }
+# A run manifest without no_early_end_turn says the rule was off. That is only
+# true while the installed default is 0, so a config that turns the rule on by
+# itself is refused whatever the knob says; and the knob needs a config that
+# knows the key, or the trainer would reject the flag after the preflight.
+if grep -Eq '^no_early_end_turn[[:space:]]*=' config/bloodbowl.ini; then
+  grep -Eq '^no_early_end_turn[[:space:]]*=[[:space:]]*0[[:space:]]*$' config/bloodbowl.ini || {
+    echo "installed config sets no_early_end_turn itself; its default must be 0 (use LADDER_NO_EARLY_END_TURN=1 so the run manifest records the rule)" >&2
+    exit 1; }
+elif [ "$LADDER_NO_EARLY_END_TURN" = "1" ]; then
+  echo "LADDER_NO_EARLY_END_TURN=1 needs an installed config with the no_early_end_turn key; install and rebuild this checkout" >&2
+  exit 1
+fi
 grep -Fq 'Patch copy: training/selfplay_league.patch' \
   "$ROOT/vendor/PufferLib/pufferlib/selfplay.py" || {
   echo "vendored selfplay.py lacks the selfplay league patch marker" >&2; exit 1; }
@@ -899,6 +928,8 @@ echo "compiled_exact_action_source_sha256=$COMPILED_EXACT_ACTION_SOURCE_HASH com
 echo "native_precision_bytes=$precision total_agents=$TOTAL_AGENTS buffers=$NUM_BUFFERS threads=$NUM_THREADS horizon=$HORIZON minibatch=$MINIBATCH_SIZE"
 echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
 echo "scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_BOT_TYPE"
+[ "$LADDER_NO_EARLY_END_TURN" != "1" ] || \
+  echo "no_early_end_turn=1 (env-layer training restriction on every policy seat; not a Blood Bowl rule)"
 [ "$BOOTSTRAP_MODE" != "graft-v6" ] || \
   echo "graft_from source_sha256=$GRAFT_FROM_SOURCE_SHA256 patch_bundle_sha256=$GRAFT_FROM_PATCH_BUNDLE_SHA256 module_sha256=$GRAFT_FROM_MODULE_SHA256 warm_lineage_sha256=$WARM_LINEAGE_HASH reason=$GRAFT_REASON"
 [ "$BOOTSTRAP_MODE" != "bridge-v4" ] || \
@@ -949,6 +980,10 @@ else
       --env.scripted-opponent-team 1 \
       --env.scripted-bank-tag "$SCRIPTED_BANK_TAG")
   fi
+fi
+
+if [ "$LADDER_NO_EARLY_END_TURN" = "1" ]; then
+  CMD+=(--env.no-early-end-turn 1)
 fi
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
@@ -1045,6 +1080,10 @@ if [ "$BOOTSTRAP_MODE" = "bridge-v4" ]; then
     bridge_provenance "$BRIDGE_PROVENANCE"
     bridge_reason "$BRIDGE_REASON"
   )
+fi
+if [ "$LADDER_NO_EARLY_END_TURN" = "1" ]; then
+  # Present only when the rule is on; see the knob's comment at the top.
+  META_ARGS+=(no_early_end_turn 1)
 fi
 "$PYBIN" - "$RUN_MANIFEST" "${META_ARGS[@]}" -- "${CMD[@]}" <<'PY'
 import json, pathlib, sys

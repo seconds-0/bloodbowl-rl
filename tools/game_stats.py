@@ -58,6 +58,38 @@ def completed_game_requirement_met(observed, minimum):
     return math.isfinite(observed) and observed >= minimum
 
 
+def no_early_end_turn_evidence_failure(metrics, declared):
+    """Whether a panel agrees that the env flag no_early_end_turn was on or off.
+
+    The flag is an env-layer training restriction, not a Blood Bowl rule
+    (docs/no-early-end-turn-2026-10-05.md). A launcher can pass it and a
+    manifest can record it while the env ignores it: an env module compiled
+    before the flag existed reads the kwarg as nothing. `end_turn_removed` is
+    the env's own count of policy-seat decisions per episode at which it had
+    taken END_TURN out of the legal list: exactly 0 with the flag off, above
+    zero with it on. A panel without the metric comes from an env built before
+    the flag, where the rule cannot have been on.
+
+    Returns None when the panel agrees with `declared`, otherwise the reason.
+    One definition for the screen's acceptance step and the exam verdict.
+    """
+    observed = metrics.get("end_turn_removed")
+    if not declared:
+        if observed is None or observed == 0:
+            return None
+        return (f"end_turn_removed is {observed!r} but no_early_end_turn was "
+                "not declared: the env removed END_TURN in a run that says it "
+                "did not")
+    if observed is None:
+        return ("the panel has no end_turn_removed: the env module predates "
+                "the flag, so no_early_end_turn cannot have been in force")
+    if (isinstance(observed, bool) or not isinstance(observed, (int, float))
+            or not math.isfinite(observed) or observed <= 0):
+        return (f"end_turn_removed is {observed!r}: the env never removed "
+                "END_TURN, so no_early_end_turn was not in force")
+    return None
+
+
 def strip_ansi(s):
     s = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", s)
     return s.replace("\u2502", " ").replace("\u2503", " ")  # box verticals

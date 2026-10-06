@@ -113,6 +113,13 @@ LADDER_GAE_LAMBDA="${LADDER_GAE_LAMBDA:-}"
 # before the knob existed; when set, the effective value is recorded in
 # contract.ladder.
 LADDER_REPLAY_RATIO="${LADDER_REPLAY_RATIO:-}"
+# ladder-rung / graft / bridge only: train the rung under the env-layer
+# restriction no_early_end_turn (a policy seat cannot choose END_TURN while it
+# has a player to activate; docs/no-early-end-turn-2026-10-05.md). Not a Blood
+# Bowl rule. Unset or 0 keeps the fixed contract and publishes the same
+# SCREEN_MANIFEST as before the knob existed; 1 is recorded in contract.ladder
+# and the per-arm launcher records it in the run manifest.
+LADDER_NO_EARLY_END_TURN="${LADDER_NO_EARLY_END_TURN:-}"
 
 # Fixed Stage-1 causal contract. Assign, rather than inherit, every optional
 # launcher input which could alter optimization, batching, or pool allocation.
@@ -214,6 +221,15 @@ fi
 if [ "$SCREEN_PROFILE" != "bridge" ] && \
    [ -n "$BRIDGE_WARM_SHA256$BRIDGE_WARM_OBS_VERSION$BRIDGE_PROVENANCE$BRIDGE_REASON" ]; then
   echo "BRIDGE_WARM_SHA256, BRIDGE_WARM_OBS_VERSION, BRIDGE_PROVENANCE and BRIDGE_REASON are only valid with SCREEN_PROFILE=bridge" >&2
+  exit 1
+fi
+case "$LADDER_NO_EARLY_END_TURN" in
+  ''|0) LADDER_NO_EARLY_END_TURN="" ;;
+  1) ;;
+  *) echo "LADDER_NO_EARLY_END_TURN must be 0 or 1, got '$LADDER_NO_EARLY_END_TURN'" >&2; exit 1 ;;
+esac
+if [ "$RUNG_LIKE" != "1" ] && [ -n "$LADDER_NO_EARLY_END_TURN" ]; then
+  echo "LADDER_NO_EARLY_END_TURN is only valid with SCREEN_PROFILE=ladder-rung, graft or bridge" >&2
   exit 1
 fi
 if [ "$RUNG_LIKE" != "1" ] && [ "$LADDER_CHAIN_LR_SCALE" != "1" ]; then
@@ -786,6 +802,7 @@ SCREEN_PLAN="$(
       LADDER_GAMMA="$LADDER_GAMMA" LADDER_GAE_LAMBDA="$LADDER_GAE_LAMBDA" \
       GAMMA="$GAMMA" GAE_LAMBDA="$GAE_LAMBDA" \
       LADDER_REPLAY_RATIO="$LADDER_REPLAY_RATIO" REPLAY_RATIO="$REPLAY_RATIO" \
+      LADDER_NO_EARLY_END_TURN="$LADDER_NO_EARLY_END_TURN" \
       "$PYBIN" - "$SCREEN_MANIFEST" <<'PY'
 import datetime, hashlib, json, os, pathlib, subprocess, sys, sysconfig
 
@@ -1199,6 +1216,10 @@ if profile in ("ladder-rung", "graft", "bridge"):
         contract["ladder"]["gae_lambda"] = float(os.environ["GAE_LAMBDA"])
     if os.environ.get("LADDER_REPLAY_RATIO"):
         contract["ladder"]["replay_ratio"] = float(os.environ["REPLAY_RATIO"])
+    if os.environ.get("LADDER_NO_EARLY_END_TURN") == "1":
+        # Present only when the rule is on, so a rung without it publishes the
+        # contract it always did and a relaunch cannot switch the rule.
+        contract["ladder"]["no_early_end_turn"] = 1
 if profile in ("paired-confirmation", "paired-final"):
     from analyze_reward_candidate_transfer import (
         TransferError, validate_completion_evidence,
@@ -1313,6 +1334,7 @@ sys.path.insert(0, str(root / "tools"))
 from game_stats import (
     completed_game_requirement_met,
     dashboard_windows,
+    no_early_end_turn_evidence_failure,
     weighted_dashboard,
 )
 from reward_manifest import load_manifest
@@ -1437,6 +1459,18 @@ if ladder and float(ladder["reset_pct"]) > 0.0:
             "phase": "train", "kind": "curriculum_inactive",
             "metric": "demo_episodes", "observed": observed_demo,
             "expected": expected_demo,
+        })
+# A rung under no_early_end_turn is only that if the env really removed
+# END_TURN, and a rung without it must show none: the trainer flag and the run
+# manifest say what was asked for, the panel says what the env did. Both
+# phases, because the trainer's own eval phase runs the same env.
+rule_declared = bool(ladder and ladder.get("no_early_end_turn"))
+for phase, metrics in phase_metrics.items():
+    reason = no_early_end_turn_evidence_failure(metrics, rule_declared)
+    if reason:
+        failures.append({
+            "phase": phase, "kind": "no_early_end_turn_evidence",
+            "declared": rule_declared, "reason": reason,
         })
 counted_windows = [
     window for window in dashboard_windows(log)
@@ -1692,6 +1726,7 @@ PY
         LIVE_INTEGRITY_FAILURE="$OUT_DIR/LIVE_INTEGRITY_FAILURE.json" \
         LIVE_INTEGRITY_MAX_SILENCE="$MAX_PANEL_SILENCE_SECONDS" \
         LIVE_INTEGRITY_POLL_SECONDS="$POLL_SECONDS" \
+        LADDER_NO_EARLY_END_TURN="$LADDER_NO_EARLY_END_TURN" \
         /bin/bash "$ROOT/tools/run_reward_ablation.sh"
     wait_for_status "$tag" "$log"
   fi

@@ -53,6 +53,18 @@
 #   LADDER_PROFILE GRAFT_FROM_SOURCE_SHA256
 #   GRAFT_FROM_PATCH_BUNDLE_SHA256 GRAFT_REASON
 #   PUFFER_SKIP_SCRIPTED_BANK_FORWARD BBE_DECIDING_ROW_TELEMETRY
+#   LADDER_NO_EARLY_END_TURN
+# (the two GRAFT_FROM digests may each be a comma-separated list, read
+# pairwise, when the warm and pool hold more than one old build).
+#
+# LADDER_NO_EARLY_END_TURN=1 trains the rung under the env-layer restriction
+# no_early_end_turn (docs/no-early-end-turn-2026-10-05.md; not a Blood Bowl
+# rule). Masked actions get no gradient, so a checkpoint trained under the rule
+# is only meaningful when played under it: the exam cells of such a stage run
+# with the rule on for the champion's seat (the bot's seat is never
+# restricted), and EXAM_VERDICT.json records no_early_end_turn: 1. Which exam
+# to run is read from the rung marker, i.e. from what the trainer received,
+# and must agree with this variable.
 #
 # Exit status:
 #   0  verdict registered and passed (or PLAN_ONLY=1 verified)
@@ -132,6 +144,12 @@ elif [ -n "${GRAFT_FROM_SOURCE_SHA256:-}${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}${GRA
   log "GRAFT_* is set but LADDER_PROFILE is '$LADDER_PROFILE_SEEN'; the rung would refuse it"
   exit 2
 fi
+
+case "${LADDER_NO_EARLY_END_TURN:-}" in
+  ''|0) NO_EARLY_END_TURN_SEEN=0 ;;
+  1) NO_EARLY_END_TURN_SEEN=1 ;;
+  *) log "LADDER_NO_EARLY_END_TURN must be 0 or 1, got '${LADDER_NO_EARLY_END_TURN}'"; exit 2 ;;
+esac
 
 # ladder_stage.sh sources POOL_IDENTITY.env, which assigns EXPECTED_POOL_HASH.
 # Keep the caller's value under another name and never pass it down.
@@ -345,6 +363,8 @@ log "stage $STAMP run_dir $RUN_DIR"
 log "recipe: rung=$RUNG reset_pct=$RESET_PCT seed=$SEED steps=$STEPS arm=$LADDER_ARM profile=$LADDER_PROFILE_SEEN prev_complete=${PREV_COMPLETE:-} warm=${WARM:-}"
 log "recipe: lr_scale=$LADDER_CHAIN_LR_SCALE ent_scale=$LADDER_CHAIN_ENT_SCALE gamma=$LADDER_GAMMA gae_lambda=$LADDER_GAE_LAMBDA replay_ratio=$LADDER_REPLAY_RATIO frozen_bank_pct=$FROZEN_BANK_PCT bot_tag=$SCRIPTED_BANK_TAG bot_type=$SCRIPTED_BOT_TYPE"
 log "build flags: PUFFER_SKIP_SCRIPTED_BANK_FORWARD=${PUFFER_SKIP_SCRIPTED_BANK_FORWARD:-unset} BBE_DECIDING_ROW_TELEMETRY=${BBE_DECIDING_ROW_TELEMETRY:-unset}"
+[ "$NO_EARLY_END_TURN_SEEN" != "1" ] || \
+  log "rule: no_early_end_turn=1 for the rung and for its exam (training restriction on policy seats; not a Blood Bowl rule)"
 log "exam: seeds=${SEED_LIST[*]} rule=$EXAM_RULE ${VERDICT_RULE_ARGS[*]:2}"
 
 terminal_checks
@@ -416,16 +436,28 @@ check_pool_identity
 
 # --- exam --------------------------------------------------------------------
 phase exam
-CKPT="$(python3 - "$MARKER" "$WANT_POOL_HASH" <<'PY'
+CKPT="$(python3 - "$MARKER" "$WANT_POOL_HASH" "$NO_EARLY_END_TURN_SEEN" <<'PY'
 import hashlib, json, os, sys
 
-marker_path, want_pool = sys.argv[1], sys.argv[2]
+marker_path, want_pool, want_rule = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
     marker = json.load(open(marker_path, encoding="utf-8"))
     checkpoint = marker["checkpoint"]
     recorded = marker["checkpoint_sha256"]
 except (OSError, ValueError, KeyError, TypeError) as exc:
     print(f"unusable rung marker {marker_path}: {exc!r}", file=sys.stderr)
+    raise SystemExit(7)
+# The rung's own record of the rule decides how it is examined. A stage whose
+# environment says otherwise is describing a different rung.
+trained_rule = marker.get("no_early_end_turn", 0)
+if trained_rule not in (0, 1) or isinstance(trained_rule, bool):
+    print(f"rung marker no_early_end_turn={trained_rule!r} is not 0 or 1: "
+          f"{marker_path}", file=sys.stderr)
+    raise SystemExit(7)
+if str(trained_rule) != want_rule:
+    print(f"RULE MISMATCH: the rung marker records no_early_end_turn="
+          f"{trained_rule}, this stage declares {want_rule} "
+          f"(LADDER_NO_EARLY_END_TURN): {marker_path}", file=sys.stderr)
     raise SystemExit(7)
 if marker.get("trainer_exit") != 0:
     print(f"rung marker is not an accepted result: {marker_path}", file=sys.stderr)
@@ -470,6 +502,14 @@ log "exam start: $EXAM_DIR"
 # derives the thread count as it did for the as-run exams (16 on the rig).
 # `timeout` signals the cell's whole process group, so a hung eval is stopped
 # with its trainer process and reads as a failed cell (status 124).
+# The rule reaches the cell by this assignment alone: the marker check above
+# has already tied NO_EARLY_END_TURN_SEEN to what the rung trained with, and an
+# inherited value must not decide an exam.
+VERDICT_EXAM_ARGS=()
+if [ "$NO_EARLY_END_TURN_SEEN" = "1" ]; then
+  VERDICT_EXAM_ARGS=(--no-early-end-turn 1)
+  log "exam runs under no_early_end_turn=1 (the rung trained under it)"
+fi
 for seed in "${SEED_LIST[@]}"; do
   mkdir -p "$EXAM_DIR/s$seed" || exit 5
   for spec in "contact_away 0 1" "contact_home 0 0" "offense_away 1 1"; do
@@ -478,6 +518,7 @@ for seed in "${SEED_LIST[@]}"; do
     env -u OMP_NUM_THREADS PATH="$C/vendor/PufferLib/.venv/bin:$PATH" \
         NATIVE=1 RIG_ALLOW_FLOAT=1 CUDA_VISIBLE_DEVICES=0 SEED="$seed" \
         BOT_TYPE="$bot_type" BOT_TEAM="$bot_team" EVAL_EPISODES=2000 \
+        LADDER_NO_EARLY_END_TURN="$NO_EARLY_END_TURN_SEEN" \
         timeout --signal=TERM --kill-after=60 "$EXAM_CELL_TIMEOUT_SECONDS" \
         bash "$C/tools/eval_vs_contact_bot.sh" "$CKPT" 12000000 \
         "$EXAM_DIR/s$seed/$cell.log" > "$EXAM_DIR/s$seed/$cell.out" 2>&1 || {
@@ -498,7 +539,8 @@ log "exam cells complete: $EXAM_DIR"
 phase verdict
 python3 "$C/tools/chain_exam_verdict.py" --exam-dir "$EXAM_DIR" \
   --seeds "${SEED_LIST[@]}" "${VERDICT_RULE_ARGS[@]}" \
-  --checkpoint-sha256 "$CKPT_SHA" --output-dir "$RUN_DIR"
+  --checkpoint-sha256 "$CKPT_SHA" --output-dir "$RUN_DIR" \
+  ${VERDICT_EXAM_ARGS[@]+"${VERDICT_EXAM_ARGS[@]}"}
 verdict_rc=$?
 case "$verdict_rc" in
   0)

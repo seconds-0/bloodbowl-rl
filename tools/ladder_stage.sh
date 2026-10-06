@@ -39,11 +39,16 @@
 #     multiple of 0.125 in (0,4] (whole minibatches per epoch under the
 #     screen's fixed batch); forwarded when set, with the gradient steps per
 #     epoch in the stage banner (unset = the screen's fixed 0.25, 2 steps)
+#   LADDER_NO_EARLY_END_TURN=1  train this rung under the env-layer
+#     restriction no_early_end_turn (docs/no-early-end-turn-2026-10-05.md);
+#     forwarded when set (unset or 0 = off, the screen's fixed contract)
 #   SCRIPTED_BANK_TAG / SCRIPTED_BOT_TYPE  scripted bank for this rung
 #     (forwarded to launch_ladder_rung.sh only when set; unset = ordinary rung)
 #   LADDER_PROFILE=graft + GRAFT_FROM_SOURCE_SHA256 / GRAFT_FROM_PATCH_BUNDLE_SHA256
 #     / GRAFT_REASON  make this stage the reviewed lineage bridge across a
-#     build change (forwarded like SCRIPTED_*; unset = ordinary rung)
+#     build change (forwarded like SCRIPTED_*; unset = ordinary rung). A
+#     lineage holding more than one old build declares them all: both digest
+#     variables become comma-separated lists of the same length, read pairwise
 #   LADDER_PROFILE=bridge + BRIDGE_WARM_SHA256 / BRIDGE_WARM_OBS_VERSION /
 #     BRIDGE_PROVENANCE / BRIDGE_REASON  make this stage the reviewed warm
 #     start from an OUT-OF-LINEAGE raw blob (docs/audit-2026-08-20.md F2).
@@ -110,6 +115,13 @@ if [ -n "${LADDER_REPLAY_RATIO:-}" ]; then
   fi
   REPLAY_STEPS_PER_EPOCH=$(( replay_milli * SCREEN_BATCH / (SCREEN_MINIBATCH * 1000) ))
 fi
+# The screen validates this too; checking here fails a typo before a pool is
+# built.
+case "${LADDER_NO_EARLY_END_TURN:-}" in
+  ''|0|1) ;;
+  *) echo "LADDER_NO_EARLY_END_TURN must be 0 or 1, got '${LADDER_NO_EARLY_END_TURN}'" >&2
+     exit 1 ;;
+esac
 POOL_KEEP="${POOL_KEEP:-$((NUM_FROZEN_BANKS - 1))}"
 POOL_ANCHOR="${POOL_ANCHOR:-}"
 PREV_COMPLETE="${PREV_COMPLETE:-}"
@@ -282,6 +294,7 @@ fi
 [ -z "${LADDER_GAMMA:-}" ] || export LADDER_GAMMA
 [ -z "${LADDER_GAE_LAMBDA:-}" ] || export LADDER_GAE_LAMBDA
 [ -z "${LADDER_REPLAY_RATIO:-}" ] || export LADDER_REPLAY_RATIO
+[ -z "${LADDER_NO_EARLY_END_TURN:-}" ] || export LADDER_NO_EARLY_END_TURN
 [ -z "${SCRIPTED_BANK_TAG:-}" ] || export SCRIPTED_BANK_TAG
 [ -z "${SCRIPTED_BOT_TYPE:-}" ] || export SCRIPTED_BOT_TYPE
 [ -z "${LADDER_PROFILE:-}" ] || export LADDER_PROFILE
@@ -306,6 +319,8 @@ esac
   echo "  horizon gamma=${LADDER_GAMMA:-contract} gae_lambda=${LADDER_GAE_LAMBDA:-contract}"
 [ -z "${LADDER_REPLAY_RATIO:-}" ] || \
   echo "  update replay_ratio=$LADDER_REPLAY_RATIO gradient_steps_per_epoch=$REPLAY_STEPS_PER_EPOCH (batch $SCREEN_BATCH / minibatch $SCREEN_MINIBATCH)"
+[ "${LADDER_NO_EARLY_END_TURN:-}" != "1" ] || \
+  echo "  rule no_early_end_turn=1 (training restriction on policy seats; not a Blood Bowl rule)"
 export POOL="$POOL_OUT/pool"
 export DEADLINE_HOURS="${DEADLINE_HOURS:-40}"
 exec bash tools/launch_ladder_rung.sh
