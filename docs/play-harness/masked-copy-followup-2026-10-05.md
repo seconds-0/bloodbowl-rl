@@ -172,9 +172,10 @@ The paired contrasts, m1 minus plain:
 
 Three things in the table besides the verdicts.
 
-- **The gain is on defence, everywhere.** With m1, chain 41 concedes fewer
-  touchdowns against all five opponents (most against chain 47, 0.73 against
-  0.86, and chain 36, 0.67 against 0.79) and scores slightly fewer against
+- **Where there is a gain it is on defence.** With m1, chain 41 concedes
+  fewer touchdowns against the contact bot and the three chains (most
+  against chain 47, 0.73 against 0.86, and chain 36, 0.67 against 0.79) and
+  scores slightly fewer against
   the offense bot and the three chains (for example 1.11 against 1.17 with
   chain 36). Against the contact bot it scores slightly more.
 - **The offense bot is the exception, and it is the opponent of the rig
