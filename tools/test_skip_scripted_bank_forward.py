@@ -451,12 +451,20 @@ class PatchContract(unittest.TestCase):
 
     def test_env_still_ignores_the_policy_action_on_bot_seats(self):
         env = ENV_HEADER.read_text(encoding="utf-8")
+        # The predicate has one definition, shared by c_step (who acts) and
+        # bbe_refresh_legal (whose list no_early_end_turn may shorten).
         self.assertIn(
-            "int scripted_env = env->scripted_opponent &&\n"
-            "            (env->scripted_bank_tag <= 0 || env->tag == env->scripted_bank_tag);",
+            "static bool bbe_seat_is_scripted(const Bloodbowl* env, int agent) {\n"
+            "    if (!env->scripted_opponent) return false;\n"
+            "    if (env->scripted_bank_tag > 0 && env->tag != env->scripted_bank_tag) {\n"
+            "        return false;\n"
+            "    }\n"
+            "    if (env->scripted_opponent_team == 2) return true;\n"
+            "    return agent == (env->scripted_opponent_team == BB_HOME ? BB_HOME : BB_AWAY);\n"
+            "}\n",
             env)
         c_step = env[env.index("static void c_step(Bloodbowl* env) {"):]
-        gate = c_step.index("if (scripted_env && (scripted_both || agent == scripted_team)) {")
+        gate = c_step.index("if (bbe_seat_is_scripted(env, agent)) {")
         bot = c_step.index("bbe_contact_bot_pick(", gate)
         decode = c_step.index("act = bbe_decode(env, agent, env->action_ptr[agent]);", gate)
         self.assertLess(bot, decode)
