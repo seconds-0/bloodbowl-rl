@@ -217,10 +217,13 @@ both read the env's own `end_turn_removed`, which now counts the learner seats' 
 (`no_early_end_turn_truncated_episodes` at screen acceptance) and in each of the six exam cells (no
 verdict otherwise); a missing counter is a failure, not a zero. A run that does not declare the rule is
 not judged on it at all, so every existing recipe's acceptance is what it was. One definition,
-`game_stats.no_early_end_turn_truncation_failure`, used by `run_reward_screen.sh` and
+`game_stats.no_early_end_turn_truncation_failure_in_log`, used by `run_reward_screen.sh` and
 `chain_exam_verdict.py`; both the canary and chain 54 go through those two, so it holds for both without
-the wrappers. `b3_chain54.sh` additionally reads the canary's own records and refuses unless they show
-zero in all eight places.
+the wrappers. It is held against every completed-episode window of a phase, not the phase average, which
+would drop a window that lacks the counter. A rung marker or a verdict already on disk is not taken on
+trust either: under the rule `chain_stage.sh` re-reads the marker's result and the verdict's cells on every
+launch and exits 7 unless they record zero. `b3_chain54.sh` additionally reads the canary's own records and
+refuses unless they show zero in training, in the evaluation and in each of the six distinct exam cells.
 
 In a rung the learner is on at least one seat of every env and in an exam cell the champion is on one, so
 "above zero" still holds under the learner-only rule; only the size of the number changed. That closes the
