@@ -63,6 +63,8 @@ The pre-registered paired analysis against chain 14 is in `docs/opponent-populat
 
 **Update 2026-10-05 12:50 (D414): the seat change is not adopted and plain continuation from chain 41 reads Flat at two seeds.** The second opponent-seat pair is +9.0 with an interval that includes zero, so the scripted bot stays on bank tag 4. Chain 48 is +11.0 over chain 41, replicating chain 42's +12.5: one more rung no longer clears the +40 gate. Chain 41 stays the warm start. Chain 49 (a third seat context) is training. Chains 50 to 53 then test whether those small gains compound: only chain 53, five rungs past chain 41, is gated.
 
+**Update 2026-10-05 21:00 (D416): the gap to human play is turn shape, and a no-training rule closes part of it.** Chain 41 activates about 3 players a team turn against a human 7 and ends its turn early in 62% of turns. Forbidding an early end of turn at play time, with no training, is worth +32 to +43 decisive-Elo on four checkpoints. Chain 54 trains one rung under that rule on a third build, with chain 42 as control, after an identity check and a canary. Also: an integrity-guard false positive halted the campaign for 27 minutes and is fixed; the exams of chains 37 to 49 ran on the original build's module because of an environment-copy defect.
+
 The obs-v6 / exact-action lineage has its first reproducible scoring policy:
 two independent rung-6 backplay runs (maxdist 6, reset 0.5, `s0_both`,
 genesis pool `f6a6323a`, 5B steps) finished clean in July at tds 0.299 /

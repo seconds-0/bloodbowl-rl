@@ -278,6 +278,12 @@ class LiveIntegrityGuardTests(unittest.TestCase):
                     "missing hard-integrity keys"):
                 self.run_guard(root, text)
 
+    def test_only_integer_bank_ids_are_league_keys(self):
+        self.assertTrue(guard.is_non_episode_key("historical_winrate_bank_3"))
+        self.assertFalse(guard.is_non_episode_key("historical_winrate_bank_"))
+        self.assertFalse(guard.is_non_episode_key("historical_winrate_bank_x"))
+        self.assertFalse(guard.is_non_episode_key("historical_winrate_bank_3_tds"))
+
     def test_elo_does_not_excuse_a_panel_that_aggregated_an_episode(self):
         # The exemption is narrow: once any episode-aggregated key appears,
         # the full registry is mandatory even alongside elo.
