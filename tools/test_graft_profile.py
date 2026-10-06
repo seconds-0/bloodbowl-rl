@@ -112,6 +112,35 @@ class GraftLauncherTests(unittest.TestCase):
             self.assertIn("GRAFT_REASON must be a non-empty string of at most 200",
                           result.stderr, bad)
 
+    def test_graft_v6_takes_lists_of_old_builds_read_pairwise(self):
+        two_sources = "a" * 64 + "," + "d" * 64
+        two_patches = "b" * 64 + "," + "e" * 64
+        # Well-formed lists of the same length clear the declaration gate.
+        result = run(LAUNCHER, {**LAUNCHER_BASE, "BOOTSTRAP_MODE": "graft-v6",
+                                **GRAFT_FROM,
+                                "GRAFT_FROM_SOURCE_SHA256": two_sources,
+                                "GRAFT_FROM_PATCH_BUNDLE_SHA256": two_patches})
+        self.assertNotIn("GRAFT_", result.stderr)
+        self.assertTrue(failed_later(result), result.stderr)
+        for sources, patches in ((two_sources, "b" * 64), ("a" * 64, two_patches)):
+            result = run(LAUNCHER, {**LAUNCHER_BASE, "BOOTSTRAP_MODE": "graft-v6",
+                                    **GRAFT_FROM,
+                                    "GRAFT_FROM_SOURCE_SHA256": sources,
+                                    "GRAFT_FROM_PATCH_BUNDLE_SHA256": patches})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("the two are read pairwise and must have the same length",
+                          result.stderr)
+        for bad in (two_sources + ",", "," + two_sources,
+                    two_sources.replace(",", ", "), two_sources.replace(",", ";"),
+                    "a" * 64 + "," + "D" * 64):
+            result = run(LAUNCHER, {**LAUNCHER_BASE, "BOOTSTRAP_MODE": "graft-v6",
+                                    **GRAFT_FROM,
+                                    "GRAFT_FROM_SOURCE_SHA256": bad,
+                                    "GRAFT_FROM_PATCH_BUNDLE_SHA256": two_patches})
+            self.assertNotEqual(result.returncode, 0, bad)
+            self.assertIn("GRAFT_FROM_SOURCE_SHA256 must be a lowercase SHA-256",
+                          result.stderr, bad)
+
     def test_graft_from_is_refused_outside_graft_v6(self):
         for mode in ("lineage-v6", "fresh-v6-genesis"):
             for knob in ("GRAFT_FROM_SOURCE_SHA256", "GRAFT_REASON"):
@@ -334,6 +363,81 @@ class GraftLauncherValidationTests(unittest.TestCase):
         self.assertIn("nothing to graft", out.stderr)
         self.assertIn("rehost", out.stderr)
 
+    # --- more than one declared old build -----------------------------------
+    # The paired rung of docs/no-early-end-turn-2026-10-05.md: a warm from the
+    # second old build, a pool holding both old builds, on a third build.
+
+    def two(self, *builds):
+        return (",".join(build[0] for build in builds),
+                ",".join(build[2] for build in builds))
+
+    def test_one_pair_reports_one_bare_module_as_before(self):
+        warm, pool, _ = self.build(self.OLD, [self.OLD] * 4)
+        out = self.validate(warm, pool, "graft-v6", self.OLD[0], self.OLD[2])
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.split()[2], self.OLD[1])
+
+    def test_two_declared_builds_both_present_are_accepted_in_declared_order(self):
+        warm, pool, warm_lineage = self.build(
+            self.OTHER, [self.OLD, self.OLD, self.OTHER, self.OTHER])
+        # One declared build is not enough for this pool, whichever it is.
+        for single in (self.OLD, self.OTHER):
+            out = self.validate(warm, pool, "graft-v6", single[0], single[2])
+            self.assertNotEqual(out.returncode, 0)
+            self.assertIn("binds neither this build nor the declared old build",
+                          out.stderr)
+        out = self.validate(warm, pool, "graft-v6", *self.two(self.OLD, self.OTHER))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        warm_sha, bundle, modules = out.stdout.split()
+        self.assertEqual(warm_sha, warm_lineage)
+        self.assertEqual(modules, self.OLD[1] + "," + self.OTHER[1])
+        self.assertEqual(len(bundle), 64)
+        out = self.validate(warm, pool, "graft-v6", *self.two(self.OTHER, self.OLD))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.split()[2], self.OTHER[1] + "," + self.OLD[1])
+
+    def test_rungs_after_a_second_graft_stay_launchable(self):
+        # The next rung on the third build: its own checkpoints are in the
+        # warm and the pool beside both old builds.
+        warm, pool, _ = self.build(
+            self.NEW, [self.OLD, self.OTHER, self.OTHER, self.NEW])
+        out = self.validate(warm, pool, "graft-v6", *self.two(self.OLD, self.OTHER))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.split()[2], self.OLD[1] + "," + self.OTHER[1])
+
+    def test_two_declared_one_absent_is_refused(self):
+        warm, pool, _ = self.build(self.OLD, [self.OLD] * 4)
+        out = self.validate(warm, pool, "graft-v6", *self.two(self.OLD, self.OTHER))
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("no sidecar binds declared old build source dddddddddddd",
+                      out.stderr)
+
+    def test_an_undeclared_third_build_is_refused(self):
+        third = ("7" * 64, "8" * 64, "9" * 64)
+        warm, pool, _ = self.build(
+            self.OTHER, [self.OLD, self.OTHER, third, self.OTHER])
+        out = self.validate(warm, pool, "graft-v6", *self.two(self.OLD, self.OTHER))
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("pool bank 2 binds neither this build nor any of the 2 "
+                      "declared old builds", out.stderr)
+
+    def test_mismatched_list_lengths_are_refused(self):
+        warm, pool, _ = self.build(
+            self.OTHER, [self.OLD, self.OLD, self.OTHER, self.OTHER])
+        out = self.validate(warm, pool, "graft-v6",
+                            self.OLD[0] + "," + self.OTHER[0], self.OLD[2])
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("read pairwise and must have the same length", out.stderr)
+
+    def test_each_declared_build_must_share_one_module(self):
+        other_rehosted = (self.OTHER[0], "9" * 64, self.OTHER[2])
+        warm, pool, _ = self.build(
+            self.OTHER, [self.OLD, self.OLD, other_rehosted, self.OTHER])
+        out = self.validate(warm, pool, "graft-v6", *self.two(self.OLD, self.OTHER))
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("record different compiled modules", out.stderr)
+        self.assertIn("declared old build source dddddddddddd", out.stderr)
+
     def test_graft_v6_still_requires_eligible_hash_bound_sidecars(self):
         # Tamper with one pool bank's checkpoint bytes: its sidecar no longer
         # binds it, and no GRAFT_FROM declaration can paper over that.
@@ -410,6 +514,29 @@ class GraftScreenProfileTests(unittest.TestCase):
             result = run(SCREEN, {**SCREEN_BASE, **GRAFT_FROM, "GRAFT_REASON": bad})
             self.assertNotEqual(result.returncode, 0, bad)
             self.assertIn("graft requires GRAFT_REASON", result.stderr, bad)
+
+    def test_graft_takes_lists_of_old_builds_read_pairwise(self):
+        two_sources = "a" * 64 + "," + "d" * 64
+        two_patches = "b" * 64 + "," + "e" * 64
+        result = run(SCREEN, {**SCREEN_BASE, **GRAFT_FROM,
+                              "GRAFT_FROM_SOURCE_SHA256": two_sources,
+                              "GRAFT_FROM_PATCH_BUNDLE_SHA256": two_patches})
+        self.assertNotIn("graft requires", result.stderr)
+        self.assertIn("missing warm checkpoint", result.stderr)
+        for sources, patches in ((two_sources, "b" * 64), ("a" * 64, two_patches)):
+            result = run(SCREEN, {**SCREEN_BASE, **GRAFT_FROM,
+                                  "GRAFT_FROM_SOURCE_SHA256": sources,
+                                  "GRAFT_FROM_PATCH_BUNDLE_SHA256": patches})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("to list the same number of old builds", result.stderr)
+        for bad in (two_patches + ",", two_patches.replace(",", " "),
+                    "b" * 64 + "," + "e" * 63):
+            result = run(SCREEN, {**SCREEN_BASE, **GRAFT_FROM,
+                                  "GRAFT_FROM_SOURCE_SHA256": two_sources,
+                                  "GRAFT_FROM_PATCH_BUNDLE_SHA256": bad})
+            self.assertNotEqual(result.returncode, 0, bad)
+            self.assertIn("graft requires GRAFT_FROM_PATCH_BUNDLE_SHA256",
+                          result.stderr, bad)
 
     def test_graft_from_is_refused_on_every_other_profile(self):
         for profile, extra in (
@@ -490,6 +617,132 @@ class GraftScreenProfileTests(unittest.TestCase):
         self.assertIn('lineage_from_run_manifest(\n'
                       '    checkpoint, run_manifest_path, '
                       'allow_eligible_publication=True)', source)
+
+
+class GraftScreenPlanStandInTests(unittest.TestCase):
+    """The graft plan, whole, on the stand-in build of
+    tools/test_ladder_rung_profile.py, with real warm and pool sidecars.
+
+    Builds as (source, module, patch): FIRST and SECOND are the old builds;
+    the stand-in checkout is the build the plan runs on."""
+
+    FIRST = ("a" * 64, "b" * 64, "c" * 64)
+    SECOND = ("d" * 64, "e" * 64, "f" * 64)
+
+    def setUp(self):
+        from tools.test_ladder_rung_profile import stand_in_checkout
+        self.temp = tempfile.TemporaryDirectory()
+        self.root, _, _ = stand_in_checkout(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def inputs(self, name, warm_build, bank_builds):
+        base = self.root / name
+        base.mkdir()
+        warm = base / "warm.bin"
+        _, warm_lineage = mint_lineage(
+            base, warm, source=warm_build[0], module=warm_build[1],
+            patch=warm_build[2])
+        pool = base / "pool"
+        pool.mkdir()
+        seeds = []
+        for bank, build in enumerate(bank_builds):
+            checkpoint = pool / f"{bank:016d}.bin"
+            sidecar, digest = mint_lineage(
+                pool, checkpoint, source=build[0], module=build[1],
+                patch=build[2], seed=1042 + bank, fill=f"bank{bank}".encode())
+            seeds.append({"bank": bank, "name": f"gen{bank}",
+                          "file": checkpoint.name, "bytes": 16066560,
+                          "sha256": f"{bank + 10:064x}",
+                          "lineage_file": sidecar.name, "lineage_sha256": digest})
+        (pool / "league_seeds.json").write_text(
+            json.dumps({"seeds": seeds}), encoding="utf-8")
+        return warm, pool, warm_lineage
+
+    def plan(self, out, warm, pool, sources, patches):
+        env = scrubbed_environ()
+        for key in ("PLAN_ONLY", "NUM_FROZEN_BANKS", "FROZEN_BANK_PCT",
+                    "ARM_DETACH", "POLL_SECONDS", "NUM_THREADS"):
+            env.pop(key, None)
+        env.update({
+            "STEPS": "3000000000", "SCREEN_PROFILE": "graft",
+            "WARM": str(warm), "POOL": str(pool),
+            "EXPECTED_POOL_HASH": "d" * 64, "PREFIX": "graft-plan-test",
+            "OUT_DIR": str(self.root / out), "PLAN_ONLY": "1",
+            "LADDER_ENDZONE_MAXDIST": "0", "LADDER_RESET_PCT": "0",
+            "LADDER_SEED": "42", "LADDER_ARM": "r0_poss_half",
+            "SCRIPTED_BANK_TAG": "4", "SCRIPTED_BOT_TYPE": "0",
+            "FROZEN_BANK_PCT": "0.12", "POLL_SECONDS": "1",
+            "GRAFT_FROM_SOURCE_SHA256": sources,
+            "GRAFT_FROM_PATCH_BUNDLE_SHA256": patches,
+            "GRAFT_REASON": "two rebuilds",
+        })
+        return subprocess.run(
+            ["bash", str(self.root / "tools/run_reward_screen.sh")],
+            cwd=self.root, env=env, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False, timeout=300)
+
+    def contract(self, out):
+        return json.loads(
+            (self.root / out / "SCREEN_MANIFEST.json").read_text())["contract"]
+
+    def test_one_declared_build_plans_the_contract_it_always_did(self):
+        warm, pool, warm_lineage = self.inputs(
+            "one", self.FIRST, [self.FIRST] * 4)
+        result = self.plan("one-out", warm, pool, self.FIRST[0], self.FIRST[2])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", result.stdout)
+        self.assertEqual(self.contract("one-out")["graft"], {
+            "from_source_sha256": self.FIRST[0],
+            "from_patch_bundle_sha256": self.FIRST[2],
+            "from_module_sha256": self.FIRST[1],
+            "warm_lineage_sha256": warm_lineage,
+            "reason": "two rebuilds",
+        })
+
+    def test_two_declared_builds_plan_and_record_every_pair(self):
+        warm, pool, warm_lineage = self.inputs(
+            "two", self.SECOND,
+            [self.FIRST, self.FIRST, self.SECOND, self.SECOND])
+        sources = self.FIRST[0] + "," + self.SECOND[0]
+        patches = self.FIRST[2] + "," + self.SECOND[2]
+        result = self.plan("two-out", warm, pool, sources, patches)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SCREEN PLAN VERIFIED", result.stdout)
+        self.assertEqual(self.contract("two-out")["graft"], {
+            "from_source_sha256": sources,
+            "from_patch_bundle_sha256": patches,
+            "from_module_sha256": self.FIRST[1] + "," + self.SECOND[1],
+            "warm_lineage_sha256": warm_lineage,
+            "reason": "two rebuilds",
+        })
+        # The same inputs under one declared build are refused at the plan.
+        result = self.plan("two-as-one", warm, pool, self.FIRST[0], self.FIRST[2])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("warm binds neither this build nor the declared old build",
+                      result.stderr)
+        self.assertFalse((self.root / "two-as-one/SCREEN_MANIFEST.json").exists())
+
+    def test_a_declared_build_no_sidecar_binds_is_refused_at_the_plan(self):
+        warm, pool, _ = self.inputs("absent", self.FIRST, [self.FIRST] * 4)
+        result = self.plan("absent-out", warm, pool,
+                           self.FIRST[0] + "," + self.SECOND[0],
+                           self.FIRST[2] + "," + self.SECOND[2])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no sidecar binds declared old build source dddddddddddd",
+                      result.stderr)
+
+    def test_an_undeclared_third_build_is_refused_at_the_plan(self):
+        third = ("7" * 64, "8" * 64, "9" * 64)
+        warm, pool, _ = self.inputs(
+            "third", self.SECOND, [self.FIRST, self.SECOND, third, self.SECOND])
+        result = self.plan("third-out", warm, pool,
+                           self.FIRST[0] + "," + self.SECOND[0],
+                           self.FIRST[2] + "," + self.SECOND[2])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("pool bank 2 binds neither this build nor any of the 2 "
+                      "declared old builds", result.stderr)
 
 
 if __name__ == "__main__":

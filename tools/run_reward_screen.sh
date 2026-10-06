@@ -67,7 +67,10 @@ SCRIPTED_BOT_TYPE="${SCRIPTED_BOT_TYPE:-}"
 # graft only: the reviewed lineage bridge across a source/patch-bundle change.
 # The operator declares the OLD build (source + patch bundle) some of the
 # warm/pool sidecars still bind, and why (GRAFT_REASON, e.g. "D242"); the
-# per-arm launcher re-checks the same declaration with the same rule.
+# per-arm launcher re-checks the same declaration with the same rule. More
+# than one old build is declared as two comma-separated lists of the same
+# length, read pairwise; contract.graft then records the lists as declared and
+# the modules in the same order.
 GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
 GRAFT_REASON="${GRAFT_REASON:-}"
@@ -338,12 +341,20 @@ case "$SCREEN_PROFILE" in
       # The operator declares what is being grafted from; a graft with an
       # inherited or empty declaration would silently accept whatever old
       # build the warm sidecar happens to record.
+      # One old build, or several: comma-separated lists of the same length,
+      # read pairwise (checkpoint_lineage.parse_graft_declaration).
       for digest_name in GRAFT_FROM_SOURCE_SHA256 GRAFT_FROM_PATCH_BUNDLE_SHA256; do
-        if ! [[ "${!digest_name}" =~ ^[0-9a-f]{64}$ ]]; then
-          echo "graft requires $digest_name as a lowercase 64-character SHA-256 digest" >&2
+        if ! [[ "${!digest_name}" =~ ^[0-9a-f]{64}(,[0-9a-f]{64})*$ ]]; then
+          echo "graft requires $digest_name as a lowercase 64-character SHA-256 digest, or a comma-separated list of them" >&2
           exit 1
         fi
       done
+      graft_source_commas="${GRAFT_FROM_SOURCE_SHA256//[^,]/}"
+      graft_patch_commas="${GRAFT_FROM_PATCH_BUNDLE_SHA256//[^,]/}"
+      if [ "${#graft_source_commas}" -ne "${#graft_patch_commas}" ]; then
+        echo "graft requires GRAFT_FROM_SOURCE_SHA256 and GRAFT_FROM_PATCH_BUNDLE_SHA256 to list the same number of old builds (they are read pairwise); got $(( ${#graft_source_commas} + 1 )) and $(( ${#graft_patch_commas} + 1 ))" >&2
+        exit 1
+      fi
       if [ -z "${GRAFT_REASON// /}" ] || [ "${#GRAFT_REASON}" -gt 200 ]; then
         echo "graft requires GRAFT_REASON as a non-empty string of at most 200 characters (e.g. the DECISIONS.md entry)" >&2
         exit 1

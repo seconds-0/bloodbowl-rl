@@ -53,6 +53,25 @@ GRAFTED_FROM_KEYS = (
     "puffer_patch_bundle_sha256",
     "reason",
 )
+# MORE THAN ONE OLD BUILD. A lineage that has already crossed one build change
+# and now crosses another holds sidecars from two old builds at once (the pool
+# anchor never rotates, so the first old build never leaves). The declaration
+# is then a LIST of old builds, written the way the operator writes it: the
+# source digests comma-separated in graft_from_source_sha256, the patch-bundle
+# digests comma-separated in graft_from_patch_bundle_sha256, the same length,
+# read pairwise; graft_from_module_sha256 carries one module per pair in the
+# same order. One pair is exactly the single-digest form above. The sidecar
+# keeps `ancestry.grafted_from` for the FIRST declared pair, in its existing
+# shape, and records every further pair under `ancestry.grafted_from_also`, a
+# list in declared order. A sidecar with one declared build therefore has the
+# bytes it always had, and a reader that predates the list still validates a
+# sidecar that carries one.
+GRAFTED_FROM_ALSO_KEYS = (
+    "source_sha256",
+    "compiled_module_sha256",
+    "puffer_patch_bundle_sha256",
+)
+GRAFT_LIST_SEPARATOR = ","
 GRAFT_REASON_MAX_CHARS = 200
 # A BRIDGE is the reviewed warm start from an OUT-OF-LINEAGE blob: a raw
 # checkpoint with no sidecar at all, produced under an older observation
@@ -120,6 +139,36 @@ def _need_sha(value, label, allow_empty=False):
             any(ch not in "0123456789abcdef" for ch in value)):
         raise LineageError(f"{label} must be a lowercase SHA-256 digest")
     return value
+
+
+def _need_sha_list(value, label):
+    """One digest, or several separated by commas with nothing else between."""
+    if not isinstance(value, str):
+        raise LineageError(f"{label} must be a lowercase SHA-256 digest")
+    return [_need_sha(item, label) for item in value.split(GRAFT_LIST_SEPARATOR)]
+
+
+def parse_graft_declaration(source_text, patch_text, *,
+                            source_label="old_source_sha256",
+                            patch_label="old_patch_bundle_sha256"):
+    """The declared old builds as [(source_sha256, patch_bundle_sha256), ...].
+
+    Each argument is one digest or a comma-separated list; the two lists are
+    read pairwise, so they must have the same length, and no build may be
+    declared twice.
+    """
+    sources = _need_sha_list(source_text, source_label)
+    patches = _need_sha_list(patch_text, patch_label)
+    if len(sources) != len(patches):
+        raise LineageError(
+            f"{source_label} lists {len(sources)} old build(s) and "
+            f"{patch_label} lists {len(patches)}; the two are read pairwise "
+            "and must have the same length")
+    builds = list(zip(sources, patches))
+    if len(set(builds)) != len(builds):
+        raise LineageError(
+            f"{source_label}/{patch_label} declare the same old build twice")
+    return builds
 
 
 def _need_int(value, label):
@@ -348,6 +397,7 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
         }
 
     grafted_from = None
+    grafted_from_also = []
     present = graft_present
     if present:
         if len(present) != len(GRAFT_MANIFEST_KEYS):
@@ -357,34 +407,49 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
                 f"{missing}")
         if initialization != "lineage-v6":
             raise LineageError("a graft requires lineage-v6 initialization")
-        grafted_from = {
-            "warm_lineage_sha256": _need_sha(
-                manifest.get("graft_from_warm_lineage_sha256"),
-                "graft_from_warm_lineage_sha256"),
-            "source_sha256": _need_sha(
-                manifest.get("graft_from_source_sha256"),
-                "graft_from_source_sha256"),
-            "compiled_module_sha256": _need_sha(
-                manifest.get("graft_from_module_sha256"),
-                "graft_from_module_sha256"),
-            "puffer_patch_bundle_sha256": _need_sha(
-                manifest.get("graft_from_patch_bundle_sha256"),
-                "graft_from_patch_bundle_sha256"),
-            "reason": _need_reason(manifest.get("graft_reason"), "graft_reason"),
-        }
+        graft_warm_lineage = _need_sha(
+            manifest.get("graft_from_warm_lineage_sha256"),
+            "graft_from_warm_lineage_sha256")
+        old_builds = parse_graft_declaration(
+            manifest.get("graft_from_source_sha256"),
+            manifest.get("graft_from_patch_bundle_sha256"),
+            source_label="graft_from_source_sha256",
+            patch_label="graft_from_patch_bundle_sha256")
+        old_modules = _need_sha_list(
+            manifest.get("graft_from_module_sha256"),
+            "graft_from_module_sha256")
+        if len(old_modules) != len(old_builds):
+            raise LineageError(
+                f"graft_from_module_sha256 lists {len(old_modules)} module(s) "
+                f"for {len(old_builds)} declared old build(s); one module per "
+                "build, in the same order")
+        graft_reason = _need_reason(manifest.get("graft_reason"), "graft_reason")
         # The graft names the warm it started from; the manifest's
         # warm_lineage_sha256 is that sidecar's digest, so both must agree.
-        if grafted_from["warm_lineage_sha256"] != warm_lineage:
+        if graft_warm_lineage != warm_lineage:
             raise LineageError(
                 "graft_from_warm_lineage_sha256 differs from warm_lineage_sha256")
-        if (grafted_from["source_sha256"] == implementation["source_sha256"] and
-                grafted_from["puffer_patch_bundle_sha256"]
-                == implementation["puffer_patch_bundle_sha256"]):
-            raise LineageError(
-                "graft is a no-op: the declared old source/patch bundle equal "
-                "the new build's, so there is nothing to graft; a module-only "
-                "difference is a `rehost`, otherwise run an ordinary lineage-v6 "
-                "arm")
+        for old_source, old_patch in old_builds:
+            if (old_source == implementation["source_sha256"] and
+                    old_patch == implementation["puffer_patch_bundle_sha256"]):
+                raise LineageError(
+                    "graft is a no-op: the declared old source/patch bundle "
+                    "equal the new build's, so there is nothing to graft; a "
+                    "module-only difference is a `rehost`, otherwise run an "
+                    "ordinary lineage-v6 arm")
+        grafted_from = {
+            "warm_lineage_sha256": graft_warm_lineage,
+            "source_sha256": old_builds[0][0],
+            "compiled_module_sha256": old_modules[0],
+            "puffer_patch_bundle_sha256": old_builds[0][1],
+            "reason": graft_reason,
+        }
+        grafted_from_also = [
+            {"source_sha256": old_source,
+             "compiled_module_sha256": old_module,
+             "puffer_patch_bundle_sha256": old_patch}
+            for (old_source, old_patch), old_module
+            in zip(old_builds[1:], old_modules[1:])]
 
     ancestry = {
         "initialization": initialization,
@@ -401,6 +466,8 @@ def lineage_from_run_manifest(checkpoint, run_manifest, *,
     }
     if grafted_from is not None:
         ancestry["grafted_from"] = grafted_from
+    if grafted_from_also:
+        ancestry["grafted_from_also"] = grafted_from_also
     if bridged_from is not None:
         ancestry["bridged_from"] = bridged_from
     return {
@@ -505,6 +572,16 @@ def graft_bridge(sidecars, *, current, old_source_sha256,
     every old-build sidecar must record the same module, which is returned so
     the run manifest can carry it as graft_from_module_sha256.
 
+    ``old_source_sha256`` and ``old_patch_bundle_sha256`` are the declaration as
+    the operator wrote it: one digest each, or comma-separated lists of the same
+    length read pairwise when the lineage holds more than one old build
+    (``parse_graft_declaration``). The same rules then hold per declared build:
+    a sidecar that is not this build must bind one of them, every declared
+    build must be bound by at least one sidecar (a build declared and absent is
+    refused, as a graft with nothing old is), and the sidecars of one old build
+    must share one module. The return value is the modules in declared order,
+    comma-separated; for one declared build that is the single module digest.
+
     This is the single definition both the per-arm launcher and the screen plan
     writer use, so a graft the screen plans is a graft the launcher accepts. It
     is what lets a lineage keep chaining after a graft: the next rung's warm is
@@ -513,44 +590,60 @@ def graft_bridge(sidecars, *, current, old_source_sha256,
     """
     for key in SHA256_KEYS:
         _need_sha(current.get(key), f"current.{key}")
-    _need_sha(old_source_sha256, "old_source_sha256")
-    _need_sha(old_patch_bundle_sha256, "old_patch_bundle_sha256")
-    if (old_source_sha256 == current["source_sha256"] and
-            old_patch_bundle_sha256 == current["puffer_patch_bundle_sha256"]):
+    old_builds = parse_graft_declaration(
+        old_source_sha256, old_patch_bundle_sha256)
+    this_build = (current["source_sha256"],
+                  current["puffer_patch_bundle_sha256"])
+    if this_build in old_builds:
         raise LineageError(
             "graft refused: the declared old source/patch bundle ARE this "
             "build's, so there is nothing to graft; a module-only difference "
             "is a `rehost`, otherwise use lineage-v6")
-    old_modules = {}
+    declared = ("the declared old build" if len(old_builds) == 1
+                else f"any of the {len(old_builds)} declared old builds")
+    old_modules = {build: {} for build in old_builds}
     for label, payload in sidecars:
         implementation = payload["implementation"]
         if all(implementation.get(key) == current[key] for key in SHA256_KEYS):
             continue
-        if (implementation.get("source_sha256") == old_source_sha256 and
-                implementation.get("puffer_patch_bundle_sha256")
-                == old_patch_bundle_sha256):
-            old_modules[label] = implementation["compiled_module_sha256"]
+        build = (implementation.get("source_sha256"),
+                 implementation.get("puffer_patch_bundle_sha256"))
+        if build in old_modules:
+            old_modules[build][label] = implementation["compiled_module_sha256"]
             continue
         raise LineageError(
-            f"graft refused: {label} binds neither this build nor the declared "
-            "old build (source "
+            f"graft refused: {label} binds neither this build nor {declared} "
+            "(source "
             f"{implementation.get('source_sha256', '?')[:12]}, patch "
             f"{implementation.get('puffer_patch_bundle_sha256', '?')[:12]}, "
             f"module {implementation.get('compiled_module_sha256', '?')[:12]}); "
             "a same-source/same-patch module difference is a `rehost`")
-    if not old_modules:
+    if not any(old_modules.values()):
         raise LineageError(
             "graft refused as a no-op: every sidecar already binds this build, "
             "so there is nothing to graft; use lineage-v6 (or `rehost` for a "
             "module-only difference)")
-    modules = sorted(set(old_modules.values()))
-    if len(modules) != 1:
-        raise LineageError(
-            "graft refused: old-build sidecars record different compiled "
-            "modules: " + ", ".join(
-                f"{label}={module[:12]}" for label, module in sorted(
-                    old_modules.items())))
-    return modules[0]
+    result = []
+    for old_source, old_patch in old_builds:
+        labelled = old_modules[(old_source, old_patch)]
+        which = ("" if len(old_builds) == 1 else
+                 f" of declared old build source {old_source[:12]} / patch "
+                 f"{old_patch[:12]}")
+        if not labelled:
+            raise LineageError(
+                f"graft refused: no sidecar binds declared old build source "
+                f"{old_source[:12]} / patch {old_patch[:12]}; a build declared "
+                "and absent is refused like a graft with nothing old, so "
+                "declare only the builds the warm and pool still hold")
+        modules = sorted(set(labelled.values()))
+        if len(modules) != 1:
+            raise LineageError(
+                f"graft refused: old-build sidecars{which} record different "
+                "compiled modules: " + ", ".join(
+                    f"{label}={module[:12]}" for label, module in sorted(
+                        labelled.items())))
+        result.append(modules[0])
+    return GRAFT_LIST_SEPARATOR.join(result)
 
 
 def validate_lineage(checkpoint, sidecar=None, *, expected=None,
@@ -750,6 +843,34 @@ def validate_lineage(checkpoint, sidecar=None, *, expected=None,
             raise LineageError(
                 "ancestry.grafted_from.warm_lineage_sha256 differs from "
                 "ancestry.warm_lineage_sha256")
+    if "grafted_from_also" in ancestry:
+        # The further old builds of a graft that declared more than one. Exact
+        # shape per entry, at least one entry, and no build named twice across
+        # grafted_from and this list; it never stands without grafted_from.
+        also = ancestry.get("grafted_from_also")
+        if "grafted_from" not in ancestry:
+            raise LineageError(
+                "ancestry.grafted_from_also requires ancestry.grafted_from")
+        if not isinstance(also, list) or not also:
+            raise LineageError(
+                "ancestry.grafted_from_also must be a non-empty list")
+        first = ancestry["grafted_from"]
+        seen = {(first["source_sha256"], first["puffer_patch_bundle_sha256"])}
+        for index, entry in enumerate(also):
+            label = f"ancestry.grafted_from_also[{index}]"
+            if not isinstance(entry, dict):
+                raise LineageError(f"{label} must be an object")
+            if sorted(entry) != sorted(GRAFTED_FROM_ALSO_KEYS):
+                raise LineageError(
+                    f"{label} must contain exactly "
+                    f"{sorted(GRAFTED_FROM_ALSO_KEYS)}, got {sorted(entry)}")
+            for key in GRAFTED_FROM_ALSO_KEYS:
+                _need_sha(entry.get(key), f"{label}.{key}")
+            build = (entry["source_sha256"], entry["puffer_patch_bundle_sha256"])
+            if build in seen:
+                raise LineageError(
+                    f"{label} repeats an old build already recorded")
+            seen.add(build)
     if require_eligible and not eligible:
         raise LineageError("qualification-only checkpoint is not eligible ancestry")
     return payload

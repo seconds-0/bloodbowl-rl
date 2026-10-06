@@ -640,6 +640,169 @@ class GraftLineageTests(unittest.TestCase):
         check(lambda b: b["ancestry"]["grafted_from"].__setitem__(
             "reason", "r" * 201), "grafted_from.reason")
 
+    # --- more than one declared old build -----------------------------------
+    TWO = {
+        "graft_from_source_sha256": "a" * 64 + "," + "d" * 64,
+        "graft_from_module_sha256": "b" * 64 + "," + "e" * 64,
+        "graft_from_patch_bundle_sha256": "c" * 64 + "," + "f" * 64,
+        "graft_from_warm_lineage_sha256": "5" * 64,
+        "graft_reason": "D242",
+    }
+
+    def test_one_declared_build_publishes_the_sidecar_it_always_did(self):
+        # The single-pair sidecar is pinned whole: same keys, same values, no
+        # list key, so its canonical bytes cannot move.
+        self.write(**self.OLD)
+        payload = self.create()
+        self.assertEqual(payload["ancestry"], {
+            "initialization": "lineage-v6",
+            "mode": "native_static_pool_reward_ablation",
+            "qualification_only": False,
+            "eligible": True,
+            "warm_lineage_sha256": "5" * 64,
+            "pool_lineage_bundle_sha256": "6" * 64,
+            "grafted_from": {
+                "warm_lineage_sha256": "5" * 64,
+                "source_sha256": "a" * 64,
+                "compiled_module_sha256": "b" * 64,
+                "puffer_patch_bundle_sha256": "c" * 64,
+                "reason": "D242",
+            },
+        })
+        self.assertEqual(
+            checkpoint_lineage.canonical_bytes(payload["ancestry"]),
+            b'{"eligible":true,"grafted_from":{"compiled_module_sha256":"'
+            + b"b" * 64 + b'","puffer_patch_bundle_sha256":"' + b"c" * 64
+            + b'","reason":"D242","source_sha256":"' + b"a" * 64
+            + b'","warm_lineage_sha256":"' + b"5" * 64
+            + b'"},"initialization":"lineage-v6","mode":'
+            b'"native_static_pool_reward_ablation",'
+            b'"pool_lineage_bundle_sha256":"' + b"6" * 64
+            + b'","qualification_only":false,"warm_lineage_sha256":"'
+            + b"5" * 64 + b'"}\n')
+
+    def test_two_declared_builds_are_both_recorded_in_declared_order(self):
+        self.write(**self.TWO)
+        payload = self.create()
+        # The first pair keeps the existing field and shape ...
+        self.assertEqual(payload["ancestry"]["grafted_from"], {
+            "warm_lineage_sha256": "5" * 64,
+            "source_sha256": "a" * 64,
+            "compiled_module_sha256": "b" * 64,
+            "puffer_patch_bundle_sha256": "c" * 64,
+            "reason": "D242",
+        })
+        # ... and every further pair is listed beside it.
+        self.assertEqual(payload["ancestry"]["grafted_from_also"], [{
+            "source_sha256": "d" * 64,
+            "compiled_module_sha256": "e" * 64,
+            "puffer_patch_bundle_sha256": "f" * 64,
+        }])
+        sidecar = checkpoint_lineage.sidecar_path(self.checkpoint)
+        checkpoint_lineage.write_lineage(sidecar, payload)
+        observed = checkpoint_lineage.validate_lineage(
+            self.checkpoint, sidecar, expected=self.expected(),
+            require_eligible=True)
+        self.assertEqual(observed, payload)
+
+        three = {**self.TWO,
+                 "graft_from_source_sha256": ",".join(("d" * 64, "a" * 64, "7" * 64)),
+                 "graft_from_module_sha256": ",".join(("e" * 64, "b" * 64, "8" * 64)),
+                 "graft_from_patch_bundle_sha256": ",".join(("f" * 64, "c" * 64, "9" * 64))}
+        self.write(**three)
+        payload = self.create()
+        self.assertEqual(payload["ancestry"]["grafted_from"]["source_sha256"],
+                         "d" * 64)
+        self.assertEqual(
+            [entry["source_sha256"]
+             for entry in payload["ancestry"]["grafted_from_also"]],
+            ["a" * 64, "7" * 64])
+        self.assertEqual(
+            [entry["compiled_module_sha256"]
+             for entry in payload["ancestry"]["grafted_from_also"]],
+            ["b" * 64, "8" * 64])
+
+    def test_declared_lists_of_different_lengths_are_refused(self):
+        for key, short, message in (
+            ("graft_from_source_sha256", "a" * 64, "read pairwise"),
+            ("graft_from_patch_bundle_sha256", "c" * 64, "read pairwise"),
+            ("graft_from_module_sha256", "b" * 64, "one module per"),
+        ):
+            self.write(**{**self.TWO, key: short})
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError, message):
+                self.create()
+
+    def test_malformed_declared_lists_are_refused(self):
+        for key in ("graft_from_source_sha256", "graft_from_module_sha256",
+                    "graft_from_patch_bundle_sha256"):
+            good = self.TWO[key]
+            for bad in (good + ",", "," + good, good.replace(",", ", "),
+                        good.replace(",", ";"), good.replace(",", ",,"),
+                        good[:64] + "," + "Z" * 64):
+                self.write(**{**self.TWO, key: bad})
+                with self.assertRaisesRegex(checkpoint_lineage.LineageError, key):
+                    self.create()
+
+    def test_a_build_declared_twice_is_refused(self):
+        self.write(**{**self.TWO,
+                      "graft_from_source_sha256": "a" * 64 + "," + "a" * 64,
+                      "graft_from_patch_bundle_sha256": "c" * 64 + "," + "c" * 64})
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "same old build twice"):
+            self.create()
+        # Same source under two patch bundles is two builds.
+        self.write(**{**self.TWO,
+                      "graft_from_source_sha256": "a" * 64 + "," + "a" * 64})
+        self.create()
+
+    def test_any_declared_build_equal_to_the_new_build_is_a_refused_no_op(self):
+        for position in (0, 1):
+            sources = ["a" * 64, "d" * 64]
+            patches = ["c" * 64, "f" * 64]
+            sources[position], patches[position] = "1" * 64, "3" * 64
+            self.write(**{**self.TWO,
+                          "graft_from_source_sha256": ",".join(sources),
+                          "graft_from_patch_bundle_sha256": ",".join(patches)})
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "no-op.*rehost"):
+                self.create()
+
+    def test_validate_refuses_malformed_grafted_from_also_in_the_sidecar(self):
+        self.write(**self.TWO)
+        payload = self.create()
+        sidecar = self.root / "g.lineage.json"
+
+        def check(mutate, message):
+            broken = json.loads(json.dumps(payload))
+            mutate(broken)
+            checkpoint_lineage.write_lineage(sidecar, broken, replace=True)
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        message):
+                checkpoint_lineage.validate_lineage(
+                    self.checkpoint, sidecar, expected=self.expected())
+
+        check(lambda b: b["ancestry"].__setitem__("grafted_from_also", {}),
+              "non-empty list")
+        check(lambda b: b["ancestry"].__setitem__("grafted_from_also", []),
+              "non-empty list")
+        check(lambda b: b["ancestry"].__setitem__("grafted_from_also", ["x"]),
+              r"grafted_from_also\[0\] must be an object")
+        check(lambda b: b["ancestry"]["grafted_from_also"][0].pop("source_sha256"),
+              "exactly")
+        check(lambda b: b["ancestry"]["grafted_from_also"][0].__setitem__(
+            "reason", "D242"), "exactly")
+        check(lambda b: b["ancestry"]["grafted_from_also"][0].__setitem__(
+            "compiled_module_sha256", "Z" * 64),
+            r"grafted_from_also\[0\].compiled_module_sha256")
+        # The first build again, or one listed twice.
+        check(lambda b: b["ancestry"]["grafted_from_also"][0].update(
+            source_sha256="a" * 64, puffer_patch_bundle_sha256="c" * 64),
+            "repeats an old build")
+        check(lambda b: b["ancestry"]["grafted_from_also"].append(
+            dict(b["ancestry"]["grafted_from_also"][0])), "repeats an old build")
+        check(lambda b: b["ancestry"].pop("grafted_from"),
+              "grafted_from_also requires ancestry.grafted_from")
+
     def test_validate_refuses_grafted_from_on_fresh_lineage(self):
         self.write(initialization="fresh", mode="native_fresh_v6_genesis",
                    warm_lineage_sha256="", pool_lineage_bundle_sha256="")
@@ -726,6 +889,118 @@ class GraftBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(checkpoint_lineage.LineageError,
                                     "old_source_sha256"):
             self.bridge([("warm", old)], old_source="A" * 64)
+
+    # --- more than one declared old build -----------------------------------
+    # Builds as (source, module, patch): FIRST = (a, b, c), SECOND = (d, e, f),
+    # this build = (1, 2, 3).
+    FIRST = ("a" * 64, "b" * 64, "c" * 64)
+    SECOND = ("d" * 64, "e" * 64, "f" * 64)
+
+    def two(self, sidecars, builds=None):
+        builds = builds or (self.FIRST, self.SECOND)
+        return self.bridge(
+            sidecars, old_source=",".join(build[0] for build in builds),
+            old_patch=",".join(build[2] for build in builds))
+
+    def test_one_pair_still_returns_one_bare_module(self):
+        old = self.payload(*self.FIRST)
+        result = self.bridge([("warm", old), ("bank0", old)])
+        self.assertEqual(result, "b" * 64)
+        self.assertNotIn(",", result)
+
+    def test_two_declared_builds_both_present_return_both_modules_in_order(self):
+        first, second = self.payload(*self.FIRST), self.payload(*self.SECOND)
+        new = self.payload(*(self.NEW[key] for key in (
+            "source_sha256", "compiled_module_sha256",
+            "puffer_patch_bundle_sha256")))
+        # The paired rung's shape: warm from the second old build, a pool
+        # holding the first old build's anchor and the second's rungs.
+        sidecars = [("warm", second), ("bank0", first), ("bank1", first),
+                    ("bank2", second), ("bank3", second)]
+        self.assertEqual(self.two(sidecars), "b" * 64 + "," + "e" * 64)
+        # Declared the other way round, the modules follow the declaration.
+        self.assertEqual(self.two(sidecars, (self.SECOND, self.FIRST)),
+                         "e" * 64 + "," + "b" * 64)
+        # A later rung on the third build: its own checkpoints join the two.
+        self.assertEqual(self.two([("warm", new), ("bank0", first),
+                                   ("bank1", second), ("bank2", second),
+                                   ("bank3", new)]),
+                         "b" * 64 + "," + "e" * 64)
+
+    def test_two_declared_one_absent_is_refused(self):
+        first = self.payload(*self.FIRST)
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError,
+                "no sidecar binds declared old build source dddddddddddd"):
+            self.two([("warm", first)] + [(f"bank{i}", first) for i in range(4)])
+        second = self.payload(*self.SECOND)
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError,
+                "no sidecar binds declared old build source aaaaaaaaaaaa"):
+            self.two([("warm", second), ("bank0", second)])
+
+    def test_an_undeclared_third_build_is_refused(self):
+        first, second = self.payload(*self.FIRST), self.payload(*self.SECOND)
+        third = self.payload("7" * 64, "8" * 64, "9" * 64)
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError,
+                "bank2 binds neither this build nor any of the 2 declared old builds"):
+            self.two([("warm", second), ("bank0", first), ("bank1", second),
+                      ("bank2", third), ("bank3", second)])
+        # A declared source under an undeclared patch bundle is undeclared too.
+        crossed = self.payload(self.FIRST[0], "8" * 64, self.SECOND[2])
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "bank0 binds neither"):
+            self.two([("warm", second), ("bank0", crossed), ("bank1", first)])
+
+    def test_mismatched_list_lengths_are_refused(self):
+        first, second = self.payload(*self.FIRST), self.payload(*self.SECOND)
+        sidecars = [("warm", second), ("bank0", first)]
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "lists 2 old build.*lists 1.*pairwise"):
+            self.bridge(sidecars, old_source="a" * 64 + "," + "d" * 64,
+                        old_patch="c" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "lists 1 old build.*lists 2.*pairwise"):
+            self.bridge(sidecars, old_source="a" * 64,
+                        old_patch="c" * 64 + "," + "f" * 64)
+        for bad in ("a" * 64 + ",", "a" * 64 + ", " + "d" * 64):
+            with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                        "old_source_sha256"):
+                self.bridge(sidecars, old_source=bad,
+                            old_patch="c" * 64 + "," + "f" * 64)
+
+    def test_each_declared_build_must_share_one_module(self):
+        first, second = self.payload(*self.FIRST), self.payload(*self.SECOND)
+        second_rehosted = self.payload(self.SECOND[0], "9" * 64, self.SECOND[2])
+        with self.assertRaisesRegex(
+                checkpoint_lineage.LineageError,
+                "declared old build source dddddddddddd.*different compiled modules"):
+            self.two([("warm", second), ("bank0", first),
+                      ("bank1", second_rehosted)])
+        # Two builds with two different modules is the whole point, not a clash.
+        self.assertEqual(self.two([("warm", second), ("bank0", first)]),
+                         "b" * 64 + "," + "e" * 64)
+
+    def test_declaring_this_build_among_several_is_refused(self):
+        first = self.payload(*self.FIRST)
+        this = (self.NEW["source_sha256"], self.NEW["compiled_module_sha256"],
+                self.NEW["puffer_patch_bundle_sha256"])
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "nothing to graft.*rehost"):
+            self.two([("warm", first)], (self.FIRST, this))
+
+    def test_a_build_declared_twice_is_refused(self):
+        first = self.payload(*self.FIRST)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "same old build twice"):
+            self.two([("warm", first)], (self.FIRST, self.FIRST))
+
+    def test_several_declared_and_nothing_old_is_the_same_no_op(self):
+        new = self.payload("1" * 64, "2" * 64, "3" * 64)
+        with self.assertRaisesRegex(checkpoint_lineage.LineageError,
+                                    "no-op.*rehost"):
+            self.two([("warm", new), ("bank0", new)])
 
 
 class BridgeLineageTests(unittest.TestCase):

@@ -16,6 +16,11 @@
 # .graft_bridge -- the same rule the screen plan writer applies). GRAFT_REASON
 # (e.g. "D242") is required. The run manifest carries graft_from_* and
 # graft_reason so the published sidecar records ancestry.grafted_from.
+# A lineage that holds MORE THAN ONE old build declares them all: both
+# variables become comma-separated lists of the same length, read pairwise.
+# Each declared build must be bound by at least one sidecar, each build's
+# sidecars must share one module, and the sidecar records the further builds
+# as ancestry.grafted_from_also.
 # bridge-v4 is the reviewed warm start from an OUT-OF-LINEAGE raw blob (an
 # obs-v4/obs-v5-era checkpoint with NO sidecar; docs/audit-2026-08-20.md F2).
 # WARM is the raw blob and is never lineage-validated; instead the operator
@@ -211,13 +216,21 @@ GRAFT_FROM_SOURCE_SHA256="${GRAFT_FROM_SOURCE_SHA256:-}"
 GRAFT_FROM_PATCH_BUNDLE_SHA256="${GRAFT_FROM_PATCH_BUNDLE_SHA256:-}"
 GRAFT_REASON="${GRAFT_REASON:-}"
 if [ "$BOOTSTRAP_MODE" = "graft-v6" ]; then
+  # One old build, or several: comma-separated lists of the same length, read
+  # pairwise (checkpoint_lineage.parse_graft_declaration).
   for digest_name in GRAFT_FROM_SOURCE_SHA256 GRAFT_FROM_PATCH_BUNDLE_SHA256; do
     digest="${!digest_name}"
-    if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-      echo "$digest_name must be a lowercase SHA-256 digest for graft-v6" >&2
+    if [[ ! "$digest" =~ ^[0-9a-f]{64}(,[0-9a-f]{64})*$ ]]; then
+      echo "$digest_name must be a lowercase SHA-256 digest, or a comma-separated list of them, for graft-v6" >&2
       exit 1
     fi
   done
+  graft_source_commas="${GRAFT_FROM_SOURCE_SHA256//[^,]/}"
+  graft_patch_commas="${GRAFT_FROM_PATCH_BUNDLE_SHA256//[^,]/}"
+  if [ "${#graft_source_commas}" -ne "${#graft_patch_commas}" ]; then
+    echo "GRAFT_FROM_SOURCE_SHA256 lists $(( ${#graft_source_commas} + 1 )) old build(s) and GRAFT_FROM_PATCH_BUNDLE_SHA256 lists $(( ${#graft_patch_commas} + 1 )); the two are read pairwise and must have the same length" >&2
+    exit 1
+  fi
   if [ -z "${GRAFT_REASON// /}" ] || [ "${#GRAFT_REASON}" -gt 200 ]; then
     echo "GRAFT_REASON must be a non-empty string of at most 200 characters" >&2
     exit 1
