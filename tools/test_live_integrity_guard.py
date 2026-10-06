@@ -234,6 +234,50 @@ class LiveIntegrityGuardTests(unittest.TestCase):
                     "no complete machine integrity panel"):
                 guard.check_log(log, state, failure, now=281.0)
 
+    def test_league_winrate_keys_without_an_episode_are_not_a_registry_violation(self):
+        # Once one league game has ended, selfplay.py writes historical_winrate
+        # and historical_winrate_bank_<b> on every epoch. An epoch in which no
+        # episode finished then carries those keys and no registry. That killed
+        # chain 50 thirty seconds in: one game ended at epoch 2, none at 3 or 4.
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            log = root / "arm.log"
+            state = root / "guard-state.json"
+            failure = root / "guard-failure.json"
+            metadata = {
+                "_puffer_schema": 2,
+                "_puffer_agent_steps": 524288.0,
+                "_puffer_epoch": 3,
+                "elo": 0.4,
+                "historical_winrate": 1.0,
+                "historical_winrate_bank_0": 1.0,
+            }
+            log.write_text(
+                "PUFFER_ENV_JSON " + json.dumps(metadata) + "\n",
+                encoding="utf-8",
+            )
+            result = guard.check_log(log, state, failure, now=100.0)
+            self.assertEqual(result.total_panels, 0)
+            self.assertFalse(failure.exists())
+
+    def test_league_winrate_keys_do_not_excuse_an_aggregated_panel(self):
+        with tempfile.TemporaryDirectory() as root:
+            values = {key: 0.0 for key in guard.HARD_INTEGRITY_KEYS}
+            values.pop("illegal_frac")
+            values.update({
+                "_puffer_schema": 2,
+                "_puffer_agent_steps": 524288.0,
+                "elo": 0.4,
+                "historical_winrate": 1.0,
+                "historical_winrate_bank_0": 1.0,
+                "tds": 1.5,
+            })
+            text = "PUFFER_ENV_JSON " + json.dumps(values) + "\n"
+            with self.assertRaisesRegex(
+                    guard.IntegrityFailure,
+                    "missing hard-integrity keys"):
+                self.run_guard(root, text)
+
     def test_elo_does_not_excuse_a_panel_that_aggregated_an_episode(self):
         # The exemption is narrow: once any episode-aggregated key appears,
         # the full registry is mandatory even alongside elo.
