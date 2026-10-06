@@ -19,13 +19,22 @@ from pathlib import Path
 from typing import Any
 
 
-# Keys the trainer publishes under the `env/` namespace on every epoch even
-# when no episode has finished, so their presence does NOT imply the env
-# aggregated an episode. `elo` is written unconditionally by the self-play
-# league (vendor/PufferLib/pufferlib/selfplay.py, `flat_logs['env/elo']`),
-# unlike its `historical_winrate*` neighbours which are gated on hist_n > 0.
-# Only reachable in a pool run, which is why no genesis arm ever hit it.
-NON_EPISODE_PANEL_KEYS = frozenset({"elo"})
+# Keys the trainer publishes under the `env/` namespace without the env having
+# aggregated an episode in that panel, so their presence does NOT imply the
+# hard registry should be there. All of them come from the self-play league
+# (vendor/PufferLib/pufferlib/selfplay.py): `elo` is written on every epoch,
+# and `historical_winrate` / `historical_winrate_bank_<b>` are written on
+# every epoch once the league's cumulative game count is above zero. A rung
+# whose first game ends before its neighbours (one episode at epoch 2, none at
+# epochs 3 and 4) therefore emits panels that carry only these keys.
+NON_EPISODE_PANEL_KEYS = frozenset({"elo", "historical_winrate"})
+NON_EPISODE_PANEL_KEY_PREFIXES = ("historical_winrate_bank_",)
+
+
+def is_non_episode_key(key: str) -> bool:
+    return (key.startswith("_") or key in NON_EPISODE_PANEL_KEYS
+            or key.startswith(NON_EPISODE_PANEL_KEY_PREFIXES))
+
 
 HARD_INTEGRITY_KEYS = (
     "illegal_frac",
@@ -306,9 +315,7 @@ def check_log(
             # aggregated episode is present, the complete hard registry is
             # mandatory -- including `n`, so an env that published metrics
             # without the registry still fails closed.
-            if not any(
-                    not key.startswith("_") and key not in NON_EPISODE_PANEL_KEYS
-                    for key in panel):
+            if all(is_non_episode_key(key) for key in panel):
                 continue
             missing = [key for key in HARD_INTEGRITY_KEYS if key not in panel]
             if missing:
