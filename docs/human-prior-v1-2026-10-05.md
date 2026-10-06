@@ -463,8 +463,12 @@ D3. The shape of a team turn, and what is on offer in it.
 | humans (held-out, default subset) | 1,206 | 7.48 | 24.5% | 2.26 / 1.82 | 4.72 / 0.87 | 0.02 | 1.29 / 0.04 |
 | chain 41 self-play | 9,170 | 3.07 | 64.1% | 0.80 / 0.66 | 2.13 / 0.29 | 0.20 | 0.31 / 0.00 |
 
-Human turns are counted from the declarations present, so a turn cut short
-by a lockstep stop counts with the decisions it has: 7.48 is a floor.
+Human turns are counted from the declarations present. Re-seated spans in
+this subset are whole team turns (they closed equal to the replay); the last
+prefix span of a replay can be cut by the lockstep stop, so at most 60 of
+the 1,206 turns are short and 7.48 is a slight underestimate. The subset
+also leaves out every turn in which the alignment stopped, which may not be
+a random sample of turns.
 
 Blocks thrown from Block actions per team turn: humans 2.26 x 0.804 x 0.991
 = 1.80; chain 41 0.80 x 0.825 x 0.609 = 0.40. The 4.5-fold gap splits into
@@ -526,8 +530,11 @@ ending and block targets (0.90 to 0.96) and weak for movement.
 | Prior faithful to humans (prior / human in [0.80, 1.25]) | 0.86: yes | 0.95: yes |
 | Proceed | no | no |
 
-**Verdict: stop.** The rule's exact outcome is "gate B passes for Blitz but
-gate A does not", which is not "proceed" and is reported as stop. In words:
+**Verdict: stop.** The exact outcome is "gate B passes for Blitz, gate A
+does not". Section 0 named three outcomes and this is not one of them: I had
+not foreseen the prior asking for more of something that chain 41 already
+does more than humans on human states. It does not meet the conditions for
+"proceed", so I read it as stop. In words:
 
 - **Blocks:** the human-imitation net does not put more weight on Block
   declarations than chain 41 on chain 41's own states. It puts less (0.59
