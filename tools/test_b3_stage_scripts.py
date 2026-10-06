@@ -198,7 +198,7 @@ class B3RecipeTests(unittest.TestCase):
         self.assertEqual(
             sorted(set(b3) - set(long_run)),
             ["B3_CANARY_STAMP", "B3_CHAIN41_MARKER", "B3_IDENTITY_PASS",
-             "B3_POOL_HASH", "B3_RUNG_STAMP", "LONGRUN"])
+             "B3_POOL49_HASH", "B3_POOL_HASH", "B3_RUNG_STAMP", "LONGRUN"])
         self.assertEqual(b3["C"], "${B3_C:-/home/rache/bloodbowl-rl-b3-20261006}")
         self.assertEqual(b3["LONGRUN"],
                          "${B3_LONGRUN:-/home/rache/bloodbowl-rl-longrun-20261002}")
