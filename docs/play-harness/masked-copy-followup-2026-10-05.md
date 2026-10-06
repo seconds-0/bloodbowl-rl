@@ -134,13 +134,13 @@ turn that m1 adds, 58% end at once, 37% are short moves and 5% are blocks.
 Plain chain 41 against plain chain 41 with the sampling seed of one side
 shifted, 3,200 games: W/D/L 880/1382/938, decisive share 0.484, **decisive-Elo
 -11.1 [-25.4, 2.8]**. No seed has identical legs. The interval covers zero
-and is 28 Elo wide, the same width as the masked arms' intervals, so those
-intervals are an honest picture of the spread. Its behaviour differences are
-all near zero (activations a team turn 2.98 against 2.97, block targets 7.33
-against 7.32, touchdowns 0.73 against 0.75); two of seventeen rows have an
-interval that just excludes zero (possession, Blitz declared), which is what
-seventeen 95% intervals do. The both-m1 run is a second null in strength: +7.0
-[-7.7, 21.0].
+and is 28 Elo wide, about the width of the masked arms' intervals. One null
+does not validate their coverage; it is compatible with it. Its behaviour
+differences are all near zero (activations a team turn 2.98 against 2.97,
+block targets 7.33 against 7.32, touchdowns 0.73 against 0.75); two of
+seventeen rows have an interval that just excludes zero (possession, Blitz
+declared), which is compatible with sampling variation. The both-m1 run is a
+second null in strength: +7.0 [-7.7, 21.0].
 
 ## 3. Transfer of m1
 
@@ -172,7 +172,10 @@ The paired contrasts, m1 minus plain:
 
 Three things in the table besides the verdicts.
 
-- **Where there is a gain it is on defence.** With m1, chain 41 concedes
+- **Where there is a gain, the scores show it on the conceding side.** This
+  describes the totals; it does not isolate a mechanism, and the same engine
+  seed does not keep the dice aligned once two policies use them
+  differently. With m1, chain 41 concedes
   fewer touchdowns against the contact bot and the three chains (most
   against chain 47, 0.73 against 0.86, and chain 36, 0.67 against 0.79) and
   scores slightly fewer against
@@ -182,8 +185,7 @@ Three things in the table besides the verdicts.
   exam.** Against it m1 concedes the same (0.275 against 0.279), scores less
   (0.411 against 0.430) and draws more (0.54 of games against 0.52). The
   score-rate contrast is small and negative with an interval that just
-  excludes zero. There is little defence to gain against a bot that scores
-  0.28 a game.
+  excludes zero.
 - **Plain chain 41 loses to chain 47** here (-53 Elo); with m1 it is level
   (-10 [-24.5, 4.4]).
 
@@ -204,11 +206,11 @@ fired 0.16 times a game (m2 only).
 | activations ended at once | 0.002 | 0.209 |
 | engine steps per game | 987 | |
 
-This changes the first test's reading of m2. Alone, m2 was worse (-25.4);
-with m1 it costs nothing that can be measured: m1 alone was +32.5 [18.3,
-47.1] and m1 with m2 is +30.2, on different seeds. The forced first action
-is harmless once the copy is also made to go through the whole team. Why it
-hurts alone was not measured.
+This qualifies the first test's reading of m2. Alone, m2 was worse than
+plain (-25.4); with m1 the copy beats plain (+30.2), as m1 alone did (+32.5
+[18.3, 47.1]). Those two were measured on different seeds, so what m2 adds
+or costs on top of m1 is not resolved; it would take the two against each
+other on shared seeds. Why m2 hurts alone was not measured.
 
 ## 5. Both sides under m1
 
@@ -221,9 +223,9 @@ null control (nobody under it):
 | activations per team turn | 6.87 | 2.98 |
 | block targets chosen per game | 10.6 | 7.3 |
 | of which inside a Blitz | 1.28 | 1.19 |
-| turnovers per team turn | 0.420 | 0.318 |
+| turnovers per team turn | 0.420 | 0.317 |
 | touchdowns per game | 0.581 | 0.742 |
-| possession | 0.397 | 0.415 |
+| possession | 0.396 | 0.415 |
 | activations ended at once | 0.424 | 0.219 |
 | draw rate | 0.488 | 0.432 |
 | engine steps per game (decisions, both sides) | 1,202 | 695 |
@@ -258,10 +260,15 @@ at both ends):
 | mean change in distance from own end zone | +0.06 | +0.13 |
 
 These rows average all moved-only activations on each side, not the added
-ones alone. Solving for the added 1.54 a turn gives about 1.9 squares of net
-displacement and about 0.2 squares nearer the ball each: short adjustments,
-with no drift up or down the pitch. Activations that end the team turn in a
-turnover go from 0.27 to 0.37 a team turn.
+ones alone, and the added ones cannot be identified: m1 also changes what
+the other activations do. As a difference of aggregate sums per added
+moved-only activation, the figures are about 1.9 squares of net
+displacement, about 0.2 squares nearer the ball and no net movement up or
+down the pitch. That is consistent with short adjustments and does not
+establish it. The ball-distance mean counts an activation with the ball off
+the pitch at either end as zero change. Activations that end the team turn
+in a turnover go from 0.27 to 0.37 a team turn (a turnover produced by the
+END_TURN action itself, such as a Stalling roll, is not attributed).
 
 **Negative traits** (Bone Head, Really Stupid, Animal Savagery, Unchannelled
 Fury, Take Root, Bloodlust). The harness sees skills. It cannot tell a
@@ -279,36 +286,47 @@ difference between the two sides.
 | the team turn ended in a turnover with this activation as its last | 12.8% | 15.8% |
 | those turnovers per game | 1.05 | 0.96 |
 
-m1 adds about 2.1 negative-trait activations a game, 0.23 more failed rolls
-that leave a player Distracted or Rooted (a lost tackle zone until its next
-activation), and 0.09 more turn-ending turnovers at such a player. Failed
-Animal Savagery, Unchannelled Fury and Bloodlust rolls show only as
-engine-ended activations or turnovers and are not counted as failures here.
+m1 adds about 2.1 negative-trait activations a game, 0.23 more activations
+a game from which the player comes out newly Distracted (no tackle zone
+until its next activation) or newly Rooted (cannot move until the drive ends
+or it goes down), and 0.09 more turn-ending turnovers at such a player. The
+failure count is a lower bound: a player who was already Distracted and
+fails again is not counted (the flag is compared with its value before the
+activation), a drive reset before the activation is closed can clear the
+flag, and failed Animal Savagery, Unchannelled Fury and Bloodlust rolls show
+only as engine-ended activations or turnovers.
 
 ## 7. Would I spend a training rung on an env-side m1 rule?
 
-By the rule fixed in section 0 the transfer result is **mixed**, not a clean
-yes: four contrasts better, the offense bot inconclusive and leaning
-negative. My answer is **yes, one paired rung, on three conditions**, because
-the one miss is the opponent against which there is the least to gain and
-the four hits include the only peer (chain 47).
+**The registered result is mixed**, not a clean yes: four contrasts better,
+the offense bot inconclusive and leaning negative. What follows is my
+judgement, separate from that result.
 
-1. **Re-register the gate for that rung before it starts.** m1 trades
-   touchdowns for fewer touchdowns conceded: with both sides under it,
-   scoring falls by a fifth, and against the offense bot the m1 copy scores
-   0.411 a game against 0.430. The exam's parent veto and floor are counts
-   of touchdowns scored against the offense bot. A rung trained and examined
-   under the rule can read Negative on that veto while being stronger head
-   to head. Decide in advance which reading governs.
+**Yes, one paired rung, on three conditions.** The four contrasts that are
+better include the only opponent at chain 41's level (chain 47), and the one
+that is not is small either way (-14.8 Elo, -0.012 in score rate).
+
+1. **Settle the gate for that rung before it starts.** With m1 the copy
+   scores 0.019 fewer touchdowns a game against the offense bot (0.411
+   against 0.430, both orientations pooled, on the harness), and with both
+   sides under the rule scoring falls by a fifth. The rig exam reads
+   touchdowns scored against the offense bot in named orientations and
+   seeds, with a margin of 0.02. I did not run the exam and the pooled
+   harness figure does not show which way it would read; it shows that a
+   rule which lowers scoring sits at the edge of that margin. Decide in
+   advance how the exam and the head-to-head result are weighed for a rung
+   trained under the rule.
 2. **Budget for longer games.** 1,202 decisions a game against 695 when both
-   sides play under the rule: a fixed step budget buys about 42% fewer
-   games, and a per-decision discount reaches less far into a turn.
+   sides play under the rule: by arithmetic a fixed step budget buys about
+   42% fewer games. What that does to throughput and to credit over a turn
+   under a per-decision discount has to be measured on the rig.
 3. **Watch the first thing that could go wrong:** 58% of what m1 adds is
    empty activations already. A policy trained under the rule, with a dense
    reward that pays nothing for the other players and charges blocks, may
-   learn to make all of it empty. The activation log added here (class
-   shares per team turn) is the meter; if empties per team turn climb toward
-   the whole of the added activations, the rule has bought nothing.
+   learn to make nearly all of it empty. The activation log added here
+   (class shares per team turn) is the meter, read next to match results:
+   an empty activation still clears Distracted, rolls traits and moves the
+   Stalling check, so "all empty" is not the same as "no effect".
 
 What this test does not say: what a policy trained under the rule does, how
 it does against a human, or anything about opponents outside chain 41's
@@ -327,3 +345,16 @@ lineage other than the two bots.
 - **All runs at commit `0f1032f`.** A 64-game slice of plain against plain on
   that code has the same action trail, score and log-probability sum in
   every game as the unmodified checkout at `b0099fb`.
+- **Codex, read-only, on the numbers:** no P1. Section 0 is unchanged since
+  its commit, the thresholds and the recommendation rule were applied as
+  registered and "mixed" is the right outcome; the paired contrast resamples
+  shared seeds correctly; all 13 pair rows equal the droplets' own
+  `tournament_stats` rows; the null is two identical checkpoints with
+  different sampling streams and no seed has identical legs; every
+  activation is filed once. Its findings, all taken in the text above: the
+  negative-trait failure count is a lower bound and Rooted was described
+  wrongly; m2's effect on top of m1 is unresolved, not zero; the "added
+  moves" figures are an aggregate decomposition; the exam claim is reduced
+  to what the harness shows; the ball-distance denominator and the END_TURN
+  turnover are named as limits of the log; two rounding errors in section 5
+  are corrected; one null does not validate interval coverage.
