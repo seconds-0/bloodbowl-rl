@@ -53,8 +53,8 @@ import time
 import numpy as np
 
 from . import engine as E
-from .policy import (NONE_TUPLE, PolicySeat, batched_forward, check_temperature,
-                     load_checkpoint)
+from .policy import (MASK_HELP, MASKS, NONE_TUPLE, MaskedPolicySeat, PolicySeat,
+                     batched_forward, check_masks, check_temperature, load_checkpoint)
 
 SCHEMA = "bbplay-tournament-game-v1"
 MANIFEST_SCHEMA = "bbplay-tournament-v1"
@@ -192,6 +192,11 @@ def new_behaviour():
     return {key: 0 for key in BEHAVIOUR_KEYS}
 
 
+def pair_masks(home, away, specs=None):
+    """(HOME masks, AWAY masks) from the player specs; None for an unmasked player."""
+    return tuple((specs or {}).get(name, {}).get("masks") or None for name in (home, away))
+
+
 class Match:
     """One natural match in flight: the engine, both seats, the action trail and
     every per-step contract check.
@@ -206,14 +211,24 @@ class Match:
     def __init__(self, home_policy, away_policy, engine_seed, mode="sample", episode=0,
                  max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
                  max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0),
-                 allow_decision_cap=False):
+                 allow_decision_cap=False, masks=(None, None)):
         modes = tuple(modes) if modes is not None else (mode, mode)
         temperatures = tuple(float(t) for t in temperatures)
+        self.masks = tuple(check_masks(m) for m in masks)
 
         def seat_for(policy, side):
             seed = sampling_seed(engine_seed, side, episode)
             if isinstance(policy, ScriptedBot):
+                if self.masks[side]:
+                    raise ValueError("a scripted bot takes no action mask")
                 return BotSeat(policy, side, seed=seed)
+            if self.masks[side]:
+                # A masked seat is the plain seat with a restricted support. An
+                # unmasked seat is built exactly as before.
+                if seat_factory is not PolicySeat:
+                    raise ValueError("action masks need the default seat factory")
+                return MaskedPolicySeat(policy, side, mode=modes[side], seed=seed,
+                                        temperature=temperatures[side], masks=self.masks[side])
             return seat_factory(policy, side, mode=modes[side], seed=seed,
                                 temperature=temperatures[side])
 
@@ -352,6 +367,11 @@ class Match:
                 team_turns=int(final.turns_completed[side]),
                 team_turns_holding_ball=int(final.turns_completed_held[side]),
                 turnovers=int(final.turnovers_completed[side]))
+        mask_stats = [None, None]
+        for side in (0, 1):
+            if self.masks[side]:
+                mask_stats[side] = {m: dict(v, mass=round(v["mass"], 4))
+                                    for m, v in seats[side].mask_stats.items()}
         return {
             "engine_seed": int(self.engine_seed), "episode": int(self.episode),
             "mode": modes[0] if modes[0] == modes[1] else "mixed",
@@ -371,13 +391,15 @@ class Match:
             "integrity": integrity, "action_trail_sha256": self.trail.hexdigest(),
             "final_digest": f"{eng.digest():016x}", "seconds": round(time.time() - self.t0, 3),
             "behaviour": self.behaviour,
+            "masks": [list(m) if m else None for m in self.masks],
+            "mask_stats": mask_stats,
         }
 
 
 def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
                max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
                max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0),
-               step_limit=None, allow_decision_cap=False):
+               step_limit=None, allow_decision_cap=False, masks=(None, None)):
     """One natural match between two players. Returns (record, seats).
 
     A player is a policy (seated through seat_factory) or a ScriptedBot (seated
@@ -395,7 +417,7 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
     match = Match(home_policy, away_policy, engine_seed, mode=mode, episode=episode,
                   max_decisions=max_decisions, lib=lib, seat_factory=seat_factory,
                   max_c_steps=max_c_steps, modes=modes, temperatures=temperatures,
-                  allow_decision_cap=allow_decision_cap)
+                  allow_decision_cap=allow_decision_cap, masks=masks)
     seats = match.seats
     try:
         while True:
@@ -441,7 +463,8 @@ def pair_game(policies, a, b, index, leg, seed0, mode="sample", lib=None,
     """
     home, away, seed, modes, temperatures = pair_seating(a, b, index, leg, seed0, mode, specs)
     record, _ = play_match(policies[home], policies[away], seed, lib=lib,
-                           seat_factory=seat_factory, modes=modes, temperatures=temperatures)
+                           seat_factory=seat_factory, modes=modes, temperatures=temperatures,
+                           masks=pair_masks(home, away, specs))
     return pair_record(a, b, index, leg, home, away, record)
 
 
@@ -499,7 +522,8 @@ class BatchedGames:
         slot.task, slot.home, slot.away = tuple(task), home, away
         slot.match = Match(self.policies[home], self.policies[away], seed, lib=self.lib,
                            seat_factory=self.seat_factory, modes=modes,
-                           temperatures=temperatures)
+                           temperatures=temperatures,
+                           masks=pair_masks(home, away, self.specs))
         slot.team, slot.inputs = None, None
         self.games.append(slot)
         self.current_task = None
@@ -638,16 +662,27 @@ def legacy_manifest_specs(old):
     return old
 
 
-def player_specs(names, mode, player_modes=None, temperatures=None, bots=None):
+def parse_masks(text):
+    """'m1,m3' -> ('m1', 'm3'); refuses unknown names and an empty list."""
+    masks = check_masks([m for m in text.split(",") if m])
+    if not masks:
+        raise ValueError(f"expected one or more of {list(MASKS)}, got {text!r}")
+    return masks
+
+
+def player_specs(names, mode, player_modes=None, temperatures=None, bots=None, masks=None):
     """Per-player specs. Checkpoints get {mode, temperature}; bots get {bot: kind}
-    and refuse mode or temperature overrides."""
+    and refuse mode, temperature or mask overrides. A masked checkpoint also gets
+    {masks: [...]}; an unmasked one carries no such key, so a run without masks
+    writes the manifest it always wrote."""
     player_modes, temperatures, bots = player_modes or {}, temperatures or {}, bots or {}
-    unknown = (set(player_modes) | set(temperatures) | set(bots)) - set(names)
+    masks = masks or {}
+    unknown = (set(player_modes) | set(temperatures) | set(bots) | set(masks)) - set(names)
     if unknown:
-        raise ValueError(f"mode/temperature/bot for unknown players {sorted(unknown)}")
-    tuned_bots = (set(player_modes) | set(temperatures)) & set(bots)
+        raise ValueError(f"mode/temperature/bot/mask for unknown players {sorted(unknown)}")
+    tuned_bots = (set(player_modes) | set(temperatures) | set(masks)) & set(bots)
     if tuned_bots:
-        raise ValueError(f"scripted bots take no mode or temperature: {sorted(tuned_bots)}")
+        raise ValueError(f"scripted bots take no mode, temperature or mask: {sorted(tuned_bots)}")
     specs = {}
     for name in names:
         if name in bots:
@@ -660,6 +695,8 @@ def player_specs(names, mode, player_modes=None, temperatures=None, bots=None):
         if m not in ("sample", "argmax"):
             raise ValueError(f"unknown mode {m!r} for {name}")
         specs[name] = {"mode": m, "temperature": check_temperature(temperatures.get(name, 1.0))}
+        if masks.get(name):
+            specs[name]["masks"] = list(check_masks(masks[name]))
     return specs
 
 
@@ -945,6 +982,11 @@ def main(argv=None):
                     help="repeatable; per-player sample|argmax override")
     ap.add_argument("--temperature", action="append", default=[], metavar="NAME=T",
                     help="repeatable; per-player policy temperature (logits / T), default 1.0")
+    ap.add_argument("--mask", action="append", default=[], metavar="NAME=M[,M]",
+                    help="repeatable; player NAME selects under action masks: "
+                         + "; ".join(f"{k} = {v}" for k, v in MASK_HELP.items())
+                         + ". Its policy is renormalized over the actions left. "
+                           "A diagnostic, never a registered gate")
     ap.add_argument("--kernel", default="native", choices=["native", "torch"])
     ap.add_argument("--workers", type=int, default=MAX_WORKERS)
     ap.add_argument("--games-per-worker", type=int, default=None, metavar="N",
@@ -987,7 +1029,8 @@ def main(argv=None):
         pairs = [parse_pair(p) for p in args.pair] or None
         specs = player_specs(names, args.mode,
                              parse_assignments(args.player_mode),
-                             parse_assignments(args.temperature, float), bots=bots)
+                             parse_assignments(args.temperature, float), bots=bots,
+                             masks=parse_assignments(args.mask, parse_masks))
         tasks = schedule(names, args.games_per_pair, args.seed0, pairs=pairs)
     except ValueError as exc:
         raise SystemExit(str(exc))
