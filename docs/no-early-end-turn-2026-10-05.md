@@ -334,12 +334,18 @@ with the shebang of the venv they came from. The long-run checkout's
 `#!/home/rache/bloodbowl-rl-qualification-candidate-10619e2/vendor/PufferLib/.venv/bin/python`, and that
 venv's editable finder points at the original checkout. The trainer does not go through that entrypoint
 (it runs `python tools/puffer_cuda_runtime.py`), but `eval_vs_contact_bot.sh` does. So the exam cells of
-the long-run campaign appear to have run the original checkout's `pufferlib` and compiled module, while
-each cell's manifest records the long-run module (`3d8e5f72...`), which it takes from the checkout's file
-and not from the import. Chain 42's training log has the long-run build's deciding-row telemetry 69,030
-times; its exam cell logs have it zero times. D407's identity evidence says the two builds play the same
-with the flag-free env, so the exam numbers are probably unaffected; the provenance is wrong. This was
-read from files on the rig, not reproduced by running anything.
+the long-run campaign ran the original checkout's `pufferlib` and, through it, the original compiled
+module, while each cell's manifest records the long-run module (`3d8e5f72...`). The manifest's hash does
+come from an import, but a different one: `implementation_identity` runs the checkout's own venv python
+with the vendor tree as cwd, which finds the long-run package. Evidence, all read-only: on the rig the
+entrypoint's interpreter resolves `pufferlib` to
+`/home/rache/bloodbowl-rl-qualification-candidate-10619e2/vendor/PufferLib/pufferlib/__init__.py`
+(`importlib.util.find_spec`, from `/`, nothing imported), where the long-run venv's own python resolves
+it to the long-run tree; and chain 42's training log has the long-run build's deciding-row telemetry
+69,030 times while its exam cell logs have it zero times. What would falsify it: an exam process shown to
+have imported the long-run `_C` (a `PYTHONPATH` or another import hook in the exam's environment). D407's
+identity evidence says the two builds play the same with the flag-free env, so the exam numbers are
+probably unaffected; the provenance record is wrong.
 
 For b3 the same thing would run the exam on a module that does not know the flag. So
 `make_b3_checkout.sh` repoints the shebangs as well and checks the import through both doors (the venv's
@@ -390,8 +396,8 @@ Add them to `CAMPAIGN_PLAN.json` as the README gives them (absolute `success` an
      `end_turn_removed` exactly 0.
    - flag on: a rollout trace of whole games (512 agents, 32 rollouts of 64 steps) and 24 epochs of rollout
      plus PPO at the full layout with the real pool. Both must show `end_turn_removed` above zero, the
-     forward skip routed to bank 4, zero hard-integrity counters and no out-of-support abort.
-     `truncated_episodes` is recorded and printed, not judged.
+     forward skip routed to bank 4, zero hard-integrity counters, no episode cut by the decision cap and
+     no out-of-support abort. (With the flag off, cut episodes are printed and recorded.)
    - every probe must have imported the b3 checkout's module, the drift check must pass, and the warm
      start, the two reference checkpoints and the pool copy must have their pinned sha256.
    It writes `runs/b3-identity-20261006/B3_IDENTITY_PASS.json` only if all of that held, exits non-zero
@@ -413,8 +419,10 @@ Add them to `CAMPAIGN_PLAN.json` as the README gives them (absolute `success` an
    `contract.ladder.no_early_end_turn` 1, `contract.graft.from_module_sha256` equal to
    `d63498f6...,3d8e5f72...`, the warm sha `b1830e23...`, learning rate 0.00028 and entropy 0.009.
 
-The canary refuses to train without the identity marker, and the rung without the identity marker and the
-canary's passing verdict. Put the DECISIONS entry number into `GRAFT_REASON` in `b3_common_env.sh` once it
+The canary refuses to train unless the identity marker is a pass for the build installed now, and the rung
+unless that holds and the canary passed under the rule on the build installed now. The supervisor only
+looks for the marker files, so after any rebuild of the b3 checkout the identity stage and the canary (a
+new stamp) are run again by hand or by resetting their stages; the wrappers are what refuse otherwise. Put the DECISIONS entry number into `GRAFT_REASON` in `b3_common_env.sh` once it
 exists.
 
 **The D244 regression gate can refuse the rung.** `launch_ladder_rung.sh` publishes no marker when the
@@ -517,7 +525,7 @@ runs from its own checkout; the tournament holds the mask equal. Still open:
    using a player while blocks and rushes are charged. The harness copy already ended 44% of its
    activations at once. A trained policy may learn to do that for every extra player, in which case the
    rung buys longer games and forced trait rolls and no play. Read "activations ended at once" first.
-3. **The long-run campaign's exam cells appear to have run the original checkout's module** (section 7.1).
+3. **The long-run campaign's exam cells ran the original checkout's module** (section 7.1).
    That is a provenance defect in chains 37 to 49's exam records whether or not b3 runs, and it wants its
    own entry and a decision on whether to fix that venv's shebangs between stages.
 4. **One supervisor means one halt.** A b3 stage that fails its attempts halts the long-run stages behind
@@ -545,6 +553,6 @@ runs from its own checkout; the tournament holds the mask equal. Still open:
 - The whole launch path with the knob and a two-pair graft on a real build: the canary is that check.
 - The supervisor driving a stage in another checkout: read from the code and tested with the supervisor's
   own functions, not run under systemd.
-- That the long-run exam cells ran the original module: inferred from the shebang, the finder and the
-  missing telemetry in the exam logs.
+- That the long-run exam cells ran the original module: shown by resolving the import on the rig and by
+  the missing telemetry in the exam logs, not by capturing `_C.__file__` in an exam process.
 - Whether the play harness accepts a sidecar with `grafted_from_also`. The pristine validator does.

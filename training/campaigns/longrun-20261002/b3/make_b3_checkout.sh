@@ -4,7 +4,8 @@
 # copied venv's entrypoint shebangs are repointed as well as its editable finder.
 #
 # It reads the source checkout and writes only under the new path. CPU only until the final import check,
-# which loads the compiled module once. Run it once; it refuses an existing target.
+# which loads the compiled module once. Run it once; it refuses an existing target, so after a failed run
+# remove the half-made target (rm -rf, the new path only) before running it again.
 #
 #   bash make_b3_checkout.sh [git ref]        default origin/feat/no-early-end-turn-20261005
 set -euo pipefail
@@ -25,7 +26,7 @@ echo "copying venv (7 GB)"; cp -a "$S/vendor/PufferLib/.venv" "$C2/vendor/Puffer
 V="$C2/vendor/PufferLib/.venv"
 SITE="$V/lib/python3.11/site-packages"
 F="$SITE/__editable___pufferlib_4_0_0_finder.py"
-grep -n "MAPPING: dict" "$F" | cut -c1-200
+grep -n "MAPPING: dict" "$F" | cut -c1-200 || true
 # The finder decides which pufferlib `python` imports; the shebangs decide which venv an ENTRYPOINT runs in.
 # cp -a keeps both pointing at the venv this one was copied from. The long-run checkout was made with the
 # finder repointed and the shebangs not, so its `puffer` entrypoint runs in the source checkout's venv.
@@ -41,7 +42,7 @@ grep -q "'pufferlib': '$C2/vendor/PufferLib/pufferlib'" "$F" || { echo "the edit
 PYD="$V/bin"
 export PUFFER_SKIP_SCRIPTED_BANK_FORWARD=1 BBE_DECIDING_ROW_TELEMETRY=1 CUDA_VISIBLE_DEVICES=0
 PATH="$PYD:$PATH" bash tools/install_puffer_env.sh > "$C2/runs/install_b3.log" 2>&1; echo "install rc=$?"
-grep -E "^applied|^reversed" "$C2/runs/install_b3.log" | tail -4
+grep -E "^applied|^reversed" "$C2/runs/install_b3.log" | tail -4 || true
 cat vendor/PufferLib/ocean/bloodbowl/.content_hash; echo
 ( cd vendor/PufferLib && PATH="$PYD:$PATH" nice -n 5 ./build.sh bloodbowl --float > "$C2/runs/build_b3.log" 2>&1 ); echo "build rc=$?"
 PATH="$PYD:$PATH" bash tools/install_puffer_env.sh --check 2>&1 | tail -3

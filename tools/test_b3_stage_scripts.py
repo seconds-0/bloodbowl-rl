@@ -393,6 +393,8 @@ if mode == "old-module-panel" and flag_on:
     env = {"n": 300.0}
 if mode == "truncated" and kind == "trace":
     env["truncated_episodes"] = 0.25
+if mode == "truncated-flag-off" and kind == "identity":
+    env["truncated_episodes"] = 0.25
 payload = {
     "identity": {"module_sha256": "f" * 64 if mode == f"foreign-module-{kind}"
                  else os.environ["STUB_MODULE_SHA"]},
@@ -429,14 +431,28 @@ class WrapperTests(FakeCheckouts):
                     for line in (self.c / "chain_stage.env").read_text().splitlines()
                     if "=" in line)
 
-    def pass_identity(self):
+    def pass_identity(self, **over):
         self.out.mkdir(parents=True, exist_ok=True)
-        (self.out / "B3_IDENTITY_PASS.json").write_text("{}")
+        marker = {"pass": True, "reference_pinned": True, "source_sha256": "7" * 64,
+                  "compiled_module_sha256": sha(self.module)}
+        marker.update(over)
+        (self.out / "B3_IDENTITY_PASS.json").write_text(json.dumps(marker))
 
-    def pass_canary(self):
+    def pass_canary(self, rule=1, verdict_pass=True, **built):
         run = self.c / "runs/ladder-d0-canary54-noearlyend-from41-s42-20261006"
-        run.mkdir(parents=True)
-        (run / "EXAM_VERDICT_PASS.json").write_text("{}")
+        run.mkdir(parents=True, exist_ok=True)
+        lineage = run / "final.bin.lineage.json"
+        implementation = {"source_sha256": "7" * 64,
+                          "compiled_module_sha256": sha(self.module)}
+        implementation.update(built)
+        lineage.write_text(json.dumps({"implementation": implementation}))
+        record = {"checkpoint_sha256": "c" * 64}
+        if rule:
+            record["no_early_end_turn"] = 1
+        (run / "LADDER_RUNG_COMPLETE.json").write_text(json.dumps(
+            {**record, "checkpoint_lineage": str(lineage)}))
+        (run / "EXAM_VERDICT_PASS.json").write_text(json.dumps(
+            {**record, "pass": verdict_pass}))
 
     def check_common(self, handed):
         marker = (self.longrun / "runs/ladder-d0-r0chain41-cont40-rr1-20261003"
@@ -490,21 +506,53 @@ class WrapperTests(FakeCheckouts):
                            and key not in ("_", "SHLVL", "BASH_EXECUTION_STRING"))
         self.assertEqual(differing, ["STAMP", "STEPS"])
 
+    def refused(self, name, message):
+        result = self.run_script(name)
+        self.assertEqual(result.returncode, 2, (name, result.stdout))
+        self.assertIn(message, result.stdout, name)
+        self.assertFalse((self.c / "chain_stage.env").exists(), name)
+
     def test_nothing_trains_before_the_gates_before_it_have_passed(self):
         for name in ("b3_canary54.sh", "b3_chain54.sh"):
-            result = self.run_script(name)
-            self.assertEqual(result.returncode, 2, (name, result.stdout))
-            self.assertIn("no identity pass marker", result.stdout, name)
-        self.assertFalse((self.c / "chain_stage.env").exists())
+            self.refused(name, "no usable identity pass marker")
+            self.refused(name, "the identity stage has not passed on the installed build")
         self.pass_identity()
-        result = self.run_script("b3_chain54.sh")
-        self.assertEqual(result.returncode, 2, result.stdout)
-        self.assertIn("the canary has no passing verdict", result.stdout)
-        self.assertFalse((self.c / "chain_stage.env").exists())
+        self.refused("b3_chain54.sh", "the canary has no usable passing verdict")
+        self.refused("b3_chain54.sh", "the canary has not passed on the installed build")
         # A result written under the unit-test overrides is not the marker.
         (self.out / "B3_IDENTITY_PASS.json").unlink()
-        (self.out / "B3_IDENTITY_PASS.unpinned.json").write_text("{}")
-        self.assertEqual(self.run_script("b3_canary54.sh").returncode, 2)
+        (self.out / "B3_IDENTITY_PASS.unpinned.json").write_text(json.dumps(
+            {"pass": True, "reference_pinned": False}))
+        self.refused("b3_canary54.sh", "no usable identity pass marker")
+
+    def test_a_marker_file_is_not_a_gate_by_existing(self):
+        # The supervisor only looks for the files. After a rebuild they are
+        # still there, and the wrappers must not train on them.
+        for marker, message in (
+            ({"pass": False}, "is not a pass against the pinned digests"),
+            ({"reference_pinned": False}, "is not a pass against the pinned digests"),
+            ({"compiled_module_sha256": "e" * 64}, "the installed build is source"),
+            ({"source_sha256": "e" * 64}, "the installed build is source"),
+        ):
+            self.pass_identity(**marker)
+            for name in ("b3_canary54.sh", "b3_chain54.sh"):
+                self.refused(name, message)
+        self.pass_identity()
+        for canary, message in (
+            ({"compiled_module_sha256": "e" * 64}, "the canary under"),
+            ({"source_sha256": "e" * 64}, "the canary under"),
+            ({"rule": 0}, "did not pass under no_early_end_turn"),
+            ({"verdict_pass": False}, "did not pass under no_early_end_turn"),
+        ):
+            self.pass_canary(**canary)
+            self.refused("b3_chain54.sh", message)
+        # The rebuild itself: both markers were good until the module changed.
+        self.pass_canary()
+        self.assertEqual(self.run_script("b3_chain54.sh").returncode, 0)
+        (self.c / "chain_stage.env").unlink()
+        self.module.write_bytes(b"rebuilt module\n")
+        self.refused("b3_canary54.sh", "Run b3_identity.sh on this build")
+        self.refused("b3_chain54.sh", "Run b3_identity.sh on this build")
 
     def test_a_plan_only_pass_may_run_before_the_gates(self):
         for name in ("b3_canary54.sh", "b3_chain54.sh"):
@@ -579,6 +627,7 @@ class IdentityStageTests(FakeCheckouts):
             ("foreign-module-trace", "trace-flag-on: the probe imported module"),
             ("unrouted-trace", "trace-flag-on: the scripted-bank forward skip is not routed"),
             ("integrity-ppo", "smoke-flag-on: hard-integrity counters are not all zero"),
+            ("truncated", "trace-flag-on: truncated_episodes is 0.25 with the flag on"),
             ("abort-message", "smoke-flag-on: the env aborted on a tuple outside exact joint support"),
             ("crash-identity", "replicate-c42: probe exit status 9"),
             ("crash-trace", "trace-flag-on: probe exit status 9"),
@@ -597,12 +646,13 @@ class IdentityStageTests(FakeCheckouts):
                 with self.gpu_lock.open("a") as probe:
                     fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
-    def test_truncated_episodes_are_reported_and_recorded_not_judged(self):
-        result = self.identity(STUB_MODE="truncated")
+    def test_cut_episodes_with_the_flag_off_are_reported_and_recorded_not_judged(self):
+        # Chain 42's own play: the byte-equal weights settle that run.
+        result = self.identity(STUB_MODE="truncated-flag-off")
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("NOTE: trace-flag-on: truncated_episodes is 0.25", result.stdout)
+        self.assertIn("NOTE: replicate-c42: truncated_episodes is 0.25", result.stdout)
         marker = json.loads((self.out / self.PASS).read_text())
-        self.assertEqual(marker["checks"]["flag_on_trace"]["truncated_episodes"], 0.25)
+        self.assertEqual(marker["checks"]["flag_off_identity"]["truncated_episodes"], 0.25)
 
     def test_a_failure_is_retried_in_a_new_attempt_directory(self):
         self.assert_failed(self.identity(STUB_MODE="flag-ignored"), "did not apply the rule")
@@ -706,6 +756,14 @@ class CheckoutScriptTests(unittest.TestCase):
         ):
             self.assertIn(step, text, step)
         self.assertLess(text.index("cp -a"), text.index("tools/install_puffer_env.sh >"))
+        # Under `set -euo pipefail` a grep with nothing to show must not end
+        # the script: an installer that had nothing left to apply prints no
+        # "applied" line.
+        self.assertIn('grep -E "^applied|^reversed" "$C2/runs/install_b3.log" | tail -4 || true',
+                      text)
+        for line in text.splitlines():
+            if line.lstrip().startswith("grep ") and "|" in line and "-q" not in line:
+                self.assertTrue(line.rstrip().endswith("|| true"), line)
         self.assertLess(text.index("./build.sh bloodbowl --float"),
                         text.index("install_puffer_env.sh --check"))
         self.assertIn("/home/rache/bloodbowl-rl-b3-20261006", text)

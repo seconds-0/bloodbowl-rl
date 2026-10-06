@@ -17,7 +17,9 @@ leave the long-run checkout alone. Background, evidence and the full runbook:
 1. Copy this directory to `/home/rache/longrun/b3/` (the stages source `b3_common_env.sh` from their own
    directory, so keep the files together).
 2. `bash /home/rache/longrun/b3/make_b3_checkout.sh`. CPU work plus one module import; it writes only under
-   the new path. Write down the source digest and module sha256 it prints.
+   the new path. Write down the source digest and module sha256 it prints. If it fails part way, remove the
+   half-made `/home/rache/bloodbowl-rl-b3-20261006` before running it again (it refuses an existing
+   target).
 3. Add the three stages to the campaign plan, in this order, after the last stage that must run whatever
    happens to b3 (a stage that exhausts its attempts halts the whole campaign, and a halt is sticky):
 
@@ -54,12 +56,17 @@ supervisor paused.
   venv's `puffer` entrypoint runs in this checkout's venv; the warm start, chain 42's two reference
   checkpoints and the pool copy have their pinned sha256; the flag-off run reproduces both reference files
   byte for byte with `end_turn_removed` exactly 0; both flag-on runs show `end_turn_removed` above zero; the
-  forward skip is routed to bank 4; hard-integrity counters are zero; no out-of-support abort; and every
-  probe imported this checkout's compiled module. `truncated_episodes` is recorded in the marker and
-  printed when it is not zero, not judged. A relaunch after a pass
+  forward skip is routed to bank 4; hard-integrity counters are zero; no flag-on episode was cut by the
+  decision cap; no out-of-support abort; and every probe imported this checkout's compiled module. With the
+  flag off, cut episodes are printed and recorded, not judged (the byte-equal weights settle that run). A relaunch after a pass
   exits 0 at once. A pass marker for a different build than the installed one exits 4.
-- `b3_canary54.sh` refuses to train without the identity pass marker.
-- `b3_chain54.sh` refuses to train without the identity pass marker and the canary's passing verdict.
+- `b3_canary54.sh` refuses to train unless the identity pass marker is a pass against the pinned digests
+  for the build installed now (source digest and module sha256).
+- `b3_chain54.sh` refuses to train unless that holds and the canary passed under the rule on the build
+  installed now (read from the canary checkpoint's lineage sidecar).
+- So after any rebuild of the b3 checkout: move `B3_IDENTITY_PASS.json` away, run `b3_identity.sh`
+  again, and run the canary again under a new stamp. The supervisor only looks for the files; the wrappers
+  are what notice a rebuild.
 - `PLAN_ONLY=1` is allowed through both guards: it trains nothing.
 
 ## Read before launching the rung

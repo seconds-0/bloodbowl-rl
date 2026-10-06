@@ -4,7 +4,7 @@
 set -uo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/b3_common_env.sh"
 # A plan-only pass trains nothing, so it may run before the gates below are met.
-[ "${PLAN_ONLY:-0}" = "1" ] || [ -f "$B3_IDENTITY_PASS" ] || { echo "b3_canary54: no identity pass marker ($B3_IDENTITY_PASS); run b3_identity.sh first" >&2; exit 2; }
+[ "${PLAN_ONLY:-0}" = "1" ] || b3_identity_holds || { echo "b3_canary54: the identity stage has not passed on the installed build; not training" >&2; exit 2; }
 export SEED=42 STAMP="$B3_CANARY_STAMP"
 export STEPS=50000000
 export PREV_COMPLETE="$B3_CHAIN41_MARKER"

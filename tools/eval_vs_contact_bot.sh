@@ -80,8 +80,8 @@ PYBIN="$ROOT/vendor/PufferLib/.venv/bin/python"
 # The trainer below runs under the interpreter named in the entrypoint's
 # shebang, not under $PYBIN. A venv made with `cp -a` keeps the shebangs of
 # the venv it was copied from, and that interpreter imports the OTHER
-# checkout's pufferlib and compiled env while the manifest records this
-# checkout's module. Under the rule that would run the exam on a module that
+# checkout's pufferlib and compiled env while the manifest records the module
+# this checkout's own python imports. Under the rule that would run the exam on a module that
 # may not know the flag, so it is refused; otherwise it is reported and the
 # exam runs as it always did.
 ENTRY_INTERPRETER="$(head -n 1 "$PUFFER_BIN" | sed -n 's/^#![[:space:]]*//p')"

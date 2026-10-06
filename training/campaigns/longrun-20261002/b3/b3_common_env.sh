@@ -26,3 +26,71 @@ export B3_CHAIN41_MARKER="$LONGRUN/runs/ladder-d0-r0chain41-cont40-rr1-20261003/
 export B3_POOL_HASH=cc9b201e619aab3dedb2577eeac273a3b70a346a5e87d30fa9ab432c068d3be6
 export B3_CANARY_STAMP=canary54-noearlyend-from41-s42-20261006
 export B3_RUNG_STAMP=r0chain54-noearlyend-from41-s42-20261006
+
+# The build the stages are about to use: the installed env source digest and the compiled module's sha256.
+# Prints "<source> <module>", or fails.
+b3_current_build() {
+  local module source
+  module="$(ls "$C"/vendor/PufferLib/pufferlib/_C*.so 2>/dev/null)" || return 1
+  [ "$(printf '%s\n' "$module" | wc -l)" -eq 1 ] || return 1
+  source="$(cat "$C/vendor/PufferLib/ocean/bloodbowl/.content_hash" 2>/dev/null)" || return 1
+  printf '%s %s\n' "$source" "$(sha256sum "$module" | awk '{print $1}')"
+}
+
+# A marker file is not a gate by existing. The identity pass must be for the build that is installed NOW:
+# a rebuild after it passed leaves the file behind, and the supervisor, which only looks for the file,
+# would not run the identity stage again.
+b3_identity_holds() {
+  local build
+  build="$(b3_current_build)" || { echo "cannot read the installed build under $C" >&2; return 1; }
+  python3 - "$B3_IDENTITY_PASS" $build <<'PY'
+import json, sys
+path, source, module = sys.argv[1:]
+try:
+    marker = json.load(open(path, encoding="utf-8"))
+except (OSError, ValueError) as exc:
+    print(f"no usable identity pass marker ({path}): {exc}; run b3_identity.sh first", file=sys.stderr)
+    raise SystemExit(1)
+if marker.get("pass") is not True or marker.get("reference_pinned") is not True:
+    print(f"{path} is not a pass against the pinned digests", file=sys.stderr)
+    raise SystemExit(1)
+if marker.get("source_sha256") != source or marker.get("compiled_module_sha256") != module:
+    print(f"{path} passed build source {marker.get('source_sha256')} module "
+          f"{marker.get('compiled_module_sha256')}; the installed build is source {source} module "
+          f"{module}. Run b3_identity.sh on this build.", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+# The canary must have passed on the installed build too: its accepted checkpoint's lineage sidecar binds
+# the build that produced it.
+b3_canary_holds() {
+  local build run
+  build="$(b3_current_build)" || { echo "cannot read the installed build under $C" >&2; return 1; }
+  run="$C/runs/ladder-d${RUNG}-${B3_CANARY_STAMP}"
+  python3 - "$run" $build <<'PY'
+import json, sys
+run, source, module = sys.argv[1:]
+try:
+    verdict = json.load(open(run + "/EXAM_VERDICT_PASS.json", encoding="utf-8"))
+    marker = json.load(open(run + "/LADDER_RUNG_COMPLETE.json", encoding="utf-8"))
+    lineage = json.load(open(marker["checkpoint_lineage"], encoding="utf-8"))
+    built = lineage["implementation"]
+except (OSError, ValueError, KeyError, TypeError) as exc:
+    print(f"the canary has no usable passing verdict under {run}: {exc!r}; run b3_canary54.sh first",
+          file=sys.stderr)
+    raise SystemExit(1)
+if verdict.get("pass") is not True or verdict.get("no_early_end_turn") != 1 \
+        or marker.get("no_early_end_turn") != 1:
+    print(f"the canary under {run} did not pass under no_early_end_turn", file=sys.stderr)
+    raise SystemExit(1)
+if verdict.get("checkpoint_sha256") != marker.get("checkpoint_sha256"):
+    print(f"the canary's verdict and rung marker under {run} name different checkpoints", file=sys.stderr)
+    raise SystemExit(1)
+if built.get("source_sha256") != source or built.get("compiled_module_sha256") != module:
+    print(f"the canary under {run} ran on build source {built.get('source_sha256')} module "
+          f"{built.get('compiled_module_sha256')}; the installed build is source {source} module "
+          f"{module}. Run the canary on this build (a new stamp).", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
