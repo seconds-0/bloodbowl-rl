@@ -320,7 +320,7 @@ esac
 [ -z "${LADDER_REPLAY_RATIO:-}" ] || \
   echo "  update replay_ratio=$LADDER_REPLAY_RATIO gradient_steps_per_epoch=$REPLAY_STEPS_PER_EPOCH (batch $SCREEN_BATCH / minibatch $SCREEN_MINIBATCH)"
 [ "${LADDER_NO_EARLY_END_TURN:-}" != "1" ] || \
-  echo "  rule no_early_end_turn=1 (training restriction on policy seats; not a Blood Bowl rule)"
+  echo "  rule no_early_end_turn=1 (training restriction on the learner's seats; not a Blood Bowl rule)"
 export POOL="$POOL_OUT/pool"
 export DEADLINE_HOURS="${DEADLINE_HOURS:-40}"
 exec bash tools/launch_ladder_rung.sh

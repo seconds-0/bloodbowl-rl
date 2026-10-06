@@ -397,7 +397,7 @@ log "recipe: rung=$RUNG reset_pct=$RESET_PCT seed=$SEED steps=$STEPS arm=$LADDER
 log "recipe: lr_scale=$LADDER_CHAIN_LR_SCALE ent_scale=$LADDER_CHAIN_ENT_SCALE gamma=$LADDER_GAMMA gae_lambda=$LADDER_GAE_LAMBDA replay_ratio=$LADDER_REPLAY_RATIO frozen_bank_pct=$FROZEN_BANK_PCT bot_tag=$SCRIPTED_BANK_TAG bot_type=$SCRIPTED_BOT_TYPE"
 log "build flags: PUFFER_SKIP_SCRIPTED_BANK_FORWARD=${PUFFER_SKIP_SCRIPTED_BANK_FORWARD:-unset} BBE_DECIDING_ROW_TELEMETRY=${BBE_DECIDING_ROW_TELEMETRY:-unset}"
 [ "$NO_EARLY_END_TURN_SEEN" != "1" ] || \
-  log "rule: no_early_end_turn=1 for the rung and for its exam (training restriction on policy seats; not a Blood Bowl rule)"
+  log "rule: no_early_end_turn=1 for the rung and for its exam (training restriction on the learner's seats; not a Blood Bowl rule)"
 log "exam: seeds=${SEED_LIST[*]} rule=$EXAM_RULE ${VERDICT_RULE_ARGS[*]:2}"
 
 terminal_checks

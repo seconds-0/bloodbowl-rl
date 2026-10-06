@@ -114,7 +114,7 @@ LADDER_GAE_LAMBDA="${LADDER_GAE_LAMBDA:-}"
 # contract.ladder.
 LADDER_REPLAY_RATIO="${LADDER_REPLAY_RATIO:-}"
 # ladder-rung / graft / bridge only: train the rung under the env-layer
-# restriction no_early_end_turn (a policy seat cannot choose END_TURN while it
+# restriction no_early_end_turn (a learner seat cannot choose END_TURN while it
 # has a player to activate; docs/no-early-end-turn-2026-10-05.md). Not a Blood
 # Bowl rule. Unset or 0 keeps the fixed contract and publishes the same
 # SCREEN_MANIFEST as before the knob existed; 1 is recorded in contract.ladder

@@ -52,7 +52,7 @@
 #   SCRIPTED_BOT_TYPE=0 0 = contact bot, 1 = offense bot (with SCRIPTED_BANK_TAG)
 #   LADDER_NO_EARLY_END_TURN=1  train under the env-layer restriction
 #                       no_early_end_turn (docs/no-early-end-turn-2026-10-05.md):
-#                       a policy seat cannot choose END_TURN while it has a
+#                       a learner seat cannot choose END_TURN while it has a
 #                       player to activate. Not a Blood Bowl rule. Unset or 0 =
 #                       off, and then the trainer command and the run manifest
 #                       are exactly what they were before the knob existed.
@@ -929,7 +929,7 @@ echo "native_precision_bytes=$precision total_agents=$TOTAL_AGENTS buffers=$NUM_
 echo "lr=$LR ent_coef=$ENT_COEF gamma=$GAMMA gae_lambda=$GAE_LAMBDA replay_ratio=$REPLAY_RATIO log=$LOG"
 echo "scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_BOT_TYPE"
 [ "$LADDER_NO_EARLY_END_TURN" != "1" ] || \
-  echo "no_early_end_turn=1 (env-layer training restriction on every policy seat; not a Blood Bowl rule)"
+  echo "no_early_end_turn=1 (env-layer training restriction on the learner's seats; not a Blood Bowl rule)"
 [ "$BOOTSTRAP_MODE" != "graft-v6" ] || \
   echo "graft_from source_sha256=$GRAFT_FROM_SOURCE_SHA256 patch_bundle_sha256=$GRAFT_FROM_PATCH_BUNDLE_SHA256 module_sha256=$GRAFT_FROM_MODULE_SHA256 warm_lineage_sha256=$WARM_LINEAGE_HASH reason=$GRAFT_REASON"
 [ "$BOOTSTRAP_MODE" != "bridge-v4" ] || \

@@ -48,7 +48,7 @@
 #     not whole, and, when set, recorded in LADDER_RUNG_COMPLETE.json from the
 #     run manifest the trainer launched with
 #   LADDER_NO_EARLY_END_TURN (default unset = off) -- 1 trains the rung under
-#     the env-layer restriction no_early_end_turn (a policy seat cannot choose
+#     the env-layer restriction no_early_end_turn (a learner seat cannot choose
 #     END_TURN while it has a player to activate; not a Blood Bowl rule; see
 #     docs/no-early-end-turn-2026-10-05.md); forwarded to the screen and, when
 #     set, recorded in LADDER_RUNG_COMPLETE.json from the run manifest the
@@ -229,7 +229,7 @@ echo "  bot    scripted_bank_tag=$SCRIPTED_BANK_TAG scripted_bot_type=$SCRIPTED_
 [ -z "${LADDER_REPLAY_RATIO:-}" ] || \
   echo "  update replay_ratio=$LADDER_REPLAY_RATIO"
 [ "${LADDER_NO_EARLY_END_TURN:-}" != "1" ] || \
-  echo "  rule   no_early_end_turn=1 (training restriction on policy seats; not a Blood Bowl rule)"
+  echo "  rule   no_early_end_turn=1 (training restriction on the learner's seats; not a Blood Bowl rule)"
 echo "  profile $LADDER_PROFILE"
 [ "$LADDER_PROFILE" != "graft" ] || \
   echo "  graft  from source=$GRAFT_FROM_SOURCE_SHA256 patch=$GRAFT_FROM_PATCH_BUNDLE_SHA256 reason=$GRAFT_REASON"

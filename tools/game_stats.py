@@ -65,9 +65,10 @@ def no_early_end_turn_evidence_failure(metrics, declared):
     (docs/no-early-end-turn-2026-10-05.md). A launcher can pass it and a
     manifest can record it while the env ignores it: an env module compiled
     before the flag existed reads the kwarg as nothing. `end_turn_removed` is
-    the env's own count of policy-seat decisions per episode at which it had
+    the env's own count of learner-seat decisions per episode at which it had
     taken END_TURN out of the legal list: exactly 0 with the flag off, above
-    zero with it on. A panel without the metric comes from an env built before
+    zero with it on (the learner is on a seat of every training env and the
+    champion on a seat of every exam env). A panel without the metric comes from an env built before
     the flag, where the rule cannot have been on.
 
     Returns None when the panel agrees with `declared`, otherwise the reason.
