@@ -222,6 +222,16 @@ def registered(plan, require_schedule=False):
                                    or set(search) != set(SETTING_KEYS)):
             raise ValueError(f"plan: player {name}'s search setting needs exactly "
                              f"{list(SETTING_KEYS)}")
+        if search is not None:
+            # The statistics are read with these, so they must be what a seat takes.
+            scope, delta = search["scope"], search["delta"]
+            if not all(_int(search[key]) and search[key] >= 2 for key in ("k", "n")) or \
+                    (delta != "inf" and (not _real(delta) or delta < 0)) or \
+                    not isinstance(scope, list) or not scope or \
+                    not all(isinstance(c, str) for c in scope) or len(set(scope)) != len(scope):
+                raise ValueError(f"plan: player {name}'s search setting needs k and n as "
+                                 "integers >= 2, delta as a number >= 0 or \"inf\", and "
+                                 "scope as a list of decision classes")
         masks = spec.get("masks") or []
         if not isinstance(masks, list) or not all(isinstance(m, str) for m in masks) or \
                 len(set(masks)) != len(masks):
@@ -356,36 +366,52 @@ def _stat_problems(stats, setting, c_steps):
     out = []
     scope = list(setting["scope"])
     for key in ("in_scope", "searched", "deviations"):
-        if sorted(stats[key]) != sorted(scope):
-            out.append(f"{key} classes {sorted(stats[key])} != the setting's scope {scope}")
+        got = sorted(stats[key]) if isinstance(stats[key], dict) else stats[key]
+        if got != sorted(scope):
+            out.append(f"{key} classes {got} != the setting's scope {scope}")
     if out:
         return out
     numbers = [stats[k][c] for k in ("in_scope", "searched", "deviations") for c in scope] + [
         stats[k] for k in STAT_KEYS[5:]]
-    if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in numbers):
+    if any(not _int(v) or v < 0 for v in numbers):
         return ["a search count is not a non-negative integer"]
+    gains, types = stats["predicted_gains"], stats["deviation_types"]
+    if not isinstance(gains, list) or not all(_real(gain) for gain in gains):
+        return ["a predicted gain is not a finite number"]
+    if not isinstance(types, dict) or any(not _int(v) or v <= 0 for v in types.values()):
+        return [f"deviation types {types} are not counts above 0"]
     for c in scope:
         if not stats["in_scope"][c] >= stats["searched"][c] >= stats["deviations"][c]:
             out.append(f"class {c}: in scope {stats['in_scope'][c]}, searched "
                        f"{stats['searched'][c]}, deviations {stats['deviations'][c]}")
     searched = sum(stats["searched"].values())
     deviations = sum(stats["deviations"].values())
-    gains, types = stats["predicted_gains"], stats["deviation_types"]
-    if not isinstance(gains, list) or not all(_real(gain) for gain in gains):
-        return out + ["a predicted gain is not a finite number"]
+    if not searched:
+        out.append("searched no decision")
     if len(gains) != deviations or sum(types.values()) != deviations:
         out.append(f"{deviations} deviations, {len(gains)} predicted gains, "
                    f"{sum(types.values())} deviation types")
-    if any(key.split(": ")[0] not in scope for key in types):
+    # A deviation type is "<class>: <action drawn> -> <action played>".
+    by_class = collections.Counter()
+    for key, count in types.items():
+        by_class[key.split(": ")[0]] += count
+    if set(by_class) - set(scope):
         out.append(f"a deviation outside the scope: {sorted(types)}")
+    for c in scope:
+        if by_class[c] != stats["deviations"][c]:
+            out.append(f"class {c}: {stats['deviations'][c]} deviations, {by_class[c]} "
+                       "deviation types")
     if stats["error_rollouts"]:
         out.append(f"{stats['error_rollouts']} error rollout(s)")
     if stats["shadow_forwards"] != c_steps:
         out.append(f"{stats['shadow_forwards']} opponent-view forwards over {c_steps} steps")
+    # A searched decision rolls out between 2 and k candidates, n times each.
     k, n = setting["k"], setting["n"]
     if not 2 * n * searched <= stats["rollouts"] <= k * n * searched:
         out.append(f"{stats['rollouts']} rollouts for {searched} searched decisions at "
                    f"k {k}, n {n}")
+    if stats["rollouts"] % n:
+        out.append(f"{stats['rollouts']} rollouts are not a multiple of n {n}")
     if stats["rollout_steps"] < stats["rollouts"]:
         out.append(f"{stats['rollout_steps']} rollout steps for {stats['rollouts']} rollouts")
     if stats["cap_rejected_decisions"] > searched or \
@@ -393,6 +419,10 @@ def _stat_problems(stats, setting, c_steps):
             stats["cap_rejected_rollouts"] > stats["rollouts"]:
         out.append(f"cap rejections: {stats['cap_rejected_decisions']} decisions, "
                    f"{stats['cap_rejected_rollouts']} rollouts")
+    # A decision with a cap rejection plays the action drawn: it never deviates.
+    if deviations + stats["cap_rejected_decisions"] > searched:
+        out.append(f"{deviations} deviations and {stats['cap_rejected_decisions']} "
+                   f"cap-rejected decisions among {searched} searched")
     if stats["cutoff_rollouts"] > stats["rollouts"]:
         out.append(f"{stats['cutoff_rollouts']} cutoff rollouts of {stats['rollouts']}")
     if setting["delta"] == "inf":
@@ -647,8 +677,8 @@ def check_identity(games, plan):
 
     A game of the `search` pair matches when the `plain` pair has exactly one
     game on its seed and leg, every compared field is there in both and equal,
-    and the searching seat's statistics add up, searched at least one decision
-    and never deviated. Every game of the pair must match, and when the plan
+    and the searching seat's statistics add up: at least one searched decision,
+    rollouts for each, no deviation. Every game of the pair must match, and when the plan
     lists pairs, as many as it registers for the pair."""
     want, block = registered(plan)
     pairs, _ = scheduled(plan, want)
@@ -693,9 +723,6 @@ def check_identity(games, plan):
             wrong = _stat_problems(stats, want[name]["search"], game["c_steps"])
             if wrong:
                 problems.append(f"{where}: {wrong[0]}")
-                continue
-            if not sum(stats["searched"].values()):
-                problems.append(f"{where}: ran no search")
                 continue
             here += 1
         matched += here

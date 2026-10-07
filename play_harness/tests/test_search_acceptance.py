@@ -622,9 +622,9 @@ def test_identity_games_that_searched_nothing_do_not_match():
     rows = games()
     for row in _identity_rows(rows, names=("I",)):
         _idle(row)
-    assert sa.check_games(rows, plan())[0] == []           # each record adds up on its own
     problems, matched = sa.check_identity(rows, plan())
-    assert matched == 0 and sum("ran no search" in p for p in problems) == 4
+    assert matched == 0 and sum("searched no decision" in p for p in problems) == 4
+    assert sum("I: searched no decision" in p for p in sa.check_games(rows, plan())[0]) == 4
 
 
 def _both(rows, **change):
@@ -651,8 +651,8 @@ def _both(rows, **change):
         (lambda g: _both(g, team_ids=[3]), "has no usable ['team_ids']"),
         (lambda g: _both(g, sampling_seeds=[True, False]), "has no usable ['sampling_seeds']"),
         # What the searching seat recorded.
-        (lambda g: _idle(first(g, "I")[0]), "identity ('I', 'C') seed 25100000 A_home: ran no "
-                                            "search"),
+        (lambda g: _idle(first(g, "I")[0]), "identity ('I', 'C') seed 25100000 A_home: "
+                                            "searched no decision"),
         (lambda g: first(g, "I")[0].update(search_stats=[None, None]),
          "identity ('I', 'C') seed 25100000 A_home: search statistics need exactly"),
         (lambda g: first(g, "I")[0].pop("search_stats"),
@@ -999,3 +999,53 @@ def test_the_result_is_read_from_the_side_the_leg_gives():
     for row in rows:
         row.update(score=[2, 2], a_td=2, b_td=2, result_a="D")
     assert sa.check_games(rows, plan())[0] == []
+
+
+# ---- search statistics that only look like they add up (item 5) ------------------------------
+def _run_idle(rows):
+    for row in rows:
+        if row["pair"] == ["S", "offense"]:
+            st = row["search_stats"][side_of(row, "S")]
+            st.update(searched={c: 0 for c in st["searched"]}, rollouts=0, rollout_steps=0,
+                      rollout_forward_rows=0, cutoff_rollouts=0, predicted_gains=[],
+                      deviations={c: 0 for c in st["deviations"]}, deviation_types={})
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda g: _stat(g, searched=["turn", "after_declare"]), "searched classes ['turn', "
+                                                             "'after_declare'] != the setting"),
+    (lambda g: _stat(g, in_scope=None), "in_scope classes None != the setting's scope"),
+    (lambda g: _stat(g, deviation_types=[]), "deviation types [] are not counts above 0"),
+    (lambda g: _stat(g, deviation_types={"turn: ACTIVATE -> ACTIVATE": 5,
+                                         "after_declare: STEP -> STEP": -2}),
+     "are not counts above 0"),
+    (lambda g: _stat(g, deviation_types={"turn: ACTIVATE -> ACTIVATE": 1.0,
+                                         "after_declare: STEP -> STEP": 2.0}),
+     "are not counts above 0"),
+    (lambda g: _stat(g, deviation_types={"turn: ACTIVATE -> ACTIVATE": 3}),
+     "class turn: 1 deviations, 3 deviation types"),
+    (lambda g: _stat(g, deviation_types={"turn: ACTIVATE -> ACTIVATE": 2,
+                                         "after_declare: END_ACTIVATION -> STEP": 1}),
+     "class after_declare: 2 deviations, 1 deviation types"),
+    (lambda g: _stat(g, rollouts=4 * 16 * 210 - 49), "13391 rollouts are not a multiple of n 16"),
+    (lambda g: _stat(g, cap_rejected_decisions=208, cap_rejected_rollouts=208),
+     "3 deviations and 208 cap-rejected decisions among 210 searched"),
+    # A seat that searched nothing in a whole game did not play as a search seat.
+    (_run_idle, "['S', 'offense'] seed 25100000 A_home: S: searched no decision"),
+])
+def test_statistics_that_do_not_add_up_are_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+
+
+@pytest.mark.parametrize("change", [
+    dict(k=1), dict(n=0), dict(k=4.0), dict(n=True), dict(n="16"), dict(delta="0.1"),
+    dict(delta=-0.1), dict(delta=float("nan")), dict(delta=None), dict(delta=True),
+    dict(scope=[]), dict(scope="turn"), dict(scope=["turn", "turn"]), dict(scope=[1, 2])])
+def test_a_plan_whose_search_setting_cannot_be_read_is_refused(change):
+    p = plan()
+    p["players"]["S"]["search"].update(change)
+    with pytest.raises(ValueError, match="S's search setting needs k and n as integers >= 2"):
+        sa.registered(p)
