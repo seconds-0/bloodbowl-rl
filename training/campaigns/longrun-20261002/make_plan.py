@@ -58,6 +58,15 @@ B3_STAGES = [
      "success": f"{B3}/ladder-d0-r0chain57-botseat1-from49-s42-20261006/EXAM_VERDICT_PASS.json",
      "progress": f"{B3}/ladder-d0-r0chain57-botseat1-from49-s42-20261006/SCREEN_STATUS.json",
      "max_attempts": 3, "max_stale_seconds": 6000},
+    # D422: one-factor arm against chain 55 (GAE lambda 0.97), then chain 55's replicate at training seed 2042.
+    {"name": "b3_chain58", "launch": f"bash {HOME}/b3/b3_chain58.sh",
+     "success": f"{B3}/ladder-d0-r0chain58-lam097-from49-s42-20261007/EXAM_VERDICT_PASS.json",
+     "progress": f"{B3}/ladder-d0-r0chain58-lam097-from49-s42-20261007/SCREEN_STATUS.json",
+     "max_attempts": 3, "max_stale_seconds": 6000},
+    {"name": "b3_chain59", "launch": f"bash {HOME}/b3/b3_chain59.sh",
+     "success": f"{B3}/ladder-d0-r0chain59-cont49-s2042-20261007/EXAM_VERDICT_PASS.json",
+     "progress": f"{B3}/ladder-d0-r0chain59-cont49-s2042-20261007/SCREEN_STATUS.json",
+     "max_attempts": 3, "max_stale_seconds": 6000},
 ]
 
 

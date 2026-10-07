@@ -333,3 +333,5 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 
 **Update 2026-10-06 17:50 (D420, D421): chain 56, trained under the no-early-END_TURN rule, reads Inconclusive; chain 49 stays the warm start.** Played under the mask against its masked control it is +52.6 [+39.0, +68.1] directly, +26.2 [+3.1, +49.8] against chain 37 and -7.1 [-30.2, +13.6] against chain 46. Under the mask it makes 7.07 activations per team turn with 3.16 of them empty (control: 6.78 and 2.51); no increase in blocks is established. The rule stays a play-time option and is not trained under again without a new idea. Chain 57 (bot seat) is training and is the last stage in the plan.
 
+**Update 2026-10-06 18:10 PDT (D422): chains 58 and 59 are registered to follow chain 57.** Chain 58 is chain 55's rung with GAE lambda 0.97; chain 59 is chain 55's rung at training seed 2042, to measure seed spread. Chain 55 is the control for both. The block-charge reward arm is not run: the reward pays declared blocks their expected value, so "blocks are net charged" was wrong as a general statement.
+
