@@ -1,0 +1,47 @@
+records 3280 {'plain': 1600, 'identity': 80, 's10': 1600}
+every game natural: True | any decision cap: False | any invalid: False | error rollouts: 0 | integrity checks per record: {13: 3280}
+records by arm and droplet: [(('identity', 'first launch'), 80), (('plain', 'first launch'), 1450), (('plain', 'relaunch'), 150), (('s10', 'first launch'), 1395), (('s10', 'relaunch'), 205)]
+
+plain: n=1600 W/D/L 449/675/476 win score 0.492 decisive share 0.485 decisive-Elo -10 TD for 0.701 against 0.736
+  A_home: n=800 W/D/L 221/330/249 win score 0.482 decisive share 0.470 decisive-Elo -21 TD for 0.701 against 0.762
+  B_home: n=800 W/D/L 228/345/227 win score 0.501 decisive share 0.501 decisive-Elo +1 TD for 0.701 against 0.710
+  s1: n=200 W/D/L 51/97/52 win score 0.497 decisive share 0.495 decisive-Elo -3 TD for 0.690 against 0.720
+  s2: n=200 W/D/L 49/89/62 win score 0.468 decisive share 0.441 decisive-Elo -41 TD for 0.595 against 0.680
+  s3: n=200 W/D/L 68/74/58 win score 0.525 decisive share 0.540 decisive-Elo +28 TD for 0.745 against 0.690
+  s4: n=200 W/D/L 61/80/59 win score 0.505 decisive share 0.508 decisive-Elo +6 TD for 0.785 against 0.780
+  s5: n=200 W/D/L 59/74/67 win score 0.480 decisive share 0.468 decisive-Elo -22 TD for 0.750 against 0.815
+  s6: n=200 W/D/L 64/86/50 win score 0.535 decisive share 0.561 decisive-Elo +43 TD for 0.745 against 0.720
+  s7: n=200 W/D/L 52/86/62 win score 0.475 decisive share 0.456 decisive-Elo -31 TD for 0.665 against 0.710
+  s8: n=200 W/D/L 45/89/66 win score 0.448 decisive share 0.405 decisive-Elo -67 TD for 0.635 against 0.775
+  played on the first launch droplet: n=1450 W/D/L 413/609/428 win score 0.495 decisive share 0.491 decisive-Elo -6 TD for 0.706 against 0.734
+  played on the relaunch droplet: n=150 W/D/L 36/66/48 win score 0.460 decisive share 0.429 decisive-Elo -50 TD for 0.660 against 0.760
+  engine steps per game 1331; seconds per game mean 9.0, median 9.0, max 14.8
+
+s10: n=1600 W/D/L 534/658/408 win score 0.539 decisive share 0.567 decisive-Elo +47 TD for 0.831 against 0.716
+  A_home: n=800 W/D/L 257/330/213 win score 0.527 decisive share 0.547 decisive-Elo +33 TD for 0.814 against 0.725
+  B_home: n=800 W/D/L 277/328/195 win score 0.551 decisive share 0.587 decisive-Elo +61 TD for 0.848 against 0.708
+  s1: n=200 W/D/L 65/87/48 win score 0.542 decisive share 0.575 decisive-Elo +53 TD for 0.870 against 0.725
+  s2: n=200 W/D/L 64/83/53 win score 0.527 decisive share 0.547 decisive-Elo +33 TD for 0.760 against 0.695
+  s3: n=200 W/D/L 71/78/51 win score 0.550 decisive share 0.582 decisive-Elo +57 TD for 0.845 against 0.700
+  s4: n=200 W/D/L 73/75/52 win score 0.552 decisive share 0.584 decisive-Elo +59 TD for 0.900 against 0.770
+  s5: n=200 W/D/L 71/73/56 win score 0.537 decisive share 0.559 decisive-Elo +41 TD for 0.860 against 0.740
+  s6: n=200 W/D/L 69/88/43 win score 0.565 decisive share 0.616 decisive-Elo +82 TD for 0.860 against 0.690
+  s7: n=200 W/D/L 56/87/57 win score 0.497 decisive share 0.496 decisive-Elo -3 TD for 0.775 against 0.725
+  s8: n=200 W/D/L 65/87/48 win score 0.542 decisive share 0.575 decisive-Elo +53 TD for 0.775 against 0.685
+  played on the first launch droplet: n=1395 W/D/L 469/576/350 win score 0.543 decisive share 0.573 decisive-Elo +51 TD for 0.834 against 0.711
+  played on the relaunch droplet: n=205 W/D/L 65/82/58 win score 0.517 decisive share 0.528 decisive-Elo +20 TD for 0.805 against 0.751
+  engine steps per game 1320; seconds per game mean 370.1, median 365.4, max 725.3
+
+s10 deviations per game: mean 2.42, median 2, max 10, games with none 151
+s10 searched decisions 331103, deviations 3878 (1.17%)
+s10 predicted gain at deviations: n 3878, mean 0.159, median 0.133, 90th percentile 0.235, max 1.224
+s10 rollouts 19576320, ended by the 200-step cutoff 711
+result of the same seed and orientation, plain then s10: [(('D', 'D'), 400), (('D', 'L'), 101), (('D', 'W'), 174), (('L', 'D'), 128), (('L', 'L'), 276), (('L', 'W'), 72), (('W', 'D'), 130), (('W', 'L'), 31), (('W', 'W'), 288)]
+
+s10 by deviations in the game (not causal: the count depends on how the game went)
+  0 deviations: n=151 W/D/L 37/61/53 win score 0.447 decisive share 0.411 decisive-Elo -62 TD for 0.815 against 0.874
+  1 deviations: n=371 W/D/L 97/162/112 win score 0.480 decisive share 0.464 decisive-Elo -25 TD for 0.739 against 0.814
+  2 deviations: n=397 W/D/L 137/153/107 win score 0.538 decisive share 0.561 decisive-Elo +43 TD for 0.882 against 0.773
+  3 deviations: n=311 W/D/L 108/137/66 win score 0.568 decisive share 0.621 decisive-Elo +86 TD for 0.846 against 0.659
+  4 deviations: n=197 W/D/L 87/65/45 win score 0.607 decisive share 0.659 decisive-Elo +115 TD for 0.827 against 0.528
+  5+ deviations: n=173 W/D/L 68/80/25 win score 0.624 decisive share 0.731 decisive-Elo +174 TD for 0.902 against 0.555

@@ -1,0 +1,31 @@
+plan ab-d425-20261007 (bae9549f6e5492f88630f9a282e6a959cb3158d93e0891af2e52a71850dfaf4c): 800 engine seeds, both orientations, seat A against the same checkpoint (seat B, plain)
+intervals: percentile bootstrap at 2.5 and 97.5 over engine seeds, 2000 replicates, generator seed 0; both orientations of a seed and all arms are resampled together
+
+arm        games  W/D/L         win score              decisive share         decisive Elo               TD difference per game
+plain       1600  449/675/476   0.492 [0.475, 0.509]   0.485 [0.456, 0.515]   -10 [-30, +11]             -0.035 [-0.081, +0.013]
+s10         1600  534/658/408   0.539 [0.523, 0.556]   0.567 [0.540, 0.596]   +47 [+28, +67]             +0.114 [+0.067, +0.161]
+replicates left out of decisive share and Elo for having no decisive game: none
+
+Each search arm minus the plain arm (same seeds, both estimates recomputed in every replicate)
+arm        pairs  decisive Elo               win score                  TD difference              same result  same game
+s10         1600  +57 [+33, +81]             +0.048 [+0.028, +0.068]    +0.149 [+0.101, +0.203]          60.2%       9.4%
+
+What the search did, per game
+arm        searched turn/after_declare     deviations turn/after_declare   mean predicted gain  rollout steps  cap-rejected decisions  cutoff rollouts  seconds  slowdown
+plain      103.3 / 111.6                   0.00 / 0.00                                       -              0       0 (0.00%)              0 (0.00%)      9.0      1.0x
+s10        99.5 / 107.4                    1.24 / 1.19                                   0.159         347780       0 (0.00%)            711 (0.00%)    370.1     41.3x
+
+deviations of s10: turn: ACTIVATE -> ACTIVATE x1978; after_declare: STEP -> STEP x953; after_declare: END_ACTIVATION -> STEP x319; after_declare: END_ACTIVATION -> BLOCK_TARGET x207; after_declare: END_ACTIVATION -> STAND_UP x146; after_declare: STEP -> END_ACTIVATION x94; after_declare: BLOCK_TARGET -> BLOCK_TARGET x63; after_declare: END_ACTIVATION -> JUMP x31; after_declare: STAND_UP -> END_ACTIVATION x28; after_declare: BLOCK_TARGET -> END_ACTIVATION x27; after_declare: STEP -> JUMP x11; after_declare: BLOCK_TARGET -> STEP x5
+
+identity: 80 game(s) of arm identity on shard(s) s1, s2, s3, s4, s5, s6, s7, s8 equal the plain game on action trail, final state and sampling state, with 1020752 rollouts run and discarded (217 searched decisions, 351569 rollout steps and 368.6 s per game, 41.1x plain)
+
+shard        games' hosts (more than one: the shard was relaunched)   native library sha256
+s1           1: bb-harness-ab-d425-s1                                32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0
+s2           2: bb-harness-ab-d425-s2, bb-harness-ab-d425r-s2        32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0
+s3           2: bb-harness-ab-d425-s3, bb-harness-ab-d425r-s3        32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0
+s4           2: bb-harness-ab-d425-s4, bb-harness-ab-d425r-s4        32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0
+s5           2: bb-harness-ab-d425-s5, bb-harness-ab-d425r-s5        32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0
+s6           2: bb-harness-ab-d425-s6, bb-harness-ab-d425r-s6        32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0
+s7           2: bb-harness-ab-d425-s7, bb-harness-ab-d425r-s7        32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0
+s8           2: bb-harness-ab-d425-s8, bb-harness-ab-d425r-s8        32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0
+ACCEPTANCE: PASS

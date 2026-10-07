@@ -1,0 +1,223 @@
+{
+ "plan_sha256": "bae9549f6e5492f88630f9a282e6a959cb3158d93e0891af2e52a71850dfaf4c",
+ "summary": {
+  "seeds": 800,
+  "reps": 2000,
+  "arms": {
+   "plain": {
+    "games": 1600,
+    "W": 449,
+    "D": 675,
+    "L": 476,
+    "win_score": [
+     0.4915625,
+     0.4749921875,
+     0.50875
+    ],
+    "decisive_share": [
+     0.4854054054054054,
+     0.45632757634651455,
+     0.5153918918918918
+    ],
+    "elo_decisive": [
+     -10.144244686868014,
+     -30.42423636555056,
+     10.69876241684508
+    ],
+    "replicates_without_a_decisive_game": 0,
+    "td_diff": [
+     -0.035,
+     -0.08125,
+     0.013125
+    ],
+    "a_td": 0.70125,
+    "b_td": 0.73625,
+    "searched_per_game": {
+     "turn": 103.30375,
+     "after_declare": 111.62375
+    },
+    "deviations_per_game": {
+     "turn": 0.0,
+     "after_declare": 0.0
+    },
+    "deviation_types": {},
+    "mean_predicted_gain": null,
+    "rollouts_per_game": 0.0,
+    "rollout_steps_per_game": 0.0,
+    "cap_rejected_decisions": 0,
+    "cap_rejection_share": 0.0,
+    "cutoff_rollouts": 0,
+    "cutoff_share": 0.0,
+    "seconds_per_game": 8.96811125,
+    "slowdown": 1.0,
+    "steps_per_game": 1330.7675
+   },
+   "s10": {
+    "games": 1600,
+    "W": 534,
+    "D": 658,
+    "L": 408,
+    "win_score": [
+     0.539375,
+     0.523125,
+     0.5559375
+    ],
+    "decisive_share": [
+     0.5668789808917197,
+     0.5395295486476993,
+     0.5955803136171596
+    ],
+    "elo_decisive": [
+     46.75243757547058,
+     27.52538734364667,
+     67.24321841285199
+    ],
+    "replicates_without_a_decisive_game": 0,
+    "td_diff": [
+     0.114375,
+     0.067484375,
+     0.160625
+    ],
+    "a_td": 0.830625,
+    "b_td": 0.71625,
+    "searched_per_game": {
+     "turn": 99.521875,
+     "after_declare": 107.4175
+    },
+    "deviations_per_game": {
+     "turn": 1.23625,
+     "after_declare": 1.1875
+    },
+    "deviation_types": {
+     "turn: ACTIVATE -> ACTIVATE": 1978,
+     "after_declare: STEP -> STEP": 953,
+     "after_declare: END_ACTIVATION -> STEP": 319,
+     "after_declare: END_ACTIVATION -> BLOCK_TARGET": 207,
+     "after_declare: END_ACTIVATION -> STAND_UP": 146,
+     "after_declare: STEP -> END_ACTIVATION": 94,
+     "after_declare: BLOCK_TARGET -> BLOCK_TARGET": 63,
+     "after_declare: END_ACTIVATION -> JUMP": 31,
+     "after_declare: STAND_UP -> END_ACTIVATION": 28,
+     "after_declare: BLOCK_TARGET -> END_ACTIVATION": 27,
+     "after_declare: STEP -> JUMP": 11,
+     "after_declare: BLOCK_TARGET -> STEP": 5,
+     "after_declare: DECLINE_REROLL -> USE_REROLL": 5,
+     "after_declare: STAND_UP -> BLOCK_TARGET": 4,
+     "after_declare: STEP -> BLOCK_TARGET": 3,
+     "after_declare: STEP -> FOUL_TARGET": 2,
+     "after_declare: USE_REROLL -> DECLINE_REROLL": 1,
+     "after_declare: HANDOFF_TARGET -> STEP": 1
+    },
+    "mean_predicted_gain": 0.15905607246003095,
+    "rollouts_per_game": 12235.2,
+    "rollout_steps_per_game": 347779.72,
+    "cap_rejected_decisions": 0,
+    "cap_rejection_share": 0.0,
+    "cutoff_rollouts": 711,
+    "cutoff_share": 3.631938995684582e-05,
+    "seconds_per_game": 370.05389375,
+    "slowdown": 41.26330321225665,
+    "steps_per_game": 1319.95125
+   }
+  },
+  "contrasts": {
+   "s10": {
+    "pairs": 1600,
+    "win_score": [
+     0.0478125,
+     0.028125,
+     0.0675
+    ],
+    "td_diff": [
+     0.149375,
+     0.100625,
+     0.2025
+    ],
+    "elo_decisive": [
+     56.896682262338594,
+     33.49738612096408,
+     80.59060702038336
+    ],
+    "same_result": 0.6025,
+    "same_game": 0.094375
+   }
+  },
+  "identity": {
+   "games": 80,
+   "rollouts": 1020752,
+   "seconds_per_game": 368.632175,
+   "slowdown": 41.10477275803197,
+   "rollout_steps_per_game": 351568.6,
+   "searched_per_game": 216.5375,
+   "shards": [
+    "s1",
+    "s2",
+    "s3",
+    "s4",
+    "s5",
+    "s6",
+    "s7",
+    "s8"
+   ]
+  },
+  "hosts": {
+   "s1": [
+    "bb-harness-ab-d425-s1"
+   ],
+   "s2": [
+    "bb-harness-ab-d425-s2",
+    "bb-harness-ab-d425r-s2"
+   ],
+   "s3": [
+    "bb-harness-ab-d425-s3",
+    "bb-harness-ab-d425r-s3"
+   ],
+   "s4": [
+    "bb-harness-ab-d425-s4",
+    "bb-harness-ab-d425r-s4"
+   ],
+   "s5": [
+    "bb-harness-ab-d425-s5",
+    "bb-harness-ab-d425r-s5"
+   ],
+   "s6": [
+    "bb-harness-ab-d425-s6",
+    "bb-harness-ab-d425r-s6"
+   ],
+   "s7": [
+    "bb-harness-ab-d425-s7",
+    "bb-harness-ab-d425r-s7"
+   ],
+   "s8": [
+    "bb-harness-ab-d425-s8",
+    "bb-harness-ab-d425r-s8"
+   ]
+  },
+  "libraries": {
+   "s1": [
+    "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0"
+   ],
+   "s2": [
+    "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0"
+   ],
+   "s3": [
+    "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0"
+   ],
+   "s4": [
+    "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0"
+   ],
+   "s5": [
+    "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0"
+   ],
+   "s6": [
+    "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0"
+   ],
+   "s7": [
+    "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0"
+   ],
+   "s8": [
+    "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0"
+   ]
+  }
+ }
+}
