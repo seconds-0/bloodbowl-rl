@@ -600,6 +600,11 @@ class Engine:
         m = self.lib.bbp_match(self._ptr).contents
         return int(m.turns_completed[0]), int(m.turns_completed[1])
 
+    def score(self):
+        """(HOME, AWAY) touchdowns so far."""
+        m = self.lib.bbp_match(self._ptr).contents
+        return int(m.score[0]), int(m.score[1])
+
     def final_match(self):
         ptr = self.lib.bbp_final_match(self._ptr)
         return BbMatch.from_buffer_copy(ptr.contents) if ptr else None

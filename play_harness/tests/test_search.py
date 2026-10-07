@@ -79,7 +79,10 @@ class Game:
         rc = eng.step(*tup)
         assert rc in (E.STEP_OK, E.STEP_TERMINAL)
         self.over = rc == E.STEP_TERMINAL
+        final = eng.final_match() if self.over else None
         self.log.append({"team": team, "tuple": tup, "rewards": eng.last_rewards(),
+                         "score_before": self.log[-1]["score_after"] if self.log else (0, 0),
+                         "score_after": tuple(final.score) if final else eng.score(),
                          "values": (outs[0]["value"], outs[1]["value"]),
                          "turns_before": turns,
                          "turns_after": None if self.over else eng.turns_completed(),
@@ -227,6 +230,53 @@ def test_t3_a_search_leaves_the_seats_and_the_session_as_they_were(rewards, net)
     assert [e["tuple"] for e in game.log] == [e["tuple"] for e in plain.log]
 
 
+@pytest.mark.parametrize("searcher", [0, 1])
+def test_a_match_horizon_rollout_reproduces_the_rest_of_the_real_game(rewards, net, searcher):
+    """The measuring horizon on the oracle: the same rollout loop, told to play on
+    past the searcher's turn ends, replays the real game to its last step, marks
+    every own turn end with the value the real seat read there, and ends with the
+    real score."""
+    game = Game((net, net), 7800 + searcher, rewards)
+    rollouts = S.Rollouts(net, searcher, horizon=S.HORIZON_MATCH, max_steps=100_000)
+    while True:
+        team, outs = game.forward()
+        if team == searcher and game.steps >= 150:
+            break
+        game.apply(team, outs)
+    root = game.steps
+    before = _seat_fingerprint(game)
+    oracle = (_generator_copy(game.seats[searcher].generator),
+              _generator_copy(game.seats[1 - searcher].generator))
+    batch = rollouts._play(game.eng, game.seats[searcher].state, game.seats[1 - searcher].state,
+                           [outs[team]["tuple"]], [_real_dice_clone(game.eng)], [oracle],
+                           after_declare=_flags(game, searcher), record=True)
+    _assert_untouched(game, before)
+    game.apply(team, outs)
+    game.play(100_000)
+    real = game.log[root:]
+    assert batch.stops == [S.STOP_TERMINAL] and batch.steps[0] == len(real) > 300
+    assert batch.trails[0] == [(e["team"], e["tuple"], e["rewards"][searcher]) for e in real]
+    last = real[-1]["score_after"]
+    assert tuple(batch.scores[0]) == (last[searcher], last[1 - searcher])
+    paid = tds = 0.0
+    marks = []
+    for t, e in enumerate(real):
+        gained = [e["score_after"][s] - e["score_before"][s] for s in (0, 1)]
+        paid += S.GAMMA ** t * e["rewards"][searcher]
+        tds += S.GAMMA ** t * float(np.float32(0.4)) * (gained[searcher] - gained[1 - searcher])
+        if e["turns_after"] is not None and \
+                e["turns_after"][searcher] != e["turns_before"][searcher]:
+            marks.append((t + 1, paid, tds, game.log[root + t + 1]["values"][searcher]))
+    assert batch.returns[0] == batch.rewards[0] == pytest.approx(paid, abs=1e-9)
+    assert batch.touchdowns[0] == pytest.approx(tds, abs=1e-9)
+    assert len(batch.marks[0]) == len(marks) >= 8
+    for got, want in zip(batch.marks[0], marks):
+        assert got[0] == want[0] and got[3] == want[3]
+        assert got[1:3] == pytest.approx(want[1:3], abs=1e-9)
+    # The search's own horizon stops the same rollout at the first of those marks.
+    assert marks[0][0] < len(real)
+
+
 # ---- T13 --------------------------------------------------------------------------------
 class Raiser:
     """Stands where the real opponent seat was. Any use of it is an error."""
@@ -362,6 +412,11 @@ def test_t1r_a_touchdown_raises_the_return_by_its_discounted_reward(rewards, bac
     assert paid.bootstraps[0] == 0.25
     # A value-only score would have missed it: V is the same with and without.
     assert paid.bootstraps[0] == unpaid.bootstraps[0]
+    # The split of the return: the touchdown's part, and the turn end it stopped at.
+    assert paid.touchdowns[0] == pytest.approx(td_reward * S.GAMMA ** t, abs=1e-9)
+    assert unpaid.touchdowns[0] == 0.0
+    assert paid.marks == [[(t + 1, paid.rewards[0], paid.touchdowns[0], 0.25)]]
+    assert (paid.scores == -1).all()                           # the match did not end
 
 
 def test_the_return_is_the_searchers_own_reward_by_physical_team(rewards):
@@ -377,6 +432,10 @@ def test_the_return_is_the_searchers_own_reward_by_physical_team(rewards):
         assert [e[2] for e in batches[seat].trails[0]] == real
         assert batches[seat].rewards[0] == pytest.approx(
             sum(S.GAMMA ** i * r for i, r in enumerate(real)), abs=1e-12)
+        # The touchdown on the fourth step is seat 0's: paid to it, charged to seat 1.
+        sign = 1.0 if seat == 0 else -1.0
+        assert batches[seat].touchdowns[0] == pytest.approx(
+            sign * float(np.float32(0.4)) * S.GAMMA ** 3, abs=1e-9)
     # Somewhere in a game the shaped rewards are not zero-sum.
     assert any(abs(e["rewards"][0] + e["rewards"][1]) > 1e-4 for e in trail)
     deciders = {e["team"] for e in trail[td - 40:td + 40]}
@@ -399,6 +458,11 @@ def test_t8_a_rollout_across_the_end_of_the_match_takes_no_bootstrap(rewards):
     assert batch.returns[0] == batch.rewards[0] == pytest.approx(
         sum(S.GAMMA ** i * r for i, r in enumerate(real)), abs=1e-12)
     assert batch.bootstraps[0] == 0.0                         # 123 was never read
+    final = E.Engine(seed, rewards=rewards)
+    for entry in trail:
+        final.step(*entry["tuple"])
+    assert tuple(batch.scores[0]) == tuple(final.final_match().score)      # seat 0 first
+    assert batch.marks == [[]]                                # no turn end with a value
     assert abs(real[-1]) >= 0.59 or trail[-1]["score"][0] == trail[-1]["score"][1]
 
 
@@ -620,7 +684,9 @@ def test_rollout_seeds_are_a_function_of_public_values_only():
 
 
 def test_rollouts_refuse_bad_settings(net):
+    assert S.Rollouts(net, 0).horizon == S.HORIZON_TURN       # the search's rule is the default
     for kwargs in ({"seat": 2}, {"seat": 0, "gamma": 0.0}, {"seat": 0, "gamma": 1.5},
+                   {"seat": 0, "horizon": "half"},
                    {"seat": 0, "max_steps": 0}, {"seat": 0, "masks": ("m9",)},
                    {"seat": 0, "temperature": 0.0}):
         with pytest.raises(ValueError):
@@ -707,6 +773,10 @@ def test_evaluate_builds_its_own_seeds_and_shares_them_across_candidates(rewards
                for purpose in ("own", "opponent"))], record=True)
     assert by_hand.trails[0] == twice.trails[3]
     assert by_hand.returns[0] == twice.returns[0, 3]
+    # Rollout indices from first_index on are the same rollouts, by index.
+    tail = rollouts.evaluate(game.eng, own, opp, [a0], 2, seed, step, record=True, first_index=3)
+    assert tail.trails == twice.trails[3:5]
+    assert np.array_equal(tail.returns[0], twice.returns[0, 3:5])
     # Another step index or sampling seed is another set of rollouts.
     moved = rollouts.evaluate(game.eng, own, opp, [a0], 5, seed, step + 1, record=True)
     assert moved.trails != twice.trails[:5]

@@ -52,6 +52,12 @@ STOP_CUTOFF = "cutoff"        # max_steps reached: bootstrapped, and counted
 STOP_REJECTED = "rejected"    # engine error or decision cap: no return
 STOPS = (STOP_TURN, STOP_TERMINAL, STOP_CUTOFF, STOP_REJECTED)
 
+# Where a rollout is meant to end. The search stops at the end of the searcher's
+# team turn. A rollout to the end of the match is for measurement: it shows what
+# an action did to the result, with no value read into the judgment.
+HORIZON_TURN = "turn"
+HORIZON_MATCH = "match"
+
 SEED_PURPOSES = ("dice", "own", "opponent")
 _HEAD_OFFSETS = (0, E.ACT_SIZES[0], E.ACT_SIZES[0] + E.ACT_SIZES[1])
 _DECLARE = E.A["DECLARE"]
@@ -110,6 +116,13 @@ class RolloutBatch:
     bootstraps: np.ndarray      # V(s_T) as read, 0 where none was taken
     steps: np.ndarray           # engine steps applied, the first action included
     stops: list                 # one of STOPS
+    touchdowns: np.ndarray      # the part of `rewards` paid for touchdowns, either way
+    scores: np.ndarray          # (searcher, opponent) final score where the match
+    #                             ended naturally, else -1
+    # Per rollout, one entry for each end of the searcher's team turn it passed
+    # with a value read there: (steps, rewards, touchdowns, V) as they stood. A
+    # rollout stopped at the turn has exactly one, its own stop.
+    marks: list = field(default_factory=list)
     engine_steps: int = 0
     forward_rows: int = 0
     trails: list = field(default_factory=list)   # record=True: [(team, tuple, reward)]
@@ -126,12 +139,18 @@ class Rollouts:
                     it observes and the index of its reward.
     masks           action masks on the searcher's decisions (policy.MASKS).
     opponent_masks  masks on the opponent model's decisions; default: `masks`.
+    horizon         HORIZON_TURN (the search's stop rule) or HORIZON_MATCH: play on
+                    past the searcher's turn ends, marking each, to the end of
+                    the match or max_steps.
     """
 
     def __init__(self, policy, seat, masks=("m1",), opponent_masks=None, gamma=GAMMA,
-                 max_steps=MAX_ROLLOUT_STEPS, temperature=1.0):
+                 max_steps=MAX_ROLLOUT_STEPS, temperature=1.0, horizon=HORIZON_TURN):
         if seat not in (0, 1):
             raise ValueError("seat must be 0 (HOME) or 1 (AWAY)")
+        if horizon not in (HORIZON_TURN, HORIZON_MATCH):
+            raise ValueError(f"unknown horizon {horizon!r}")
+        self.horizon = horizon
         if not 0.0 < gamma <= 1.0:
             raise ValueError(f"gamma must be in (0, 1], got {gamma!r}")
         if max_steps < 1:
@@ -151,7 +170,7 @@ class Rollouts:
         self._pool = []
 
     def evaluate(self, root, own_state, opp_state, candidates, rollouts, sampling_seed,
-                 step_index, after_declare=(False, False), record=False):
+                 step_index, after_declare=(False, False), record=False, first_index=0):
         """`rollouts` rollouts of every candidate action at the root, scored.
 
         root           the session at a decision. It is copied, never stepped.
@@ -166,19 +185,21 @@ class Rollouts:
         after_declare  (searcher, opponent): that side's previous decision was a
                        DECLARE, as mask m2 reads it at the root
         record         keep each rollout's (team, tuple, reward) trail
+        first_index    the rollout index of the first rollout: another range of
+                       indices is another, independent set of rollouts
 
         Common random numbers: rollout j of every candidate has the same dice
         seed and the same two sampling seeds. The batch's arrays come back
-        shaped (candidates, rollouts); stops and trails stay flat, candidate by
-        candidate.
+        shaped (candidates, rollouts); stops, marks and trails stay flat,
+        candidate by candidate.
         """
         k, n = len(candidates), int(rollouts)
         if k < 1 or n < 1:
             raise ValueError("at least one candidate and one rollout")
         while len(self._pool) < k * n:
             self._pool.append(root.clone_for_search(0, SEARCH_DICE_STREAM))
-        seeds = [[rollout_seed(sampling_seed, step_index, j, purpose) for j in range(n)]
-                 for purpose in SEED_PURPOSES]
+        seeds = [[rollout_seed(sampling_seed, step_index, first_index + j, purpose)
+                  for j in range(n)] for purpose in SEED_PURPOSES]
         clones = [self._pool[c * n + j].copy_from(root, seeds[0][j], SEARCH_DICE_STREAM)
                   for c in range(k) for j in range(n)]
         generators = [(torch.Generator().manual_seed(seeds[1][j]),
@@ -187,8 +208,9 @@ class Rollouts:
         firsts = [tuple(action) for action in candidates for _ in range(n)]
         out = self._play(root, own_state, opp_state, firsts, clones, generators,
                          after_declare, record)
-        for name in ("returns", "rewards", "bootstraps", "steps"):
+        for name in ("returns", "rewards", "bootstraps", "steps", "touchdowns"):
             setattr(out, name, getattr(out, name).reshape(k, n))
+        out.scores = out.scores.reshape(k, n, 2)
         return out
 
     def _play(self, root, own_state, opp_state, first_actions, clones, generators,
@@ -206,15 +228,20 @@ class Rollouts:
             raise ValueError("a rollout steps its own search clone, never the root")
         if len({id(g) for pair in generators for g in pair}) != 2 * n:
             raise ValueError("every rollout needs its own two generators")
-        base_turns = root.turns_completed()[seat]
         # [0] the searcher's view, [1] the opponent's: row, state, mask flag.
         rows = (seat, 1 - seat)
         state = [own_state.repeat(1, n, 1), opp_state.repeat(1, n, 1)]
         declared = [[bool(after_declare[0]), bool(after_declare[1])] for _ in range(n)]
         out = RolloutBatch(returns=np.zeros(n), rewards=np.zeros(n), bootstraps=np.zeros(n),
                            steps=np.zeros(n, dtype=np.int64), stops=[None] * n,
+                           touchdowns=np.zeros(n), scores=np.full((n, 2), -1, dtype=np.int64),
+                           marks=[[] for _ in range(n)],
                            trails=[[] for _ in range(n)] if record else [])
         discount = np.ones(n)
+        turns = [root.turns_completed()[seat]] * n       # the searcher's counter, as last seen
+        score = [root.score()] * n
+        reward_td = root.reward_table()["reward_td"]
+        turn_end = [None] * n                # a turn end passed, waiting for its value
         running, waiting_value = [], []
 
         def apply(b, action):
@@ -227,23 +254,36 @@ class Rollouts:
                 out.stops[b], out.returns[b] = STOP_REJECTED, np.nan
                 return
             reward = clone.last_rewards()[seat]
+            before = score[b]
+            final = clone.final_match() if rc == E.STEP_TERMINAL else None
+            score[b] = (int(final.score[0]), int(final.score[1])) if final else clone.score()
+            scored = (score[b][seat] - before[seat]) - (score[b][1 - seat] - before[1 - seat])
             out.rewards[b] += discount[b] * reward
+            out.touchdowns[b] += discount[b] * reward_td * scored
             discount[b] *= self.gamma
             out.steps[b] += 1
             declared[b][view] = action[0] == _DECLARE
             if record:
                 out.trails[b].append((rows[view], tuple(int(v) for v in action), reward))
             if rc == E.STEP_TERMINAL:
-                if clone.counters()["final_status"] == E.STATUS_MATCH_OVER:
+                if final.status == E.STATUS_MATCH_OVER:
                     out.stops[b], out.returns[b] = STOP_TERMINAL, out.rewards[b]
+                    out.scores[b] = score[b][seat], score[b][1 - seat]
                 else:
                     out.stops[b], out.returns[b] = STOP_REJECTED, np.nan
-            elif clone.status != E.STATUS_DECISION:
+                return
+            if clone.status != E.STATUS_DECISION:
                 out.stops[b], out.returns[b] = STOP_REJECTED, np.nan
-            elif clone.turns_completed()[seat] != base_turns:
-                out.stops[b] = STOP_TURN
-                waiting_value.append(b)
-            elif out.steps[b] >= self.max_steps:
+                return
+            now = clone.turns_completed()[seat]
+            if now != turns[b]:
+                turns[b] = now
+                turn_end[b] = (int(out.steps[b]), float(out.rewards[b]), float(out.touchdowns[b]))
+                if self.horizon == HORIZON_TURN:
+                    out.stops[b] = STOP_TURN
+                    waiting_value.append(b)
+                    return
+            if out.steps[b] >= self.max_steps:
                 out.stops[b] = STOP_CUTOFF
                 waiting_value.append(b)
             else:
@@ -265,6 +305,10 @@ class Rollouts:
             out.forward_rows += len(obs)
             state[0][:, own_rows] = hidden[:, :len(own_rows)]
             state[1][:, step_running] = hidden[:, len(own_rows):]
+            for i, b in enumerate(own_rows):
+                if turn_end[b] is not None:
+                    out.marks[b].append(turn_end[b] + (float(value[i]),))
+                    turn_end[b] = None
             for i, b in enumerate(step_value, start=len(step_running)):
                 out.bootstraps[b] = float(value[i])
                 out.returns[b] = out.rewards[b] + discount[b] * out.bootstraps[b]
