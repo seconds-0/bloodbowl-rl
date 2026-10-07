@@ -245,3 +245,45 @@ def test_an_interrupted_run_with_a_bad_record_plays_nothing(runs, blobs, tmp_pat
         twin = finished[T.task_key(*game["pair"], game["game_index"], game["leg"])]
         assert {k: v for k, v in twin.items() if k not in ("seconds", "pid")} == \
             {k: v for k, v in game.items() if k not in ("seconds", "pid")}
+
+
+# ---- one run, one harness commit -----------------------------------------------------------
+def test_a_resume_refuses_a_manifest_of_another_harness_commit(runs, blobs, tmp_path,
+                                                               monkeypatch):
+    """The manifest is rewritten with the current head on every start, so a resume
+    at another commit would advertise one head over the games of two."""
+    head = T._git_head()
+    with open(runs / "plain" / "manifest.json") as f:
+        assert json.load(f)["harness_git_head"] == head and len(head) == 40
+    args = plain_args(blobs)
+
+    def resume(name, manifest_change=None, keep=6):
+        folder = tmp_path / name
+        os.makedirs(folder)
+        with open(runs / "plain" / "manifest.json") as f:
+            manifest = json.load(f)
+        if manifest_change:
+            manifest_change(manifest)
+        with open(folder / "manifest.json", "w") as f:
+            json.dump(manifest, f, indent=1)
+        with open(runs / "plain" / "games.jsonl") as src, open(folder / "games.jsonl", "w") as dst:
+            dst.writelines(src.readlines()[:keep])
+        before = {n: open(folder / n).read() for n in ("manifest.json", "games.jsonl")}
+        code, printed = tournament(args, folder)
+        return code, printed, before == {n: open(folder / n).read() for n in before}
+
+    # The run was written at another commit, or does not say at which.
+    for name, change in (("other", lambda m: m.update(harness_git_head="0" * 40)),
+                         ("none", lambda m: m.update(harness_git_head=None)),
+                         ("absent", lambda m: m.pop("harness_git_head"))):
+        code, printed, untouched = resume(name, change, keep=3)
+        assert isinstance(code, str) and "existing manifest differs on harness_git_head" in code
+        assert untouched and "to play" not in printed            # nothing rewritten or played
+    # The same run directory after the checkout moved on.
+    monkeypatch.setattr(T, "_git_head", lambda root=None: "f" * 40)
+    code, printed, untouched = resume("moved", keep=3)
+    assert isinstance(code, str) and f"({head!r} vs {'f' * 40!r})" in code and untouched
+    monkeypatch.undo()
+    # At the same commit the interrupted run resumes.
+    code, printed, _ = resume("same", keep=3)
+    assert code == 0 and "6 tasks, 3 already recorded, 3 to play" in printed

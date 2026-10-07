@@ -24,7 +24,8 @@ hard counter is zero, and each seat made exactly one forward per engine step.
 Any violation aborts the whole run. A resume holds every record already in
 games.jsonl to the same contract and to the manifest's settings for its two
 players (recorded_game_problems) before it plays anything, and refuses the
-run directory when one fails.
+run directory when one fails. It also refuses a run directory whose manifest
+names another harness commit, so one run is the games of one implementation.
 
 Batching (--games-per-worker N, default 1). With N > 1 a worker keeps N games in
 flight and runs ONE forward per policy per step over every seat that holds that
@@ -1438,8 +1439,12 @@ def main(argv=None):
         # games_per_worker changes float rounding in the forward, so a resume at another
         # value would mix two slightly different samplers in one run; a manifest without
         # the key was played unbatched and counts as 1.
-        for key in ("checkpoints", "bots", "bot_library_sha256", "games_per_pair", "seed0",
-                    "mode", "players", "pairs", "kernel", "games_per_worker"):
+        # harness_git_head: the manifest is rewritten with this checkout's head, so a
+        # resume at another commit would put games of two implementations under the
+        # one head the manifest names.
+        for key in ("harness_git_head", "checkpoints", "bots", "bot_library_sha256",
+                    "games_per_pair", "seed0", "mode", "players", "pairs", "kernel",
+                    "games_per_worker"):
             if old.get(key) != manifest[key]:
                 raise SystemExit(f"existing manifest differs on {key} "
                                  f"({old.get(key)!r} vs {manifest[key]!r}); use a new --out-dir")
