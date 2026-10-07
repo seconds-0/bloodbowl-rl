@@ -619,6 +619,9 @@ def check_games(games, plan, seed0=None):
                            if key in g and (key != "search" or g[key] != [None, None]))
             if extra:
                 problems.append(f"{where}: no registered search, yet the game carries {extra}")
+            if "search" in extra and _two(g["search"]):
+                problems += [f"{where}: {name}'s search setting {setting} != registered None"
+                             for name, setting in zip(names, g["search"]) if setting is not None]
             continue
         counts["searched_games"] += 1
         if g.get("reward_manifest_sha256") != block["reward_manifest_sha256"]:

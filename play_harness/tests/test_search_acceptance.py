@@ -984,6 +984,10 @@ def test_a_plan_with_a_player_it_cannot_read_is_refused(change, needle):
     (lambda g: _plain(g).update(final_state_sha256=""), "carries ['final_state_sha256']"),
     (lambda g: _plain(g).update(reward_manifest_sha256=None), "['reward_manifest_sha256']"),
     (lambda g: _plain(g).update(search=[None, {}]), "yet the game carries ['search']"),
+    (lambda g: _plain(g).update(search=[None, {}]), "chain37's search setting {} != registered "
+                                                    "None"),
+    (lambda g: _plain(g).update(search=[copy.deepcopy(SETTING), None]),
+     "['C', 'chain37'] seed 25100000 A_home: C's search setting {'scope': "),
     (lambda g: _plain(g).update(search=[]), "yet the game carries ['search']"),
     (lambda g: _plain(g).update(search=None), "yet the game carries ['search']"),
 ])
