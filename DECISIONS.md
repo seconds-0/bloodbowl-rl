@@ -2307,3 +2307,18 @@ Chain 55 (`f6ba3b44...`, plain continuation from chain 49 on the b3 build) compl
 
 **Process change for the next two gates.** The gate plan's sha256 is committed to this ledger and pushed before the shards are launched, and acceptance is run against that same plan file, so that "written before launch" rests on the remote's push time and no longer on local file times.
 - Reviewed by Codex before this entry was written (`.codex-reviews/d419-review.md`): no other label is defensible; every number matches the artifacts; three wording corrections applied above.
+
+**D420 - CHAIN 56 PASSED ITS STAGE; ITS GATE'S PLAN IS FIXED HERE BEFORE ANY GAME IS LAUNCHED (2026-10-06 17:08 PDT; no shard exists yet, chain 57 is training)**
+
+Chain 56 (`50b88263...`, the rule arm from chain 49) completed 3B steps. From the rig's `EXAM_VERDICT.json` and `LADDER_RUNG_COMPLETE.json` as read at 16:57 PDT: completion marker written with the rule declared, exam rule none, all six cells at 2,006 games or more with zero truncated episodes, END_TURN removed 116 to 124 times per episode. Champion TDs: offense AWAY 0.578 / 0.578, contact AWAY 0.497 / 0.477, contact HOME 0.449 / 0.430 (chain 55's unmasked exam: 0.588 / 0.601, 0.518 / 0.539, 0.460 / 0.459). The exam gates nothing for this arm (D418). Chain 57 launched at 16:30 PDT.
+
+**Gate plan, committed before launch (D419's process change).** `c56-gate-20261006/PLAN.json`, sha256 `ef07eff1fb76556f7b8a922c6cbc732766db83d1c1b28774c089fc285dbfc4be`: the eleven pairs registered in D418 and its first amendment, seed block 22500000, 3,200 games per pair, 32 per worker, T=1, kickoff starts, both legs, mask harness `7d0d547`, checkpoints by sha256 (chain 56 `50b88263...`, chain 55 `f6ba3b44...`, chain 49 `a2d1d10d...`, chain 37 `268f1db0...`, chain 46 `8eee9ac1...`), `paired_contrasts.py` sha256 `722ece95...`. The launcher and the acceptance step both refuse unless the plan file hashes to this value.
+
+**Four points fixed now that D418 left open. None changes a label rule.**
+1. **Acceptance also checks the masks.** `tools/gate_acceptance.py` does not look at masks. Acceptance for this gate is that tool with every argument taken from the plan, plus: each player's mask in the manifest and on its side of every game as the plan says, no sampling offset, no truncated game (`accept_from_plan.py`, sha256 `89f0f0d7...`).
+2. **A game that reaches the harness's 4,096-decision cap.** The harness aborts the shard. If that happens the gate is unread and nothing is rerun until a new entry says how. It is not a Negative.
+3. **Definitions for the registered diagnostics.** Blocks are block targets chosen. Decisions per game is reported both as the side's own decisions and as engine steps. Mean log-probability per decision is not comparable between a masked and a plain seat, because the masked seat's is taken under the renormalised distribution.
+4. **Pair 9 (chain 56 + m1 against plain chain 55) stays descriptive.** There is no chain 55 + m1 against plain chain 55 pair on this seed block, so the pair cannot be split into a mask part and a training part.
+- Retention contrasts (chain 56 + m1 minus chain 49 + m1) are written under `main/retention-chain49m1/` because the contrast script names its output by opponent only.
+- Not tested by execution: that the play-time mask and the trainer's env rule remove END_TURN in exactly the same states. Both were read and state the same condition.
+
