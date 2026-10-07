@@ -476,22 +476,40 @@ def manifest_games_per_worker(manifest):
     return 1 if value is None else value
 
 
+SEARCH_FIELDS = ("search", "search_stats", "search_seconds", "reward_manifest_sha256",
+                 "integrity_checks", "final_state_sha256", "sampling_state_sha256")
+
+
+def manifest_search(manifest):
+    """{player: {"k", "n", "delta"}} for the players the manifest gives a search
+    setting: the request a run with this manifest answers."""
+    return {name: {key: (spec["search"] or {}).get(key) for key in ("k", "n", "delta")}
+            for name, spec in (manifest.get("players") or {}).items() if spec.get("search")}
+
+
+def _search_fields(game):
+    """The search fields a record carries; a `search` of two Nones is none."""
+    return sorted(field for field in SEARCH_FIELDS
+                  if game.get(field) and (field != "search" or any(game[field])))
+
+
 def search_problems(manifest, games, search=None):
     """Problems that mean the run's search seats are not the ones asked for.
 
     search maps a player to its requested {"k", "n", "delta"}. The manifest must
     give exactly those players a search setting with those three values and say
     what the setting rests on; every game must carry, on each side, the setting
-    the manifest gives that side's player, and a searched game must list the
-    manifest's integrity checks, name its reward manifest, and report no failed
-    rollout and one opponent-view forward per engine step. tools/
+    the manifest gives the player its pair and leg seat there, and a searched
+    game must list the manifest's integrity checks, name its reward manifest,
+    and report no failed rollout and one opponent-view forward per engine step.
+    A game without a searching player must carry no search field. tools/
     search_acceptance.py holds a run to a registered plan; this holds it to the
-    command line."""
+    command line, and `merge` holds each shard's games to the shard's own
+    manifest with it (the request is manifest_search)."""
     search = dict(search or {})
     problems = []
     players = manifest.get("players") or {}
-    got = {name: {key: (spec["search"] or {}).get(key) for key in ("k", "n", "delta")}
-           for name, spec in players.items() if spec.get("search")}
+    got = manifest_search(manifest)
     if got != search:
         problems.append(f"manifest search settings {got} != requested {search}")
     entry = manifest.get("search")
@@ -500,6 +518,12 @@ def search_problems(manifest, games, search=None):
             problems.append("the manifest has a search entry and no player searches")
         if any(any(g.get("search") or ()) for g in games):
             problems.append("a game carries a search setting and no player searches")
+        carried = [g for g in games if _search_fields(g)]
+        if carried:
+            g = carried[0]
+            problems.append(f"{len(carried)} game(s) carry search fields and no player "
+                            f"searches, e.g. {g.get('pair')} game {g.get('game_index')} "
+                            f"{g.get('leg')}: {_search_fields(g)}")
         return problems
     if not isinstance(entry, dict):
         return problems + ["the manifest has no search entry"]
@@ -514,10 +538,19 @@ def search_problems(manifest, games, search=None):
     bad = 0
     for g in games:
         where = f"{g.get('pair')} game {g.get('game_index')} {g.get('leg')}"
-        want = [(players.get(name) or {}).get("search") for name in (g.get("home"), g.get("away"))]
+        # The seats come from the pair and the leg, not from the record's own
+        # home and away, which must then agree.
+        seats = list(g.get("pair") or [None, None])
+        if g.get("leg") != "A_home":
+            seats.reverse()
+        want = [(players.get(name) or {}).get("search") for name in seats]
         found = []
+        if [g.get("home"), g.get("away")] != seats:
+            found.append(f"seats {g.get('home')},{g.get('away')} are not its leg's")
         if list(g.get("search") or [None, None]) != want:
             found.append("search settings are not its players'")
+        if not any(want) and _search_fields(g):
+            found.append(f"no player of the game searches, yet it carries {_search_fields(g)}")
         if any(want):
             if g.get("integrity_checks") != checks:
                 found.append("integrity checks are not the manifest's")
@@ -717,8 +750,10 @@ def merge_shards(shards):
     share its run, and droplets of one image build a byte-identical shim, so
     shards may run on different droplets. Refused unless
     the shards share the commit, seed block, settings, torch and compiled shim,
-    give shared players the same checkpoint and spec, and give each pair game
-    index ranges that tile 0 .. total/2 - 1 (slice_problems). A pair that several
+    give shared players the same checkpoint and spec, give each pair game index
+    ranges that tile 0 .. total/2 - 1 (slice_problems), and each hold games whose
+    search fields are what the shard's own manifest says (search_problems with
+    manifest_search as the request). A pair that several
     shards share is listed once, with the summed game count, and the merged
     manifest carries no index0: it is the run one machine plays from index 0.
     Returns (manifest, complete, games); raises RunnerError listing every problem.
@@ -775,6 +810,9 @@ def merge_shards(shards):
                                 "checks) differs from an earlier shard's")
             search_entry["players"] = sorted(set(search_entry["players"])
                                              | set(entry.get("players") or []))
+        # The shard's records against the shard's own manifest: comparing manifests
+        # across shards says nothing about what the games played.
+        problems += [f"{name}: {p}" for p in search_problems(m, shard["games"], manifest_search(m))]
         for a, b, n in m.get("pairs") or []:
             key = frozenset((a, b))
             if n % 2:

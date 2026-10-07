@@ -1070,17 +1070,25 @@ def searched_manifest():
                        "integrity_checks": ["one", "two"]}}
 
 
-def searched_games():
+def searched_games(pairs=SEARCH_PAIRS, searcher="a"):
+    """Records of games in which `searcher`, the first player of each pair, searches."""
     out = []
-    for g in scheduled_games(SEARCH_PAIRS):
-        side = 0 if g["leg"] == "A_home" else 1
-        names = ("a", "b") if side == 0 else ("b", "a")
+    for g in scheduled_games(pairs):
+        names = g["pair"] if g["leg"] == "A_home" else g["pair"][::-1]
+        side = names.index(searcher)
         settings, stats = [None, None], [None, None]
         settings[side] = dict(SETTING)
         stats[side] = {"error_rollouts": 0, "shadow_forwards": 500, "rollouts": 640}
         out.append(dict(g, home=names[0], away=names[1], search=settings, search_stats=stats,
                         integrity_checks=["one", "two"], reward_manifest_sha256="r" * 64))
     return out
+
+
+def seated_games(pairs):
+    """Records of games without a search seat, with the seats a real record names."""
+    return [dict(g, home=(g["pair"] if g["leg"] == "A_home" else g["pair"][::-1])[0],
+                 away=(g["pair"] if g["leg"] == "A_home" else g["pair"][::-1])[1])
+            for g in scheduled_games(pairs)]
 
 
 def verify_searched(manifest, games, search):
@@ -1130,6 +1138,15 @@ def test_verify_run_accepts_the_requested_search():
      "missing opponent-view forward"),
     (lambda m, g: g[0].update(search_stats=[None, None]), {"a": "default"},
      "search statistics do not match"),
+    # The setting is looked up for the player the pair and the leg seat, so a
+    # record cannot name another player on its searching side.
+    (lambda m, g: g[0].update(home="b", away="a"), {"a": "default"},
+     "seats b,a are not its leg's"),
+    (lambda m, g: g[0].update(home="b", away="a", search=g[0]["search"][::-1],
+                              search_stats=g[0]["search_stats"][::-1]), {"a": "default"},
+     "search settings are not its players'"),
+    (lambda m, g: (g[0].pop("home"), g[0].pop("away")), {"a": "default"},
+     "seats None,None are not its leg's"),
 ])
 def test_verify_run_flags_each_search_mismatch(mutate, request_, needle):
     manifest, games = searched_manifest(), searched_games()
@@ -1155,31 +1172,71 @@ def test_verify_run_flags_search_fields_nobody_asked_for():
     games[0]["search"] = [dict(SETTING), None]
     assert any("a game carries a search setting" in p
                for p in D.search_problems(good_manifest_with_bot(), games))
+    # Any other search field on a game of a run without a search seat.
+    for field, value in (("search_stats", [{"rollouts": 4}, None]), ("search_seconds", [1.0, None]),
+                         ("reward_manifest_sha256", "r" * 64), ("integrity_checks", ["one"]),
+                         ("final_state_sha256", "f" * 64), ("sampling_state_sha256", "s" * 64)):
+        games = scheduled_games()
+        games[2][field] = value
+        problems = D.search_problems(good_manifest_with_bot(), games)
+        assert problems == [f"1 game(s) carry search fields and no player searches, e.g. "
+                            f"['a', 'b'] game 1 A_home: ['{field}']"], problems
+    games = scheduled_games()
+    games[0]["search"] = [None, None]                       # two Nones are no search
+    assert D.search_problems(good_manifest_with_bot(), games) == []
+    assert D.manifest_search(good_manifest_with_bot()) == {}
+    assert D.manifest_search(searched_manifest()) == {"a": D.parse_search("default")}
+
+
+PLAIN_SPEC = {"mode": "sample", "temperature": 1.0}
+
+
+def search_entry(*players):
+    return {"players": list(players), "reward_manifest": {"sha256": "r" * 64},
+            "integrity_checks": ["one", "two"]}
+
+
+def search_spec():
+    return {"mode": "sample", "temperature": 1.0, "masks": ["m1"], "search": dict(SETTING)}
+
+
+def searching_shard(name, pair, searcher="a", **manifest_over):
+    """A shard whose one pair is searched by its first player, records and manifest alike."""
+    players = {p: search_spec() if p == searcher else dict(PLAIN_SPEC) for p in pair if p != "bot"}
+    if "bot" in pair:
+        manifest_over.update(bots={"bot": {"kind": "offense"}}, bot_library_sha256="lib1")
+    return shard(name, [(*pair, 2)], searched_games([(*pair, 2)], searcher), players=players,
+                 checkpoints={p: {"sha256": "h" + p, "path": "/srv/" + p} for p in players},
+                 search=search_entry(searcher), **manifest_over)
 
 
 def searching_shards():
-    """s1 holds the searched pair, s2 a pair without a search seat."""
-    entry = {"players": ["a"], "reward_manifest": {"sha256": "r" * 64},
-             "integrity_checks": ["one", "two"]}
-    spec = {"mode": "sample", "temperature": 1.0, "masks": ["m1"], "search": dict(SETTING)}
-    s1, s2 = two_shards()
-    s1["manifest"].update(search=entry)
-    for s in (s1, s2):
-        s["manifest"]["players"]["a"] = json.loads(json.dumps(spec))    # no shared setting
-    return s1, s2
+    """Player a searches in both of its pairs: against b in s1 and the bot in s2."""
+    return searching_shard("s1", ("a", "b")), searching_shard("s2", ("a", "bot"))
+
+
+def mixed_shards():
+    """s1 holds the searched pair, s2 a pair in which nobody searches."""
+    s2 = shard("s2", [("c", "bot", 2)], seated_games([("c", "bot", 2)]),
+               players={"c": dict(PLAIN_SPEC)}, checkpoints={"c": {"sha256": "hc", "path": "/srv/c"}},
+               bots={"bot": {"kind": "offense"}}, bot_library_sha256="lib1")
+    return searching_shard("s1", ("a", "b")), s2
 
 
 def test_merge_carries_the_search_entry_of_the_shards_that_have_one():
-    s1, s2 = searching_shards()
+    s1, s2 = mixed_shards()
+    assert "search" not in s2["manifest"] and not any("search" in g for g in s2["games"])
     manifest, _, games = D.merge_shards([s1, s2])
-    assert manifest["search"] == {"players": ["a"], "reward_manifest": {"sha256": "r" * 64},
-                                  "integrity_checks": ["one", "two"]}
+    assert manifest["search"] == search_entry("a")
     assert manifest["players"]["a"]["search"] == SETTING and len(games) == 4
+    assert "search" not in manifest["players"]["c"]
     assert "search" not in D.merge_shards(list(two_shards()))[0]       # as before without one
-    # Two shards that both search: one entry, the players joined.
-    s1, s2 = searching_shards()
-    s2["manifest"].update(search=dict(s1["manifest"]["search"], players=["c"]))
-    s2["manifest"]["players"]["c"] = json.loads(json.dumps(s2["manifest"]["players"]["a"]))
+    # Both shards search with the same player: one entry.
+    manifest, _, games = D.merge_shards(list(searching_shards()))
+    assert manifest["search"] == search_entry("a") and len(games) == 4
+    assert all(any(g["search"]) for g in games)
+    # Two shards that search with different players: one entry, the players joined.
+    s1, s2 = searching_shard("s1", ("a", "b")), searching_shard("s2", ("c", "bot"), searcher="c")
     assert D.merge_shards([s1, s2])[0]["search"]["players"] == ["a", "c"]
 
 
@@ -1190,7 +1247,9 @@ def test_merge_carries_the_search_entry_of_the_shards_that_have_one():
     (lambda a, b: b["manifest"].update(search={
         "players": ["a"], "reward_manifest": {"sha256": "r" * 64},
         "integrity_checks": ["one"]}), "the search entry"),
-    (lambda a, b: a["manifest"].pop("search"), "players with a search setting ['a']"),
+    (lambda a, b: a["manifest"].pop("search"), "s1: the manifest has no search entry"),
+    (lambda a, b: (a["manifest"].pop("search"), b["manifest"].pop("search")),
+     "players with a search setting ['a']"),
     (lambda a, b: a["manifest"]["search"].update(players=["a", "zz"]),
      "players with a search setting ['a']"),
     (lambda a, b: b["manifest"]["players"]["a"]["search"].update(n=32), "players[a]"),
@@ -1203,3 +1262,86 @@ def test_merge_refuses_shards_whose_search_differs(mutate, needle):
     with pytest.raises(D.RunnerError) as err:
         D.merge_shards([s1, s2])
     assert needle in str(err.value), str(err.value)
+
+
+def plain_records(shard_):
+    """The shard's games as a run without a search seat records them."""
+    shard_["games"] = seated_games([tuple(p) for p in shard_["manifest"]["pairs"]])
+
+
+def with_an_unsearched_pair(shard_):
+    """Add a pair in which nobody searches to a searching shard."""
+    shard_["manifest"]["pairs"].append(["c", "b", 2])
+    shard_["manifest"]["players"]["c"] = dict(PLAIN_SPEC)
+    shard_["manifest"]["checkpoints"]["c"] = {"sha256": "hc", "path": "/srv/c"}
+    shard_["games"] += seated_games([("c", "b", 2)])
+    shard_["manifest"]["tasks"] = len(shard_["games"])
+    return shard_["games"][-1]
+
+
+@pytest.mark.parametrize("build, mutate, needle", [
+    # The manifest says a player searches and the records carry no search.
+    (searching_shards, lambda a, b: plain_records(a),
+     "s1: ['a', 'b'] game 0 A_home: search settings are not its players'"),
+    (searching_shards, lambda a, b: plain_records(b),
+     "s2: ['a', 'bot'] game 0 B_home: search settings are not its players'"),
+    (searching_shards, lambda a, b: a["games"][1].pop("search"),
+     "s1: ['a', 'b'] game 0 B_home: search settings are not its players'"),
+    # The records carry a search and the manifest has no searching player.
+    (mixed_shards, lambda a, b: b.update(games=searched_games([("c", "bot", 2)], "c")),
+     "s2: a game carries a search setting and no player searches"),
+    (lambda: two_shards(), lambda a, b: a.update(games=searched_games([("a", "b", 2)])),
+     "s1: a game carries a search setting and no player searches"),
+    (mixed_shards, lambda a, b: b["games"][0].update(search_stats=[{"rollouts": 4}, None]),
+     "s2: 1 game(s) carry search fields and no player searches, e.g. ['c', 'bot'] game 0 "
+     "A_home: ['search_stats']"),
+    (mixed_shards, lambda a, b: b["games"][1].update(reward_manifest_sha256="r" * 64),
+     "s2: 1 game(s) carry search fields and no player searches"),
+    # A record's setting is not the one the manifest gives its player.
+    (searching_shards, lambda a, b: a["games"][0]["search"][0].update(n=32),
+     "s1: ['a', 'b'] game 0 A_home: search settings are not its players'"),
+    (searching_shards, lambda a, b: b["games"][1]["search"][1].update(delta="inf"),
+     "s2: ['a', 'bot'] game 0 B_home: search settings are not its players'"),
+    (searching_shards, lambda a, b: a["games"][0].update(search=[dict(SETTING), dict(SETTING)]),
+     "s1: ['a', 'b'] game 0 A_home: search settings are not its players'"),
+    (searching_shards, lambda a, b: a["games"][0].update(search=a["games"][0]["search"][::-1]),
+     "s1: ['a', 'b'] game 0 A_home: search settings are not its players'"),
+    # The seats are the pair's and the leg's, not the names the record gives.
+    (searching_shards, lambda a, b: a["games"][0].update(home="b", away="a"),
+     "s1: ['a', 'b'] game 0 A_home: seats b,a are not its leg's"),
+    # A searched game that does not rest on what the manifest names, or whose
+    # search statistics do not hold.
+    (searching_shards, lambda a, b: a["games"][0].update(integrity_checks=["one"]),
+     "s1: ['a', 'b'] game 0 A_home: integrity checks are not the manifest's"),
+    (searching_shards, lambda a, b: a["games"][0].update(reward_manifest_sha256="x" * 64),
+     "s1: ['a', 'b'] game 0 A_home: reward manifest is not the manifest's"),
+    (searching_shards, lambda a, b: a["games"][0]["search_stats"][0].update(error_rollouts=1),
+     "s1: ['a', 'b'] game 0 A_home: side 0 reports a failed rollout"),
+    (searching_shards, lambda a, b: a["games"][0]["search_stats"][0].update(shadow_forwards=1),
+     "missing opponent-view forward"),
+    (searching_shards, lambda a, b: a["games"][0].update(search_stats=[None, None]),
+     "s1: ['a', 'b'] game 0 A_home: side 0 search statistics do not match its setting"),
+    # A game without a searching player in a shard that has one carries no search field.
+    (searching_shards, lambda a, b: with_an_unsearched_pair(a).update(search_seconds=[1.5, None]),
+     "s1: ['c', 'b'] game 0 B_home: no player of the game searches, yet it carries "
+     "['search_seconds']"),
+    (searching_shards, lambda a, b: with_an_unsearched_pair(a).update(
+        search=[dict(SETTING), None], search_stats=[{"error_rollouts": 0}, None]),
+     "s1: ['c', 'b'] game 0 B_home: search settings are not its players'"),
+])
+def test_merge_holds_each_shards_games_to_its_own_manifest(build, mutate, needle):
+    """The manifests of the shards can agree with each other while a shard's games
+    are not what its manifest says. The merge reads the games."""
+    s1, s2 = build()
+    mutate(s1, s2)
+    with pytest.raises(D.RunnerError) as err:
+        D.merge_shards([s1, s2])
+    assert needle in str(err.value), str(err.value)
+
+
+def test_merge_takes_a_searching_shard_with_a_pair_nobody_searches_in():
+    s1, s2 = searching_shards()
+    with_an_unsearched_pair(s1)
+    manifest, _, games = D.merge_shards([s1, s2])
+    assert len(games) == 6 and manifest["search"] == search_entry("a")
+    assert sum(1 for g in games if "search" in g) == 4
