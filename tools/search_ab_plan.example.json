@@ -1,0 +1,33 @@
+{
+ "schema": "search-ab-plan-v1",
+ "name": "example-chain55-m1-search-ab",
+ "source_commit": "0000000000000000000000000000000000000000",
+ "code_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+ "checkpoint_sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+ "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
+ "gamma": 0.999,
+ "temperature": 1.0,
+ "masks": {"a": ["m1"], "b": ["m1"]},
+ "sampling_offsets": {"a": 0, "b": 1},
+ "max_decisions": 4096,
+ "search": {
+  "scope": ["turn", "after_declare"],
+  "k": 4,
+  "n": 16,
+  "se_floor": "sqrt(mean over candidates of per-rollout return variance / n)",
+  "candidates": "a0, then the others by policy probability, ties in packed-tuple order",
+  "max_rollout_steps": 200
+ },
+ "arms": [
+  {"name": "plain", "delta": null},
+  {"name": "s10", "delta": 0.1},
+  {"name": "s02", "delta": 0.02}
+ ],
+ "identity": {"arm": "identity", "seeds_per_shard": 2},
+ "shards": [
+  {"name": "shard-a", "seed_start": 30000000, "seed_count": 100},
+  {"name": "shard-b", "seed_start": 30000100, "seed_count": 100}
+ ],
+ "cap_rejection_ceiling": 0.01,
+ "bootstrap": {"reps": 2000, "seed": 0, "quantiles": [2.5, 97.5]}
+}
