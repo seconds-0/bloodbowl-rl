@@ -45,6 +45,13 @@ aborts the run like any other), and is played on the unbatched path only: its
 time is all rollouts, so a batch buys nothing, and N games stepped in lockstep
 would hold every record back until the slowest search of each step is done.
 
+Slices (--index0 K, default 0). The run's game indexes start at K: a pair with n
+games here plays indexes K .. K + n/2 - 1, on engine seed seed0 + index as
+always, and its records carry that index. A game depends on (pair, engine seed,
+leg) only, so one pair played as several runs on consecutive index ranges is the
+same games as one run, and tools/droplet_tournament.py merge joins them. The
+manifest records index0 only when it is not 0, and a resume refuses another.
+
   OMP_NUM_THREADS=1 .venv/bin/python -m play_harness.tournament \\
       --games-per-pair 400 --workers 4 --out-dir .play-artifacts/tournaments/<stamp>
 """
@@ -769,13 +776,18 @@ def run_batched(policies, tasks, seed0, slots, mode="sample", lib=None, specs=No
         runner.close()
 
 
-def schedule(names, games_per_pair, seed0, pairs=None):
+def schedule(names, games_per_pair, seed0, pairs=None, index0=0):
     """Tasks (a, b, index, leg) interleaved by game index across pairs.
 
     pairs: None for the full round robin at games_per_pair, else a list of
     (a, b) or (a, b, n) with n games for that pair (default games_per_pair).
     A pair with fewer games stops at its last index while larger pairs go on.
+    index0 is the first game index: a pair with n games gets index0 ..
+    index0 + n/2 - 1.
     """
+    index0 = int(index0)
+    if index0 < 0:
+        raise ValueError(f"the first game index must be 0 or more, got {index0}")
     if pairs is None:
         pairs = list(itertools.combinations(names, 2))
     sized = []
@@ -790,8 +802,8 @@ def schedule(names, games_per_pair, seed0, pairs=None):
     if len({frozenset(p[:2]) for p in sized}) != len(sized):
         raise ValueError("duplicate pair")
     most = max(n for _, _, n in sized)
-    return [(a, b, i, leg) for i in range(most // 2) for a, b, n in sized if i < n // 2
-            for leg in LEGS]
+    return [(a, b, index0 + i, leg) for i in range(most // 2) for a, b, n in sized
+            if i < n // 2 for leg in LEGS]
 
 
 def parse_pair(text):
@@ -1186,6 +1198,11 @@ def main(argv=None):
                     help="repeatable; play only these pairs (A first), N games each; "
                          "default the full round robin")
     ap.add_argument("--seed0", type=int, default=20260915)
+    ap.add_argument("--index0", type=int, default=0, metavar="K",
+                    help="first game index of this run (default 0): a pair with N games "
+                         "plays indexes K .. K + N/2 - 1 on engine seed seed0 + index, so "
+                         "one pair can be played as several runs on consecutive ranges "
+                         "and merged (tools/droplet_tournament.py merge)")
     ap.add_argument("--mode", default="sample", choices=["sample", "argmax"],
                     help="default selection mode for every player")
     ap.add_argument("--player-mode", action="append", default=[], metavar="NAME=MODE",
@@ -1258,7 +1275,8 @@ def main(argv=None):
                              masks=parse_assignments(args.mask, parse_masks),
                              seed_offsets=parse_assignments(args.sampling_offset, int),
                              search=parse_assignments(args.search, S.parse_setting))
-        tasks = schedule(names, args.games_per_pair, args.seed0, pairs=pairs)
+        tasks = schedule(names, args.games_per_pair, args.seed0, pairs=pairs,
+                         index0=args.index0)
         searching = bool(search_players(specs))
         if searching and games_per_worker != 1:
             raise ValueError(SEARCH_UNBATCHED)
@@ -1301,6 +1319,10 @@ def main(argv=None):
                 "tasks": len(tasks), "harness_git_head": _git_head(),
                 "torch": torch.__version__, "host": platform.node(),
                 "python": sys.version.split()[0]}
+    if args.index0:
+        # Only a run that does not start at game index 0 carries the key, so a
+        # run without the flag writes the manifest it always wrote.
+        manifest["index0"] = args.index0
     if searching:
         # Only a run with a search seat carries the key, so a run without one
         # writes the manifest it always wrote.
@@ -1324,6 +1346,10 @@ def main(argv=None):
         if old.get("search") != manifest.get("search"):
             raise SystemExit(f"existing manifest differs on search ({old.get('search')!r} vs "
                              f"{manifest.get('search')!r}); use a new --out-dir")
+        # A manifest without the key started at game index 0.
+        if old.get("index0", 0) != args.index0:
+            raise SystemExit(f"existing manifest differs on index0 ({old.get('index0', 0)!r} "
+                             f"vs {args.index0!r}); use a new --out-dir")
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=1)
 
@@ -1336,7 +1362,8 @@ def main(argv=None):
     pending = [t for t in tasks if task_key(*t) not in done]
     print(f"{len(tasks)} tasks, {len(done)} already recorded, {len(pending)} to play, "
           f"{args.workers} workers"
-          + (f", {games_per_worker} games per worker" if games_per_worker > 1 else ""),
+          + (f", {games_per_worker} games per worker" if games_per_worker > 1 else "")
+          + (f", game indexes from {args.index0}" if args.index0 else ""),
           flush=True)
 
     import multiprocessing as mp
