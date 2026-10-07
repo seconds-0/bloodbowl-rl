@@ -8,7 +8,8 @@
   T8   a clone that reaches the end of the match pays the terminal reward, then
        refuses steps and observations;
   T9   the real session's stalling tally and this thread's stalling sink are the
-       same with and without clone stepping, failures included.
+       same with and without clone stepping, failures included; a crowd roll is
+       counted once, in the session that rolled it.
 
 Dice reach a clone only through Engine._test_copy_dice_from, the test hook.
 """
@@ -323,3 +324,66 @@ def test_t9_the_stalling_sink_survives_a_clone_that_ends_the_match(rewards, lib)
     replay.close()                                             # the attached session itself
     assert lib.bbp_test_stall_attached(None) == 1              # no sink left on freed memory
     real.close()
+
+
+def _stalling_trail(seed, rewards):
+    """A bot game up to a real Stalling event: the coach whose carrier can score
+    without dice ends the turn instead (a legal END_TURN), so the crowd rolls.
+    Returns the tuples applied; the last one is that END_TURN."""
+    eng = E.Engine(seed, rewards=rewards)
+    kinds = (E.BOT_TYPES["offense"], E.BOT_TYPES["contact"])
+    held = E.BALL_STATES.index("held")
+    trail = []
+    while True:
+        team = eng.decision_team
+        legal = eng.legal()
+        ball = eng.match().ball
+        end_turn = [la for la in legal if la.type_name == "END_TURN"]
+        if end_turn and ball.state == held and ball.carrier >> 4 == team \
+                and eng.can_score_without_dice(ball.carrier):
+            rolls = sum(eng.stall_counts()["rolls"])
+            trail.append(end_turn[0].tuple)
+            assert eng.step(*trail[-1]) == E.STEP_OK
+            if sum(eng.stall_counts()["rolls"]) > rolls:
+                return trail
+            continue
+        trail.append(legal[eng.scripted_bot_index(kinds[team])].tuple)
+        assert eng.step(*trail[-1]) == E.STEP_OK, "no stalling event in this game"
+
+
+# Seed 9000: the crowd acts and the knockdown is a turnover. Seed 9004: the roll is
+# consumed and forgiven. Both are real crowd dice.
+@pytest.mark.parametrize("seed,acted", [(9000, 1), (9004, 0)])
+def test_t9_a_crowd_roll_is_counted_once_in_the_session_that_rolled_it(rewards, seed, acted):
+    trail = _stalling_trail(seed, rewards)
+    plain = E.Engine(seed, rewards=rewards)
+    for tup in trail:
+        assert plain.step(*tup) == E.STEP_OK
+    want = plain.stall_counts()
+    assert sum(want["rolls"]) == 1 and sum(want["acted"]) == acted
+    assert sum(want["turnovers"]) == acted
+    busy = E.Engine(seed, rewards=rewards)
+    for tup in trail[:-1]:
+        assert busy.step(*tup) == E.STEP_OK
+    before = busy.stall_counts()
+    assert sum(before["rolls"]) == 0 and before != want
+    # A clone on the real dice rolls the same crowd die, into its own tally.
+    twin = _real_dice_clone(busy)
+    assert twin.step(*trail[-1]) == E.STEP_OK
+    assert twin.stall_counts() == want
+    # Clones on their own dice roll their own crowd die: the roll is the rule's,
+    # whether the crowd acts is the die's.
+    outcomes = set()
+    for dice in range(24):
+        clone = busy.clone_for_search(dice, STREAM)
+        assert clone.step(*trail[-1]) == E.STEP_OK
+        counts = clone.stall_counts()
+        assert sum(counts["rolls"]) == 1
+        outcomes.add(sum(counts["acted"]))
+        clone.close()
+    assert outcomes == {0, 1}
+    # None of it reached the real session, which then rolls its own, once.
+    assert busy.stall_counts() == before and busy._test_stall_attached()
+    assert busy.step(*trail[-1]) == E.STEP_OK
+    assert busy.stall_counts() == want
+    assert busy.digest() == plain.digest() == twin.digest()
