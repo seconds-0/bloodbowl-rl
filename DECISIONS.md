@@ -2436,3 +2436,56 @@ Chain 57 (`b040a1b9...`, the bot-seat arm from chain 49: contact bot on tag 1, a
 4. Labels, in the order Negative, Positive, Flat, Inconclusive, as registered: Negative is the interval against chain 55 entirely below zero (the guard clause is already settled above). Positive is above +40 over chain 55 with that interval entirely above zero and both label contrasts entirely above zero. Flat is within plus or minus 40 inclusive. Otherwise Inconclusive. A Positive makes the seat change a candidate that needs a second Positive in another registered context (amendment item 5), and makes chain 57 a warm-start candidate only if both retention contrasts are also entirely above zero (item 6). Nothing is launched from any candidate before the gates of chains 58 and 59 are read (D422).
 
 **Chain 58** (`r0chain58-lam097-from49-s42-20261007`) launched on its own at 01:12 PDT. Its stage manifest shows `gae_lambda` 0.97 and the same source, module and patch bundle as chain 55's, with the bot on tag 4 and seed 42; the b3 checkout is at `fc25468` and clean. D422's manifest condition holds.
+
+**D424 - CHAIN 57 (BOT ON TAG 1) READS INCONCLUSIVE: IT BEATS ITS CONTROL DIRECTLY BUT DOES NOT ESTABLISH GAINS ON BOTH HELD-OUT OPPONENTS; THE SEAT CHANGE STAYS NOT ADOPTED AND CHAIN 49 STAYS THE WARM START (2026-10-07 02:25 PDT; chain 58 is training, the gates of chains 58 and 59 have not been played)**
+
+**A correction first.** D423's heading carries an in-text time of 02:10 PDT. It was committed at 01:59:30 PDT (`92322cc`); by the operator's shell output the push finished at 01:59:32 PDT, and the shards were launched at 02:00:10 PDT (the shard logs' first lines read 02:00:11). The order stated there is right. The push time rests on that shell output and the remote's record, not on a gate artifact.
+
+Gate `c57-gate-20261007` as registered in D418, its first amendment and D423: harness `b0099fb`, seed block 22600000, ten pairs, plan sha256 `ad2da847...`. The launcher and the scoring script each checked the plan file against the hash passed to them, which was the value committed in D423; both saved copies of the plan hash to it. Acceptance, run before scoring, which passes only with every game naturally completed and every integrity counter zero: `GATE-ACCEPTED 32000 games, 10 pairs, seed0 22600000, games_per_worker 32, commit b0099fb`. Merged `games.jsonl` sha256 `11f3d0b1...`. Five droplets, about $0.24 in total by the tool's own cost lines, all five deleted (HTTP 204 in each shard log; the tool's status listing shows no tagged droplet, no key and no live local state afterwards).
+
+| # | Pair | W / D / L | Decisive-Elo [95% seed-cluster] |
+|---|---|---|---|
+| 1 | chain 57 vs chain 55 | 1165 / 1120 / 915 | +42.0 [+29.7, +54.8] |
+| 2 | chain 57 vs chain 37 | 1648 / 991 / 561 | +187.2 [+172.5, +202.8] |
+| 3 | chain 55 vs chain 37 | 1628 / 990 / 582 | +178.7 [+162.9, +193.6] |
+| 4 | chain 49 vs chain 37 | 1591 / 1022 / 587 | +173.2 [+158.8, +189.5] |
+| 5 | chain 57 vs chain 46 | 1713 / 946 / 541 | +200.2 [+184.6, +216.5] |
+| 6 | chain 55 vs chain 46 | 1606 / 1011 / 583 | +176.0 [+161.3, +191.1] |
+| 7 | chain 49 vs chain 46 | 1286 / 1167 / 747 | +94.4 [+80.7, +108.3] |
+| 8 | chain 57 vs chain 49 (in pool, descriptive) | 1557 / 1004 / 639 | +154.7 [+139.5, +170.5] |
+| 9 | chain 57 vs offense bot | 901 / 1709 / 590 | +73.5 [+55.2, +92.9] |
+| 10 | chain 55 vs offense bot | 934 / 1767 / 499 | +108.9 [+90.8, +128.0] |
+
+| Paired contrast | Opponent | Decisive-Elo [95%] |
+|---|---|---|
+| chain 57 minus chain 55 (label) | chain 37 | +8.5 [-11.3, +28.3] |
+| chain 57 minus chain 55 (label) | chain 46 | +24.2 [+3.3, +45.4] |
+| chain 57 minus chain 49 (retention) | chain 37 | +14.0 [-6.5, +34.7] |
+| chain 57 minus chain 49 (retention) | chain 46 | +105.9 [+85.3, +126.4] |
+| chain 57 minus chain 55 (descriptive) | offense bot | -35.3 [-57.4, -12.8] |
+| chain 55 minus chain 49 (descriptive) | chain 37 | +5.5 [-16.7, +26.4] |
+| chain 55 minus chain 49 (descriptive) | chain 46 | +81.7 [+61.7, +100.7] |
+
+**Reading, labels applied in the registered order: Inconclusive.**
+- Not Negative: pair 1's interval is entirely above zero, and the stage's chain 30 guard did not fire (D423).
+- Not Positive: pair 1 is above +40 (by 2.0) with its interval entirely above zero, but Positive also needs both label contrasts entirely above zero. The chain 46 contrast is; the chain 37 contrast is +8.5 with an interval that spans zero.
+- Not Flat: Flat is pair 1 within plus or minus 40 inclusive, and it is +42.0.
+- So Inconclusive.
+
+**Consequences.**
+- The seat change is not a candidate recipe component on this evidence and stays not adopted (D414, D418 amendment item 5). Chain 57 is not a warm-start candidate. Chain 49 stays the warm start.
+- The retention contrasts matter only together with a Positive (amendment item 6). One of the two spans zero in any case.
+- Candidate selection among chains 57, 58 and 59 (D422): chain 57 is out. Nothing is launched from chain 58 or chain 59 before both of their gates are read.
+- Nothing is concluded about the seat change in general from one rung at one training seed. This is the seat change's fourth reading: Positive (D412), Flat (D414), Negative by the exam veto (D417, chain 49), and Inconclusive here. Chain 49's Negative label stood; D417's amendment and D418's confirmatory gate took it as the warm start as a checkpoint. None of the four adopts the seat.
+
+**Descriptive, not part of the reading.**
+- Against the offense bot chain 57 is below chain 55: the contrast is -35.3 with its interval entirely below zero. The stage exam's offense AWAY cell pointed the same way (0.552 / 0.535 against chain 55's 0.588 / 0.601, D423). Touchdowns per game against the offense bot: chain 57 scores 0.392 and concedes 0.307; chain 55 scores 0.404 and concedes 0.269. This contrast was declared descriptive before launch and enters no label.
+- Head to head, touchdowns per game: chain 57 0.901, chain 55 0.792. Raw roster-conditioned decisive share of chain 57 in pair 1: bash 0.466, agile 0.755, hybrid 0.511, stunty 0.653. With a bash roster chain 57's share is below one half, its seed-cluster interval [0.437, 0.496].
+- D419's two contrasts repeat on this seed block. Chain 55 minus chain 49 was -1.7 [-21.9, +19.3] against chain 37 and +60.9 [+40.2, +81.5] against chain 46 on block 22400000; here it is +5.5 [-16.7, +26.4] and +81.7 [+61.7, +100.7].
+- Three gates in this round have the same shape: the arm or continuation beats its comparator directly and one of the two held-out contrasts spans zero (chain 55: chain 37; chain 56 under m1: chain 46; chain 57: chain 37).
+- Against chain 37 the three unmasked checkpoints measure +173.2, +178.7 and +187.2 here with overlapping intervals, and their raw decisive shares with a bash roster are 0.642, 0.641 and 0.639 (1,601 of the 3,200 games in each pair have chain A on a bash roster). Against chain 46 the bash shares are 0.531, 0.631 and 0.673. This split was looked at after the result and was not registered; it is a lead for the next design and shows nothing by itself.
+- The same pair across seed blocks: chain 49 against chain 37 is +173.2 here, +178.0 on 22400000 and +181.5 on 22300000; chain 49 against chain 46 is +94.4, +118.6 and +107.4; chain 55 against chain 37 is +178.7 here and +176.3 on 22400000; chain 55 against chain 46 is +176.0 and +179.5; chain 55 against the offense bot is +108.9 [+90.8, +128.0] here and was +79.2 [+60.3, +98.1].
+- The Bradley-Terry fit rejects transitivity (chi-square 128.7 on 5 degrees of freedom).
+- Mean log-probability per decision: chain 57 -0.168, chain 55 -0.174, chain 49 -0.111, chain 37 -0.157, chain 46 -0.155. Each is pooled over that player's pairs in this gate, which differ by player.
+- No per-turn style table exists for this gate (D423 item 3).
+- Reviewed by Codex before this entry was written (`.codex-reviews/d424-review.md`): no other label is defensible; every number matches the artifacts; three corrections applied above (the count of seat readings, the wording of the hash check, the heading).
