@@ -101,6 +101,13 @@ def test_the_shim_repeats_every_check_of_the_aborting_validator():
          "reward_td": 1.0, "reward_win": 1.0}),
     (6, {"reward_dist_pbrs_gamma": 1.5}),
     (6, {"reward_dist_pbrs_gamma": float("nan")}),
+    # The flag is converted to int: anything but 0 or 1 is refused before that.
+    (7, {"reward_injury_value_scaled": 0.9}),
+    (7, {"reward_injury_value_scaled": 1.9}),
+    (7, {"reward_injury_value_scaled": -1.0}),
+    (7, {"reward_injury_value_scaled": 3e9}),
+    (7, {"reward_injury_value_scaled": float("nan")}),
+    (7, {"reward_injury_value_scaled": float("inf")}),
 ])
 def test_a_bad_reward_table_is_refused_without_abort(lib, code, override):
     fields = E.reward_fields(lib)
@@ -113,6 +120,17 @@ def test_a_bad_reward_table_is_refused_without_abort(lib, code, override):
     assert lib.bbp_reward_table_error(raw, len(fields) - 1) == -1
     assert not lib.bbp_create_rewards(ctypes.c_uint64(3), 0, -1, -1, 4, 2, 0.0, 4096,
                                       raw, len(fields))
+
+
+def test_the_flag_check_runs_before_the_table_is_converted():
+    """bbp_reward_table_error must look at the raw value: bbp_set_rewards casts it."""
+    shim = open(os.path.join(ROOT, "play_harness", "native", "bbplay.c")).read()
+    body = shim.split("int bbp_reward_table_error(const float* table, int n) {")[1].split("\n}\n")[0]
+    assert body.index("bbp_reward_flags_valid(table)") < body.index("bbp_set_rewards(")
+    create = shim.split("bbp_session* bbp_create_rewards(")[1].split("\n}\n")[0]
+    assert create.index("bbp_reward_table_error(rewards, n)") < create.index("bbp_create_env(")
+    assert E.REWARD_INT_FIELDS == ("reward_injury_value_scaled",)
+    assert shim.count("I(reward_") == len(E.REWARD_INT_FIELDS)
 
 
 def test_a_reward_table_must_name_every_coefficient(lib):

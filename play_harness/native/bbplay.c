@@ -190,10 +190,25 @@ static int bbp_reward_config_error(const Bloodbowl* env) {
     return 0;
 }
 
+// The int coefficients are flags. They are checked on the raw table value,
+// before bbp_set_rewards converts it: a NaN, an infinity or an out-of-range
+// float converted to int is undefined behaviour.
+static int bbp_reward_flags_valid(const float* table) {
+    int i = 0, ok = 1;
+#define BBP_SKIP(field) i++;
+#define BBP_FLAG(field) ok &= (table[i] == 0.0f || table[i] == 1.0f); i++;
+    BBP_REWARD_FIELDS(BBP_SKIP, BBP_FLAG)
+#undef BBP_SKIP
+#undef BBP_FLAG
+    return ok;
+}
+
 // 0 when bbp_create_rewards would accept this table, -1 for a wrong length,
-// else the failing check of bbp_reward_config_error.
+// 7 for an int coefficient that is not exactly 0 or 1, else the failing check
+// of bbp_reward_config_error.
 int bbp_reward_table_error(const float* table, int n) {
     if (!table || n != BBP_REWARD_COUNT) return -1;
+    if (!bbp_reward_flags_valid(table)) return 7;
     Bloodbowl env;
     memset(&env, 0, sizeof env);
     bbp_set_rewards(&env, table);

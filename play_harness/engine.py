@@ -333,6 +333,7 @@ REWARD_TABLE_ERRORS = {
     4: "exact-PBRS distance coefficients must be >= 0",
     5: "the reward envelope exceeds the trainer clamp",
     6: "reward_dist_pbrs_gamma must lie in [0, 1]",
+    7: "an int coefficient (a flag) is not exactly 0 or 1",
 }
 # Coefficients a schema-1 manifest must omit. Schema 1 means their legacy value
 # (tools/reward_manifest.py SCHEMA2_ONLY_FLOAT_KEYS), which is 0.
