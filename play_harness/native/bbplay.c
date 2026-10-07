@@ -9,14 +9,15 @@
 // Differences from the vec binding (binding.c), all deliberate:
 //   * one env, two agent rows, buffers owned here (the test-fixture layout);
 //   * apply_kwargs is mirrored for the play-relevant fields (see
-//     bbp_create); play_harness/tests/test_native_config.py guards drift;
+//     bbp_create_env) and for every reward coefficient (BBP_REWARD_FIELDS);
+//     play_harness/tests/test_native_config.py guards drift;
 //   * a submitted tuple is checked against exact joint support BEFORE c_step,
 //     because c_step abort()s the process on an out-of-support tuple;
 //   * c_step auto-resets the env at the terminal step, so the natural final
 //     state is rebuilt by re-applying the terminal action to a pre-step copy.
 #include "bloodbowl.h"
 
-#define BBP_ABI_VERSION 4
+#define BBP_ABI_VERSION 5
 
 // Return codes for bbp_step and bbp_step_scripted.
 #define BBP_STEP_OK 0
@@ -108,23 +109,111 @@ static void bbp_wire(bbp_session* s) {
     }
 }
 
-// episode: number of matches this env has already finished. The env seeds
-// procgen from (seed, episode + 1), so a native vec env i with base seed B
-// reproduces here as seed = B + i, episode = completed matches on that row.
-bbp_session* bbp_create(uint64_t seed, int episode, int home_team, int away_team,
-                        int skillup_max_players, int skillup_max_each,
-                        float skillup_secondary_pct, int max_decisions) {
+// Every reward coefficient apply_kwargs (binding.c) reads, in the order of the
+// table bbp_create_rewards takes. F = float field, I = int field.
+#define BBP_REWARD_FIELDS(F, I) \
+    F(reward_td) F(reward_win) F(reward_draw) \
+    F(reward_setup_done) F(reward_setup_autofix) \
+    F(reward_ball_gain) F(reward_ball_loss) \
+    F(reward_dist_ball) F(reward_dist_endzone) F(reward_dist_pbrs_gamma) \
+    F(reward_injury_inflicted) F(reward_injury_taken) \
+    I(reward_injury_value_scaled) \
+    F(reward_send_off) F(reward_kickoff_touchback) \
+    F(reward_surf_taken) F(reward_surf_inflicted) \
+    F(reward_k_kd) F(reward_k_value) F(reward_k_self_injury) F(reward_k_ball) \
+    F(reward_k_seq) F(reward_k_turnover) \
+    F(reward_possession) F(reward_k_assist) F(reward_rush_cost) \
+    F(reward_carrier_exposure) F(reward_carrier_exposure_soft) \
+    F(reward_carrier_threat) \
+    F(reward_defensive_threat) F(reward_defensive_threat_soft) \
+    F(reward_statmatch_scale)
+
+#define BBP_REWARD_NAME(field) #field,
+static const char* const bbp_reward_names[] = {
+    BBP_REWARD_FIELDS(BBP_REWARD_NAME, BBP_REWARD_NAME)
+};
+#undef BBP_REWARD_NAME
+#define BBP_REWARD_COUNT ((int)(sizeof bbp_reward_names / sizeof bbp_reward_names[0]))
+
+int bbp_reward_field_count(void) { return BBP_REWARD_COUNT; }
+
+const char* bbp_reward_field_name(int i) {
+    return (i >= 0 && i < BBP_REWARD_COUNT) ? bbp_reward_names[i] : NULL;
+}
+
+static void bbp_set_rewards(Bloodbowl* env, const float* table) {
+    int i = 0;
+#define BBP_SET_F(field) env->field = table[i++];
+#define BBP_SET_I(field) env->field = (int)table[i++];
+    BBP_REWARD_FIELDS(BBP_SET_F, BBP_SET_I)
+#undef BBP_SET_F
+#undef BBP_SET_I
+}
+
+static void bbp_get_rewards(const Bloodbowl* env, float* table) {
+    int i = 0;
+#define BBP_GET(field) table[i++] = (float)env->field;
+    BBP_REWARD_FIELDS(BBP_GET, BBP_GET)
+#undef BBP_GET
+}
+
+// 0 when bbe_validate_reward_config accepts the env's coefficients, else the
+// number of its check that fails. That function abort()s the process, which a
+// bad manifest must not do to a Python caller, so its checks are repeated here
+// in its order (test_native_config.py counts them against the header). Check 6
+// is the shim's own: the header never tests the PBRS gamma for a finite value.
+static int bbp_reward_config_error(const Bloodbowl* env) {
+    if (!bbe_reward_config_scalars_valid(env, NULL)) return 1;
+    if (env->reward_carrier_threat != 0.0f &&
+        (env->reward_carrier_exposure != 0.0f ||
+         env->reward_carrier_exposure_soft != 0.0f)) {
+        return 2;
+    }
+    if (env->reward_carrier_threat != 0.0f && env->reward_k_assist != 0.0f) return 3;
+    if (!bbe_reward_potential_sign_valid(env)) return 4;
+    if (!bbe_reward_envelope_valid(env)) return 5;
+    if (!(env->reward_dist_pbrs_gamma >= 0.0f && env->reward_dist_pbrs_gamma <= 1.0f)) {
+        return 6;
+    }
+    return 0;
+}
+
+// 0 when bbp_create_rewards would accept this table, -1 for a wrong length,
+// else the failing check of bbp_reward_config_error.
+int bbp_reward_table_error(const float* table, int n) {
+    if (!table || n != BBP_REWARD_COUNT) return -1;
+    Bloodbowl env;
+    memset(&env, 0, sizeof env);
+    bbp_set_rewards(&env, table);
+    return bbp_reward_config_error(&env);
+}
+
+// rewards: BBP_REWARD_COUNT coefficients in BBP_REWARD_FIELDS order, or NULL
+// for the objective defaults and zero shaping.
+static bbp_session* bbp_create_env(uint64_t seed, int episode, int home_team,
+                                   int away_team, int skillup_max_players,
+                                   int skillup_max_each, float skillup_secondary_pct,
+                                   int max_decisions, const float* rewards) {
     bbp_session* s = (bbp_session*)calloc(1, sizeof(bbp_session));
     if (!s) return NULL;
     bbp_wire(s);
     Bloodbowl* env = &s->env;
     // Mirrors apply_kwargs (binding.c) at the bloodbowl.ini defaults for every
     // field that changes observations, legality, rosters or episode bounds.
-    // Reward fields keep the objective defaults and zero shaping: rewards are
-    // not observed and do not change the policy's inputs.
-    env->reward_td = BBE_DEFAULT_REWARD_TD;
-    env->reward_win = BBE_DEFAULT_REWARD_WIN;
-    env->reward_draw = BBE_DEFAULT_REWARD_DRAW;
+    // Rewards are not observed and do not change the policy's inputs
+    // (test_reward_independence.py), so a session without a table keeps the
+    // objective defaults and zero shaping.
+    if (rewards) {
+        bbp_set_rewards(env, rewards);
+    } else {
+        env->reward_td = BBE_DEFAULT_REWARD_TD;
+        env->reward_win = BBE_DEFAULT_REWARD_WIN;
+        env->reward_draw = BBE_DEFAULT_REWARD_DRAW;
+    }
+    if (bbp_reward_config_error(env)) {
+        free(s);
+        return NULL;
+    }
     env->reward_configured = 1;
     bbe_validate_reward_config(env);
     env->demo_endzone_maxdist = 0;
@@ -153,6 +242,38 @@ bbp_session* bbp_create(uint64_t seed, int episode, int home_team, int away_team
     c_reset(env);
     s->last_agent = -1;
     return s;
+}
+
+// episode: number of matches this env has already finished. The env seeds
+// procgen from (seed, episode + 1), so a native vec env i with base seed B
+// reproduces here as seed = B + i, episode = completed matches on that row.
+bbp_session* bbp_create(uint64_t seed, int episode, int home_team, int away_team,
+                        int skillup_max_players, int skillup_max_each,
+                        float skillup_secondary_pct, int max_decisions) {
+    return bbp_create_env(seed, episode, home_team, away_team, skillup_max_players,
+                          skillup_max_each, skillup_secondary_pct, max_decisions,
+                          NULL);
+}
+
+// bbp_create with a full reward coefficient table (the training reward
+// manifest), so the session's per-step rewards are the trainer's. NULL when
+// the table is refused; bbp_reward_table_error says why.
+bbp_session* bbp_create_rewards(uint64_t seed, int episode, int home_team,
+                                int away_team, int skillup_max_players,
+                                int skillup_max_each, float skillup_secondary_pct,
+                                int max_decisions, const float* rewards, int n) {
+    if (bbp_reward_table_error(rewards, n)) return NULL;
+    return bbp_create_env(seed, episode, home_team, away_team, skillup_max_players,
+                          skillup_max_each, skillup_secondary_pct, max_decisions,
+                          rewards);
+}
+
+// The session's reward coefficients in BBP_REWARD_FIELDS order.
+int bbp_reward_table(bbp_session* s, float* out, int cap) {
+    float v[BBP_REWARD_COUNT];
+    bbp_get_rewards(&s->env, v);
+    for (int i = 0; i < BBP_REWARD_COUNT && i < cap; i++) out[i] = v[i];
+    return BBP_REWARD_COUNT;
 }
 
 void bbp_destroy(bbp_session* s) { free(s); }

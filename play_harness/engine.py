@@ -7,6 +7,8 @@ itself. This module adds no rules: it reads state and forwards tuples.
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -19,7 +21,7 @@ BUILD_SCRIPT = os.path.join(ROOT, "play_harness", "native", "build.sh")
 LIB_EXT = "dylib" if sys.platform == "darwin" else "so"
 DEFAULT_LIB = os.path.join(ROOT, "build", "play_harness", f"libbbplay.{LIB_EXT}")
 
-ABI_VERSION = 4
+ABI_VERSION = 5
 OBS_SIZE = 2782
 OBS_VERSION = 6
 MASK_SIZE = 454
@@ -203,6 +205,15 @@ def load_library(path=None, build_if_missing=True):
         "bbp_layout": ([ctypes.POINTER(ctypes.c_int32), ctypes.c_int], ctypes.c_int),
         "bbp_create": ([ctypes.c_uint64, ctypes.c_int, ctypes.c_int, ctypes.c_int,
                         ctypes.c_int, ctypes.c_int, ctypes.c_float, ctypes.c_int], c_p),
+        "bbp_reward_field_count": ([], ctypes.c_int),
+        "bbp_reward_field_name": ([ctypes.c_int], ctypes.c_char_p),
+        "bbp_reward_table_error": ([ctypes.POINTER(ctypes.c_float), ctypes.c_int],
+                                   ctypes.c_int),
+        "bbp_create_rewards": ([ctypes.c_uint64, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                ctypes.c_int, ctypes.c_int, ctypes.c_float, ctypes.c_int,
+                                ctypes.POINTER(ctypes.c_float), ctypes.c_int], c_p),
+        "bbp_reward_table": ([c_p, ctypes.POINTER(ctypes.c_float), ctypes.c_int],
+                             ctypes.c_int),
         "bbp_destroy": ([c_p], None),
         "bbp_obs": ([c_p, ctypes.c_int], ctypes.POINTER(ctypes.c_uint8)),
         "bbp_mask": ([c_p, ctypes.c_int], ctypes.POINTER(ctypes.c_uint8)),
@@ -296,21 +307,103 @@ def unpack_tuple(packed):
     return packed & 1023, (packed >> 10) & 1023, (packed >> 20) & 1023
 
 
+# The shim's reasons for refusing a reward table (bbp_reward_table_error).
+REWARD_TABLE_ERRORS = {
+    -1: "wrong number of coefficients",
+    1: "a coefficient is not finite or lies outside [-1, 1]",
+    2: "reward_carrier_threat cannot be combined with reward_carrier_exposure",
+    3: "reward_carrier_threat cannot be combined with reward_k_assist",
+    4: "exact-PBRS distance coefficients must be >= 0",
+    5: "the reward envelope exceeds the trainer clamp",
+    6: "reward_dist_pbrs_gamma must lie in [0, 1]",
+}
+# Coefficients a schema-1 manifest must omit. Schema 1 means their legacy value
+# (tools/reward_manifest.py SCHEMA2_ONLY_FLOAT_KEYS), which is 0.
+SCHEMA1_ABSENT_REWARDS = ("reward_dist_pbrs_gamma",)
+REWARD_INT_FIELDS = ("reward_injury_value_scaled",)
+
+
+def reward_fields(lib=None):
+    """The shim's reward coefficient names, in the order of its table."""
+    lib = lib or load_library()
+    return [lib.bbp_reward_field_name(i).decode()
+            for i in range(lib.bbp_reward_field_count())]
+
+
+def reward_table(rewards, lib=None):
+    """A complete {name: value} reward mapping as the shim's float table.
+
+    Every coefficient must be named: one left out is not the same as zero.
+    """
+    lib = lib or load_library()
+    names = reward_fields(lib)
+    missing = sorted(set(names) - set(rewards))
+    unknown = sorted(set(rewards) - set(names))
+    if missing or unknown:
+        raise ValueError(f"reward table: missing {missing}, unknown {unknown}")
+    table = (ctypes.c_float * len(names))(*[float(rewards[n]) for n in names])
+    err = lib.bbp_reward_table_error(table, len(names))
+    if err:
+        raise ValueError(f"reward table refused: {REWARD_TABLE_ERRORS.get(err, err)}")
+    return table
+
+
+def load_reward_manifest(path, lib=None):
+    """A reward manifest (puffer/config/rewards/*.json) as an Engine reward table.
+
+    Returns {"name", "sha256", "file_sha256", "rewards"}. sha256 is the digest
+    of the canonical manifest, the one tools/reward_manifest.py prints and the
+    ledger quotes; file_sha256 is the digest of the file's bytes. The canonical
+    form is repeated here because tools/ is not shipped to tournament droplets;
+    test_reward_independence.py holds the two to the same digest.
+    """
+    with open(path, "rb") as f:
+        raw = f.read()
+    manifest = json.loads(raw)
+    reward = manifest.get("reward")
+    if manifest.get("schema_version") not in (1, 2) or not isinstance(reward, dict):
+        raise ValueError(f"{path}: not a schema 1 or 2 reward manifest")
+    for key, value in reward.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{path}: {key} must be numeric")
+        reward[key] = int(value) if key in REWARD_INT_FIELDS else float(value)
+    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False, allow_nan=False).encode("utf-8")
+    rewards = dict(reward)
+    if manifest["schema_version"] == 1:
+        for key in SCHEMA1_ABSENT_REWARDS:
+            if key in rewards:
+                raise ValueError(f"{path}: a schema 1 manifest must not carry {key}")
+            rewards[key] = 0.0
+    reward_table(rewards, lib)
+    return {"name": manifest.get("name"), "sha256": hashlib.sha256(canonical).hexdigest(),
+            "file_sha256": hashlib.sha256(raw).hexdigest(), "rewards": rewards}
+
+
 class Engine:
-    """One match on the real env TU. Two agent rows, 0 = HOME, 1 = AWAY."""
+    """One match on the real env TU. Two agent rows, 0 = HOME, 1 = AWAY.
+
+    rewards: a complete {coefficient: value} mapping (load_reward_manifest), so
+    last_rewards() is the training reward. Without it the session pays the
+    objective terms only (touchdown, win, draw) and no shaping.
+    """
 
     def __init__(self, seed, episode=0, home_team=-1, away_team=-1,
                  skillup_max_players=4, skillup_max_each=2,
-                 skillup_secondary_pct=0.0, max_decisions=4096, lib=None):
+                 skillup_secondary_pct=0.0, max_decisions=4096, lib=None, rewards=None):
         self.lib = lib or load_library()
         self.seed = int(seed)
         self.episode = int(episode)
         self.home_team = int(home_team)
         self.away_team = int(away_team)
-        self._ptr = self.lib.bbp_create(
-            ctypes.c_uint64(self.seed), self.episode, self.home_team,
-            self.away_team, int(skillup_max_players), int(skillup_max_each),
-            float(skillup_secondary_pct), int(max_decisions))
+        args = (ctypes.c_uint64(self.seed), self.episode, self.home_team,
+                self.away_team, int(skillup_max_players), int(skillup_max_each),
+                float(skillup_secondary_pct), int(max_decisions))
+        if rewards is None:
+            self._ptr = self.lib.bbp_create(*args)
+        else:
+            table = reward_table(rewards, self.lib)
+            self._ptr = self.lib.bbp_create_rewards(*args, table, len(table))
         if not self._ptr:
             raise MemoryError("bbp_create failed")
         cap = self.lib.bbp_legal_max()
@@ -395,9 +488,17 @@ class Engine:
         return agent, tuple(int(v) for v in buf)
 
     def last_rewards(self):
+        """The latest step's reward for (HOME, AWAY), whoever decided it."""
         buf = (ctypes.c_float * 2)()
         self.lib.bbp_last_rewards(self._ptr, buf)
         return float(buf[0]), float(buf[1])
+
+    def reward_table(self):
+        """The session's reward coefficients, {name: value}."""
+        names = reward_fields(self.lib)
+        buf = (ctypes.c_float * len(names))()
+        self.lib.bbp_reward_table(self._ptr, buf, len(names))
+        return {n: float(v) for n, v in zip(names, buf)}
 
     def digest(self):
         return int(self.lib.bbp_state_digest(self._ptr))
