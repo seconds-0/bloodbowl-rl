@@ -707,3 +707,255 @@ def test_api_retries_a_rate_limit_on_delete_but_not_on_create(monkeypatch):
     assert D.Api("tok").call("DELETE", "/droplets/1")[0] == 200 and calls == ["DELETE"] * 3
     calls.clear()
     assert D.Api("tok").call("POST", "/droplets", {})[0] == 429 and calls == ["POST"]
+
+
+# ---- the search seat ------------------------------------------------------------------
+def test_search_settings_parse_as_the_tournament_parses_them():
+    from play_harness import search as S
+    assert D.DEFAULT_SEARCH == (S.DEFAULT_K, S.DEFAULT_N, S.DEFAULT_DELTA)
+    for text in ("default", "4:16:0.1", "2:2:0", "4:16:inf", "3:8:0.02", "2:2:0.0"):
+        theirs = S.parse_setting(text)
+        assert D.parse_search(text) == {key: theirs[key] for key in ("k", "n", "delta")}
+    for bad in ("", "4:16", "1:16:0.1", "4:1:0.1", "4:16:-1", "4:16:nan", "a:b:c", "4:16:0.1:2",
+                "4.5:16:0.1"):
+        with pytest.raises(D.RunnerError, match="--search"):
+            D.parse_search(bad)
+        with pytest.raises(ValueError):
+            S.parse_setting(bad)
+
+
+def test_extra_assignments_read_both_spellings_of_a_flag():
+    extra = ["--mask", "S=m1", "--mask=C=m1,m3", "--sampling-offset", "C=1", "--mode", "sample",
+             "--mask"]
+    assert D.extra_assignments(extra, "--mask") == {"S": "m1", "C": "m1,m3"}
+    assert D.extra_assignments(extra, "--sampling-offset") == {"C": "1"}
+    assert D.extra_assignments(extra, "--temperature") == {}
+
+
+SEARCH_EXTRA = ["--mask", "S=m1", "--mask", "I=m1", "--mask", "C=m1", "--sampling-offset", "C=1"]
+
+
+def test_tournament_argv_carries_the_search_flag_the_real_parser_accepts(tmp_path, monkeypatch):
+    from play_harness import search as S
+    from play_harness import tournament as T
+    search = {"S": D.parse_search("default"), "I": D.parse_search("2:8:inf")}
+    blobs = {name: f"/nope/{name}/{BLOB}" for name in ("S", "I", "C")}
+    pairs = [("S", "C", 2), ("I", "C", 2)]
+    argv = D.tournament_argv(blobs, {}, pairs, 5, 2, out_dir=str(tmp_path / "o"),
+                             extra=SEARCH_EXTRA, search=search)
+    at = argv.index("--search")
+    assert argv[at:at + 4] == ["--search", "S=4:16:0.1", "--search", "I=2:8:inf"]
+    assert argv[at + 4:] == SEARCH_EXTRA and "--games-per-worker" not in argv
+    assert D.tournament_argv(blobs, {}, pairs, 5, 2) == \
+        D.tournament_argv(blobs, {}, pairs, 5, 2, search={})       # no flag without a seat
+    # The real parser takes it, builds the full settings, and stops at the missing blob.
+    seen = {}
+    real = T.player_specs
+
+    def spy(*args, **kwargs):
+        seen["specs"] = real(*args, **kwargs)
+        return seen["specs"]
+    monkeypatch.setattr(T, "player_specs", spy)
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    monkeypatch.delenv(T.GAMES_PER_WORKER_ENV, raising=False)
+    with pytest.raises(FileNotFoundError):
+        T.main(argv)
+    assert seen["specs"]["S"]["search"] == S.search_setting()
+    assert seen["specs"]["I"]["search"] == S.search_setting(2, 8, float("inf"))
+    assert "search" not in seen["specs"]["C"] and seen["specs"]["C"]["seed_offset"] == 1
+    # Batched, the tournament itself refuses the search seat.
+    batched = D.tournament_argv(blobs, {}, pairs, 5, 2, out_dir=str(tmp_path / "b"),
+                                extra=SEARCH_EXTRA, search=search, games_per_worker=8)
+    with pytest.raises(SystemExit, match="unbatched path only"):
+        T.main(batched)
+    assert not (tmp_path / "b").exists()
+
+
+@pytest.mark.parametrize("extra, needle", [
+    (["--search", "S=4:16"], "NAME=default or NAME=k:n:delta"),
+    (["--search", "S"], "--search wants NAME=VALUE"),
+    (["--search", "o=default"], "a scripted bot does not search"),
+    (["--search", "Z=default"], "not a checkpoint of this run"),
+    (["--search", "idle=default", "--tournament-arg=--mask", "--tournament-arg=idle=m1"],
+     "is in no pair"),
+    (["--search", "S=default"], "plays under a mask"),
+    (["--search", "S=default", "--tournament-arg=--mask", "--tournament-arg=C=m1"],
+     "plays under a mask"),
+    (["--search", "S=default", "--tournament-arg=--mask", "--tournament-arg=S=m1",
+      "--games-per-worker", "32"], "unbatched path only"),
+    (["--search", "S=default", "--tournament-arg=--mask", "--tournament-arg=S=m1",
+      "--tournament-arg=--temperature", "--tournament-arg=S=0.5"], "temperature 1"),
+    (["--search", "S=default", "--tournament-arg=--mask", "--tournament-arg=S=m1",
+      "--tournament-arg=--player-mode", "--tournament-arg=S=argmax"], "sample mode"),
+    (["--tournament-arg=--search", "--tournament-arg=S=default"], "not --tournament-arg"),
+    (["--tournament-arg=--search=S=default"], "not --tournament-arg"),
+])
+def test_a_search_request_is_refused_before_anything_is_created(tmp_path, extra, needle):
+    """Argument checks only: the no-network fixture fails the test if cmd_run reads the
+    token, calls the API or runs git."""
+    args = build_run_args(["--checkpoint", f"S={tmp_path / 'S.bin'}", "--checkpoint",
+                           f"C={tmp_path / 'C.bin'}", "--checkpoint", f"idle={tmp_path / 'i.bin'}",
+                           "--bot", "o=offense", "--pair", "S,C,2", "--pair", "S,o,2", *extra])
+    with pytest.raises(D.RunnerError, match=needle):
+        D.cmd_run(args)
+
+
+def test_a_good_search_request_passes_the_search_checks(tmp_path):
+    args = build_run_args(["--checkpoint", f"S={tmp_path / 'S.bin'}", "--checkpoint",
+                           f"C={tmp_path / 'C.bin'}", "--pair", "S,C,2", "--search", "S=default",
+                           "--tournament-arg=--mask", "--tournament-arg=S=m1"])
+    with pytest.raises(D.RunnerError, match="checkpoint S: missing"):   # the next check
+        D.cmd_run(args)
+    # A searched game takes minutes: the silence allowed before a run is called dead.
+    assert args.stale_seconds is None
+    assert (D.STALE_SECONDS, D.STALE_SECONDS_SEARCH) == (900, 1800)
+    assert build_run_args(["--stale-seconds", "600"]).stale_seconds == 600
+
+
+SETTING = {"scope": ["turn", "after_declare"], "k": 4, "n": 16, "delta": 0.1,
+           "max_rollout_steps": 200, "gamma": 0.999}
+SEARCH_PAIRS = [("a", "b", 4)]
+
+
+def searched_manifest():
+    return {**good_manifest(), "tasks": 4, "pairs": [["a", "b", 4]], "games_per_worker": 1,
+            "players": {"a": {"mode": "sample", "temperature": 1.0, "masks": ["m1"],
+                              "search": dict(SETTING)},
+                        "b": {"mode": "sample", "temperature": 1.0}},
+            "search": {"players": ["a"], "reward_manifest": {"name": "r0", "sha256": "r" * 64},
+                       "integrity_checks": ["one", "two"]}}
+
+
+def searched_games():
+    out = []
+    for g in scheduled_games(SEARCH_PAIRS):
+        side = 0 if g["leg"] == "A_home" else 1
+        names = ("a", "b") if side == 0 else ("b", "a")
+        settings, stats = [None, None], [None, None]
+        settings[side] = dict(SETTING)
+        stats[side] = {"error_rollouts": 0, "shadow_forwards": 500, "rollouts": 640}
+        out.append(dict(g, home=names[0], away=names[1], search=settings, search_stats=stats,
+                        integrity_checks=["one", "two"], reward_manifest_sha256="r" * 64))
+    return out
+
+
+def verify_searched(manifest, games, search):
+    return D.verify_run(manifest, {"complete": True}, games, "c0ffee", {"a": "ha", "b": "hb"},
+                        SEARCH_PAIRS, 7, search=search)
+
+
+def test_verify_run_accepts_the_requested_search():
+    request = {"a": D.parse_search("default")}
+    assert verify_searched(searched_manifest(), searched_games(), request) == []
+    assert D.search_problems(searched_manifest(), searched_games(), request) == []
+    # A run without a search seat is verified as before, with or without the argument.
+    assert D.search_problems(good_manifest_with_bot(), scheduled_games()) == []
+    assert D.search_problems(good_manifest_with_bot(), scheduled_games(), {}) == []
+
+
+@pytest.mark.parametrize("mutate, request_, needle", [
+    (lambda m, g: None, {"a": "4:16:0.02"}, "manifest search settings"),
+    (lambda m, g: None, {"a": "4:32:0.1"}, "manifest search settings"),
+    (lambda m, g: None, {"a": "2:16:0.1"}, "manifest search settings"),
+    (lambda m, g: None, {"a": "4:16:inf"}, "manifest search settings"),
+    (lambda m, g: None, {}, "manifest search settings"),
+    (lambda m, g: None, {"a": "default", "b": "default"}, "manifest search settings"),
+    (lambda m, g: m["players"]["a"].pop("search"), {"a": "default"}, "manifest search settings"),
+    (lambda m, g: m["players"]["b"].update(search=dict(SETTING)), {"a": "default"},
+     "manifest search settings"),
+    (lambda m, g: m.pop("search"), {"a": "default"}, "the manifest has no search entry"),
+    (lambda m, g: m["search"].update(players=["a", "b"]), {"a": "default"}, "search players"),
+    (lambda m, g: m["search"].update(reward_manifest={}), {"a": "default"},
+     "names no reward manifest hash"),
+    (lambda m, g: m["search"].update(integrity_checks=[]), {"a": "default"},
+     "lists no integrity checks"),
+    (lambda m, g: g[0].update(search=[None, None]), {"a": "default"},
+     "search settings are not its players'"),
+    (lambda m, g: g[0].pop("search"), {"a": "default"}, "search settings are not its players'"),
+    (lambda m, g: g[0]["search"][0].update(n=32), {"a": "default"},
+     "search settings are not its players'"),
+    (lambda m, g: g[1].update(search=[dict(SETTING), dict(SETTING)]), {"a": "default"},
+     "search settings are not its players'"),
+    (lambda m, g: g[0].update(integrity_checks=["one"]), {"a": "default"},
+     "integrity checks are not the manifest's"),
+    (lambda m, g: g[0].update(reward_manifest_sha256="x" * 64), {"a": "default"},
+     "reward manifest is not the manifest's"),
+    (lambda m, g: g[0]["search_stats"][0].update(error_rollouts=2), {"a": "default"},
+     "reports a failed rollout"),
+    (lambda m, g: g[0]["search_stats"][0].update(shadow_forwards=499), {"a": "default"},
+     "missing opponent-view forward"),
+    (lambda m, g: g[0].update(search_stats=[None, None]), {"a": "default"},
+     "search statistics do not match"),
+])
+def test_verify_run_flags_each_search_mismatch(mutate, request_, needle):
+    manifest, games = searched_manifest(), searched_games()
+    mutate(manifest, games)
+    request = {name: D.parse_search(text) for name, text in request_.items()}
+    problems = verify_searched(manifest, games, request)
+    assert any(needle in p for p in problems), problems
+
+
+def test_verify_run_names_the_first_few_bad_games_and_counts_the_rest():
+    manifest = {**searched_manifest(), "tasks": 16, "pairs": [["a", "b", 16]]}
+    games = []
+    for i, g in enumerate(searched_games() * 4):
+        games.append(dict(g, game_index=i // 2, engine_seed=7 + i // 2, integrity_checks=[]))
+    problems = D.search_problems(manifest, games, {"a": D.parse_search("default")})
+    assert len(problems) == 6 and problems[-1] == "... and 11 more games with search problems"
+
+
+def test_verify_run_flags_search_fields_nobody_asked_for():
+    manifest, games = good_manifest_with_bot(), scheduled_games()
+    manifest["search"] = {"players": []}
+    assert any("no player searches" in p for p in D.search_problems(manifest, games))
+    games[0]["search"] = [dict(SETTING), None]
+    assert any("a game carries a search setting" in p
+               for p in D.search_problems(good_manifest_with_bot(), games))
+
+
+def searching_shards():
+    """s1 holds the searched pair, s2 a pair without a search seat."""
+    entry = {"players": ["a"], "reward_manifest": {"sha256": "r" * 64},
+             "integrity_checks": ["one", "two"]}
+    spec = {"mode": "sample", "temperature": 1.0, "masks": ["m1"], "search": dict(SETTING)}
+    s1, s2 = two_shards()
+    s1["manifest"].update(search=entry)
+    for s in (s1, s2):
+        s["manifest"]["players"]["a"] = json.loads(json.dumps(spec))    # no shared setting
+    return s1, s2
+
+
+def test_merge_carries_the_search_entry_of_the_shards_that_have_one():
+    s1, s2 = searching_shards()
+    manifest, _, games = D.merge_shards([s1, s2])
+    assert manifest["search"] == {"players": ["a"], "reward_manifest": {"sha256": "r" * 64},
+                                  "integrity_checks": ["one", "two"]}
+    assert manifest["players"]["a"]["search"] == SETTING and len(games) == 4
+    assert "search" not in D.merge_shards(list(two_shards()))[0]       # as before without one
+    # Two shards that both search: one entry, the players joined.
+    s1, s2 = searching_shards()
+    s2["manifest"].update(search=dict(s1["manifest"]["search"], players=["c"]))
+    s2["manifest"]["players"]["c"] = json.loads(json.dumps(s2["manifest"]["players"]["a"]))
+    assert D.merge_shards([s1, s2])[0]["search"]["players"] == ["a", "c"]
+
+
+@pytest.mark.parametrize("mutate, needle", [
+    (lambda a, b: b["manifest"].update(search={
+        "players": ["a"], "reward_manifest": {"sha256": "x" * 64},
+        "integrity_checks": ["one", "two"]}), "the search entry"),
+    (lambda a, b: b["manifest"].update(search={
+        "players": ["a"], "reward_manifest": {"sha256": "r" * 64},
+        "integrity_checks": ["one"]}), "the search entry"),
+    (lambda a, b: a["manifest"].pop("search"), "players with a search setting ['a']"),
+    (lambda a, b: a["manifest"]["search"].update(players=["a", "zz"]),
+     "players with a search setting ['a']"),
+    (lambda a, b: b["manifest"]["players"]["a"]["search"].update(n=32), "players[a]"),
+    (lambda a, b: b["manifest"]["players"]["a"].pop("search"), "players[a]"),
+    (lambda a, b: b["manifest"].update(games_per_worker=32), "games_per_worker"),
+])
+def test_merge_refuses_shards_whose_search_differs(mutate, needle):
+    s1, s2 = searching_shards()
+    mutate(s1, s2)
+    with pytest.raises(D.RunnerError) as err:
+        D.merge_shards([s1, s2])
+    assert needle in str(err.value), str(err.value)

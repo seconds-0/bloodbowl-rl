@@ -55,6 +55,12 @@ TORCH_VERSION = "2.14.0"            # the Mac harness venv's torch; installed CP
 NUMPY_VERSION = "2.5.3"
 TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
 MAX_GAMES_PER_WORKER = 256          # play_harness.tournament.MAX_GAMES_PER_WORKER
+# play_harness.search DEFAULT_K, DEFAULT_N, DEFAULT_DELTA: what `--search NAME=default` means.
+DEFAULT_SEARCH = (4, 16, 0.1)
+STALE_SECONDS = 900
+# A searched game takes minutes and the tournament log gains one line per finished
+# game, so a run with a search seat is allowed a longer silence.
+STALE_SECONDS_SEARCH = 1800
 REMOTE_ROOT = "/srv/bb"
 REMOTE_SRC = REMOTE_ROOT + "/src"
 REMOTE_RUN = REMOTE_ROOT + "/run"
@@ -143,6 +149,67 @@ def parse_pair(text):
     return parts[0], parts[1], n
 
 
+def parse_search(text):
+    """'default' or 'k:n:delta' -> {"k", "n", "delta"}, delta a float or "inf".
+    The forms play_harness.search.parse_setting accepts, checked here so a bad
+    one is refused before a droplet exists."""
+    if text == "default":
+        k, n, delta = DEFAULT_SEARCH
+        return {"k": k, "n": n, "delta": delta}
+    parts = text.split(":")
+    try:
+        if len(parts) != 3:
+            raise ValueError
+        k, n = int(parts[0]), int(parts[1])
+        delta = math.inf if parts[2] == "inf" else float(parts[2])
+    except ValueError:
+        raise RunnerError(f"--search wants NAME=default or NAME=k:n:delta, got {text!r}")
+    if k < 2 or n < 2 or math.isnan(delta) or delta < 0.0:
+        raise RunnerError(f"--search needs k >= 2, n >= 2 and delta >= 0 or inf, got {text!r}")
+    return {"k": k, "n": n, "delta": delta if math.isfinite(delta) else "inf"}
+
+
+def extra_assignments(extra, flag):
+    """{NAME: VALUE} for every `flag NAME=VALUE` or `flag=NAME=VALUE` among the
+    extra tournament arguments."""
+    out, items = {}, list(extra)
+    for i, item in enumerate(items):
+        value = None
+        if item == flag and i + 1 < len(items):
+            value = items[i + 1]
+        elif item.startswith(flag + "="):
+            value = item[len(flag) + 1:]
+        if value is not None and "=" in value:
+            name, _, rest = value.partition("=")
+            out[name] = rest
+    return out
+
+
+def search_refusal(search, checkpoints, bots, pairs, games_per_worker, extra):
+    """Why a run with these search seats must not be launched, or None."""
+    if any(item == "--search" or item.startswith("--search=") for item in extra):
+        return "pass a search seat with --search, not --tournament-arg, so the run is verified"
+    if not search:
+        return None
+    for name in search:
+        if name in bots:
+            return f"--search {name}: a scripted bot does not search"
+        if name not in checkpoints:
+            return f"--search {name}: not a checkpoint of this run"
+        if not any(name in (a, b) for a, b, _ in pairs):
+            return f"--search {name}: the player is in no pair"
+        if not extra_assignments(extra, "--mask").get(name):
+            return (f"--search {name}: a search seat plays under a mask; add "
+                    f"--tournament-arg=--mask --tournament-arg={name}=m1")
+        if name in extra_assignments(extra, "--player-mode") or \
+                name in extra_assignments(extra, "--temperature"):
+            return f"--search {name}: a search seat plays in sample mode at temperature 1"
+    if int(games_per_worker) != 1:
+        return ("a search seat plays on the unbatched path only: run with "
+                "--games-per-worker 1")
+    return None
+
+
 def plan_pairs(pairs, players, games_per_pair):
     """[(a, b, n)] with every n resolved; the same rules tournament.schedule enforces."""
     if not pairs:
@@ -170,10 +237,11 @@ def remote_checkpoint_path(name, local_path):
 
 
 def tournament_argv(checkpoints, bots, pairs, seed0, workers, out_dir=REMOTE_OUT,
-                    extra=(), games_per_worker=1):
+                    extra=(), games_per_worker=1, search=None):
     """argv after `python -m play_harness.tournament`, with droplet-side blob paths.
 
-    games_per_worker 1 adds nothing, so an unbatched run's command line is unchanged."""
+    games_per_worker 1 adds nothing, so an unbatched run's command line is unchanged.
+    search maps a player to its requested setting ({"k", "n", "delta"})."""
     argv = []
     for name, local in checkpoints.items():
         argv += ["--checkpoint", f"{name}={remote_checkpoint_path(name, local)}"]
@@ -185,6 +253,8 @@ def tournament_argv(checkpoints, bots, pairs, seed0, workers, out_dir=REMOTE_OUT
              "--out-dir", out_dir]
     if int(games_per_worker) != 1:
         argv += ["--games-per-worker", str(int(games_per_worker))]
+    for name, setting in (search or {}).items():
+        argv += ["--search", f"{name}={setting['k']}:{setting['n']}:{setting['delta']}"]
     return argv + list(extra)
 
 
@@ -376,10 +446,73 @@ def manifest_games_per_worker(manifest):
     return 1 if value is None else value
 
 
-def verify_run(manifest, complete, games, commit, checkpoint_sha, pairs, seed0, bots=None,
-               games_per_worker=1):
-    """Problems that mean the copied run is not the tournament that was asked for."""
+def search_problems(manifest, games, search=None):
+    """Problems that mean the run's search seats are not the ones asked for.
+
+    search maps a player to its requested {"k", "n", "delta"}. The manifest must
+    give exactly those players a search setting with those three values and say
+    what the setting rests on; every game must carry, on each side, the setting
+    the manifest gives that side's player, and a searched game must list the
+    manifest's integrity checks, name its reward manifest, and report no failed
+    rollout and one opponent-view forward per engine step. tools/
+    search_acceptance.py holds a run to a registered plan; this holds it to the
+    command line."""
+    search = dict(search or {})
     problems = []
+    players = manifest.get("players") or {}
+    got = {name: {key: (spec["search"] or {}).get(key) for key in ("k", "n", "delta")}
+           for name, spec in players.items() if spec.get("search")}
+    if got != search:
+        problems.append(f"manifest search settings {got} != requested {search}")
+    entry = manifest.get("search")
+    if not got and not search:
+        if entry:
+            problems.append("the manifest has a search entry and no player searches")
+        if any(any(g.get("search") or ()) for g in games):
+            problems.append("a game carries a search setting and no player searches")
+        return problems
+    if not isinstance(entry, dict):
+        return problems + ["the manifest has no search entry"]
+    if sorted(entry.get("players") or []) != sorted(got):
+        problems.append(f"manifest search players {entry.get('players')} != {sorted(got)}")
+    sha = (entry.get("reward_manifest") or {}).get("sha256")
+    checks = entry.get("integrity_checks")
+    if not (isinstance(sha, str) and len(sha) == 64):
+        problems.append("the manifest's search entry names no reward manifest hash")
+    if not checks:
+        problems.append("the manifest's search entry lists no integrity checks")
+    bad = 0
+    for g in games:
+        where = f"{g.get('pair')} game {g.get('game_index')} {g.get('leg')}"
+        want = [(players.get(name) or {}).get("search") for name in (g.get("home"), g.get("away"))]
+        found = []
+        if list(g.get("search") or [None, None]) != want:
+            found.append("search settings are not its players'")
+        if any(want):
+            if g.get("integrity_checks") != checks:
+                found.append("integrity checks are not the manifest's")
+            if g.get("reward_manifest_sha256") != sha:
+                found.append("reward manifest is not the manifest's")
+            stats = g.get("search_stats") or [None, None]
+            for side in (0, 1):
+                if bool(want[side]) != bool(stats[side]):
+                    found.append(f"side {side} search statistics do not match its setting")
+                elif want[side] and (stats[side].get("error_rollouts") != 0 or
+                                     stats[side].get("shadow_forwards") != g.get("c_steps")):
+                    found.append(f"side {side} reports a failed rollout or a missing "
+                                 "opponent-view forward")
+        bad += bool(found)
+        if found and bad <= 5:
+            problems.append(f"{where}: " + "; ".join(found))
+    if bad > 5:
+        problems.append(f"... and {bad - 5} more games with search problems")
+    return problems
+
+
+def verify_run(manifest, complete, games, commit, checkpoint_sha, pairs, seed0, bots=None,
+               games_per_worker=1, search=None):
+    """Problems that mean the copied run is not the tournament that was asked for."""
+    problems = search_problems(manifest, games, search)
     if manifest_games_per_worker(manifest) != int(games_per_worker):
         problems.append(f"manifest games_per_worker {manifest.get('games_per_worker')} != "
                         f"requested {games_per_worker}")
@@ -524,6 +657,7 @@ def merge_shards(shards):
     problems = []
     first = shards[0]
     checkpoints, bots, players, pairs, games, seen_pairs = {}, {}, {}, [], [], {}
+    search_entry = None
     for shard in shards:
         name, m = shard["name"], shard["manifest"]
         for key in MERGE_EQUAL_KEYS:
@@ -553,6 +687,18 @@ def merge_shards(shards):
                 if player in merged and ident(merged[player]) != ident(value):
                     problems.append(f"{name}: {group}[{player}] differs from an earlier shard")
                 merged.setdefault(player, value)
+        entry = m.get("search")
+        if entry:
+            # Shards without a search seat have no entry. Those that have one must
+            # rest on the same reward manifest and the same integrity checks.
+            rests_on = {k: v for k, v in entry.items() if k != "players"}
+            if search_entry is None:
+                search_entry = dict(rests_on, players=[])
+            elif rests_on != {k: v for k, v in search_entry.items() if k != "players"}:
+                problems.append(f"{name}: the search entry (reward manifest, integrity "
+                                "checks) differs from an earlier shard's")
+            search_entry["players"] = sorted(set(search_entry["players"])
+                                             | set(entry.get("players") or []))
         for a, b, n in m.get("pairs") or []:
             key = frozenset((a, b))
             if key in seen_pairs:
@@ -564,6 +710,10 @@ def merge_shards(shards):
         games += shard["games"]
     if len({_key(g) for g in games}) != len(games):
         problems.append("duplicate (pair, game_index, leg) across shards")
+    searching = sorted(name for name, spec in players.items() if spec.get("search"))
+    if searching != (search_entry or {}).get("players", []):
+        problems.append(f"players with a search setting {searching} != the shards' search "
+                        f"entries {(search_entry or {}).get('players', [])}")
     if problems:
         raise RunnerError("shards do not merge:\n  " + "\n  ".join(problems))
     lib = first["machine"]["library_sha256"]
@@ -582,6 +732,8 @@ def merge_shards(shards):
                          "wall_seconds": (s.get("complete") or {}).get("wall_seconds"),
                          "games_per_second_wall": (s.get("complete") or {}).get("games_per_second_wall")}
                         for s in shards]})
+    if search_entry:
+        manifest["search"] = search_entry
     walls = [(s.get("complete") or {}).get("wall_seconds") or 0.0 for s in shards]
     rates = [(s.get("complete") or {}).get("games_per_second_wall") or 0.0 for s in shards]
     complete = {"played": len(games), "complete": True, "shards": len(shards),
@@ -1014,6 +1166,13 @@ def cmd_run(args):
     if not 1 <= args.games_per_worker <= MAX_GAMES_PER_WORKER:   # before anything is created
         raise RunnerError(f"--games-per-worker must be in 1..{MAX_GAMES_PER_WORKER}, "
                           f"got {args.games_per_worker}")
+    search = {n: parse_search(v) for n, v in (parse_assignment(s, "search") for s in args.search)}
+    refusal = search_refusal(search, checkpoints, bots, pairs, args.games_per_worker,
+                             args.tournament_arg)
+    if refusal:
+        raise RunnerError(refusal)
+    stale_seconds = args.stale_seconds if args.stale_seconds is not None else \
+        (STALE_SECONDS_SEARCH if search else STALE_SECONDS)
     checkpoints = {n: os.path.abspath(os.path.expanduser(p)) for n, p in checkpoints.items()}
     for n, p in checkpoints.items():
         for path in (p, p + ".lineage.json"):
@@ -1097,7 +1256,7 @@ def cmd_run(args):
 
         argv = tournament_argv(checkpoints, bots, pairs, args.seed0, workers,
                                extra=args.tournament_arg,
-                               games_per_worker=args.games_per_worker)
+                               games_per_worker=args.games_per_worker, search=search)
         remote.run(f"cat > {REMOTE_RUN}/job.sh", stdin_text=job_script(argv, workers, args.stats_reps))
         # No `cd &&` in front: a backgrounded list runs in a subshell that keeps ssh's
         # stdout open, and the launch would block until the tournament ends.
@@ -1105,7 +1264,7 @@ def cmd_run(args):
                    f"< /dev/null & echo started", timeout=60)
         t_launch = time.time()
         log(f"tournament launched under nohup ({t_launch - t_start:.0f} s after create)")
-        rc = poll(remote, tasks, deadline, args.stale_seconds)
+        rc = poll(remote, tasks, deadline, stale_seconds)
         if rc != 0:
             raise RunnerError(f"droplet job exited {rc}; logs are copied to {out_dir}.failed")
         t_done = time.time()
@@ -1126,7 +1285,8 @@ def cmd_run(args):
         with open(os.path.join(partial, "games.jsonl")) as f:
             games = [json.loads(line) for line in f if line.strip()]
         problems += verify_run(manifest, complete, games, commit, checkpoint_sha, pairs,
-                               args.seed0, bots=bots, games_per_worker=args.games_per_worker)
+                               args.seed0, bots=bots, games_per_worker=args.games_per_worker,
+                               search=search)
         bad = {k: v for k, v in integrity_totals(games).items() if v}
         if bad:
             problems.append(f"nonzero integrity counters: {bad}")
@@ -1151,7 +1311,8 @@ def cmd_run(args):
         result = {"schema": "bbplay-droplet-run-v1", "name": name, "droplet_id": droplet_id,
                   "size": args.size, "region": args.region, "price_hourly": price,
                   "vcpus": size["vcpus"], "workers": workers,
-                  "games_per_worker": args.games_per_worker, "commit": commit,
+                  "games_per_worker": args.games_per_worker, "search": search,
+                  "commit": commit,
                   "machine": machine, "tasks": tasks,
                   "games_per_second_wall": complete.get("games_per_second_wall"),
                   "tournament_wall_seconds": complete.get("wall_seconds"),
@@ -1326,8 +1487,15 @@ def build_parser():
                      help="refuse a size above this hourly price")
     run.add_argument("--max-hours", type=float, default=4.0,
                      help="give up and destroy the droplet after this long")
-    run.add_argument("--stale-seconds", type=int, default=900,
-                     help="fail when the tournament log is silent this long")
+    run.add_argument("--search", action="append", default=[], metavar="NAME=SETTING",
+                     help="repeatable; checkpoint NAME plays with the rollout search: SETTING "
+                          "is 'default' or k:n:delta (play_harness.tournament --search). "
+                          "NAME needs a mask and --games-per-worker 1; the run is verified "
+                          "against the setting")
+    run.add_argument("--stale-seconds", type=int, default=None,
+                     help="fail when the tournament log is silent this long (default "
+                          f"{STALE_SECONDS}, or {STALE_SECONDS_SEARCH} with --search: a "
+                          "searched game takes minutes)")
     run.add_argument("--commit", default="HEAD", help="harness commit to sync (default HEAD)")
     run.add_argument("--out-root", default=os.path.join(ROOT, ".play-artifacts", "tournaments"))
     run.add_argument("--torch", default=TORCH_VERSION)
