@@ -283,6 +283,9 @@ def test_the_identity_arm_is_the_plain_game_with_the_search_run_and_discarded(sh
         assert identity["deviations"] == {"turn": 0, "after_declare": 0}
         assert plain["rollouts"] == plain["rollout_steps"] == 0
         assert sum(plain["searched"].values()) == searched   # counted, not run
+        # A decision with one legal action is in scope but is not searched and not
+        # counted as searched: under m1 the last player of a turn is such a choice.
+        assert identity["in_scope"]["turn"] - identity["searched"]["turn"] >= 8
 
 
 def test_the_plain_arm_is_the_tournaments_plain_game(shard):
