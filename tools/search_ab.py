@@ -59,6 +59,12 @@ What can go wrong, kept apart and never merged:
   cutoff          a rollout reached max_rollout_steps. Bootstrapped, counted,
                   allowed, reported.
 
+What is checked for `invalid`, and where, is INTEGRITY_CHECKS below; every
+record carries the list. Not covered: the env's own reward telemetry (its
+clipped, non-finite and component-mismatch counters), which the shim does not
+export. The checks on the rewards the env emits, for both seats, on every real
+step and every rollout step, stand in for it.
+
 One arm of one (seed, orientation) is a pure function of the plan, so results
 do not depend on the number of processes or the order games finish. A shard
 plays ALL arms for its own seeds, seed by seed, so a shard that dies early has
@@ -117,6 +123,23 @@ CODE_FILES = ("play_harness/search.py", "play_harness/policy.py", "play_harness/
               "play_harness/native/bbplay.c", "tools/search_ab.py",
               "tools/search_probe_diag.py")
 SCORE = {"W": 1.0, "D": 0.5, "L": 0.0}
+# Every integrity check a game runs. Any failure marks its record invalid.
+INTEGRITY_CHECKS = (
+    "real game: the engine's return code on every step",
+    "real game: hard counters after every step and at the end (illegal, "
+    "projection_collision, error_episodes, rejected_submissions, precheck_collisions)",
+    "real game: both seats' logits and values finite on every step",
+    "real game: the opponent-view state and value finite on every step (search arms)",
+    "real game: both seats' emitted rewards finite and within the clip threshold on every step",
+    "real game: no mask fallback",
+    "rollouts: the engine's return code and status on every step",
+    "rollouts: the same hard counters of every clone at its rollout's end",
+    "rollouts: both seats' emitted rewards finite and within the clip threshold on every step",
+    "rollouts: logits and values finite on every forward",
+    "rollouts: the accumulated return finite",
+    "rollouts: no mask fallback, and an action selectable at every decision",
+    "search: every return the deviation rule reads is finite",
+)
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
 SHARD_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,30}$")
@@ -293,8 +316,12 @@ def decide(returns, delta):
     """The deviation rule on (candidates, rollouts) returns, row 0 = a0.
 
     Returns (deviate, best alternative as a row index, its paired mean gain, the
-    floored standard error). An infinite delta never deviates.
+    floored standard error). An infinite delta never deviates. A return that is
+    not finite is an error here, never dropped.
     """
+    returns = np.asarray(returns, dtype=np.float64)
+    if not np.isfinite(returns).all():
+        raise ValueError("a return is not finite")
     stats = diag.screen_stats(returns)
     deviate = bool(stats["gain"] > delta and stats["gain"] > 2.0 * stats["se"])
     return deviate, 1 + stats["best"], stats["gain"], stats["se"]
@@ -452,21 +479,28 @@ class Player:
                         if caps:
                             count["cap_rejected_rollouts"] += caps
                             count["cap_rejected_decisions"] += 1
+                        deviate = False
                         if not caps and not errors:
-                            deviate, best, gain, _ = decide(batch.returns, delta)
-                            if deviate:
-                                played = tuple(int(v) for v in candidates[best])
-                                key = (f"{cls}: {diag.action_label(action, E)} -> "
-                                       f"{diag.action_label(played, E)}")
-                                deviation_types[key] = deviation_types.get(key, 0) + 1
-                                deviations[cls] += 1
-                                gains.append(round(gain, 6))
-                                action = played
-                                if hasattr(seats[a], "_after_declare"):
-                                    seats[a]._after_declare = action[0] == E.A["DECLARE"]
+                            try:
+                                deviate, best, gain, _ = decide(batch.returns, delta)
+                            except ValueError as exc:
+                                flag(f"the deviation rule could not be applied: {exc}")
+                        if deviate:
+                            played = tuple(int(v) for v in candidates[best])
+                            key = (f"{cls}: {diag.action_label(action, E)} -> "
+                                   f"{diag.action_label(played, E)}")
+                            deviation_types[key] = deviation_types.get(key, 0) + 1
+                            deviations[cls] += 1
+                            gains.append(round(gain, 6))
+                            action = played
+                            if hasattr(seats[a], "_after_declare"):
+                                seats[a]._after_declare = action[0] == E.A["DECLARE"]
             trail.update(struct.pack("<Biii", team, *action))
             rc = eng.step(*action)
             step += 1
+            hard = eng.counters()
+            if any(hard[key] for key in T.HARD_COUNTERS):
+                flag(f"hard counters { {key: hard[key] for key in T.HARD_COUNTERS if hard[key]} }")
             rewards = eng.last_rewards() if rc >= 0 else (0.0, 0.0)
             if not all(math.isfinite(r) for r in rewards):
                 flag("a reward is not finite")
@@ -505,6 +539,7 @@ class Player:
             "W" if a_td > b_td else "D" if a_td == b_td else "L",
             "a_td": a_td, "b_td": b_td, "c_steps": step, "natural": natural,
             "decision_cap": cap, "invalid": invalid, "integrity": integrity,
+            "integrity_checks": list(INTEGRITY_CHECKS),
             "team_ids": [int(final.team_id[0]), int(final.team_id[1])] if final is not None
             else None,
             "sampling_seeds": [seat.seed for seat in seats],
@@ -675,6 +710,8 @@ def accept(plan, plan_sha256, records, allow_test_policy=False):
                                 f"the plan says {want}")
         if record["arm"] in arms and record["settings"] != game_settings(plan, record["arm"]):
             problems.append(f"{key}: its settings are not the plan's")
+        if record.get("integrity_checks") != list(INTEGRITY_CHECKS):
+            problems.append(f"{key}: integrity_checks is not this tool's list")
         if record["shard"] != shard_of(plan, record["engine_seed"]):
             problems.append(f"{key}: played by shard {record['shard']}, the plan gives that "
                             f"seed to {shard_of(plan, record['engine_seed'])}")

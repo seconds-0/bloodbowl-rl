@@ -204,6 +204,12 @@ def test_the_deviation_rule_and_its_floor():
     assert AB.decide(returns, 0.15)[0] is False             # must EXCEED delta
     assert AB.decide(returns, 0.02)[0] is True
     assert AB.decide(returns, math.inf)[0] is False         # the identity arm never deviates
+    # A return that is not finite is refused, not dropped with its rollout index.
+    for bad in (float("nan"), float("inf")):
+        broken = returns.copy()
+        broken[2, 5] = bad
+        with pytest.raises(ValueError, match="not finite"):
+            AB.decide(broken, 0.10)
     # Above delta but not above two standard errors: a0.
     noisy = np.stack([base, base + rng.normal(0.3, 1.0, 16)])
     d, _, gain, se = AB.decide(noisy, 0.10)
@@ -387,6 +393,67 @@ def test_a_game_that_ends_on_the_decision_cap_is_recorded_and_refused(capped, ca
     assert "did not end naturally (decision cap)" in text and "win score" not in text
 
 
+def _quick_player(tmp_path):
+    plan = make_plan(max_decisions=150,
+                     shards=[{"name": "t1", "seed_start": 32000, "seed_count": 2}])
+    _, sha = write_plan(tmp_path, plan)
+    return AB.Player(plan, sha, "t1", POLICY, FIXTURE)
+
+
+def test_every_record_lists_the_integrity_checks_that_ran(capped):
+    records = AB.load_records(str(capped["folder"] / "p1" / "games.jsonl"))
+    assert all(r["integrity_checks"] == list(AB.INTEGRITY_CHECKS) for r in records)
+    assert len(AB.INTEGRITY_CHECKS) == len(set(AB.INTEGRITY_CHECKS)) == 13
+    for needle in ("real game: hard counters after every step", "both seats' emitted rewards",
+                   "rollouts: the same hard counters of every clone",
+                   "rollouts: the accumulated return finite"):
+        assert any(needle in check for check in AB.INTEGRITY_CHECKS)
+    assert all(name in " ".join(AB.INTEGRITY_CHECKS) for name in T.HARD_COUNTERS)
+
+
+@pytest.mark.parametrize("fault, needle", [
+    ("real_counter", "hard counters {'illegal': 1}"),
+    ("real_reward", "a reward is not finite"),
+    ("clone_counter", "a rollout failed: hard counters {'precheck_collisions': 1}"),
+    ("clone_reward", "a rollout failed: a reward that is not finite"),
+    ("rule", "the deviation rule could not be applied: a return is not finite"),
+])
+def test_an_integrity_failure_in_the_real_game_or_a_clone_makes_the_record_invalid(
+        tmp_path, monkeypatch, fault, needle):
+    player = _quick_player(tmp_path)
+    clean = player.play(32000, "A_home", "s0")
+    assert clean["invalid"] == [] and sum(clean["searched"].values()) > 0
+    counters, rewards = E.Engine.counters, E.Engine.last_rewards
+    if fault == "real_counter":
+        monkeypatch.setattr(E.Engine, "counters", lambda self: counters(self) if self.is_clone
+                            else dict(counters(self), illegal=1))
+    elif fault == "real_reward":
+        # Seat B's reward, which no return counts: still checked on the real step.
+        monkeypatch.setattr(E.Engine, "last_rewards", lambda self: rewards(self) if self.is_clone
+                            else (rewards(self)[0], float("nan")))
+    elif fault == "clone_counter":
+        monkeypatch.setattr(E.Engine, "counters", lambda self: counters(self)
+                            if not self.is_clone else dict(counters(self), precheck_collisions=1))
+    elif fault == "clone_reward":
+        monkeypatch.setattr(E.Engine, "last_rewards", lambda self: rewards(self)
+                            if not self.is_clone else (rewards(self)[0], float("nan")))
+    else:
+        monkeypatch.setattr(AB, "decide",
+                            lambda returns, delta: AB.diag and (_ for _ in ()).throw(
+                                ValueError("a return is not finite")))
+    record = player.play(32000, "A_home", "s0")
+    assert record["invalid"] and needle in record["invalid"][0], record["invalid"]
+    assert len(record["invalid"]) <= 8                       # the first few, not thousands
+    if fault != "real_counter" and fault != "real_reward":
+        # With every search refused the seat played a0 throughout: the plain game.
+        plain = player.play(32000, "A_home", "plain")
+        assert record["action_trail_sha256"] == plain["action_trail_sha256"]
+        assert record["deviations"] == {"turn": 0, "after_declare": 0}
+        assert record["error_rollouts"] > 0 or fault == "rule"
+    plan, sha = player.plan, player.hashes["plan_sha256"]
+    assert any("UNREAD" in p for p in AB.accept(plan, sha, [record], allow_test_policy=True))
+
+
 def test_a_killed_run_resumes_with_only_the_missing_games(capped, tmp_path, capsys):
     source = capped["folder"] / "p1" / "games.jsonl"
     lines = source.read_text().splitlines(keepends=True)
@@ -441,6 +508,7 @@ def fake(plan, sha, key, result="D", a_td=1, b_td=1, **over):
         "schema": AB.SCHEMA, "shard": shard, "engine_seed": seed, "leg": leg, "arm": arm,
         "settings": AB.game_settings(plan, arm), "result_a": result, "a_td": a_td, "b_td": b_td,
         "c_steps": 1200, "natural": True, "decision_cap": False, "invalid": [],
+        "integrity_checks": list(AB.INTEGRITY_CHECKS),
         "integrity": {k: 0 for k in T.HARD_COUNTERS}, "team_ids": [1, 2],
         "sampling_seeds": [1, 2], "in_scope": {"turn": 100, "after_declare": 100},
         "searched": {"turn": 90, "after_declare": 100},
