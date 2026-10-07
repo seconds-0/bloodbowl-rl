@@ -109,16 +109,6 @@ def _flags(game, searcher):
             getattr(game.seats[1 - searcher], "_after_declare", False))
 
 
-def _search_inputs(sampling_seed, step, n, k):
-    """Seeds and generators for n rollouts of each of k candidates (common random
-    numbers: rollout j of every candidate shares its seeds)."""
-    dice = [S.rollout_seed(sampling_seed, step, j, "dice") for _ in range(k) for j in range(n)]
-    gens = [(torch.Generator().manual_seed(S.rollout_seed(sampling_seed, step, j, "own")),
-             torch.Generator().manual_seed(S.rollout_seed(sampling_seed, step, j, "opponent")))
-            for _ in range(k) for j in range(n)]
-    return dice, gens
-
-
 def _seat_fingerprint(game):
     return ([s.state.clone() for s in game.seats],
             [s.generator.get_state().clone() for s in game.seats],
@@ -155,15 +145,16 @@ def test_t6_an_oracle_rollout_reproduces_the_real_game_to_the_end_of_the_turn(
             before = _seat_fingerprint(game)
             # The oracle shares a batch with ordinary rollouts of another action.
             other = E.unpack_tuple(game.eng.joint_support(team)[0])
-            dice, gens = _search_inputs(5, game.steps, 2, 1)
             clones = [_real_dice_clone(game.eng)] + [
-                game.eng.clone_for_search(seed, S.SEARCH_DICE_STREAM) for seed in dice]
+                game.eng.clone_for_search(seed, S.SEARCH_DICE_STREAM) for seed in (1, 2)]
             oracle = (_generator_copy(game.seats[searcher].generator),
                       _generator_copy(game.seats[1 - searcher].generator))
-            batch = rollouts.run(
+            others = [tuple(torch.Generator().manual_seed(10 * b + i) for i in (1, 2))
+                      for b in (1, 2)]
+            batch = rollouts._play(
                 game.eng, game.seats[searcher].state, game.seats[1 - searcher].state,
-                [outs[team]["tuple"], other, other], None, [oracle] + gens,
-                after_declare=_flags(game, searcher), clones=clones, record=True)
+                [outs[team]["tuple"], other, other], clones, [oracle] + others,
+                after_declare=_flags(game, searcher), record=True)
             _assert_untouched(game, before)
             roots.append((game.steps, batch,
                           None if batch.stops[0] == S.STOP_TERMINAL else clones[0].digest()))
@@ -214,19 +205,17 @@ def test_t3_a_search_leaves_the_seats_and_the_session_as_they_were(rewards, net)
             own, opp = game.seats[0].state, game.seats[1].state
             copies = own.clone(), opp.clone()
             tuples, _ = S.joint_probabilities(outs[0]["logits"], support)
-            k = min(4, len(tuples))
-            firsts = [E.unpack_tuple(t) for t in tuples[:k] for _ in range(4)]
-            dice, gens = _search_inputs(game.seats[0].seed, game.steps, 4, k)
-            batch = rollouts.run(game.eng, own, opp, firsts, dice, gens,
-                                 after_declare=_flags(game, 0))
+            candidates = [E.unpack_tuple(t) for t in tuples[:4]]
+            batch = rollouts.evaluate(game.eng, own, opp, candidates, 4, game.seats[0].seed,
+                                      game.steps, after_declare=_flags(game, 0))
             _assert_untouched(game, before)
             assert game.seats[0].state is own and game.seats[1].state is opp
             assert torch.equal(own, copies[0]) and torch.equal(opp, copies[1])
+            assert batch.returns.shape == (len(candidates), 4)
             assert np.isfinite(batch.returns).all() and batch.count(S.STOP_REJECTED) == 0
             # The same search again is the same search: nothing carried over.
-            dice, gens = _search_inputs(game.seats[0].seed, game.steps, 4, k)
-            again = rollouts.run(game.eng, own, opp, firsts, dice, gens,
-                                 after_declare=_flags(game, 0))
+            again = rollouts.evaluate(game.eng, own, opp, candidates, 4, game.seats[0].seed,
+                                      game.steps, after_declare=_flags(game, 0))
             assert np.array_equal(batch.returns, again.returns)
             assert batch.forward_rows == again.forward_rows > 0
             searched += 1
@@ -260,12 +249,13 @@ def test_t13_rollouts_never_touch_the_real_opponent_seat(rewards, net):
         game.apply(team, outs)
     assert not torch.equal(shadow, game.seats[1].state)       # another network's state
     tuples, _ = S.joint_probabilities(outs[0]["logits"], support)
-    firsts = [E.unpack_tuple(t) for t in tuples[:2] for _ in range(4)]
+    candidates = [E.unpack_tuple(t) for t in tuples[:2]]
     rollouts = S.Rollouts(net, 0)
+    seed, step = game.seats[0].seed, game.steps
 
     def search():
-        dice, gens = _search_inputs(game.seats[0].seed, game.steps, 4, 2)
-        return rollouts.run(game.eng, game.seats[0].state, shadow, firsts, dice, gens)
+        return rollouts.evaluate(game.eng, game.seats[0].state, shadow, candidates, 4,
+                                 seed, step)
 
     with_seat = search()
     real_opponent, game.seats[1] = game.seats[1], Raiser()
@@ -274,7 +264,7 @@ def test_t13_rollouts_never_touch_the_real_opponent_seat(rewards, net):
     without = search()
     assert np.array_equal(with_seat.returns, without.returns)
     assert np.isfinite(without.returns).all()
-    assert without.engine_steps == with_seat.engine_steps > len(firsts)
+    assert without.engine_steps == with_seat.engine_steps > 8
     assert real_opponent.forwards == game.steps + 1
 
 
@@ -331,8 +321,8 @@ def _scripted_rollout(root, seat, trail, start, value=0.25, **kwargs):
     rollouts = S.Rollouts(policy, seat, masks=(), **kwargs)
     state = policy.initial_state(1)
     generators = [(torch.Generator().manual_seed(1), torch.Generator().manual_seed(2))]
-    return rollouts.run(root, state, state, [trail[start]["tuple"]], None, generators,
-                        clones=[_real_dice_clone(root)], record=True)
+    return rollouts._play(root, state, state, [trail[start]["tuple"]],
+                          [_real_dice_clone(root)], generators, record=True)
 
 
 def _first_touchdown(rewards, seat):
@@ -451,12 +441,11 @@ def test_t2_rollout_returns_do_not_depend_on_the_real_dice_stream(rewards, net):
     games[1].eng._test_copy_dice_from(elsewhere)              # same match, another stream
     assert games[0].eng.digest() != games[1].eng.digest()
     tuples, _ = S.joint_probabilities(moves[0][1][0]["logits"], support)
-    firsts = [E.unpack_tuple(t) for t in tuples[:2] for _ in range(6)]
-    batches = []
-    for g in games:
-        dice, gens = _search_inputs(g.seats[0].seed, g.steps, 6, 2)
-        batches.append(S.Rollouts(net, 0).run(g.eng, g.seats[0].state, g.seats[1].state,
-                                              firsts, dice, gens, record=True))
+    candidates = [E.unpack_tuple(t) for t in tuples[:2]]
+    batches = [S.Rollouts(net, 0).evaluate(g.eng, g.seats[0].state, g.seats[1].state,
+                                           candidates, 6, g.seats[0].seed, g.steps,
+                                           record=True)
+               for g in games]
     assert np.array_equal(batches[0].returns, batches[1].returns)
     assert batches[0].trails == batches[1].trails
     assert len({tuple(t) for t in batches[0].trails}) > 1     # the rollouts did differ
@@ -476,6 +465,8 @@ def test_search_code_cannot_reach_real_dice():
     # One way to make a clone, on the search stream; one reward read, the searcher's.
     assert code.count("clone_for_search(") + code.count("copy_from(") == 2
     assert code.count("SEARCH_DICE_STREAM)") == 2
+    # Outside tests, clones and generators are made in evaluate() and nowhere else.
+    assert code.count("._play(") == 1 and code.count("torch.Generator()") == 2
     assert code.count("last_rewards()") == 1 and "last_rewards()[seat]" in code
     assert S.SEARCH_DICE_STREAM != E.REAL_DICE_STREAM
 
@@ -547,14 +538,86 @@ def test_rollouts_refuse_bad_settings(net):
             S.Rollouts(net, **kwargs)
     eng = E.Engine(3)
     state = net.initial_state(1)
-    first = [eng.legal()[0].tuple]
+    first = eng.legal()[0].tuple
     with pytest.raises(ValueError):
-        S.Rollouts(net, 0).run(eng, state, state, first, [1, 2], [(None, None)])
+        S.Rollouts(net, 0).evaluate(eng, state, state, [], 4, 1, 0)
     with pytest.raises(ValueError):
-        S.Rollouts(net, 0).run(eng, state, state, first, [1], [])
+        S.Rollouts(net, 0).evaluate(eng, state, state, [first], 0, 1, 0)
     with pytest.raises(E.CloneRefused):
         finished = E.Engine(4)
         rng = random.Random(4)
         while finished.step(*rng.choice(finished.legal()).tuple) != E.STEP_TERMINAL:
             pass
-        S.Rollouts(net, 0).run(finished, state, state, first, [1], [(None, None)])
+        S.Rollouts(net, 0).evaluate(finished, state, state, [first], 1, 1, 0)
+
+
+def _generators(n):
+    return [(torch.Generator().manual_seed(2 * b), torch.Generator().manual_seed(2 * b + 1))
+            for b in range(n)]
+
+
+def test_a_rollout_never_steps_the_root_or_a_shared_clone(rewards, net):
+    """The test entry takes ready clones. It must refuse the root itself, a real
+    session, one clone listed twice and a generator shared between rollouts, each
+    of which would let one rollout change the real game or another rollout."""
+    game = Game((net, net), 7600, rewards)
+    game.play(90)
+    team, outs = game.forward()
+    eng, rollouts = game.eng, S.Rollouts(net, team)
+    own, opp = game.seats[team].state, game.seats[1 - team].state
+    first = outs[team]["tuple"]
+    other_real = E.Engine(7600, rewards=rewards)       # creating it moves the stalling sink
+    before = (eng.digest(), eng.env_digest(), eng.counters(), other_real._test_stall_attached())
+    assert before[3]
+    clone = eng.clone_for_search(1, S.SEARCH_DICE_STREAM)
+    shared = torch.Generator().manual_seed(1)
+    bad = [([eng], _generators(1)),
+           ([other_real], _generators(1)),
+           ([clone, clone], _generators(2)),
+           ([clone, eng], _generators(2)),
+           ([clone], [(shared, shared)]),
+           ([clone, eng.clone_for_search(2, S.SEARCH_DICE_STREAM)],
+            [(shared, torch.Generator()), (torch.Generator(), shared)]),
+           ([clone], _generators(2))]
+    for clones, generators in bad:
+        with pytest.raises(ValueError):
+            rollouts._play(eng, own, opp, [first] * len(clones), clones, generators)
+    assert (eng.digest(), eng.env_digest(), eng.counters(),
+            other_real._test_stall_attached()) == before
+    assert clone.counters()["steps"] == eng.counters()["steps"]          # nothing was stepped
+    # A root that is itself a clone (a stored root) is still never stepped.
+    with pytest.raises(ValueError):
+        S.Rollouts(net, team)._play(clone, own, opp, [first], [clone], _generators(1))
+    good = rollouts._play(eng, own, opp, [first], [clone], _generators(1))
+    assert good.stops[0] in S.STOPS and good.steps[0] >= 1
+
+
+def test_evaluate_builds_its_own_seeds_and_shares_them_across_candidates(rewards, net):
+    game = Game((net, net), 7700, rewards)
+    while True:
+        team, outs = game.forward()
+        support, _ = restrict_support(game.eng.joint_support(team), ("m1",), False)
+        if team == 0 and game.steps > 100 and len(support) >= 2:
+            break
+        game.apply(team, outs)
+    own, opp = game.seats[0].state, game.seats[1].state
+    a0 = tuple(int(v) for v in outs[0]["tuple"])
+    rollouts = S.Rollouts(net, 0)
+    seed, step = game.seats[0].seed, game.steps
+    twice = rollouts.evaluate(game.eng, own, opp, [a0, a0], 5, seed, step, record=True)
+    # Common random numbers: the same candidate twice is the same five rollouts twice,
+    # and rollout j is not rollout j + 1.
+    assert np.array_equal(twice.returns[0], twice.returns[1])
+    assert twice.trails[:5] == twice.trails[5:]
+    assert len({repr(t) for t in twice.trails[:5]}) > 1
+    # The seeds are the published ones: rebuilding rollout 3 by hand gives its trail.
+    clone = game.eng.clone_for_search(S.rollout_seed(seed, step, 3, "dice"), S.SEARCH_DICE_STREAM)
+    by_hand = rollouts._play(
+        game.eng, own, opp, [a0], [clone],
+        [tuple(torch.Generator().manual_seed(S.rollout_seed(seed, step, 3, purpose))
+               for purpose in ("own", "opponent"))], record=True)
+    assert by_hand.trails[0] == twice.trails[3]
+    assert by_hand.returns[0] == twice.returns[0, 3]
+    # Another step index or sampling seed is another set of rollouts.
+    moved = rollouts.evaluate(game.eng, own, opp, [a0], 5, seed, step + 1, record=True)
+    assert moved.trails != twice.trails[:5]

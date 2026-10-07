@@ -16,8 +16,9 @@ What a rollout may not touch, and how that is held:
   real dice      a clone is always reseeded; the real stream's id is refused by
                  the shim. Dice seeds here come from rollout_seed, a hash of
                  public values.
-  the real seats nothing here takes a seat. The caller hands over copies of the
-                 two recurrent states, and sampling uses rollout-only generators.
+  the real seats nothing here takes a seat. The caller hands over the two
+                 recurrent states, which are copied, and evaluate() builds every
+                 clone and every sampling generator itself from rollout_seed.
   the opponent   its reward is never read: the shaped reward is not zero-sum,
                  so the return is the searcher's own reward on every engine
                  step, the opponent's decisions included.
@@ -149,36 +150,62 @@ class Rollouts:
             clone.close()
         self._pool = []
 
-    def _clones(self, root, dice_seeds):
-        while len(self._pool) < len(dice_seeds):
-            self._pool.append(root.clone_for_search(0, SEARCH_DICE_STREAM))
-        return [clone.copy_from(root, seed, SEARCH_DICE_STREAM)
-                for clone, seed in zip(self._pool, dice_seeds)]
+    def evaluate(self, root, own_state, opp_state, candidates, rollouts, sampling_seed,
+                 step_index, after_declare=(False, False), record=False):
+        """`rollouts` rollouts of every candidate action at the root, scored.
 
-    def run(self, root, own_state, opp_state, first_actions, dice_seeds, generators,
-            after_declare=(False, False), clones=None, record=False):
-        """Play one rollout per entry of first_actions and score each.
-
-        root           the real session at a decision. It is copied, never stepped.
+        root           the session at a decision. It is copied, never stepped.
         own_state      the searcher's recurrent state after its forward on the root
         opp_state      the searcher's network on the opponent's row, likewise
                        (both (layers, 1, hidden); neither is written)
-        first_actions  the tuple each rollout applies at the root
-        dice_seeds     each rollout's dice seed
-        generators     each rollout's (searcher, opponent) sampling generators;
-                       never a seat's own generator
+        candidates     the tuples to compare, each applied at the root
+        sampling_seed, step_index
+                       the seat's sampling seed and the engine step searched:
+                       with the rollout index, all a rollout's dice and sampling
+                       derive from (rollout_seed)
         after_declare  (searcher, opponent): that side's previous decision was a
                        DECLARE, as mask m2 reads it at the root
-        clones         for tests: ready clones of the root, used as they are
         record         keep each rollout's (team, tuple, reward) trail
+
+        Common random numbers: rollout j of every candidate has the same dice
+        seed and the same two sampling seeds. The batch's arrays come back
+        shaped (candidates, rollouts); stops and trails stay flat, candidate by
+        candidate.
+        """
+        k, n = len(candidates), int(rollouts)
+        if k < 1 or n < 1:
+            raise ValueError("at least one candidate and one rollout")
+        while len(self._pool) < k * n:
+            self._pool.append(root.clone_for_search(0, SEARCH_DICE_STREAM))
+        seeds = [[rollout_seed(sampling_seed, step_index, j, purpose) for j in range(n)]
+                 for purpose in SEED_PURPOSES]
+        clones = [self._pool[c * n + j].copy_from(root, seeds[0][j], SEARCH_DICE_STREAM)
+                  for c in range(k) for j in range(n)]
+        generators = [(torch.Generator().manual_seed(seeds[1][j]),
+                       torch.Generator().manual_seed(seeds[2][j]))
+                      for _ in range(k) for j in range(n)]
+        firsts = [tuple(action) for action in candidates for _ in range(n)]
+        out = self._play(root, own_state, opp_state, firsts, clones, generators,
+                         after_declare, record)
+        for name in ("returns", "rewards", "bootstraps", "steps"):
+            setattr(out, name, getattr(out, name).reshape(k, n))
+        return out
+
+    def _play(self, root, own_state, opp_state, first_actions, clones, generators,
+              after_declare=(False, False), record=False):
+        """One rollout per entry of first_actions, on the clones and generators
+        given: clones[b] is stepped, generators[b] is its (searcher, opponent)
+        pair. evaluate() is the entry point; tests call this to hand a rollout
+        the real dice and copies of the real generators.
         """
         seat, n = self.seat, len(first_actions)
-        if clones is None:
-            if len(dice_seeds) != n:
-                raise ValueError("one dice seed per rollout")
-            clones = self._clones(root, dice_seeds)
         if len(clones) != n or len(generators) != n:
             raise ValueError("one clone and one generator pair per rollout")
+        if len({id(c) for c in clones}) != n or \
+                any(c is root or not c.is_clone for c in clones):
+            raise ValueError("a rollout steps its own search clone, never the root")
+        if len({id(g) for pair in generators for g in pair}) != 2 * n:
+            raise ValueError("every rollout needs its own two generators")
         base_turns = root.turns_completed()[seat]
         # [0] the searcher's view, [1] the opponent's: row, state, mask flag.
         rows = (seat, 1 - seat)
