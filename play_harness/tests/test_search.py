@@ -427,6 +427,95 @@ def test_a_rollout_that_ends_on_the_decision_cap_is_rejected(rewards):
     assert batch.steps[0] == 4 and batch.bootstraps[0] == 0.0
 
 
+def test_the_default_cutoff_is_200_engine_steps(rewards):
+    """A bot game holds stretches of more than 200 engine steps in which one team's
+    turn counter does not move (setup, a kick-off, the other team's long turn). A
+    rollout for that team is cut at 200, bootstrapped there and counted."""
+    seed = 8005
+    trail = _bot_game(seed, rewards)
+    best = (0, 0, 0)
+    for seat in (0, 1):
+        start = 0
+        for i in range(1, len(trail)):
+            if trail[i]["turns"][seat] != trail[i - 1]["turns"][seat]:
+                best = max(best, (i - start, start, seat))
+                start = i
+    length, start, seat = best
+    assert length > S.MAX_ROLLOUT_STEPS == 200
+    root = _replayed(seed, rewards, trail, start)
+    batch = _scripted_rollout(root, seat, trail, start)                 # default max_steps
+    assert batch.stops == [S.STOP_CUTOFF] and batch.count(S.STOP_CUTOFF) == 1
+    assert batch.steps[0] == 200
+    real = trail[start:start + 200]
+    assert batch.trails[0] == [(e["team"], e["tuple"], e["rewards"][seat]) for e in real]
+    expect = sum(S.GAMMA ** i * e["rewards"][seat] for i, e in enumerate(real))
+    assert batch.bootstraps[0] == 0.25
+    assert batch.returns[0] == pytest.approx(expect + S.GAMMA ** 200 * 0.25, abs=1e-9)
+    # One step more of budget and the same rollout is not cut there.
+    longer = _scripted_rollout(_replayed(seed, rewards, trail, start), seat, trail, start,
+                               max_steps=201)
+    assert longer.steps[0] == 201
+
+
+class UniformPolicy:
+    """A stand-in network: equal logits (a uniform draw over what is legal) and a
+    constant value, whatever the batch."""
+
+    def initial_state(self, batch=1):
+        return torch.zeros(1, batch, 1)
+
+    def forward_eval(self, obs, state):
+        n = state.shape[1]
+        return torch.zeros(n, sum(E.ACT_SIZES)), torch.full((n,), 0.25), state
+
+
+@pytest.mark.parametrize("back,seat,max_steps,kinds", [
+    (6, 0, 5, {S.STOP_TERMINAL, S.STOP_CUTOFF, S.STOP_REJECTED}),
+    (20, 1, 3, {S.STOP_TURN, S.STOP_CUTOFF, S.STOP_REJECTED}),
+])
+def test_rows_that_stop_differently_share_a_batch(rewards, back, seat, max_steps, kinds):
+    """One batch near the end of a game: rollouts that end the match, that run out
+    of steps, that end the turn, and rollouts the engine refuses at their first
+    action. Each row is filed under its own stop, with its own return, and is the
+    rollout it would have been alone."""
+    seed = 8005
+    trail = _bot_game(seed, rewards)
+    start = len(trail) - back
+    root = _replayed(seed, rewards, trail, start)
+    policy = UniformPolicy()
+    state = policy.initial_state(1)
+    rollouts = S.Rollouts(policy, seat, masks=(), max_steps=max_steps)
+    legal, refused = trail[start]["tuple"], (A["STEP"], 40, 999)
+    assert root.tuple_index(*refused) < 0
+    before = (root.digest(), root.env_digest(), root.counters())
+    n = 16
+    batch = rollouts.evaluate(root, state, state, [legal, refused], n, 7, start, record=True)
+    assert set(batch.stops) == kinds
+    assert (root.digest(), root.env_digest(), root.counters()) == before
+    assert batch.stops[n:] == [S.STOP_REJECTED] * n                 # the refused candidate
+    assert np.isnan(batch.returns[1]).all() and not batch.steps[1].any()
+    assert not batch.bootstraps[1].any() and batch.trails[n:] == [[]] * n
+    assert np.isfinite(batch.returns[0]).all()
+    assert sum(batch.count(s) for s in S.STOPS) == 2 * n
+    for j in range(n):
+        stop, row, steps = batch.stops[j], batch.trails[j], int(batch.steps[0, j])
+        assert steps == len(row) >= 1
+        paid = sum(S.GAMMA ** t * e[2] for t, e in enumerate(row))
+        assert batch.rewards[0, j] == pytest.approx(paid, abs=1e-12)
+        if stop == S.STOP_TERMINAL:
+            assert batch.bootstraps[0, j] == 0.0 and batch.returns[0, j] == batch.rewards[0, j]
+        else:
+            assert steps == max_steps if stop == S.STOP_CUTOFF else steps <= max_steps
+            assert batch.bootstraps[0, j] == 0.25
+            assert batch.returns[0, j] == pytest.approx(paid + S.GAMMA ** steps * 0.25, abs=1e-12)
+        clone = root.clone_for_search(S.rollout_seed(7, start, j, "dice"), S.SEARCH_DICE_STREAM)
+        generators = [tuple(torch.Generator().manual_seed(S.rollout_seed(7, start, j, purpose))
+                            for purpose in ("own", "opponent"))]
+        alone = rollouts._play(root, state, state, [legal], [clone], generators, record=True)
+        assert alone.stops == [stop] and alone.trails[0] == row
+        assert alone.returns[0] == batch.returns[0, j]
+
+
 # ---- real dice, at this level -----------------------------------------------------------
 def test_t2_rollout_returns_do_not_depend_on_the_real_dice_stream(rewards, net):
     games = [Game((net, net), 7500, rewards) for _ in range(2)]
