@@ -61,3 +61,51 @@ def test_a_schema_1_manifest_may_not_carry_the_schema_2_key(tmp_path, manifest):
     raw["schema_version"] = 2
     path.write_text(json.dumps(raw))
     assert E.load_reward_manifest(str(path))["rewards"]["reward_dist_pbrs_gamma"] == 0.999
+
+
+def _tool():
+    tool = os.path.join(ROOT, "tools", "reward_manifest.py")
+    if not os.path.exists(tool):
+        pytest.skip("tools/reward_manifest.py is not in this checkout")
+    spec = importlib.util.spec_from_file_location("reward_manifest_tool", tool)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("flag", [0.9, 1.9, -1, 2, 0.5, "1", None, [1]])
+def test_a_malformed_flag_is_refused_not_truncated(tmp_path, flag):
+    """0.9 must not load as 0, nor 1.9 as 1: the loader would then hand out the
+    digest of a valid manifest for a file the manifest tool refuses."""
+    raw = json.load(open(FIXTURE))
+    raw["reward"]["reward_injury_value_scaled"] = flag
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match="reward_injury_value_scaled must be 0 or 1"):
+        E.load_reward_manifest(str(path))
+    with pytest.raises(ValueError):
+        _tool().load_manifest(str(path))
+
+
+@pytest.mark.parametrize("flag", [0, 1, 1.0, True, False])
+def test_a_valid_flag_hashes_as_the_manifest_tool_hashes_it(tmp_path, flag):
+    raw = json.load(open(FIXTURE))
+    raw["reward"]["reward_injury_value_scaled"] = flag
+    path = tmp_path / "ok.json"
+    path.write_text(json.dumps(raw))
+    loaded = E.load_reward_manifest(str(path))
+    assert loaded["rewards"]["reward_injury_value_scaled"] == int(flag)
+    assert type(loaded["rewards"]["reward_injury_value_scaled"]) is int
+    assert loaded["sha256"] == _tool().load_manifest(str(path))[1]
+    assert (loaded["sha256"] == FIXTURE_SHA256) == (int(flag) == 0)
+
+
+@pytest.mark.parametrize("key,value", [("reward_td", True), ("reward_k_kd", "0.1"),
+                                       ("reward_possession", None)])
+def test_a_non_numeric_coefficient_is_refused(tmp_path, key, value):
+    raw = json.load(open(FIXTURE))
+    raw["reward"][key] = value
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match="must be numeric"):
+        E.load_reward_manifest(str(path))

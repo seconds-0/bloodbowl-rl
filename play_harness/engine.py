@@ -381,10 +381,20 @@ def load_reward_manifest(path, lib=None):
     reward = manifest.get("reward")
     if manifest.get("schema_version") not in (1, 2) or not isinstance(reward, dict):
         raise ValueError(f"{path}: not a schema 1 or 2 reward manifest")
+    # Normalised as tools/reward_manifest.py normalises before it hashes. A flag
+    # must already be 0 or 1: truncating 0.9 to 0 would give a malformed
+    # manifest the digest of a valid one.
     for key, value in reward.items():
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if key in REWARD_INT_FIELDS:
+            if isinstance(value, bool):
+                value = int(value)
+            if not isinstance(value, (int, float)) or value not in (0, 1):
+                raise ValueError(f"{path}: {key} must be 0 or 1")
+            reward[key] = int(value)
+        elif isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"{path}: {key} must be numeric")
-        reward[key] = int(value) if key in REWARD_INT_FIELDS else float(value)
+        else:
+            reward[key] = float(value)
     canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"),
                            ensure_ascii=False, allow_nan=False).encode("utf-8")
     rewards = dict(reward)
