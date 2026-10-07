@@ -235,6 +235,8 @@ def load_library(path=None, build_if_missing=True):
         "bbp_last_action": ([c_p, ctypes.POINTER(ctypes.c_uint8)], ctypes.c_int),
         "bbp_last_rewards": ([c_p, ctypes.POINTER(ctypes.c_float)], None),
         "bbp_state_digest": ([c_p], ctypes.c_uint64),
+        "bbp_env_digest": ([c_p], ctypes.c_uint64),
+        "bbp_session_bytes": ([], ctypes.c_int),
         "bbp_contact_bot_index": ([c_p], ctypes.c_int),
         "bbp_scripted_bot_index": ([c_p, ctypes.c_int], ctypes.c_int),
         "bbp_step_scripted": ([c_p, ctypes.c_int, ctypes.c_int], ctypes.c_int),
@@ -502,6 +504,11 @@ class Engine:
 
     def digest(self):
         return int(self.lib.bbp_state_digest(self._ptr))
+
+    def env_digest(self):
+        """digest() widened to the legal list, caches, counters and output buffers,
+        with every reward field left out (bbp_env_digest)."""
+        return int(self.lib.bbp_env_digest(self._ptr))
 
     def match(self):
         return BbMatch.from_buffer_copy(self.lib.bbp_match(self._ptr).contents)

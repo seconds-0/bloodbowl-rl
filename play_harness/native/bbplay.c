@@ -533,22 +533,94 @@ void bbp_last_rewards(bbp_session* s, float* out2) {
     out2[1] = s->last_rewards[1];
 }
 
-// FNV-1a over the whole match struct and the dice stream state: the
-// determinism fingerprint for traces.
-uint64_t bbp_state_digest(bbp_session* s) {
-    uint64_t h = 1469598103934665603ull;
-    const uint8_t* p = (const uint8_t*)&s->env.match;
-    for (size_t i = 0; i < sizeof(bb_match); i++) {
+#define BBP_FNV_INIT 1469598103934665603ull
+
+static uint64_t bbp_fnv(uint64_t h, const void* data, size_t n) {
+    const uint8_t* p = (const uint8_t*)data;
+    for (size_t i = 0; i < n; i++) {
         h ^= p[i];
-        h *= 1099511628211ull;
-    }
-    const uint8_t* r = (const uint8_t*)&s->env.rng;
-    for (size_t i = 0; i < sizeof(bb_rng); i++) {
-        h ^= r[i];
         h *= 1099511628211ull;
     }
     return h;
 }
+
+// FNV-1a over the whole match struct and the dice stream state: the
+// determinism fingerprint for traces.
+uint64_t bbp_state_digest(bbp_session* s) {
+    uint64_t h = bbp_fnv(BBP_FNV_INIT, &s->env.match, sizeof(bb_match));
+    return bbp_fnv(h, &s->env.rng, sizeof(bb_rng));
+}
+
+// FNV-1a over everything a later observation, legal list or step can read,
+// plus the bookkeeping that is not reward: the match, both rng streams, the
+// legal list and its projections, the encode caches, the counters, the
+// stalling tally, both output buffers and the session's own flags. Reward
+// coefficients, reward state and the Log are left out, so two sessions that
+// differ only in their reward table share this digest at every step.
+uint64_t bbp_env_digest(bbp_session* s) {
+    const Bloodbowl* env = &s->env;
+    uint64_t h = bbp_state_digest(s);
+#define BBP_H(x) h = bbp_fnv(h, &(x), sizeof(x))
+    BBP_H(env->procgen);
+    BBP_H(env->seed);
+    BBP_H(env->episode);
+    BBP_H(env->decisions);
+    BBP_H(env->illegal);
+    BBP_H(env->illegal_projection_collision);
+    BBP_H(env->demo_started);
+    BBP_H(env->n_legal);
+    int n = env->n_legal > 0 ? env->n_legal : 0;
+    h = bbp_fnv(h, env->legal, (size_t)n * sizeof env->legal[0]);
+    h = bbp_fnv(h, env->legal_arg, (size_t)n * sizeof env->legal_arg[0]);
+    h = bbp_fnv(h, env->legal_sq, (size_t)n * sizeof env->legal_sq[0]);
+    BBP_H(env->macro_len);
+    BBP_H(env->macro_pos);
+    BBP_H(env->macro_mover);
+    BBP_H(env->reach_mover);
+    BBP_H(env->reach_blitz);
+    BBP_H(env->ev_valid);
+    BBP_H(env->ev_mover);
+    BBP_H(env->ev_blitz);
+    for (int d = 0; d < BB_NUM_PLAYERS; d++) {
+        if ((env->ev_valid >> d) & 1u) BBP_H(env->ev_cache[d]);
+    }
+    BBP_H(env->setup_t0);
+    BBP_H(env->setup_len);
+    BBP_H(env->setup_fast);
+    BBP_H(env->setup_block_start);
+    BBP_H(env->setup_sq_off);
+    BBP_H(env->v4_dirty);
+    BBP_H(env->skill_keys);
+    BBP_H(env->skill_rows);
+    BBP_H(env->pending_pickup_slot);
+    BBP_H(env->pending_gfi_slot);
+    BBP_H(env->pending_dodge_slot);
+    BBP_H(env->prev_active_team);
+    BBP_H(env->possessor);
+    BBP_H(env->score_prev);
+    BBP_H(env->score_start);
+    BBP_H(env->sent_off_prev);
+    BBP_H(env->kickoff_touchback_latched);
+    BBP_H(env->ep_turns);
+    BBP_H(env->ep_turns_with_ball);
+    BBP_H(env->ep_turnovers);
+    BBP_H(env->ep_tds_team);
+    BBP_H(env->ep_stall);
+    BBP_H(s->obs);
+    BBP_H(s->masks);
+    BBP_H(s->final_valid);
+    BBP_H(s->terminal);
+    BBP_H(s->rejected);
+    BBP_H(s->collisions);
+    BBP_H(s->steps);
+    BBP_H(s->decisions_at_terminal);
+    BBP_H(s->last_action);
+    BBP_H(s->last_agent);
+#undef BBP_H
+    return h;
+}
+
+int bbp_session_bytes(void) { return (int)sizeof(bbp_session); }
 
 // Scripted drivers. Index into bbp_legal of the bot's pick for the deciding
 // coach: -1 not at a decision, -2 unknown bot type, -3 pick not in the list.
