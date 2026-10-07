@@ -32,6 +32,19 @@ actions as at N = 1 and a rare knife-edge game does not (measured: 1 in 1,200).
 N = 1 is the unbatched path, unchanged. The manifest records N and a resume
 refuses a different one. See docs/play-harness/batched-tournaments-2026-09-17.md.
 
+Search (--search NAME=default or NAME=k:n:delta). Player NAME, a masked
+checkpoint sampling at temperature 1, plays as a search.SearchSeat: at its
+turn-level decisions and at the first decision after its own declaration it
+rolls out the action plain play drew and the policy's next most probable ones,
+and deviates only on a clear gain. k, n and delta are the arguments; scope,
+rollout cutoff, gamma, reward manifest (by hash) and opponent model are fixed
+and written, complete, into the player's spec in the manifest and into every
+game record. A game with a search seat runs on a session that pays the reward
+manifest, runs the integrity checks of search.INTEGRITY_CHECKS (a failure
+aborts the run like any other), and is played on the unbatched path only: its
+time is all rollouts, so a batch buys nothing, and N games stepped in lockstep
+would hold every record back until the slowest search of each step is done.
+
   OMP_NUM_THREADS=1 .venv/bin/python -m play_harness.tournament \\
       --games-per-pair 400 --workers 4 --out-dir .play-artifacts/tournaments/<stamp>
 """
@@ -42,6 +55,7 @@ import contextlib
 import hashlib
 import itertools
 import json
+import math
 import os
 import platform
 import queue
@@ -53,6 +67,7 @@ import time
 import numpy as np
 
 from . import engine as E
+from . import search as S
 from .activations import ActivationLog
 from .policy import (MASK_HELP, MASKS, NONE_TUPLE, MaskedPolicySeat, PolicySeat,
                      batched_forward, check_masks, check_temperature, load_checkpoint)
@@ -207,6 +222,12 @@ def pair_masks(home, away, specs=None):
     return tuple((specs or {}).get(name, {}).get("masks") or None for name in (home, away))
 
 
+def pair_search(home, away, specs=None):
+    """(HOME, AWAY) search settings from the player specs; None for a seat that
+    does not search."""
+    return tuple((specs or {}).get(name, {}).get("search") or None for name in (home, away))
+
+
 class Match:
     """One natural match in flight: the engine, both seats, the action trail and
     every per-step contract check.
@@ -221,11 +242,23 @@ class Match:
     def __init__(self, home_policy, away_policy, engine_seed, mode="sample", episode=0,
                  max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
                  max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0),
-                 allow_decision_cap=False, masks=(None, None), seed_offsets=(0, 0)):
+                 allow_decision_cap=False, masks=(None, None), seed_offsets=(0, 0),
+                 search=(None, None)):
         modes = tuple(modes) if modes is not None else (mode, mode)
         temperatures = tuple(float(t) for t in temperatures)
         self.masks = tuple(check_masks(m) for m in masks)
         self.seed_offsets = tuple(int(o or 0) for o in seed_offsets)
+        # Per side, the complete setting of a search seat (search.search_setting)
+        # or None. A game with one runs on a session that pays the search's
+        # pinned reward manifest (loaded once per process) and is audited on
+        # every step (audit_outputs, audit_step).
+        self.search = tuple(S.check_setting(s) if s else None for s in search)
+        self.searching = any(self.search)
+        self.reward_manifest = None
+        if self.searching:
+            self.reward_manifest = S.pinned_reward_manifest(lib)
+            self.reward_limit = S.reward_clip_threshold(
+                self.reward_manifest["rewards"]) * (1.0 + 1e-6)
 
         def seat_for(policy, side):
             seed = sampling_seed(engine_seed, side, episode)
@@ -237,7 +270,17 @@ class Match:
             if isinstance(policy, ScriptedBot):
                 if self.masks[side]:
                     raise ValueError("a scripted bot takes no action mask")
+                if self.search[side]:
+                    raise ValueError("a scripted bot does not search")
                 return BotSeat(policy, side, seed=seed)
+            if self.search[side]:
+                # The masked seat with the search on top. It refuses a missing
+                # mask, argmax and a temperature other than 1.
+                if seat_factory is not PolicySeat:
+                    raise ValueError("a search seat needs the default seat factory")
+                return S.SearchSeat(policy, side, mode=modes[side], seed=seed,
+                                    temperature=temperatures[side],
+                                    masks=self.masks[side] or (), search=self.search[side])
             if self.masks[side]:
                 # A masked seat is the plain seat with a restricted support. An
                 # unmasked seat is built exactly as before.
@@ -256,7 +299,19 @@ class Match:
                           for s in self.seats)
         for seat in self.seats:
             seat.reset_match()
-        self.eng = E.Engine(engine_seed, episode=episode, max_decisions=max_decisions, lib=lib)
+        if self.searching:
+            self.eng = E.Engine(engine_seed, episode=episode, max_decisions=max_decisions,
+                                lib=lib, rewards=self.reward_manifest["rewards"])
+            try:
+                for seat in self.seats:
+                    if isinstance(seat, S.SearchSeat):
+                        seat.bind(self.eng, self.reward_manifest)
+            except Exception:
+                self.close()
+                raise
+        else:
+            self.eng = E.Engine(engine_seed, episode=episode, max_decisions=max_decisions,
+                                lib=lib)
         self.t0 = time.time()
         self.c_steps = 0
         self.trail = hashlib.sha256()
@@ -267,7 +322,42 @@ class Match:
         self.activations = ActivationLog(self.eng)
 
     def close(self):
+        for seat in self.seats:
+            if isinstance(seat, S.SearchSeat):
+                seat.close()
         self.eng.close()
+
+    def audit_outputs(self, outs):
+        """A searched game, before the action is applied: every policy seat's
+        logits and value are finite. Needs the unbatched path, where a seat's
+        step returns both."""
+        for s in (0, 1):
+            if self.bots[s] is not None:
+                continue
+            logits, value = outs[s].get("logits"), outs[s].get("value")
+            if logits is None or value is None:
+                raise IntegrityError(f"seat {s} returned no logits or value at step "
+                                     f"{self.c_steps}: a searched game is played unbatched")
+            if not (np.isfinite(logits).all() and math.isfinite(value)):
+                raise IntegrityError(f"seat {s}: a logit or value is not finite at step "
+                                     f"{self.c_steps}")
+
+    def audit_step(self, rc):
+        """A searched game, after every engine step: the hard counters are zero
+        and both seats' emitted rewards are finite and inside the clip threshold
+        of the reward manifest."""
+        hard = self.eng.counters()
+        nonzero = {k: hard[k] for k in HARD_COUNTERS if hard[k]}
+        if nonzero:
+            raise IntegrityError(f"hard counters {nonzero} after step {self.c_steps}")
+        if rc < 0:
+            return
+        rewards = self.eng.last_rewards()
+        if not all(math.isfinite(r) for r in rewards):
+            raise IntegrityError(f"a reward is not finite at step {self.c_steps}")
+        if max(abs(r) for r in rewards) > self.reward_limit:
+            raise IntegrityError(f"a reward of {max(rewards, key=abs)} is beyond the clip "
+                                 f"threshold at step {self.c_steps}")
 
     def observe(self):
         """The deciding team, after checking the engine waits on a decision."""
@@ -295,6 +385,8 @@ class Match:
                                      f"over {c_steps} engine steps")
         if tuple(outs[1 - team]["tuple"]) != NONE_TUPLE:
             raise IntegrityError(f"waiting seat {1 - team} emitted {outs[1 - team]['tuple']}")
+        if self.searching:
+            self.audit_outputs(outs)
         if bots[team] is not None:
             idx = eng.scripted_bot_index(bots[team].bot_type)
             if idx < 0:
@@ -312,6 +404,8 @@ class Match:
             self.trail.update(struct.pack("<Biii", team, *tup))
             self.count(team, tup)
             rc = eng.step(*tup)
+        if self.searching:
+            self.audit_step(rc)
         if rc == E.STEP_TERMINAL:
             return True
         if rc < 0:
@@ -392,6 +486,7 @@ class Match:
             if self.masks[side]:
                 mask_stats[side] = {m: dict(v, mass=round(v["mass"], 4))
                                     for m, v in seats[side].mask_stats.items()}
+        searched = self.search_record(final) if self.searching else {}
         return {
             "engine_seed": int(self.engine_seed), "episode": int(self.episode),
             "mode": modes[0] if modes[0] == modes[1] else "mixed",
@@ -414,20 +509,60 @@ class Match:
             "masks": [list(m) if m else None for m in self.masks],
             "mask_stats": mask_stats,
             "seed_offsets": list(self.seed_offsets),
+            **searched,
         }
+
+    def search_record(self, final):
+        """The record fields only a game with a search seat carries. Per side:
+        the seat's complete setting and what its search did. Per game: the
+        reward manifest the session paid, the integrity checks that ran, and the
+        two digests tools/search_ab.py records, so the two tools' games can be
+        compared field for field."""
+        seats = self.seats
+        fallbacks = sum(stats["fallback"] for seat in seats
+                        for stats in getattr(seat, "mask_stats", {}).values())
+        if fallbacks:
+            raise IntegrityError(f"a mask gave way {fallbacks} time(s) in a searched game")
+        sampling = hashlib.sha256()
+        for seat in seats:
+            if getattr(seat, "scripted", False):
+                continue
+            sampling.update(seat.generator.get_state().numpy().tobytes())
+            sampling.update(seat.state.numpy().tobytes())
+        stats, seconds = [None, None], [None, None]
+        for side in (0, 1):
+            if self.search[side]:
+                seat = seats[side]
+                if seat.stats["shadow_forwards"] != self.c_steps:
+                    raise IntegrityError(f"seat {side} made {seat.stats['shadow_forwards']} "
+                                         f"opponent-view forwards over {self.c_steps} steps")
+                if seat.stats["error_rollouts"]:
+                    raise IntegrityError(f"seat {side}: {seat.stats['error_rollouts']} "
+                                         "rollout(s) failed")
+                stats[side] = seat.stats
+                seconds[side] = round(seat.search_seconds, 3)
+        return {"search": list(self.search), "search_stats": stats,
+                "search_seconds": seconds,
+                "reward_manifest_sha256": self.reward_manifest["sha256"],
+                "integrity_checks": list(S.INTEGRITY_CHECKS),
+                "final_state_sha256": hashlib.sha256(bytes(final)).hexdigest(),
+                "sampling_state_sha256": sampling.hexdigest()}
 
 
 def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
                max_decisions=MAX_DECISIONS, lib=None, seat_factory=PolicySeat,
                max_c_steps=200_000, modes=None, temperatures=(1.0, 1.0),
                step_limit=None, allow_decision_cap=False, masks=(None, None),
-               seed_offsets=(0, 0)):
+               seed_offsets=(0, 0), search=(None, None)):
     """One natural match between two players. Returns (record, seats).
 
     A player is a policy (seated through seat_factory) or a ScriptedBot (seated
     as a BotSeat). modes / temperatures are (HOME, AWAY); modes defaults to
     `mode` for both, and bot seats ignore both. Raises IntegrityError on any
     violation of the tournament contract.
+
+    search is (HOME, AWAY): a search.search_setting() for a seat that searches,
+    else None. Such a game is paid under search.pinned_reward_manifest().
 
     Bench-only options, never used by the tournament CLI:
       step_limit          stop after this many c_steps without a terminal and
@@ -440,7 +575,7 @@ def play_match(home_policy, away_policy, engine_seed, mode="sample", episode=0,
                   max_decisions=max_decisions, lib=lib, seat_factory=seat_factory,
                   max_c_steps=max_c_steps, modes=modes, temperatures=temperatures,
                   allow_decision_cap=allow_decision_cap, masks=masks,
-                  seed_offsets=seed_offsets)
+                  seed_offsets=seed_offsets, search=search)
     seats = match.seats
     try:
         while True:
@@ -488,8 +623,13 @@ def pair_game(policies, a, b, index, leg, seed0, mode="sample", lib=None,
     record, _ = play_match(policies[home], policies[away], seed, lib=lib,
                            seat_factory=seat_factory, modes=modes, temperatures=temperatures,
                            masks=pair_masks(home, away, specs),
-                           seed_offsets=pair_seed_offsets(home, away, specs))
+                           seed_offsets=pair_seed_offsets(home, away, specs),
+                           search=pair_search(home, away, specs))
     return pair_record(a, b, index, leg, home, away, record)
+
+
+SEARCH_UNBATCHED = ("a search seat plays on the unbatched path only: run with "
+                    "--games-per-worker 1")
 
 
 class _Slot:
@@ -542,6 +682,8 @@ class BatchedGames:
         self.current_task = tuple(task)
         home, away, seed, modes, temperatures = pair_seating(a, b, index, leg, self.seed0,
                                                              self.mode, self.specs)
+        if any(pair_search(home, away, self.specs)):
+            raise ValueError(SEARCH_UNBATCHED)
         slot = _Slot()
         slot.task, slot.home, slot.away = tuple(task), home, away
         slot.match = Match(self.policies[home], self.policies[away], seed, lib=self.lib,
@@ -696,18 +838,20 @@ def parse_masks(text):
 
 
 def player_specs(names, mode, player_modes=None, temperatures=None, bots=None, masks=None,
-                 seed_offsets=None):
+                 seed_offsets=None, search=None):
     """Per-player specs. Checkpoints get {mode, temperature}; bots get {bot: kind}
     and refuse mode, temperature or mask overrides. A masked checkpoint also gets
     {masks: [...]}; an unmasked one carries no such key, so a run without masks
-    writes the manifest it always wrote."""
+    writes the manifest it always wrote. A searching checkpoint also gets
+    {search: the complete setting}; it must be masked and sample at temperature 1."""
     player_modes, temperatures, bots = player_modes or {}, temperatures or {}, bots or {}
-    masks, seed_offsets = masks or {}, seed_offsets or {}
+    masks, seed_offsets, search = masks or {}, seed_offsets or {}, search or {}
     unknown = (set(player_modes) | set(temperatures) | set(bots) | set(masks)
-               | set(seed_offsets)) - set(names)
+               | set(seed_offsets) | set(search)) - set(names)
     if unknown:
         raise ValueError(f"mode/temperature/bot/mask for unknown players {sorted(unknown)}")
-    tuned_bots = (set(player_modes) | set(temperatures) | set(masks) | set(seed_offsets)) & set(bots)
+    tuned_bots = (set(player_modes) | set(temperatures) | set(masks) | set(seed_offsets)
+                  | set(search)) & set(bots)
     if tuned_bots:
         raise ValueError(f"scripted bots take no mode, temperature or mask: {sorted(tuned_bots)}")
     specs = {}
@@ -728,7 +872,33 @@ def player_specs(names, mode, player_modes=None, temperatures=None, bots=None, m
             if int(seed_offsets[name]) < 0:
                 raise ValueError(f"sampling offset for {name} must be positive")
             specs[name]["seed_offset"] = int(seed_offsets[name])
+        if search.get(name):
+            if not specs[name].get("masks"):
+                raise ValueError(f"search for {name} needs an action mask (--mask {name}=m1)")
+            if specs[name]["mode"] != "sample" or specs[name]["temperature"] != 1.0:
+                raise ValueError(f"search for {name} needs sample mode at temperature 1")
+            specs[name]["search"] = S.check_setting(search[name])
     return specs
+
+
+def search_players(specs):
+    """The names of the players that search, in spec order."""
+    return [name for name, spec in (specs or {}).items() if spec.get("search")]
+
+
+def search_manifest(specs, lib=None):
+    """The manifest's `search` entry for a run in which a player searches, else
+    None: the reward manifest every searched game is paid under and the
+    integrity checks it runs. A resume refuses a run where this changed."""
+    if not search_players(specs):
+        return None
+    pinned = S.pinned_reward_manifest(lib)
+    return {"players": search_players(specs),
+            "reward_manifest": {"name": pinned["name"], "sha256": pinned["sha256"],
+                                "file_sha256": pinned["file_sha256"],
+                                "path": os.path.relpath(S.REWARD_MANIFEST_PATH, E.ROOT)},
+            "integrity_checks": list(S.INTEGRITY_CHECKS),
+            "path": "unbatched (games_per_worker 1)"}
 
 
 def task_key(a, b, index, leg):
@@ -744,6 +914,13 @@ def check_record(rec):
         problems.append(f"integrity {rec.get('integrity')}")
     if rec.get("forwards") != [rec.get("c_steps")] * 2:
         problems.append(f"forwards {rec.get('forwards')} vs c_steps {rec.get('c_steps')}")
+    if any(rec.get("search") or ()):
+        if rec.get("integrity_checks") != list(S.INTEGRITY_CHECKS):
+            problems.append("a searched game without the search integrity checks")
+        for setting, stats in zip(rec["search"], rec.get("search_stats") or (None, None)):
+            if setting and (not stats or stats.get("error_rollouts") != 0
+                            or stats.get("shadow_forwards") != rec.get("c_steps")):
+                problems.append(f"search statistics {stats}")
     return problems
 
 
@@ -766,6 +943,8 @@ def _init_worker(checkpoints, kernel, mode, seed0, specs=None, bots=None):
     _W["policies"] = {name: loaded[path] for name, path in checkpoints.items()}
     _W["policies"].update({name: ScriptedBot(kind) for name, kind in (bots or {}).items()})
     _W["mode"], _W["seed0"], _W["specs"] = mode, seed0, specs
+    if search_players(specs):
+        S.pinned_reward_manifest(_W["lib"])      # loaded and hash-checked before the first game
 
 
 def _run_task(task):
@@ -1023,6 +1202,16 @@ def main(argv=None):
                          "integer). Sampling seeds are keyed by side, so one checkpoint "
                          "under two names plays identical legs unless one name is shifted. "
                          "A diagnostic, never a registered gate")
+    ap.add_argument("--search", action="append", default=[], metavar="NAME=SETTING",
+                    help="repeatable; player NAME searches at its turn-level decisions and "
+                         "at the first decision after its own declaration. SETTING is "
+                         f"'default' ({S.DEFAULT_K}:{S.DEFAULT_N}:{S.DEFAULT_DELTA:g}) or "
+                         "k:n:delta: k candidates, n rollouts each, deviate on a paired "
+                         "mean gain above delta and two standard errors (delta inf: search "
+                         "and never deviate). Scope, the 200-step rollout cutoff, gamma, "
+                         "the reward manifest and the opponent model are fixed and "
+                         "recorded. NAME needs --mask, sample mode, temperature 1 and "
+                         "--games-per-worker 1")
     ap.add_argument("--kernel", default="native", choices=["native", "torch"])
     ap.add_argument("--workers", type=int, default=MAX_WORKERS)
     ap.add_argument("--games-per-worker", type=int, default=None, metavar="N",
@@ -1067,8 +1256,14 @@ def main(argv=None):
                              parse_assignments(args.player_mode),
                              parse_assignments(args.temperature, float), bots=bots,
                              masks=parse_assignments(args.mask, parse_masks),
-                             seed_offsets=parse_assignments(args.sampling_offset, int))
+                             seed_offsets=parse_assignments(args.sampling_offset, int),
+                             search=parse_assignments(args.search, S.parse_setting))
         tasks = schedule(names, args.games_per_pair, args.seed0, pairs=pairs)
+        searching = bool(search_players(specs))
+        if searching and games_per_worker != 1:
+            raise ValueError(SEARCH_UNBATCHED)
+        # Before anything is written: the pinned reward manifest must be there.
+        search_entry = search_manifest(specs)
     except ValueError as exc:
         raise SystemExit(str(exc))
     pair_sizes = {}
@@ -1106,6 +1301,10 @@ def main(argv=None):
                 "tasks": len(tasks), "harness_git_head": _git_head(),
                 "torch": torch.__version__, "host": platform.node(),
                 "python": sys.version.split()[0]}
+    if searching:
+        # Only a run with a search seat carries the key, so a run without one
+        # writes the manifest it always wrote.
+        manifest["search"] = search_entry
     if os.path.exists(manifest_path):
         with open(manifest_path) as f:
             old = legacy_manifest_specs(json.load(f))
@@ -1120,6 +1319,11 @@ def main(argv=None):
             if old.get(key) != manifest[key]:
                 raise SystemExit(f"existing manifest differs on {key} "
                                  f"({old.get(key)!r} vs {manifest[key]!r}); use a new --out-dir")
+        # A search setting lives in `players`, checked above. This is what it
+        # rests on: the reward manifest and the integrity checks.
+        if old.get("search") != manifest.get("search"):
+            raise SystemExit(f"existing manifest differs on search ({old.get('search')!r} vs "
+                             f"{manifest.get('search')!r}); use a new --out-dir")
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=1)
 
@@ -1156,7 +1360,10 @@ def main(argv=None):
             out.write(json.dumps(rec, separators=(",", ":")) + "\n")
             out.flush()
             played += 1
-            if played % 100 == 0 or played == len(pending):
+            # A searched game takes minutes, so every one is a progress line: the
+            # droplet runner reads a silent log as a dead run. Counts only, never a
+            # game's result.
+            if searching or played % 100 == 0 or played == len(pending):
                 rate = played / (time.time() - t0)
                 eta = (len(pending) - played) / rate if rate else float("inf")
                 print(f"{played}/{len(pending)} games, {rate:.2f} games/s wall, "
