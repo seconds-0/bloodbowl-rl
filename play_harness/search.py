@@ -107,6 +107,14 @@ def joint_probabilities(logits, support, temperature=1.0):
     Returns (packed tuples, probabilities), most probable first, ties in packed
     order. The support is the one the seat samples from, masks applied.
     """
+    tuples, logp = joint_log_probabilities(logits, support, temperature)
+    return tuples, np.exp(logp)
+
+
+def joint_log_probabilities(logits, support, temperature=1.0):
+    """joint_probabilities in log space: (packed tuples, log-probabilities), in
+    the same order. Finite for finite logits, where the probability of an
+    action the policy all but rules out underflows to zero."""
     temperature = check_temperature(temperature)
     logits = torch.as_tensor(logits).reshape(-1).double().numpy() / temperature
     packed = np.unique(np.asarray(support, dtype=np.int64).reshape(-1))
@@ -129,7 +137,16 @@ def joint_probabilities(logits, support, temperature=1.0):
         logp += cell_logp[cell_of]
         prefix = cell_of
     order = np.lexsort((packed, -logp))
-    return packed[order].astype(np.uint32), np.exp(logp[order])
+    return packed[order].astype(np.uint32), logp[order]
+
+
+def played_logprob(logp):
+    """The log-probability recorded for an action the search played in place of
+    a0: log(exp(logp)), the value records have always carried, or logp itself
+    where exp(logp) underflows to zero and its log would be -inf."""
+    with np.errstate(divide="ignore"):
+        value = float(np.log(np.exp(logp)))
+    return value if math.isfinite(value) else float(logp)
 
 
 @dataclass
@@ -724,7 +741,7 @@ class SearchSeat(MaskedPolicySeat):
             return action, logprob
         stats["searched"][cls] += 1
         started = time.perf_counter()
-        tuples, probs = joint_probabilities(logits, support, self.temperature)
+        tuples, logps = joint_log_probabilities(logits, support, self.temperature)
         order = candidate_order(tuples, E.pack_tuple(*action), self.k)
         candidates = [E.unpack_tuple(tuples[i]) for i in order]
         batch = self.rollouts.evaluate(
@@ -759,4 +776,4 @@ class SearchSeat(MaskedPolicySeat):
         self._after_declare = played[0] == _DECLARE
         # The log-probability the policy gave the action played, under the same
         # masked support a0 was drawn from.
-        return played, float(np.log(probs[order[best]]))
+        return played, played_logprob(logps[order[best]])

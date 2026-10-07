@@ -207,3 +207,28 @@ def test_a_seat_refuses_what_the_setting_was_not_measured_with():
     assert (seat.k, seat.n, seat.delta, seat.scope) == (4, 16, 0.1, ("turn", "after_declare"))
     assert seat.masks == ("m1", "m3") and seat.search == S.search_setting()
     assert S.SearchSeat(net, 0, masks=M1, search=S.search_setting(2, 2, math.inf)).delta == math.inf
+
+
+# ---- the log-probability of a played alternative --------------------------------------------
+def test_a_played_alternative_whose_probability_underflows_records_a_finite_logprob():
+    """Chain 55's logits span more than a thousand, so a legal action can have a
+    probability of exactly zero in a double. The seat once recorded log(0) for a
+    deviation to such an action, and the game's logprob_sum was -inf."""
+    logits = torch.zeros(sum(E.ACT_SIZES))
+    activate, end_turn = E.A["ACTIVATE"], E.A["END_TURN"]
+    logits[activate] = 900.0
+    logits[end_turn] = -900.0
+    support = np.asarray([E.pack_tuple(activate, 0, 0), E.pack_tuple(end_turn, 0, 0)],
+                         dtype=np.uint32)
+    tuples, probs = S.joint_probabilities(logits, support)
+    same, logps = S.joint_log_probabilities(logits, support)
+    assert list(tuples) == list(same)
+    assert probs[1] == 0.0 and np.isfinite(logps).all()
+    assert logps[1] == pytest.approx(-1800.0)
+    assert S.played_logprob(logps[1]) == float(logps[1])
+    assert np.array_equal(probs, np.exp(logps))
+
+
+def test_a_played_alternative_with_a_representable_probability_records_what_it_always_did():
+    for logp in (-0.25, -3.2, -40.0, -700.0):
+        assert S.played_logprob(logp) == float(np.log(np.exp(logp)))
