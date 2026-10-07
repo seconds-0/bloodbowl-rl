@@ -496,6 +496,27 @@ def _integrity_problems(g, names, want):
     return out
 
 
+def _result_problems(g):
+    """What is wrong with a record's step count and result. a_td, b_td and
+    result_a are what a scorer reads, so they must be the score from A's side."""
+    out = []
+    steps = g.get("c_steps")
+    if not _int(steps) or steps <= 0:
+        out.append(f"c_steps {steps!r} is not a positive integer")
+    elif g.get("forwards") != [steps] * 2:
+        out.append(f"forwards {g.get('forwards')} over {steps} steps")
+    score = g.get("score")
+    if not _two(score, lambda v: _int(v) and v >= 0):
+        return out + [f"score {score} is not two integers >= 0"]
+    a_td, b_td = score if g["leg"] == LEGS[0] else score[::-1]
+    result = "W" if a_td > b_td else ("D" if a_td == b_td else "L")
+    if not _is(g.get("a_td"), a_td) or not _is(g.get("b_td"), b_td) or \
+            g.get("result_a") != result:
+        out.append(f"a_td {g.get('a_td')!r}, b_td {g.get('b_td')!r}, result_a "
+                   f"{g.get('result_a')!r} are not the score {score} from A's side")
+    return out
+
+
 def _seed_problems(g, seed0, games_in_pair):
     """What is wrong with which game of its pair a record says it is."""
     out = []
@@ -551,9 +572,7 @@ def check_games(games, plan, seed0=None):
             problems.append(f"{where}: natural {g.get('natural')!r}, truncated "
                             f"{g.get('truncated')!r}")
         problems += [f"{where}: {p}" for p in _integrity_problems(g, names, want)]
-        if g.get("forwards") != [g.get("c_steps")] * 2:
-            problems.append(f"{where}: forwards {g.get('forwards')} over {g.get('c_steps')} "
-                            "steps")
+        problems += [f"{where}: {p}" for p in _result_problems(g)]
         if not any(want[name]["search"] for name in names):
             # The tournament writes none of these keys into such a game.
             extra = sorted(key for key in SEARCH_FIELDS

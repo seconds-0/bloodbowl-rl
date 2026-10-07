@@ -959,3 +959,43 @@ def test_a_searched_game_without_its_own_fields_is_rejected(tmp_path, change, ne
     change(rows)
     problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
     assert any(needle in problem for problem in problems), problems
+
+
+# ---- the steps and the result (item 5) --------------------------------------------------------
+def _b_leg(rows):
+    return next(r for r in rows if r["leg"] == "B_home")
+
+
+@pytest.mark.parametrize("change, needle", [
+    # forwards == [c_steps, c_steps] also held for [None, None] over None.
+    (lambda g: (g[0].pop("c_steps"), g[0].pop("forwards")), "c_steps None is not a positive"),
+    (lambda g: g[0].update(c_steps=0, forwards=[0, 0]), "c_steps 0 is not a positive integer"),
+    (lambda g: g[0].update(c_steps=True, forwards=[True, True]), "c_steps True is not a"),
+    (lambda g: g[0].update(c_steps="1200", forwards=["1200"] * 2), "c_steps '1200' is not a"),
+    (lambda g: _plain(g).update(c_steps=None, forwards=[None, None]),
+     "['C', 'chain37'] seed 25100000 A_home: c_steps None is not a positive integer"),
+    # What a scorer reads: a_td, b_td and result_a are the score, from A's side.
+    (lambda g: g[0].pop("score"), "score None is not two integers >= 0"),
+    (lambda g: g[0].update(score=[1, -1]), "score [1, -1] is not two integers >= 0"),
+    (lambda g: g[0].update(score=[1, 0, 0]), "score [1, 0, 0] is not two integers >= 0"),
+    (lambda g: g[0].update(a_td=0), "a_td 0, b_td 0, result_a 'W' are not the score [1, 0]"),
+    (lambda g: g[0].update(result_a="L"), "a_td 1, b_td 0, result_a 'L' are not the score"),
+    (lambda g: g[0].pop("result_a"), "a_td 1, b_td 0, result_a None are not the score"),
+    (lambda g: g[0].update(score=[0, 1]), "a_td 1, b_td 0, result_a 'W' are not the score"),
+    (lambda g: _b_leg(g).update(a_td=1, b_td=0, result_a="W"),
+     "B_home: a_td 1, b_td 0, result_a 'W' are not the score [1, 0]"),
+    (lambda g: _plain(g).update(a_td=2, b_td=2, result_a="D"), "are not the score [1, 0]"),
+])
+def test_a_game_whose_steps_or_result_do_not_add_up_is_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+
+
+def test_the_result_is_read_from_the_side_the_leg_gives():
+    rows = games()
+    assert [(r["a_td"], r["b_td"], r["result_a"]) for r in rows[:2]] == [(1, 0, "W"), (0, 1, "L")]
+    for row in rows:
+        row.update(score=[2, 2], a_td=2, b_td=2, result_a="D")
+    assert sa.check_games(rows, plan())[0] == []
