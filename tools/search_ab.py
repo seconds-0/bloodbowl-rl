@@ -76,7 +76,8 @@ count and generator seed: both orientations of a seed and all arms are
 resampled together, so a contrast between arms is computed inside each
 replicate. A replicate with no decisive game for an arm has no decisive share:
 it is left out of that arm's decisive-share and Elo percentiles, and the report
-says how many were.
+says how many were. A replicate with wins and no losses (or the reverse) has a
+share of 1 (or 0), which the Elo transform clips to about +4800 (or -4800).
 """
 from __future__ import annotations
 
