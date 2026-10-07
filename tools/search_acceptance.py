@@ -105,11 +105,18 @@ LEGS = ("A_home", "B_home")
 HARD_COUNTERS = ("illegal", "projection_collision", "error_episodes",
                  "rejected_submissions", "precheck_collisions")
 MASK_STAT_KEYS = ("held", "applied", "fallback", "mass")
+SCRIPTED_MODE = "scripted"                # a bot seat's mode; its temperature is None
+SEED_OFFSET_STRIDE = 1_000_000_007
 MAX_PROBLEMS = 40
 
 
 def _int(value):
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is(value, want):
+    """Equal, and not a boolean standing in for a number."""
+    return value == want and isinstance(value, bool) == isinstance(want, bool)
 
 
 def _real(value):
@@ -140,6 +147,14 @@ IDENTITY_SHAPES = {
     "sampling_seeds": lambda v: _two(v, _int),
 }
 IDENTITY_FIELDS = tuple(IDENTITY_SHAPES)
+
+
+def sampling_seed(engine_seed, side, offset):
+    """The sampling seed the tournament gives a side of a game: its
+    sampling_seed() at episode 0, shifted by the player's sampling offset the
+    way Match seats it."""
+    seed = (engine_seed * 1_000_003 + 17 + side) % (1 << 62)
+    return (seed + offset * SEED_OFFSET_STRIDE) % (1 << 62) if offset else seed
 
 
 def sha256_file(path):
@@ -179,7 +194,8 @@ def scheduled(plan, names):
 
 def registered(plan, require_schedule=False):
     """Raise ValueError unless the plan's player settings are complete. Returns
-    {name: {"masks", "offset", "search"}} and the plan's search block.
+    {name: {"masks", "offset", "search", "bot", "mode", "temperature"}} and the
+    plan's search block.
 
     require_schedule: also refuse a plan in which a player searches and that
     does not list its pairs and seed0. The command line asks for it."""
@@ -190,12 +206,39 @@ def registered(plan, require_schedule=False):
         raise ValueError("plan: no players")
     out = {}
     for name, spec in players.items():
-        search = spec.get("search") or None
-        if search is not None and set(search) != set(SETTING_KEYS):
+        if not isinstance(spec, dict):
+            raise ValueError(f"plan: player {name} is not an object")
+        if spec.get("bot") is not None:
+            if not isinstance(spec["bot"], str) or any(
+                    spec.get(key) for key in ("masks", "sampling_offset", "search", "mode",
+                                              "temperature")):
+                raise ValueError(f"plan: bot {name} takes a kind and no mask, sampling "
+                                 "offset, search, mode or temperature")
+            out[name] = {"masks": [], "offset": 0, "search": None, "bot": spec["bot"],
+                         "mode": SCRIPTED_MODE, "temperature": None}
+            continue
+        search = spec.get("search")
+        if search is not None and (not isinstance(search, dict)
+                                   or set(search) != set(SETTING_KEYS)):
             raise ValueError(f"plan: player {name}'s search setting needs exactly "
                              f"{list(SETTING_KEYS)}")
-        out[name] = {"masks": sorted(spec.get("masks") or []),
-                     "offset": int(spec.get("sampling_offset") or 0), "search": search}
+        masks = spec.get("masks") or []
+        if not isinstance(masks, list) or not all(isinstance(m, str) for m in masks) or \
+                len(set(masks)) != len(masks):
+            raise ValueError(f"plan: player {name}'s masks must be a list of names")
+        offset = spec.get("sampling_offset") or 0
+        if not _int(offset) or offset < 0:
+            raise ValueError(f"plan: player {name}'s sampling_offset must be an integer >= 0")
+        mode, temperature = spec.get("mode", "sample"), spec.get("temperature", 1.0)
+        if mode not in ("sample", "argmax"):
+            raise ValueError(f"plan: player {name}'s mode is sample or argmax")
+        if not _real(temperature) or temperature <= 0:
+            raise ValueError(f"plan: player {name}'s temperature must be a number above 0")
+        if search and (mode != "sample" or temperature != 1.0):
+            raise ValueError(f"plan: player {name} searches outside sample mode at "
+                             "temperature 1")
+        out[name] = {"masks": sorted(masks), "offset": offset, "search": search, "bot": None,
+                     "mode": mode, "temperature": temperature}
     block = plan.get("search") or {}
     if any(p["search"] for p in out.values()):
         for key in ("reward_manifest_sha256", "integrity_checks", "cap_rejection_ceiling"):
@@ -256,14 +299,29 @@ def check_manifest(manifest, plan):
     if sorted(players) != sorted(want):
         problems.append(f"manifest players {sorted(players)} != registered {sorted(want)}")
     for name, reg in want.items():
-        spec = players.get(name) or {}
-        if sorted(spec.get("masks") or []) != reg["masks"]:
+        if name not in players:
+            continue                                        # reported above
+        spec = players[name]
+        if not isinstance(spec, dict):
+            problems.append(f"player {name}: manifest spec {spec!r} is not an object")
+            continue
+        if spec.get("bot") != reg["bot"]:
+            problems.append(f"player {name}: manifest bot {spec.get('bot')!r} != registered "
+                            f"{reg['bot']!r}")
+        # A bot's spec is its kind alone; the tournament seats it as scripted.
+        mode, temperature = (None, None) if reg["bot"] else (reg["mode"], reg["temperature"])
+        if spec.get("mode") != mode or not _is(spec.get("temperature"), temperature):
+            problems.append(f"player {name}: manifest mode {spec.get('mode')!r} at temperature "
+                            f"{spec.get('temperature')!r} != registered {mode!r} at "
+                            f"{temperature!r}")
+        masks = spec.get("masks", [])
+        if not isinstance(masks, list) or sorted(masks, key=repr) != reg["masks"]:
             problems.append(f"player {name}: manifest masks {spec.get('masks')} != registered "
                             f"{reg['masks']}")
-        if int(spec.get("seed_offset") or 0) != reg["offset"]:
+        if not _is(spec.get("seed_offset", 0), reg["offset"]):
             problems.append(f"player {name}: manifest sampling offset "
                             f"{spec.get('seed_offset')} != registered {reg['offset']}")
-        if (spec.get("search") or None) != reg["search"]:
+        if spec.get("search") != reg["search"]:
             problems.append(f"player {name}: manifest search setting "
                             f"{spec.get('search')} != registered {reg['search']}")
     searching = sorted(name for name, reg in want.items() if reg["search"])
@@ -367,6 +425,40 @@ def _seat_problems(g, want, pairs):
     return out
 
 
+def _side_problems(g, names, want):
+    """What is wrong with how a record says each side was seated: bot, mode,
+    temperature, masks, sampling offset and the sampling seed that offset
+    gives. An absent field is a problem, never a default."""
+    out = [f"{key} is not a two-element list" for key in
+           ("bots", "modes", "temperatures", "masks", "seed_offsets", "sampling_seeds")
+           if not _two(g.get(key))]
+    if out:
+        return out
+    for side, name in enumerate(names):
+        reg = want[name]
+        if g["bots"][side] != reg["bot"]:
+            out.append(f"{name} played as bot {g['bots'][side]!r}, registered {reg['bot']!r}")
+        mode, temperature = g["modes"][side], g["temperatures"][side]
+        if mode != reg["mode"] or not _is(temperature, reg["temperature"]):
+            out.append(f"{name} searched outside sample mode at temperature 1" if reg["search"]
+                       else f"{name} played in mode {mode!r} at temperature {temperature!r}, "
+                            f"registered {reg['mode']!r} at {reg['temperature']!r}")
+        masks = g["masks"][side]
+        if (sorted(masks, key=repr) if isinstance(masks, list) else masks) != \
+                (reg["masks"] or None):
+            out.append(f"{name} played under masks {masks}, registered {reg['masks'] or None}")
+        if not _is(g["seed_offsets"][side], reg["offset"]):
+            out.append(f"{name} on sampling offset {g['seed_offsets'][side]}, registered "
+                       f"{reg['offset']}")
+        if _int(g.get("engine_seed")):
+            seed = sampling_seed(g["engine_seed"], side, reg["offset"])
+            if not _is(g["sampling_seeds"][side], seed):
+                out.append(f"{name}'s sampling seed {g['sampling_seeds'][side]} is not {seed}, "
+                           f"what engine seed {g['engine_seed']} gives side {side} at sampling "
+                           f"offset {reg['offset']}")
+    return out
+
+
 def _integrity_problems(g, names, want):
     """What is wrong with a record's integrity evidence: the hard counters, and
     the statistics of each mask a side played under. Missing evidence is a
@@ -454,20 +546,12 @@ def check_games(games, plan, seed0=None):
             seen[(pair, g["game_index"], g["leg"])] += 1
             if seen[(pair, g["game_index"], g["leg"])] == 2:
                 problems.append(f"{where}: recorded more than once")
+        problems += [f"{where}: {p}" for p in _side_problems(g, names, want)]
         settings = g.get("search") or [None, None]
         for side, name in enumerate(names):
-            reg = want[name]
-            masks = sorted((g.get("masks") or [None, None])[side] or [])
-            if masks != reg["masks"]:
-                problems.append(f"{where}: {name} played under masks {masks}, registered "
-                                f"{reg['masks']}")
-            offset = (g.get("seed_offsets") or [0, 0])[side]
-            if offset != reg["offset"]:
-                problems.append(f"{where}: {name} on sampling offset {offset}, registered "
-                                f"{reg['offset']}")
-            if (settings[side] or None) != reg["search"]:
+            if (settings[side] or None) != want[name]["search"]:
                 problems.append(f"{where}: {name}'s search setting {settings[side]} != "
-                                f"registered {reg['search']}")
+                                f"registered {want[name]['search']}")
         if g.get("natural") is not True or g.get("truncated") is not False:
             problems.append(f"{where}: natural {g.get('natural')!r}, truncated "
                             f"{g.get('truncated')!r}")
@@ -493,10 +577,6 @@ def check_games(games, plan, seed0=None):
                 if all_stats[side]:
                     problems.append(f"{where}: {name} does not search and has search statistics")
                 continue
-            if (g.get("modes") or [None, None])[side] != "sample" or \
-                    (g.get("temperatures") or [None, None])[side] != 1.0:
-                problems.append(f"{where}: {name} searched outside sample mode at "
-                                "temperature 1")
             found = _stat_problems(all_stats[side], setting, g.get("c_steps"))
             problems += [f"{where}: {name}: {p}" for p in found]
             if found:

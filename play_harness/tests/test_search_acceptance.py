@@ -9,6 +9,7 @@ real runs.
 import copy
 import hashlib
 import importlib.util
+import itertools
 import json
 import os
 
@@ -191,6 +192,10 @@ def test_the_names_this_tool_repeats_are_the_tournaments():
     seat = MaskedPolicySeat.__new__(MaskedPolicySeat)
     seat.masks = ("m1",)
     assert tuple(seat._fresh_stats()["m1"]) == sa.MASK_STAT_KEYS
+    assert sa.SCRIPTED_MODE == T.SCRIPTED_MODE and T.BotSeat.temperature is None
+    for seed, side, offset in itertools.product((0, 7, SEED0, (1 << 61) + 5), (0, 1), (0, 1, 9)):
+        assert sa.sampling_seed(seed, side, offset) == (
+            T.sampling_seed(seed, side) + offset * T.SEED_OFFSET_STRIDE) % (1 << 62)
 
 
 def test_a_run_without_search_needs_no_search_block(tmp_path):
@@ -780,3 +785,136 @@ def test_a_gain_recorded_at_delta_is_accepted():
     assert sa.check_games(rows, plan())[0] == []
     _stat(rows, predicted_gains=[0.1, 0.1, 0.099999])
     assert any("a predicted gain below delta 0.1" in p for p in sa.check_games(rows, plan())[0])
+
+
+# ---- each side's seat: nothing read off a default (item 5) ------------------------------------
+def _bot_game(rows):
+    return next(r for r in rows if r["pair"] == ["S", "offense"])
+
+
+def _unshifted(row, name):
+    """The sampling seed `name` would have had without its sampling offset."""
+    side = side_of(row, name)
+    row["sampling_seeds"][side] = T.sampling_seed(row["engine_seed"], side)
+
+
+@pytest.mark.parametrize("change, needle", [
+    # Absent used to read as "unmasked", "offset 0", "any mode".
+    (lambda g: _plain(g).pop("masks"), "masks is not a two-element list"),
+    (lambda g: next(r for r in g if r["pair"] == ["S", "chain37"]).pop("seed_offsets"),
+     "['S', 'chain37'] seed 25100000 A_home: seed_offsets is not a two-element list"),
+    (lambda g: _plain(g).pop("modes"), "modes is not a two-element list"),
+    (lambda g: _plain(g).pop("temperatures"), "temperatures is not a two-element list"),
+    (lambda g: _plain(g).pop("bots"), "bots is not a two-element list"),
+    (lambda g: _plain(g).pop("sampling_seeds"), "sampling_seeds is not a two-element list"),
+    (lambda g: _plain(g).update(masks=[["m1"]]), "masks is not a two-element list"),
+    # Bots.
+    (lambda g: g[0].update(bots=[None, "offense"]), "C played as bot 'offense', registered None"),
+    (lambda g: _bot_game(g).update(bots=[None, None]),
+     "offense played as bot None, registered 'offense'"),
+    (lambda g: _bot_game(g).update(bots=[None, "contact"]),
+     "offense played as bot 'contact', registered 'offense'"),
+    # Mode and temperature of a seat that does not search.
+    (lambda g: g[0].update(modes=["sample", "argmax"]),
+     "C played in mode 'argmax' at temperature 1.0, registered 'sample' at 1.0"),
+    (lambda g: g[0].update(temperatures=[1.0, 0.5]),
+     "C played in mode 'sample' at temperature 0.5, registered 'sample' at 1.0"),
+    (lambda g: _plain(g).update(temperatures=[1.0, None]),
+     "chain37 played in mode 'sample' at temperature None, registered 'sample' at 1.0"),
+    (lambda g: _plain(g).update(temperatures=[True, 1.0]), "C played in mode 'sample' at "
+                                                           "temperature True"),
+    (lambda g: _bot_game(g).update(modes=["sample", "sample"], temperatures=[1.0, 1.0]),
+     "offense played in mode 'sample' at temperature 1.0, registered 'scripted' at None"),
+    (lambda g: g[0].update(temperatures=[True, 1.0]), "S searched outside sample mode"),
+    # Masks, as the tournament writes them: a list, or None for an unmasked side.
+    (lambda g: g[0].update(masks=[["m1"], None]), "C played under masks None, registered ['m1']"),
+    (lambda g: g[0].update(masks=[["m1"], "m1"]), "C played under masks m1, registered ['m1']"),
+    (lambda g: _plain(g).update(masks=[["m1"], []]),
+     "chain37 played under masks [], registered None"),
+    # Sampling offsets and the seeds they give.
+    (lambda g: g[0].update(seed_offsets=[False, 1]), "S on sampling offset False, registered 0"),
+    (lambda g: g[0].update(seed_offsets=[0, "1"]), "C on sampling offset 1, registered 1"),
+    (lambda g: _unshifted(g[0], "C"), "C's sampling seed 25100075300018 is not 25101075300025, "
+                                      "what engine seed 25100000 gives side 1 at sampling "
+                                      "offset 1"),
+    (lambda g: g[0]["sampling_seeds"].reverse(), "S's sampling seed"),
+    (lambda g: g[0]["sampling_seeds"].__setitem__(0, 11), "S's sampling seed 11 is not"),
+    (lambda g: g[0]["sampling_seeds"].__setitem__(0, None), "S's sampling seed None is not"),
+    (lambda g: _both(g, sampling_seeds=[11, 12]), "I's sampling seed 11 is not"),
+])
+def test_a_side_that_was_not_seated_as_registered_is_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+
+
+def test_the_plan_decides_mode_and_temperature(tmp_path):
+    """A player the plan registers at another mode or temperature is held to
+    that; one it says nothing about samples at temperature 1."""
+    p, m, rows = plan(), manifest(), games()
+    p["players"]["chain37"].update(mode="argmax", temperature=0.5)
+    assert any("player chain37: manifest mode 'sample' at temperature 1.0 != registered "
+               "'argmax' at 0.5" in x for x in sa.check_manifest(m, p))
+    assert sum("chain37 played in mode 'sample' at temperature 1.0, registered 'argmax' at 0.5"
+               in x for x in sa.check_games(rows, p)[0]) == 8
+    m["players"]["chain37"].update(mode="argmax", temperature=0.5)
+    for row in rows:
+        if "chain37" in row["pair"]:
+            side = side_of(row, "chain37")
+            row["modes"][side], row["temperatures"][side] = "argmax", 0.5
+    assert sa.accept(write_run(tmp_path, m, rows), p)[0] == []
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda m: m["players"].update(offense={"bot": "contact"}),
+     "player offense: manifest bot 'contact' != registered 'offense'"),
+    (lambda m: m["players"].update(offense={"mode": "sample", "temperature": 1.0}),
+     "player offense: manifest bot None != registered 'offense'"),
+    (lambda m: m["players"]["offense"].update(mode="sample"),
+     "player offense: manifest mode 'sample' at temperature None != registered None at None"),
+    (lambda m: m["players"]["chain37"].update(bot="offense"),
+     "player chain37: manifest bot 'offense' != registered None"),
+    (lambda m: m["players"]["C"].update(mode="argmax"),
+     "player C: manifest mode 'argmax' at temperature 1.0 != registered 'sample' at 1.0"),
+    (lambda m: m["players"]["C"].update(temperature=0.7), "player C: manifest mode 'sample' at "
+                                                          "temperature 0.7"),
+    (lambda m: m["players"]["C"].pop("temperature"), "player C: manifest mode 'sample' at "
+                                                     "temperature None"),
+    (lambda m: m["players"]["C"].pop("mode"), "player C: manifest mode None"),
+    (lambda m: m["players"].update(C="chain55"), "player C: manifest spec 'chain55' is not an "
+                                                 "object"),
+])
+def test_a_manifest_player_off_the_plan_is_rejected(change, needle):
+    m = manifest()
+    change(m)
+    assert any(needle in problem for problem in sa.check_manifest(m, plan())), needle
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda p: p["players"].update(S="chain55"), "player S is not an object"),
+    (lambda p: p["players"]["offense"].update(masks=["m1"]), "bot offense takes a kind and no"),
+    (lambda p: p["players"]["offense"].update(mode="sample"), "bot offense takes a kind and no"),
+    (lambda p: p["players"]["offense"].update(bot=1), "bot offense takes a kind and no"),
+    (lambda p: p["players"]["C"].update(mode="greedy"), "player C's mode is sample or argmax"),
+    (lambda p: p["players"]["C"].update(temperature=0), "player C's temperature must be a "
+                                                        "number above 0"),
+    (lambda p: p["players"]["C"].update(temperature=True), "player C's temperature must be"),
+    (lambda p: p["players"]["S"].update(mode="argmax"), "S searches outside sample mode at "
+                                                        "temperature 1"),
+    (lambda p: p["players"]["S"].update(temperature=0.5), "S searches outside sample mode at "
+                                                          "temperature 1"),
+    (lambda p: p["players"]["C"].update(masks="m1"), "player C's masks must be a list of names"),
+    (lambda p: p["players"]["C"].update(masks=["m1", "m1"]), "player C's masks must be a list"),
+    (lambda p: p["players"]["C"].update(sampling_offset="1"), "player C's sampling_offset must "
+                                                              "be an integer >= 0"),
+    (lambda p: p["players"]["C"].update(sampling_offset=-1), "player C's sampling_offset must"),
+    (lambda p: p["players"]["C"].update(sampling_offset=1.5), "player C's sampling_offset must"),
+    (lambda p: p["players"]["C"].update(search={}), "C's search setting needs exactly"),
+    (lambda p: p["players"]["C"].update(search=False), "C's search setting needs exactly"),
+])
+def test_a_plan_with_a_player_it_cannot_read_is_refused(change, needle):
+    p = plan()
+    change(p)
+    with pytest.raises(ValueError, match=needle.replace("[", r"\[").replace("]", r"\]")):
+        sa.registered(p)
