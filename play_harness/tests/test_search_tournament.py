@@ -13,6 +13,8 @@
                included, twice and at two worker counts;
   the flag     the manifest records the complete setting and a resume refuses
                another; a search seat is refused on the batched path;
+  acceptance   tools/search_acceptance.py and the droplet tool's verification
+               read these real runs;
   integrity    a failure in the real game or in a clone aborts the game.
 
 Games here use a seeded random network at k = 2, n = 2, so a searched game takes
@@ -20,6 +22,7 @@ seconds. The same tests on the chain 55 checkpoint at the measured setting take
 minutes a game and run only when BBPLAY_SEARCH_REAL=1 (see the last section).
 """
 import contextlib
+import importlib.util
 import io
 import json
 import math
@@ -35,6 +38,7 @@ from play_harness import policy as P
 from play_harness import search as S
 from play_harness import tournament as T
 from play_harness.policy import MASKS, MaskedPolicySeat, PolicySeat, random_policy
+from tools import droplet_tournament as D
 from tools import search_ab as AB
 
 from .conftest import ROOT
@@ -478,6 +482,97 @@ def test_a_searched_run_prints_a_line_per_game_and_no_result(identity_run):
     assert all(shape.match(line) for line in progress), progress
     assert lines[0] == "4 tasks, 0 already recorded, 4 to play, 1 workers"
     assert len(lines) == 6 and json.loads(lines[-1])["complete"] is True
+
+
+# ---- acceptance: the checks an operator runs on a finished run ------------------------------
+def _acceptance_tool():
+    spec = importlib.util.spec_from_file_location(
+        "search_acceptance", os.path.join(ROOT, "tools", "search_acceptance.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def gate_plan(players, identity=None):
+    block = {"reward_manifest_sha256": S.REWARD_MANIFEST_SHA256,
+             "integrity_checks": list(S.INTEGRITY_CHECKS), "cap_rejection_ceiling": 0.01}
+    if identity:
+        block["identity"] = identity
+    return {"players": players, "search": block}
+
+
+def _run(folder):
+    with open(os.path.join(str(folder), "manifest.json")) as f:
+        manifest = json.load(f)
+    with open(os.path.join(str(folder), "games.jsonl")) as f:
+        return manifest, [json.loads(line) for line in f]
+
+
+def test_the_acceptance_step_accepts_a_real_run_and_rejects_another_setting(cli_runs):
+    sa = _acceptance_tool()
+    control = {"checkpoint": "test", "masks": ["m1"], "sampling_offset": 1}
+    plan = gate_plan({"S": {"checkpoint": "test", "masks": ["m1"], "search": QUICK},
+                      "C": control})
+    problems, counts = sa.accept(str(cli_runs / "w1"), plan)
+    assert problems == []
+    assert counts["games"] == counts["searched_games"] == 2
+    assert sum(counts["searched"].values()) > 100 and sum(counts["deviations"].values()) > 0
+    assert counts["error_rollouts"] == 0 and counts["rollouts"] > 0
+    # The plan registered the default setting; the run played another.
+    default = gate_plan({"S": {"masks": ["m1"], "search": S.search_setting()}, "C": control})
+    problems, _ = sa.accept(str(cli_runs / "w1"), default)
+    assert any("player S: manifest search setting" in p for p in problems)
+    assert sum("S's search setting" in p for p in problems) == 2        # on every game
+    # A plan that registered no search, no offset, or another mask.
+    for players, needle in (
+            ({"S": {"masks": ["m1"]}, "C": control}, "S's search setting"),
+            ({"S": {"masks": ["m1"], "search": QUICK}, "C": {"masks": ["m1"]}},
+             "C on sampling offset 1, registered 0"),
+            ({"S": {"masks": ["m1", "m2"], "search": QUICK}, "C": control},
+             "S played under masks ['m1'], registered ['m1', 'm2']")):
+        registered = gate_plan(players) if any("search" in p for p in players.values()) \
+            else {"players": players}
+        problems, _ = sa.accept(str(cli_runs / "w1"), registered)
+        assert any(needle in p for p in problems), (needle, problems)
+    # The droplet tool's own verification of what it was asked to run.
+    manifest, games = _run(cli_runs / "w1")
+    assert D.search_problems(manifest, games, {"S": D.parse_search("2:2:0")}) == []
+    assert any("manifest search settings" in p for p in
+               D.search_problems(manifest, games, {"S": D.parse_search("default")}))
+    assert any("manifest search settings" in p for p in D.search_problems(manifest, games))
+
+
+def test_the_acceptance_step_holds_an_identity_sample_to_its_plain_games(identity_run):
+    sa = _acceptance_tool()
+    players = {"I": {"masks": ["m1"], "search": IDENTITY}, "P": {"masks": ["m1"]},
+               "C": {"masks": ["m1"], "sampling_offset": 1}}
+    plan = gate_plan(players, identity=[{"search": ["I", "C"], "plain": ["P", "C"]}])
+    problems, counts = sa.accept(str(identity_run["out"]), plan)
+    assert problems == []
+    assert counts["games"] == 4 and counts["searched_games"] == 2
+    assert counts["identity_games"] == 2 and counts["rollouts"] > 400
+    assert counts["deviations"] == {"turn": 0, "after_declare": 0}
+    manifest, games = _run(identity_run["out"])
+    assert manifest["search"]["players"] == ["I"] and "search" not in manifest["players"]["P"]
+    by_pair = {(tuple(g["pair"]), g["leg"]): g for g in games}
+    for leg in T.LEGS:
+        searched, plain = by_pair[(("I", "C"), leg)], by_pair[(("P", "C"), leg)]
+        assert "search" not in plain and searched["search"][T.LEGS.index(leg)] == IDENTITY
+        for name in sa.IDENTITY_FIELDS:
+            assert searched[name] == plain[name], name
+    assert D.search_problems(manifest, games, {"I": D.parse_search("2:2:inf")}) == []
+    # A searched game that is not its plain game fails the sample.
+    path = os.path.join(str(identity_run["out"]), "games.jsonl")
+    original = open(path).read()
+    try:
+        broken = [dict(g, logprob_sum=[0.0, 0.0]) if g["pair"] == ["P", "C"] else g for g in games]
+        with open(path, "w") as f:
+            f.write("".join(json.dumps(g) + "\n" for g in broken))
+        problems, _ = sa.accept(str(identity_run["out"]), plan)
+        assert len(problems) == 2 and all("['logprob_sum']" in p for p in problems)
+    finally:
+        with open(path, "w") as f:
+            f.write(original)
 
 
 def test_tournament_statistics_read_a_searched_run(cli_runs):

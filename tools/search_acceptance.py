@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+"""Check a finished tournament run's search settings against a registered plan.
+
+tools/gate_acceptance.py holds a run to its pairs, seeds, commit and checkpoint
+hashes. It predates action masks, sampling offsets and the search seat and looks
+at none of them. This check holds every player's masks, sampling offset and
+search setting to the plan, in the manifest and on that player's side of every
+game, and reads what each searched game recorded about its search. Both checks
+are needed; neither replaces the other.
+
+  tools/search_acceptance.py PLAN.json RUN_DIR --expect-sha256 <sha256 of PLAN.json>
+
+What it reads from the plan (other keys are ignored):
+
+  "players": {NAME: {"masks": [...],            # [] or absent: unmasked
+                     "sampling_offset": K,      # 0 or absent: none
+                     "search": {...}}},         # absent: the player does not search
+  "search": {"reward_manifest_sha256": "...",   # required when a player searches
+             "integrity_checks": [...],
+             "cap_rejection_ceiling": 0.01,
+             "identity": [{"search": [A, B], "plain": [C, D]}]}   # optional
+
+A player's "search" is the complete setting as the harness writes it into the
+manifest: scope, k, n, delta, max_rollout_steps, horizon, gamma, reward_manifest,
+reward_manifest_sha256, opponent_model, candidates, se_floor. Print the default
+with:  python -c "import json; from play_harness import search as S;
+print(json.dumps(S.search_setting(), indent=1))"
+
+Checked, for a run with a searching player:
+  manifest   the registered players and no others; each one's masks, sampling
+             offset and search setting; games_per_worker 1; the reward manifest
+             hash and the list of integrity checks.
+  each game  both players registered; masks, sampling offsets and search setting
+             of each side equal to the plan's; a natural untruncated ending, zero
+             hard counters and one real forward per seat per engine step; a game
+             without a searching player carries no search fields. For a game
+             with one: the reward manifest hash, the list of integrity checks,
+             no mask fallback, one opponent-view forward per engine step, the
+             searching seat in sample mode at temperature 1, and the search
+             statistics: in scope >=
+             searched >= deviations in every class of the setting's scope, one
+             predicted gain and one deviation type per deviation, no error
+             rollout, rollouts between 2n and kn per searched decision, every
+             predicted gain at least delta, and no deviation at all when delta
+             is inf.
+  each pair  the share of a searching player's searched decisions that had a cap
+             rejection is at most the plan's ceiling.
+  identity   for each listed pair of pairs: every game of the `search` pair
+             (whose searching player has delta inf) equals the `plain` pair's
+             game for the same seed and leg on action trail, final digest,
+             log-probability sums, score, steps, rosters and sampling seeds,
+             and ran rollouts.
+
+Exit 0 and print SEARCH-ACCEPTED only when every check passes. Stdlib only.
+"""
+import argparse
+import collections
+import hashlib
+import json
+import os
+import sys
+
+SETTING_KEYS = ("scope", "k", "n", "delta", "max_rollout_steps", "horizon", "gamma",
+                "reward_manifest", "reward_manifest_sha256", "opponent_model", "candidates",
+                "se_floor")
+STAT_KEYS = ("in_scope", "searched", "deviations", "deviation_types", "predicted_gains",
+             "rollouts", "rollout_steps", "rollout_forward_rows", "cap_rejected_rollouts",
+             "cap_rejected_decisions", "cutoff_rollouts", "error_rollouts", "shadow_forwards")
+SEARCH_FIELDS = ("search", "search_stats", "search_seconds", "reward_manifest_sha256",
+                 "integrity_checks", "final_state_sha256", "sampling_state_sha256")
+IDENTITY_FIELDS = ("action_trail_sha256", "final_digest", "logprob_sum", "score", "c_steps",
+                   "team_ids", "sampling_seeds")
+MAX_PROBLEMS = 40
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def registered(plan):
+    """Raise ValueError unless the plan's player settings are complete. Returns
+    {name: {"masks", "offset", "search"}} and the plan's search block."""
+    players = plan.get("players")
+    if not isinstance(players, dict) or not players:
+        raise ValueError("plan: no players")
+    out = {}
+    for name, spec in players.items():
+        search = spec.get("search") or None
+        if search is not None and set(search) != set(SETTING_KEYS):
+            raise ValueError(f"plan: player {name}'s search setting needs exactly "
+                             f"{list(SETTING_KEYS)}")
+        out[name] = {"masks": sorted(spec.get("masks") or []),
+                     "offset": int(spec.get("sampling_offset") or 0), "search": search}
+    block = plan.get("search") or {}
+    if any(p["search"] for p in out.values()):
+        for key in ("reward_manifest_sha256", "integrity_checks", "cap_rejection_ceiling"):
+            if key not in block:
+                raise ValueError(f"plan: search.{key} is required when a player searches")
+        if not isinstance(block["integrity_checks"], list) or not block["integrity_checks"]:
+            raise ValueError("plan: search.integrity_checks must list the checks")
+        if not 0.0 <= float(block["cap_rejection_ceiling"]) <= 1.0:
+            raise ValueError("plan: search.cap_rejection_ceiling must be in [0, 1]")
+        for name, p in out.items():
+            if p["search"] and p["search"]["reward_manifest_sha256"] != \
+                    block["reward_manifest_sha256"]:
+                raise ValueError(f"plan: player {name}'s reward manifest is not "
+                                 "search.reward_manifest_sha256")
+            if p["search"] and not p["masks"]:
+                raise ValueError(f"plan: player {name} searches without a mask")
+    for item in block.get("identity") or []:
+        if set(item) != {"search", "plain"} or len(item["search"]) != 2 or \
+                len(item["plain"]) != 2:
+            raise ValueError("plan: an identity entry is {search: [A, B], plain: [C, D]}")
+        searching = [n for n in item["search"] if (out.get(n) or {}).get("search")]
+        if len(searching) != 1 or out[searching[0]]["search"]["delta"] != "inf":
+            raise ValueError(f"plan: identity pair {item['search']} needs exactly one "
+                             "searching player, with delta inf")
+        if any((out.get(n) or {"search": 1})["search"] for n in item["plain"]):
+            raise ValueError(f"plan: identity's plain pair {item['plain']} must not search")
+    return out, block
+
+
+def check_manifest(manifest, plan):
+    want, block = registered(plan)
+    problems = []
+    players = manifest.get("players") or {}
+    if sorted(players) != sorted(want):
+        problems.append(f"manifest players {sorted(players)} != registered {sorted(want)}")
+    for name, reg in want.items():
+        spec = players.get(name) or {}
+        if sorted(spec.get("masks") or []) != reg["masks"]:
+            problems.append(f"player {name}: manifest masks {spec.get('masks')} != registered "
+                            f"{reg['masks']}")
+        if int(spec.get("seed_offset") or 0) != reg["offset"]:
+            problems.append(f"player {name}: manifest sampling offset "
+                            f"{spec.get('seed_offset')} != registered {reg['offset']}")
+        if (spec.get("search") or None) != reg["search"]:
+            problems.append(f"player {name}: manifest search setting "
+                            f"{spec.get('search')} != registered {reg['search']}")
+    searching = sorted(name for name, reg in want.items() if reg["search"])
+    entry = manifest.get("search")
+    if not searching:
+        if entry:
+            problems.append("the manifest has a search entry and no player is registered "
+                            "to search")
+        return problems
+    gpw = manifest.get("games_per_worker")
+    if (1 if gpw is None else gpw) != 1:
+        problems.append(f"games_per_worker {gpw}: a searched run is played unbatched (1)")
+    if not isinstance(entry, dict):
+        problems.append("the manifest has no search entry")
+        return problems
+    if sorted(entry.get("players") or []) != searching:
+        problems.append(f"manifest search players {entry.get('players')} != registered "
+                        f"{searching}")
+    got = (entry.get("reward_manifest") or {}).get("sha256")
+    if got != block["reward_manifest_sha256"]:
+        problems.append(f"manifest reward manifest {got} != registered "
+                        f"{block['reward_manifest_sha256']}")
+    if entry.get("integrity_checks") != block["integrity_checks"]:
+        problems.append("the manifest's integrity checks are not the registered list")
+    return problems
+
+
+def _stat_problems(stats, setting, c_steps):
+    """What is wrong with one searching seat's statistics for one game."""
+    if not isinstance(stats, dict) or set(stats) != set(STAT_KEYS):
+        return [f"search statistics need exactly {list(STAT_KEYS)}"]
+    out = []
+    scope = list(setting["scope"])
+    for key in ("in_scope", "searched", "deviations"):
+        if sorted(stats[key]) != sorted(scope):
+            out.append(f"{key} classes {sorted(stats[key])} != the setting's scope {scope}")
+    if out:
+        return out
+    numbers = [stats[k][c] for k in ("in_scope", "searched", "deviations") for c in scope] + [
+        stats[k] for k in STAT_KEYS[5:]]
+    if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in numbers):
+        return ["a search count is not a non-negative integer"]
+    for c in scope:
+        if not stats["in_scope"][c] >= stats["searched"][c] >= stats["deviations"][c]:
+            out.append(f"class {c}: in scope {stats['in_scope'][c]}, searched "
+                       f"{stats['searched'][c]}, deviations {stats['deviations'][c]}")
+    searched = sum(stats["searched"].values())
+    deviations = sum(stats["deviations"].values())
+    gains, types = stats["predicted_gains"], stats["deviation_types"]
+    if len(gains) != deviations or sum(types.values()) != deviations:
+        out.append(f"{deviations} deviations, {len(gains)} predicted gains, "
+                   f"{sum(types.values())} deviation types")
+    if any(key.split(": ")[0] not in scope for key in types):
+        out.append(f"a deviation outside the scope: {sorted(types)}")
+    if stats["error_rollouts"]:
+        out.append(f"{stats['error_rollouts']} error rollout(s)")
+    if stats["shadow_forwards"] != c_steps:
+        out.append(f"{stats['shadow_forwards']} opponent-view forwards over {c_steps} steps")
+    k, n = setting["k"], setting["n"]
+    if not 2 * n * searched <= stats["rollouts"] <= k * n * searched:
+        out.append(f"{stats['rollouts']} rollouts for {searched} searched decisions at "
+                   f"k {k}, n {n}")
+    if stats["rollout_steps"] < stats["rollouts"]:
+        out.append(f"{stats['rollout_steps']} rollout steps for {stats['rollouts']} rollouts")
+    if stats["cap_rejected_decisions"] > searched or \
+            stats["cap_rejected_rollouts"] < stats["cap_rejected_decisions"] or \
+            stats["cap_rejected_rollouts"] > stats["rollouts"]:
+        out.append(f"cap rejections: {stats['cap_rejected_decisions']} decisions, "
+                   f"{stats['cap_rejected_rollouts']} rollouts")
+    if stats["cutoff_rollouts"] > stats["rollouts"]:
+        out.append(f"{stats['cutoff_rollouts']} cutoff rollouts of {stats['rollouts']}")
+    if setting["delta"] == "inf":
+        if deviations:
+            out.append(f"{deviations} deviation(s) at delta inf")
+    elif any(not isinstance(g, (int, float)) or g < setting["delta"] for g in gains):
+        out.append(f"a predicted gain below delta {setting['delta']}")
+    return out
+
+
+def check_games(games, plan):
+    """(problems, counts) for the games of a run."""
+    want, block = registered(plan)
+    problems = []
+    counts = {"games": 0, "searched_games": 0, "rollouts": 0, "cutoff_rollouts": 0,
+              "cap_rejected_decisions": 0, "error_rollouts": 0,
+              "searched": collections.Counter(), "deviations": collections.Counter()}
+    per_pair = collections.defaultdict(lambda: [0, 0])     # (pair, player): searched, rejected
+    for g in games:
+        counts["games"] += 1
+        where = f"{g.get('pair')} seed {g.get('engine_seed')} {g.get('leg')}"
+        names = (g.get("home"), g.get("away"))
+        if any(name not in want for name in names):
+            problems.append(f"{where}: an unregistered player in {names}")
+            continue
+        settings = g.get("search") or [None, None]
+        for side, name in enumerate(names):
+            reg = want[name]
+            masks = sorted((g.get("masks") or [None, None])[side] or [])
+            if masks != reg["masks"]:
+                problems.append(f"{where}: {name} played under masks {masks}, registered "
+                                f"{reg['masks']}")
+            offset = (g.get("seed_offsets") or [0, 0])[side]
+            if offset != reg["offset"]:
+                problems.append(f"{where}: {name} on sampling offset {offset}, registered "
+                                f"{reg['offset']}")
+            if (settings[side] or None) != reg["search"]:
+                problems.append(f"{where}: {name}'s search setting {settings[side]} != "
+                                f"registered {reg['search']}")
+        if g.get("natural") is not True or g.get("truncated") is not False:
+            problems.append(f"{where}: natural {g.get('natural')!r}, truncated "
+                            f"{g.get('truncated')!r}")
+        bad = {k: v for k, v in (g.get("integrity") or {"missing": 1}).items() if v}
+        if bad:
+            problems.append(f"{where}: integrity {bad}")
+        if g.get("forwards") != [g.get("c_steps")] * 2:
+            problems.append(f"{where}: forwards {g.get('forwards')} over {g.get('c_steps')} "
+                            "steps")
+        if not any(want[name]["search"] for name in names):
+            extra = sorted(key for key in SEARCH_FIELDS if g.get(key))
+            if extra and not (extra == ["search"] and not any(settings)):
+                problems.append(f"{where}: no registered search, yet the game carries {extra}")
+            continue
+        counts["searched_games"] += 1
+        if g.get("reward_manifest_sha256") != block["reward_manifest_sha256"]:
+            problems.append(f"{where}: reward manifest {g.get('reward_manifest_sha256')} != "
+                            f"registered {block['reward_manifest_sha256']}")
+        if g.get("integrity_checks") != block["integrity_checks"]:
+            problems.append(f"{where}: its integrity checks are not the registered list")
+        fallbacks = sum(v.get("fallback", 0) for stats in g.get("mask_stats") or []
+                        if stats for v in stats.values())
+        if fallbacks:
+            problems.append(f"{where}: {fallbacks} mask fallback(s)")
+        all_stats = g.get("search_stats") or [None, None]
+        for side, name in enumerate(names):
+            setting = want[name]["search"]
+            if not setting:
+                if all_stats[side]:
+                    problems.append(f"{where}: {name} does not search and has search statistics")
+                continue
+            if (g.get("modes") or [None, None])[side] != "sample" or \
+                    (g.get("temperatures") or [None, None])[side] != 1.0:
+                problems.append(f"{where}: {name} searched outside sample mode at "
+                                "temperature 1")
+            found = _stat_problems(all_stats[side], setting, g.get("c_steps"))
+            problems += [f"{where}: {name}: {p}" for p in found]
+            if found:
+                continue
+            stats = all_stats[side]
+            for c in setting["scope"]:
+                counts["searched"][c] += stats["searched"][c]
+                counts["deviations"][c] += stats["deviations"][c]
+            for key in ("rollouts", "cutoff_rollouts", "cap_rejected_decisions",
+                        "error_rollouts"):
+                counts[key] += stats[key]
+            cell = per_pair[(tuple(g.get("pair") or ()), name)]
+            cell[0] += sum(stats["searched"].values())
+            cell[1] += stats["cap_rejected_decisions"]
+    for (pair, name), (searched, rejected) in sorted(per_pair.items()):
+        ceiling = float(block["cap_rejection_ceiling"])
+        if searched and rejected / searched > ceiling:
+            problems.append(f"{pair}: {rejected} of {name}'s {searched} searched decisions had "
+                            f"a cap rejection, above the ceiling {ceiling}")
+    counts["searched"], counts["deviations"] = dict(counts["searched"]), dict(counts["deviations"])
+    return problems, counts
+
+
+def check_identity(games, plan):
+    """(problems, identity games that matched) for the plan's identity entries."""
+    want, block = registered(plan)
+    problems, matched = [], 0
+    by_pair = collections.defaultdict(dict)
+    for g in games:
+        by_pair[tuple(g.get("pair") or ())][(g.get("engine_seed"), g.get("leg"))] = g
+    for item in block.get("identity") or []:
+        search, plain = tuple(item["search"]), tuple(item["plain"])
+        name = next(n for n in search if want[n]["search"])
+        if not by_pair.get(search):
+            problems.append(f"identity: no game of the pair {search}")
+            continue
+        for key, game in sorted(by_pair[search].items(), key=str):
+            where = f"identity {search} seed {key[0]} {key[1]}"
+            base = by_pair.get(plain, {}).get(key)
+            if base is None:
+                problems.append(f"{where}: the plain pair {plain} has no such game")
+                continue
+            differ = [f for f in IDENTITY_FIELDS if game.get(f) != base.get(f)]
+            if differ:
+                problems.append(f"{where}: differs from the plain game on {differ}")
+                continue
+            stats = (game.get("search_stats") or [None, None])[
+                (game.get("home"), game.get("away")).index(name)] or {}
+            if sum((stats.get("searched") or {}).values()) and not stats.get("rollouts"):
+                problems.append(f"{where}: ran no search")
+                continue
+            matched += 1
+    return problems, matched
+
+
+def accept(run_dir, plan):
+    """(problems, counts) for a run directory; no problems means accepted."""
+    with open(os.path.join(run_dir, "manifest.json")) as handle:
+        manifest = json.load(handle)
+    with open(os.path.join(run_dir, "games.jsonl")) as handle:
+        games = [json.loads(line) for line in handle if line.strip()]
+    problems = check_manifest(manifest, plan)
+    found, counts = check_games(games, plan)
+    more, counts["identity_games"] = check_identity(games, plan)
+    problems += found + more
+    if len(problems) > MAX_PROBLEMS:
+        problems = problems[:MAX_PROBLEMS] + [f"... and {len(problems) - MAX_PROBLEMS} more"]
+    return problems, counts
+
+
+def accepted_line(counts):
+    searched = sum(counts["searched"].values())
+    share = counts["cap_rejected_decisions"] / searched if searched else 0.0
+    by_class = ", ".join(f"{c} {counts['searched'][c]} searched / {counts['deviations'][c]} "
+                         "deviations" for c in sorted(counts["searched"]))
+    return (f"SEARCH-ACCEPTED {counts['searched_games']} searched games of {counts['games']} "
+            f"as registered; {by_class or 'no searched decision'}; "
+            f"{counts['cap_rejected_decisions']} cap-rejected decisions "
+            f"({share * 100:.3f}%), {counts['cutoff_rollouts']} cutoff rollouts of "
+            f"{counts['rollouts']}, {counts['error_rollouts']} error rollouts; "
+            f"{counts['identity_games']} identity game(s) equal to the plain game")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("plan")
+    parser.add_argument("run_dir")
+    parser.add_argument("--expect-sha256", required=True,
+                        help="the PLAN.json hash committed before launch")
+    args = parser.parse_args(argv)
+    plan_sha = sha256_file(args.plan)
+    if plan_sha != args.expect_sha256.strip().lower():
+        print(f"SEARCH-REJECTED plan file hashes to {plan_sha}, not the committed "
+              f"{args.expect_sha256}")
+        return 1
+    with open(args.plan) as handle:
+        plan = json.load(handle)
+    try:
+        problems, counts = accept(args.run_dir, plan)
+    except ValueError as exc:
+        print(f"SEARCH-REJECTED {exc}")
+        return 1
+    if problems:
+        for problem in problems:
+            print(f"SEARCH-REJECTED {problem}")
+        return 1
+    print(accepted_line(counts))
+    print(f"plan {os.path.abspath(args.plan)} sha256 {plan_sha}; this tool sha256 "
+          f"{sha256_file(os.path.abspath(__file__))}; games.jsonl sha256 "
+          f"{sha256_file(os.path.join(args.run_dir, 'games.jsonl'))}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
