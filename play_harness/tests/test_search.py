@@ -676,6 +676,27 @@ def test_an_integrity_failure_inside_a_rollout_is_an_error_not_a_rejection(
     assert clean.stops == [S.STOP_TURN] and clean.errors == []
 
 
+@pytest.mark.parametrize("counter", S.HARD_COUNTERS)
+def test_a_nonzero_hard_counter_in_a_clone_is_an_error(rewards, monkeypatch, counter):
+    """The rollout itself went through; its clone's counter says something broke."""
+    from play_harness import tournament as T
+    assert S.HARD_COUNTERS == T.HARD_COUNTERS
+    seat = 0
+    seed, trail, td = _first_touchdown(rewards, seat)
+    start = td - 9
+    root = _replayed(seed, rewards, trail, start)
+    assert not any(root.counters()[name] for name in S.HARD_COUNTERS)
+    real = E.Engine.counters
+    monkeypatch.setattr(E.Engine, "counters",
+                        lambda self: dict(real(self), **{counter: 1}) if self.is_clone
+                        else real(self))
+    batch = _scripted_rollout(root, seat, trail, start)
+    assert batch.stops == [S.STOP_ERROR] and math.isnan(batch.returns[0])
+    assert batch.errors == [(0, f"hard counters {{'{counter}': 1}}")]
+    monkeypatch.undo()
+    assert _scripted_rollout(root, seat, trail, start).stops == [S.STOP_TURN]
+
+
 def test_a_reward_inside_the_limit_is_not_an_error(rewards):
     seat = 0
     seed, trail, td = _first_touchdown(rewards, seat)

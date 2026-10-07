@@ -57,6 +57,10 @@ STOPS = (STOP_TURN, STOP_TERMINAL, STOP_CUTOFF, STOP_CAP, STOP_ERROR)
 # The two that leave a rollout without a return (nan). They are different things:
 # a cap ending is a property of where the real game stands, an error never is.
 REJECTED = (STOP_CAP, STOP_ERROR)
+# The env's and the shim's hard-integrity counters (Engine.counters). Every one
+# must be zero in a clone when its rollout ends.
+HARD_COUNTERS = ("illegal", "projection_collision", "error_episodes",
+                 "rejected_submissions", "precheck_collisions")
 
 # Where a rollout is meant to end. The search stops at the end of the searcher's
 # team turn. A rollout to the end of the match is for measurement: it shows what
@@ -159,8 +163,9 @@ class Rollouts:
 
     A rollout ends in STOP_ERROR, with no return, on any integrity failure: the
     engine refuses a step or reports an error, a logit, a value, either seat's
-    reward or the accumulated return is not finite, a mask had to give way, or
-    no action can be selected.
+    reward or the accumulated return is not finite, a mask had to give way, no
+    action can be selected, or one of HARD_COUNTERS is nonzero in the clone when
+    its rollout ends.
     """
 
     def __init__(self, policy, seat, masks=("m1",), opponent_masks=None, gamma=GAMMA,
@@ -378,4 +383,10 @@ class Rollouts:
                     fail(b, f"no action could be selected: {exc}")
                     continue
                 apply(b, action)
+        for b, clone in enumerate(clones):
+            if out.stops[b] != STOP_ERROR:
+                counters = clone.counters()
+                nonzero = {name: counters[name] for name in HARD_COUNTERS if counters[name]}
+                if nonzero:
+                    fail(b, f"hard counters {nonzero}")
         return out
