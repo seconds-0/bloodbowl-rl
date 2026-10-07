@@ -392,12 +392,14 @@ def test_a_game_off_the_plan_is_rejected(tmp_path, change, needle):
 def test_an_identity_pair_that_was_never_played_is_rejected(tmp_path):
     rows = [r for r in games() if tuple(r["pair"]) != ("I", "C")]
     problems, counts = sa.accept(write_run(tmp_path, manifest(), rows), plan())
-    assert problems == ["('I', 'C'): 4 of the 4 registered games missing, e.g. "
+    assert problems == ["I is registered to search and played no game",
+                        "('I', 'C'): 4 of the 4 registered games missing, e.g. "
                         "[(0, 'A_home'), (0, 'B_home'), (1, 'A_home')]",
                         "identity: no game of the pair ('I', 'C')"]
     assert counts["identity_games"] == 0
     problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), without_schedule(plan()))
-    assert problems == ["identity: no game of the pair ('I', 'C')"]
+    assert problems == ["I is registered to search and played no game",
+                        "identity: no game of the pair ('I', 'C')"]
 
 
 def test_cap_rejections_are_held_to_the_ceiling_per_pair():
@@ -1357,3 +1359,19 @@ def test_which_fields_a_real_run_can_lose(real_run):
     assert ours == {"games_per_worker", "pairs", "players", "search", "seed0"}
     assert gate - ours == MANIFEST_FIELDS_THE_GATE_HOLDS
     assert set(m) - ours - gate == MANIFEST_FIELDS_NOBODY_HOLDS
+
+
+# ---- the last defaults (item 5) --------------------------------------------------------------
+def test_a_searching_player_without_a_game_is_rejected(tmp_path):
+    """Without the plan's pairs nothing else says the searching player had to
+    play, and a run with no searched game at all was accepted."""
+    p = without_schedule(plan())
+    rows = [r for r in games() if "S" not in r["pair"]]
+    m = manifest()
+    problems, counts = sa.accept(write_run(tmp_path, m, rows), p)
+    assert problems == ["S is registered to search and played no game"]
+    problems, _ = sa.accept(write_run(tmp_path, m, []), p)
+    assert problems == ["I is registered to search and played no game",
+                        "S is registered to search and played no game",
+                        "identity: no game of the pair ('I', 'C')"]
+

@@ -589,6 +589,7 @@ def check_games(games, plan, seed0=None):
               "scheduled_pairs": None if pairs is None else len(pairs)}
     per_pair = collections.defaultdict(lambda: [0, 0])     # (pair, player): searched, rejected
     seen = collections.Counter()                            # (pair, game index, leg)
+    played = set()
     for g in games:
         counts["games"] += 1
         if not isinstance(g, dict):
@@ -601,6 +602,7 @@ def check_games(games, plan, seed0=None):
             continue
         names = (g["home"], g["away"])
         pair = tuple(g["pair"])
+        played.update(names)
         found = _seed_problems(g, seed0, None if pairs is None else pairs[pair])
         problems += [f"{where}: {p}" for p in found]
         if not found:
@@ -675,6 +677,9 @@ def check_games(games, plan, seed0=None):
         if searched and rejected / searched > ceiling:
             problems.append(f"{pair}: {rejected} of {name}'s {searched} searched decisions had "
                             f"a cap rejection, above the ceiling {ceiling}")
+    for name in sorted(set(want) - played):
+        if want[name]["search"]:
+            problems.append(f"{name} is registered to search and played no game")
     for pair, n in sorted((pairs or {}).items()):
         missing = sorted((i, leg) for i in range(n // len(LEGS)) for leg in LEGS
                          if not seen[(pair, i, leg)])
