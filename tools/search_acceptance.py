@@ -209,7 +209,7 @@ def registered(plan, require_schedule=False):
         if not isinstance(spec, dict):
             raise ValueError(f"plan: player {name} is not an object")
         if spec.get("bot") is not None:
-            if not isinstance(spec["bot"], str) or any(
+            if not isinstance(spec["bot"], str) or not spec["bot"] or any(
                     spec.get(key) for key in ("masks", "sampling_offset", "search", "mode",
                                               "temperature")):
                 raise ValueError(f"plan: bot {name} takes a kind and no mask, sampling "
@@ -250,13 +250,16 @@ def registered(plan, require_schedule=False):
         out[name] = {"masks": sorted(masks), "offset": offset, "search": search, "bot": None,
                      "mode": mode, "temperature": temperature}
     block = plan.get("search") or {}
+    if not isinstance(block, dict):
+        raise ValueError("plan: search must be an object")
     if any(p["search"] for p in out.values()):
         for key in ("reward_manifest_sha256", "integrity_checks", "cap_rejection_ceiling"):
             if key not in block:
                 raise ValueError(f"plan: search.{key} is required when a player searches")
         if not isinstance(block["integrity_checks"], list) or not block["integrity_checks"]:
             raise ValueError("plan: search.integrity_checks must list the checks")
-        if not 0.0 <= float(block["cap_rejection_ceiling"]) <= 1.0:
+        if not _real(block["cap_rejection_ceiling"]) or \
+                not 0.0 <= block["cap_rejection_ceiling"] <= 1.0:
             raise ValueError("plan: search.cap_rejection_ceiling must be in [0, 1]")
         for name, p in out.items():
             if p["search"] and p["search"]["reward_manifest_sha256"] != \
@@ -265,10 +268,13 @@ def registered(plan, require_schedule=False):
                                  "search.reward_manifest_sha256")
             if p["search"] and not p["masks"]:
                 raise ValueError(f"plan: player {name} searches without a mask")
-    for item in block.get("identity") or []:
-        if set(item) != {"search", "plain"} or len(item["search"]) != 2 or \
-                len(item["plain"]) != 2:
-            raise ValueError("plan: an identity entry is {search: [A, B], plain: [C, D]}")
+    identity = block.get("identity") or []
+    if not isinstance(identity, list) or not all(
+            isinstance(item, dict) and set(item) == {"search", "plain"}
+            and all(_two(item[key], lambda name: isinstance(name, str)) for key in item)
+            for item in identity):
+        raise ValueError("plan: an identity entry is {search: [A, B], plain: [C, D]}")
+    for item in identity:
         searching = [n for n in item["search"] if (out.get(n) or {}).get("search")]
         if len(searching) != 1 or out[searching[0]]["search"]["delta"] != "inf":
             raise ValueError(f"plan: identity pair {item['search']} needs exactly one "
@@ -280,7 +286,7 @@ def registered(plan, require_schedule=False):
             (pairs is None or seed0 is None):
         raise ValueError("plan: pairs and seed0 are required when a player searches")
     if pairs is not None:
-        for item in block.get("identity") or []:
+        for item in identity:
             search, plain = tuple(item["search"]), tuple(item["plain"])
             if search not in pairs:
                 raise ValueError(f"plan: identity pair {item['search']} is not in pairs")
@@ -540,12 +546,12 @@ def _result_problems(g):
         out.append(f"c_steps {steps!r} is not a positive integer")
     elif g.get("forwards") != [steps] * 2:
         out.append(f"forwards {g.get('forwards')} over {steps} steps")
-    score = g.get("score")
-    # The step count, score and sampling seeds are held above and by the caller.
+    # The other fields an identity check compares are held here and by the caller.
     unusable = [f for f in ("action_trail_sha256", "final_digest", "logprob_sum", "team_ids")
                 if not IDENTITY_SHAPES[f](g.get(f))]
     if unusable:
         out.append(f"has no usable {unusable}")
+    score = g.get("score")
     if not _two(score, lambda v: _int(v) and v >= 0):
         return out + [f"score {score} is not two integers >= 0"]
     a_td, b_td = score if g["leg"] == LEGS[0] else score[::-1]
@@ -669,7 +675,7 @@ def check_games(games, plan, seed0=None):
             for key in ("rollouts", "cutoff_rollouts", "cap_rejected_decisions",
                         "error_rollouts"):
                 counts[key] += stats[key]
-            cell = per_pair[(tuple(g.get("pair") or ()), name)]
+            cell = per_pair[(pair, name)]
             cell[0] += sum(stats["searched"].values())
             cell[1] += stats["cap_rejected_decisions"]
     for (pair, name), (searched, rejected) in sorted(per_pair.items()):
@@ -696,8 +702,8 @@ def check_identity(games, plan):
     A game of the `search` pair matches when the `plain` pair has exactly one
     game on its seed and leg, every compared field is there in both and equal,
     and the searching seat's statistics add up: at least one searched decision,
-    rollouts for each, no deviation. Every game of the pair must match, and when the plan
-    lists pairs, as many as it registers for the pair."""
+    rollouts for each, no deviation. Every game of the pair must match, and
+    when the plan lists pairs, as many as it registers for the pair."""
     want, block = registered(plan)
     pairs, _ = scheduled(plan, want)
     problems, matched = [], 0
@@ -802,6 +808,9 @@ def main(argv=None):
         problems, counts = accept(args.run_dir, plan, require_schedule=True)
     except ValueError as exc:
         print(f"SEARCH-REJECTED {exc}")
+        return 1
+    except OSError as exc:
+        print(f"SEARCH-REJECTED the run cannot be read: {exc}")
         return 1
     if problems:
         for problem in problems:

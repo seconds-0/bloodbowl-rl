@@ -1375,3 +1375,40 @@ def test_a_searching_player_without_a_game_is_rejected(tmp_path):
                         "S is registered to search and played no game",
                         "identity: no game of the pair ('I', 'C')"]
 
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda p: p["players"]["offense"].update(bot=""), "bot offense takes a kind and no"),
+    (lambda p: p.update(search=[p["search"]]), "plan: search must be an object"),
+    (lambda p: p["search"].update(identity={"search": ["I", "C"], "plain": ["P", "C"]}),
+     "an identity entry is"),
+    (lambda p: p["search"].update(identity=[["I", "C"], ["P", "C"]]), "an identity entry is"),
+    (lambda p: p["search"].update(identity=[{"search": "IC", "plain": "PC"}]),
+     "an identity entry is"),
+    (lambda p: p["search"].update(cap_rejection_ceiling="0.01"), "in [0, 1]"),
+    (lambda p: p["search"].update(cap_rejection_ceiling=[0.01]), "in [0, 1]"),
+    (lambda p: p["search"].update(cap_rejection_ceiling=True), "in [0, 1]"),
+    (lambda p: p["search"].update(cap_rejection_ceiling=float("nan")), "in [0, 1]"),
+])
+def test_a_plan_whose_search_block_cannot_be_read_is_refused(change, needle):
+    p = plan()
+    change(p)
+    with pytest.raises(ValueError, match=needle.replace("[", r"\[").replace("]", r"\]")):
+        sa.registered(p)
+
+
+def test_a_run_that_cannot_be_read_is_rejected_not_a_crash(tmp_path, capsys):
+    path = tmp_path / "PLAN.json"
+    path.write_text(json.dumps(plan()))
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert sa.main([str(path), str(tmp_path / "nowhere"), "--expect-sha256", sha]) == 1
+    assert capsys.readouterr().out.startswith("SEARCH-REJECTED the run cannot be read: ")
+    run = tmp_path / "run"
+    run.mkdir()
+    write_run(run, manifest(), games())
+    for name, text in (("games.jsonl", '{"pair": ["S", "C"]\n'), ("manifest.json", "[]")):
+        original = (run / name).read_text()
+        (run / name).write_text(text)
+        assert sa.main([str(path), str(run), "--expect-sha256", sha]) == 1
+        assert capsys.readouterr().out.startswith("SEARCH-REJECTED ")
+        (run / name).write_text(original)
+    assert sa.main([str(path), str(run), "--expect-sha256", sha]) == 0
