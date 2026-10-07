@@ -35,3 +35,14 @@ If D2 is not met the search gate is not registered on this rule setting, and a n
 - Roots come from plain self-play trajectories of chain 55 + m1, one deviation at a time. A seat that has already deviated, or that plays chain 37 or chain 46, visits other states.
 - The count is about the evaluator (shaped return plus the value head to the end of the own turn). It says nothing about wins; the gate is the judge of that.
 - The tool also plays every selected root to the end of the match. Those win-score and touchdown numbers are reported as exploratory, as in `FINDINGS.md`, and enter nothing.
+
+## Result (2026-10-07 12:50 PDT, added after the batch; nothing above was changed)
+
+`d2_count.txt` (the output of `d2_count.py`), `tail_all_report.txt` (the tool's own report over all four batch folders, exploratory), `d2_launch.py` (the launch). The first launch at 11:47 failed at import because the code export lacked the `training` package; nothing was screened. The package was added and the same command was launched again.
+
+- Third batch: 3,990 roots screened from 133 games, 58 tail roots in 45 games, every one played. **0 false.** Upper bound 5.0% counting roots. Condition 1 met.
+- All three batches: 87 tail roots in 67 games, 0 false games. Upper bound 4.4% counting games. Condition 2 met.
+- Third batch mean fresh gain 0.146 [0.120, 0.178]. Condition 3 met.
+- **D2 is met.**
+- The weakest tail root (seed 29100154, a turn-level choice) has a fresh gain of +0.021 with a standard error of 0.017, so it is not shown to be above zero on its own; the next weakest is +0.063 with 0.010. The 58 control-band roots of the batch also have 0 at or below zero.
+- Exploratory, entering nothing: over all four batch folders the 87 tail roots played to the end of the match show +0.051 [+0.019, +0.085] touchdown difference and +0.019 [+0.007, +0.031] win score for one deviation, and the 87 control-band roots show -0.001 [-0.021, +0.016] and +0.001 [-0.007, +0.009]. The tail is 1.46% [1.16, 1.78] of searched decisions.

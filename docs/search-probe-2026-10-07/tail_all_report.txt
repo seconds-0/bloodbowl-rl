@@ -1,0 +1,79 @@
+screen: 6000 roots from 200 games at 16 rollouts per candidate; tail = predicted gain above 0.1 and above two standard errors (floored); control band = (0.02, 0.1] likewise
+intervals: 95% bootstrap over games
+
+How often the tail occurs
+class          sampled  tail  band  searchable/game  tail per searched decision   tail per game per seat
+after_declare     3000    40   356            110.6  1.35% [0.92, 1.81]          1.49 [1.01, 2.00]
+all               6000    87   600            212.9  1.46% [1.16, 1.78]          3.10 [2.47, 3.80]
+turn              3000    47   244            102.3  1.57% [1.17, 2.02]          1.61 [1.19, 2.06]
+
+Realized, to the end of the match (alternative minus a0, mean over roots)
+set                  roots games  TD difference               win score                   P(win)                      P(loss)                   
+tail                    87    67  0.051 [0.019, 0.085]        0.0190 [0.0068, 0.0312]     0.0255 [0.0096, 0.0423]     -0.0125 [-0.0286, 0.0026] 
+tail, live              71    59  0.051 [0.018, 0.085]        0.0201 [0.0059, 0.0335]     0.0297 [0.0105, 0.0498]     -0.0105 [-0.0249, 0.0041] 
+tail, decided           16    11  0.054 [-0.031, 0.158]       0.0142 [-0.0009, 0.0460]    0.0068 [0.0000, 0.0166]     -0.0215 [-0.0770, 0.0033] 
+control                 87    71  -0.001 [-0.021, 0.016]      0.0012 [-0.0072, 0.0087]    -0.0015 [-0.0153, 0.0096]   -0.0040 [-0.0111, 0.0034] 
+control, live           68    55  0.002 [-0.023, 0.022]       0.0018 [-0.0094, 0.0108]    -0.0021 [-0.0207, 0.0118]   -0.0057 [-0.0148, 0.0033] 
+tail, turn              47    43  0.039 [-0.006, 0.087]       0.0139 [-0.0041, 0.0311]    0.0165 [-0.0036, 0.0359]    -0.0113 [-0.0369, 0.0124] 
+tail, after_declare     40    34  0.066 [0.019, 0.122]        0.0250 [0.0063, 0.0459]     0.0361 [0.0115, 0.0651]     -0.0139 [-0.0327, 0.0041] 
+
+The screen's gain beside the same roots on fresh rollouts (shaped return)
+set                  screen   depth 1                     depth 2                     depth 1 = touchdowns + other reward + value term
+tail                 0.1575   0.1458 [0.1253, 0.1693]     0.1130 [0.0809, 0.1481]     +0.0087 + +0.0679 + +0.0692
+tail, live           0.1511   0.1402 [0.1211, 0.1615]     0.1062 [0.0743, 0.1394]     +0.0070 + +0.0643 + +0.0689
+tail, decided        0.1856   0.1706 [0.1150, 0.2840]     0.1427 [0.0491, 0.2900]     +0.0161 + +0.0838 + +0.0708
+control              0.0421   0.0393 [0.0349, 0.0436]     0.0252 [0.0119, 0.0372]     +0.0009 + +0.0168 + +0.0216
+control, live        0.0421   0.0392 [0.0342, 0.0449]     0.0297 [0.0186, 0.0415]     +0.0011 + +0.0186 + +0.0196
+tail, turn           0.1568   0.1382 [0.1113, 0.1761]     0.1121 [0.0711, 0.1576]     +0.0055 + +0.0653 + +0.0675
+tail, after_declare  0.1582   0.1547 [0.1283, 0.1859]     0.1139 [0.0729, 0.1638]     +0.0125 + +0.0709 + +0.0713
+
+What the tail deviations are (played tail roots)
+decision                      a0              alternative      roots  live  screen  TD difference  win score
+turn                          ACTIVATE        ACTIVATE            47    39   0.157         +0.039     +0.014
+after_declare of MOVE         STEP            STEP                17    11   0.163         +0.062     +0.025
+after_declare of BLOCK        END_ACTIVATION  BLOCK_TARGET         7     5   0.141         +0.000     +0.012
+after_declare of MOVE         END_ACTIVATION  STEP                 6     6   0.168         +0.128     +0.039
+after_declare of MOVE         STEP            JUMP                 2     2   0.138         +0.090     +0.023
+after_declare of BLITZ        STAND_UP        END_ACTIVATION       1     1   0.137         -0.094     -0.059
+after_declare of BLITZ        END_ACTIVATION  STAND_UP             1     1   0.101         +0.023     -0.004
+after_declare of MOVE         STAND_UP        END_ACTIVATION       1     1   0.117         -0.008     +0.000
+after_declare of PASS         END_ACTIVATION  STEP                 1     1   0.182         +0.148     +0.047
+after_declare of PASS         STEP            STEP                 1     1   0.436         +0.375     +0.141
+after_declare of SECURE_BALL  END_ACTIVATION  STAND_UP             1     1   0.105         +0.188     +0.078
+after_declare of BLOCK        BLOCK_TARGET    END_ACTIVATION       1     1   0.109         +0.102     +0.055
+after_declare of MOVE         STEP            END_ACTIVATION       1     1   0.104         -0.102     -0.047
+
+The largest screened gains, one root each (mean, standard error over rollouts)
+game 112 step 984 (turn, decided, a0 win score 0.06, 128 pairs): screen 0.920
+    half 2, own turn 3, score 0-1, ball held by own Skink Lineman at (17,0), standing, carrying the ball, 8 squares from the end zone the searcher attacks
+    a0: activate own Skink Lineman at (12,1), standing
+    alternative: activate own Skink Lineman at (17,0), standing, carrying the ball
+    TD difference +0.531 (0.080); win score +0.215 (0.030); depth 1 +0.887 (0.051); depth 2 +0.946 (0.051)
+game 103 step 385 (after_declare, live, a0 win score 0.41, 128 pairs): screen 0.486
+    half 1, own turn 6, score 0-0, ball held by own Bretonnian Knight Catcher at (8,5), standing, carrying the ball, 8 squares from the end zone the searcher attacks
+    a0: STEP to (9,4) [acting: own Bretonnian Knight Catcher at (8,5), standing, carrying the ball]
+    alternative: STEP to (7,6) [acting: own Bretonnian Knight Catcher at (8,5), standing, carrying the ball]
+    TD difference +0.680 (0.095); win score +0.262 (0.037); depth 1 +0.493 (0.035); depth 2 +0.699 (0.049)
+game 1 step 477 (after_declare, live, a0 win score 0.59, 128 pairs): screen 0.436
+    half 1, own turn 6, score 0-0, ball on_ground at (6,6), 6 squares from the end zone the searcher attacks
+    a0: STEP to (3,8) [acting: own Renegade Human Thrower at (3,7), standing]
+    alternative: STEP to (4,8) [acting: own Renegade Human Thrower at (3,7), standing]
+    TD difference +0.375 (0.099); win score +0.141 (0.040); depth 1 +0.398 (0.011); depth 2 +0.553 (0.039)
+game 26 step 603 (after_declare, live, a0 win score 0.55, 128 pairs): screen 0.367
+    half 1, own turn 8, score 0-0, ball held by own Bodyguard at (19,0), standing, carrying the ball, 6 squares from the end zone the searcher attacks
+    a0: END_ACTIVATION [acting: own Bodyguard at (19,0), standing, carrying the ball]
+    alternative: STEP to (20,0) [acting: own Bodyguard at (19,0), standing, carrying the ball]
+    TD difference +0.305 (0.077); win score +0.137 (0.037); depth 1 +0.371 (0.035); depth 2 +0.351 (0.035)
+game 66 step 626 (turn, live, a0 win score 0.66, 128 pairs): screen 0.330
+    half 1, own turn 7, score 0-0, ball held by own Human Catcher at (20,7), standing, carrying the ball, 5 squares from the end zone the searcher attacks
+    a0: activate own Human Catcher at (6,1), standing
+    alternative: activate own Human Lineman at (13,0), standing
+    TD difference +0.031 (0.103); win score +0.047 (0.040); depth 1 +0.289 (0.023); depth 2 +0.109 (0.050)
+
+A per-game upper bound: tail deviations per game per seat (3.10) times the realized gain per deviation. Gains from several deviations in one game do not add, so this bounds the effect from above. 82% of the played tail roots were in live games.
+    td_diff                      +0.159 [+0.056, +0.271] per game
+    win_score                    +0.059 [+0.020, +0.100] per game
+    td_diff, live games only     +0.129 [+0.044, +0.224] per game
+    win_score, live games only   +0.051 [+0.016, +0.089] per game
+
+Decision rule (fixed before the run): GO: the tail's realized touchdown-difference gain is above zero and the tail occurs at least once per hundred searched decisions. Next: the seat with delta 0.10 on turn-level and after-declare decisions, then a whole-game pilot.

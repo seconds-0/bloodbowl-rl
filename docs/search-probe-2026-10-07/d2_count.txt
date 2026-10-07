@@ -1,0 +1,70 @@
+search-diag-20261007/tail1/outcomes.jsonl: 38 roots, sha256 42b87a9ffc4c53210587663616057fd40aec9dbba46b006f23f0857e27a05cb9
+search-diag-20261007/tail2/outcomes.jsonl: 20 roots, sha256 c83262a331f6f18ab2e548d7f22100da4b54883f823cae961a55e71a36a906da
+search-d2-20261007/tail3a/outcomes.jsonl: 76 roots, sha256 261a363f1e0800bb8e1e5153fef5b1727db9d6868babc235b5a405a09514f886
+search-d2-20261007/tail3b/outcomes.jsonl: 40 roots, sha256 747adcbf4ee716a3e1e2cbc7ac26a33ee9a08a93f15fd919900ae3a8dfec6a89
+new batch (tail): 58 roots in 45 games; false roots 0 (upper bound 5.0%), false games 0 (upper bound 6.4%); mean fresh gain 0.1458 [0.1202, 0.1784]; fresh pairs per root [128]
+all batches (tail): 87 roots in 67 games; false roots 0 (upper bound 3.4%), false games 0 (upper bound 4.4%); mean fresh gain 0.1458 [0.1253, 0.1693]; fresh pairs per root [128]
+new batch (control): 58 roots in 46 games; false roots 0 (upper bound 5.0%), false games 0 (upper bound 6.3%); mean fresh gain 0.0419 [0.0368, 0.0478]; fresh pairs per root [128]
+condition 1 (new batch, roots, bound <= 10%): met
+condition 2 (all batches, games, bound <= 10%): met
+condition 3 (new batch, lower bound of the mean gain above zero): met
+D2 MET
+new batch tail roots, lowest fresh gain first:
+  seed 29100154 turn          screen 0.104 fresh +0.0213 se 0.0172 n 128
+  seed 29100074 turn          screen 0.115 fresh +0.0629 se 0.0100 n 128
+  seed 29100101 after_declare screen 0.101 fresh +0.0640 se 0.0156 n 128
+  seed 29100074 turn          screen 0.110 fresh +0.0691 se 0.0048 n 128
+  seed 29100069 after_declare screen 0.109 fresh +0.0747 se 0.0090 n 128
+  seed 29100199 turn          screen 0.122 fresh +0.0800 se 0.0150 n 128
+  seed 29100142 turn          screen 0.103 fresh +0.0826 se 0.0110 n 128
+  seed 29100198 turn          screen 0.156 fresh +0.0829 se 0.0158 n 128
+  seed 29100117 turn          screen 0.108 fresh +0.0867 se 0.0091 n 128
+  seed 29100120 turn          screen 0.100 fresh +0.0885 se 0.0057 n 128
+  seed 29100080 turn          screen 0.112 fresh +0.0895 se 0.0125 n 128
+  seed 29100102 after_declare screen 0.117 fresh +0.0901 se 0.0102 n 128
+  seed 29100096 turn          screen 0.114 fresh +0.0910 se 0.0088 n 128
+  seed 29100136 after_declare screen 0.111 fresh +0.0913 se 0.0055 n 128
+  seed 29100170 after_declare screen 0.112 fresh +0.0922 se 0.0042 n 128
+  seed 29100171 after_declare screen 0.110 fresh +0.0961 se 0.0049 n 128
+  seed 29100089 turn          screen 0.119 fresh +0.0982 se 0.0111 n 128
+  seed 29100085 after_declare screen 0.105 fresh +0.0982 se 0.0036 n 128
+  seed 29100199 after_declare screen 0.110 fresh +0.1020 se 0.0020 n 128
+  seed 29100119 turn          screen 0.138 fresh +0.1039 se 0.0064 n 128
+  seed 29100112 turn          screen 0.118 fresh +0.1067 se 0.0115 n 128
+  seed 29100152 after_declare screen 0.136 fresh +0.1098 se 0.0096 n 128
+  seed 29100159 after_declare screen 0.108 fresh +0.1144 se 0.0090 n 128
+  seed 29100073 turn          screen 0.163 fresh +0.1161 se 0.0104 n 128
+  seed 29100110 turn          screen 0.111 fresh +0.1169 se 0.0104 n 128
+  seed 29100083 after_declare screen 0.127 fresh +0.1176 se 0.0043 n 128
+  seed 29100189 turn          screen 0.152 fresh +0.1216 se 0.0091 n 128
+  seed 29100141 after_declare screen 0.117 fresh +0.1251 se 0.0126 n 128
+  seed 29100188 after_declare screen 0.112 fresh +0.1261 se 0.0087 n 128
+  seed 29100067 turn          screen 0.158 fresh +0.1262 se 0.0116 n 128
+  seed 29100084 turn          screen 0.156 fresh +0.1267 se 0.0128 n 128
+  seed 29100085 after_declare screen 0.136 fresh +0.1282 se 0.0043 n 128
+  seed 29100078 turn          screen 0.111 fresh +0.1290 se 0.0132 n 128
+  seed 29100091 turn          screen 0.151 fresh +0.1292 se 0.0043 n 128
+  seed 29100100 turn          screen 0.107 fresh +0.1299 se 0.0073 n 128
+  seed 29100099 turn          screen 0.146 fresh +0.1314 se 0.0054 n 128
+  seed 29100123 after_declare screen 0.117 fresh +0.1314 se 0.0066 n 128
+  seed 29100168 turn          screen 0.102 fresh +0.1396 se 0.0152 n 128
+  seed 29100085 after_declare screen 0.144 fresh +0.1421 se 0.0054 n 128
+  seed 29100102 after_declare screen 0.110 fresh +0.1456 se 0.0079 n 128
+  seed 29100122 turn          screen 0.121 fresh +0.1461 se 0.0134 n 128
+  seed 29100098 turn          screen 0.157 fresh +0.1472 se 0.0094 n 128
+  seed 29100076 after_declare screen 0.140 fresh +0.1477 se 0.0035 n 128
+  seed 29100123 after_declare screen 0.169 fresh +0.1508 se 0.0129 n 128
+  seed 29100086 after_declare screen 0.137 fresh +0.1540 se 0.0055 n 128
+  seed 29100172 after_declare screen 0.182 fresh +0.1571 se 0.0066 n 128
+  seed 29100165 after_declare screen 0.162 fresh +0.1587 se 0.0059 n 128
+  seed 29100080 turn          screen 0.170 fresh +0.1688 se 0.0042 n 128
+  seed 29100158 after_declare screen 0.199 fresh +0.1695 se 0.0066 n 128
+  seed 29100125 turn          screen 0.159 fresh +0.1699 se 0.0116 n 128
+  seed 29100155 turn          screen 0.177 fresh +0.1908 se 0.0113 n 128
+  seed 29100142 after_declare screen 0.210 fresh +0.1986 se 0.0075 n 128
+  seed 29100110 after_declare screen 0.152 fresh +0.2099 se 0.0177 n 128
+  seed 29100103 turn          screen 0.188 fresh +0.2189 se 0.0147 n 128
+  seed 29100122 turn          screen 0.253 fresh +0.2308 se 0.0120 n 128
+  seed 29100188 after_declare screen 0.237 fresh +0.2794 se 0.0086 n 128
+  seed 29100103 after_declare screen 0.486 fresh +0.4932 se 0.0350 n 128
+  seed 29100112 turn          screen 0.920 fresh +0.8874 se 0.0510 n 128
