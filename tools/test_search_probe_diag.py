@@ -198,13 +198,14 @@ class Report(unittest.TestCase):
         self.assertIsNone(D.decision_class({9, 19}, False, A))
 
 
-def make_outcome(game, cls, group, gain=0.0, n=64, seed=0, predicted=0.0, missing=()):
+def make_outcome(game, cls, group, gain=0.0, n=64, seed=0, predicted=0.0, missing=(),
+                 a0_wins=0.5):
     """An outcome record with a planted win-score gain of `gain`: a0 wins half its
     rollouts, and the alternative lifts a share 4 * gain of them by half a point,
     which only counts where a0 had lost. The two candidates share a0's results,
     as common dice would."""
     rng = np.random.default_rng(seed)
-    base = (rng.random(n) > 0.5).astype(float)
+    base = (rng.random(n) < a0_wins).astype(float)
     lift = rng.random(n) < abs(gain) * 4
     alt = np.clip(base + np.sign(gain) * 0.5 * lift, 0.0, 1.0)
     win = np.stack([base, alt])
@@ -367,6 +368,143 @@ class Outcomes(unittest.TestCase):
         self.assertEqual((got["depth1"][1][1], got["depth1_touchdown"][1][1],
                           got["depth1_value"][1][1]), (-1.2, -0.8, 0.0))
         self.assertAlmostEqual(got["depth1_other"][1][1], -0.4)
+
+
+def make_screened(game, cls, band, index, searchable=100, sampled=10):
+    return {"index": index, "game": game, "class": cls, "band": band, "searchable": searchable,
+            "sampled": sampled, "rollouts": 16}
+
+
+class Tail(unittest.TestCase):
+    def test_the_screen_reads_a_root_as_the_rule_does(self):
+        rng = np.random.default_rng(0)
+        base = rng.normal(1.0, 0.1, 16)
+        returns = np.stack([base, base + 0.15, base - 0.05, base + rng.normal(0.02, 0.2, 16)])
+        stats = D.screen_stats(returns)
+        self.assertEqual(stats["best"], 0)
+        self.assertAlmostEqual(stats["gain"], 0.15, places=9)
+        # The difference is constant, so its own standard error is zero: the floor,
+        # from the candidates' spread, is what is reported.
+        floor = np.sqrt(returns.var(axis=1, ddof=1).mean() / 16)
+        self.assertAlmostEqual(stats["se"], floor, places=12)
+        self.assertGreater(stats["se"], 0.02)
+        noisy = D.screen_stats(np.stack([base, base + rng.normal(0.15, 1.0, 16)]))
+        self.assertGreater(noisy["se"], 0.15)
+
+    def test_the_bands(self):
+        self.assertEqual(D.screen_band(0.15, 0.01), "tail")
+        self.assertEqual(D.screen_band(0.10, 0.01), "band")          # the tail is above delta
+        self.assertEqual(D.screen_band(0.05, 0.01), "band")
+        self.assertIsNone(D.screen_band(0.02, 0.001))                # the band is above 0.02
+        self.assertIsNone(D.screen_band(0.15, 0.08))                 # not two standard errors
+        self.assertIsNone(D.screen_band(0.05, 0.03))
+        self.assertIsNone(D.screen_band(-0.2, 0.01))
+
+    def test_the_tail_is_taken_in_screening_order_and_the_control_from_the_band(self):
+        bands = ["band", "tail", None, "band", "tail", "tail", "band", None, "band", "tail",
+                 "band", "band"]
+        tail, control = D.select_tail(bands, cap=3, seed=0)
+        self.assertEqual(tail, [1, 4, 5])                            # the first three, not all
+        self.assertEqual(len(control), 3)
+        self.assertEqual(control, sorted(control))
+        self.assertTrue(all(bands[i] == "band" for i in control))
+        self.assertEqual((tail, control), D.select_tail(bands, cap=3, seed=0))
+        draws = {tuple(D.select_tail(bands, cap=3, seed=s)[1]) for s in range(20)}
+        self.assertGreater(len(draws), 3)
+        # A band smaller than the tail gives what it has; no tail, no control.
+        self.assertEqual(D.select_tail(["tail", "tail", "band"], cap=40), ([0, 1], [2]))
+        self.assertEqual(D.select_tail(["band", None]), ([], []))
+
+    def screened(self):
+        """Ten games. Each samples 10 of 100 turn decisions and 10 of 200
+        after-declare decisions; one sampled root of each class is in the tail."""
+        out = []
+        for game in range(10):
+            for cls, searchable in (("turn", 100), ("after_declare", 200)):
+                for i in range(10):
+                    band = "tail" if i == 0 else "band" if i < 3 else None
+                    out.append(make_screened(game, cls, band, len(out), searchable))
+        return out
+
+    def test_tail_counts_weight_each_class_by_its_decisions(self):
+        games, est, searchable = D.tail_counts(self.screened())
+        self.assertEqual(len(games), 10)
+        np.testing.assert_allclose(est["turn"], 10.0)                # 100 * 1/10
+        np.testing.assert_allclose(est["after_declare"], 20.0)       # 200 * 1/10
+        np.testing.assert_allclose(est["all"], 30.0)
+        np.testing.assert_allclose(searchable["all"], 300.0)
+
+    def test_the_per_game_bound_is_frequency_times_gain(self):
+        games = np.arange(10)
+        point, lo, hi = D.per_game_bound(games, np.full(10, 3.0), [0, 1, 2], [0.2, 0.2, 0.2])
+        self.assertAlmostEqual(point, 0.6)
+        self.assertAlmostEqual(lo, 0.6)
+        self.assertAlmostEqual(hi, 0.6)
+        rng = np.random.default_rng(1)
+        point, lo, hi = D.per_game_bound(games, rng.uniform(1, 5, 10), np.repeat(games, 2),
+                                         rng.normal(0.1, 0.1, 20), reps=500)
+        self.assertLess(lo, point)
+        self.assertLess(point, hi)
+        self.assertTrue(all(np.isnan(v) for v in D.per_game_bound(games, np.ones(10), [], [])))
+
+    def test_the_decision_rule(self):
+        go = D.tail_decision((0.2, 0.05, 0.4, 0.38), (0.02, 0.01, 0.03, 0.03),
+                             (0.0, -0.05, 0.05, 0.04))
+        self.assertTrue(go["go"])
+        self.assertIn("delta 0.10", go["text"])
+        self.assertNotIn("lower than 0.10", go["text"])
+        zero = D.tail_decision((0.2, -0.01, 0.4, 0.38), (0.02, 0.01, 0.03, 0.03),
+                               (0.0, -0.05, 0.05, 0.04))
+        self.assertFalse(zero["go"])
+        self.assertIn("includes zero", zero["text"])
+        rare = D.tail_decision((0.2, 0.05, 0.4, 0.38), (0.005, 0.001, 0.01, 0.01),
+                               (0.1, 0.02, 0.2, 0.2))
+        self.assertFalse(rare["go"])
+        self.assertIn("rarer", rare["text"])
+        self.assertIn("lower than 0.10", rare["text"])               # the control band paid
+
+    def test_the_tail_tables_recover_what_was_planted(self):
+        screened = self.screened()
+        records = []
+        for game in range(10):
+            # The turn tail root is live and gains; the after-declare one is decided.
+            live = make_outcome(game, "turn", "tail", gain=0.1, n=128, seed=game, predicted=0.2)
+            done = make_outcome(game, "after_declare", "tail", gain=0.0, n=128, seed=50 + game,
+                                predicted=0.15, a0_wins=1.0)
+            ctrl = make_outcome(game, "turn", "control", gain=0.0, seed=100 + game,
+                                predicted=0.05)
+            records += [live, done, ctrl]
+        summary = D.analyze_tail(screened, records, reps=400)
+        self.assertEqual((summary["screened"], summary["games"], summary["tail_played"]),
+                         (200, 10, 20))
+        freq = summary["frequency"]
+        self.assertEqual((freq["all"]["tail"], freq["all"]["band"]), (20, 40))
+        self.assertAlmostEqual(freq["all"]["per_decision"][0], 0.1)
+        self.assertAlmostEqual(freq["all"]["per_game"][0], 30.0)
+        self.assertAlmostEqual(freq["turn"]["per_game"][0], 10.0)
+        sets = summary["sets"]
+        self.assertEqual((sets["tail"]["roots"], sets["tail, live"]["roots"],
+                          sets["tail, decided"]["roots"], sets["control"]["roots"]),
+                         (20, 10, 10, 10))
+        self.assertAlmostEqual(sets["tail, live"]["win_score"][0], 0.1, delta=0.02)
+        self.assertEqual(sets["tail, decided"]["win_score"][0], 0.0)
+        self.assertAlmostEqual(sets["tail"]["win_score"][0],
+                               sets["tail, live"]["win_score"][0] / 2, places=9)
+        self.assertAlmostEqual(sets["tail"]["screen_gain"], 0.175)
+        self.assertEqual(summary["tail_live_share"], 0.5)
+        # The bound: 30 tail decisions a game times the mean gain; the live-only
+        # bound counts the decided half as zero, which here it already is.
+        self.assertAlmostEqual(summary["bounds"]["win_score"][0],
+                               30.0 * sets["tail"]["win_score"][0], places=9)
+        self.assertAlmostEqual(summary["bounds"]["win_score, live games only"][0],
+                               summary["bounds"]["win_score"][0], places=9)
+        self.assertEqual([r["predicted"]["gain_b"] for r in summary["largest"]], [0.2] * 5)
+        self.assertEqual(summary["types"][0]["roots"], 10)
+        self.assertTrue(summary["decision"]["go"])       # td gain planted above zero, 10% tail
+        text = D.format_tail_report(summary)
+        for heading in ("How often the tail occurs", "Realized, to the end of the match",
+                        "The screen's gain beside", "A per-game upper bound", "Decision rule"):
+            self.assertIn(heading, text)
 
 
 if __name__ == "__main__":

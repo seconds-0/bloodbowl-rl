@@ -30,6 +30,15 @@ at the decisions it would search, under the evaluator it would use?
            outcome is seen, and a0 and the alternative are each played to the
            end of the match on common random numbers.
 
+  tail-collect, tail-analyze
+           the same judgment for the large predicted gains only. Fresh games are
+           screened at a few rollouts per candidate, the way a search seat would
+           look at them; the roots whose best alternative beats a0 by a wide
+           margin (the tail) and a control draw from the small-gain band are
+           fixed in a selection file, then played to the end of the match. The
+           report adds how often the tail occurs, so a per-game effect can be
+           bounded.
+
 Nothing here is a registered experiment. The returns of collect and analyze
 are the shaped training return, not wins.
 
@@ -63,6 +72,11 @@ SETS = ("flagged", "control")
 FRESH_INDEX = 1000
 OUTCOME_METRICS = ("win_score", "win", "loss", "td_diff", "depth1", "depth2",
                    "depth1_touchdown", "depth1_other", "depth1_value")
+SCREEN_SCHEMA = "search-probe-diag-screen-v1"
+TAIL_CLASSES = ("turn", "after_declare")
+TAIL_DELTA = 0.10           # the tail: predicted gain above this
+TAIL_CAP = 40               # tail roots played, the first in screening order
+LIVE = (0.1, 0.9)           # a live game: a0's own win score strictly inside
 
 
 # ---- statistics (numpy only) --------------------------------------------------------------
@@ -415,27 +429,31 @@ def cluster_correlation(clusters, x, y, reps=2000, seed=0):
     return r, float(r_lo), float(r_hi), slope, float(s_lo), float(s_hi)
 
 
+def outcome_row(record):
+    """One outcome record reduced to its root-level numbers, or None when fewer
+    than two rollout pairs ended naturally."""
+    diffs, values, excluded = outcome_differences(record)
+    n = len(diffs["win_score"])
+    if n < 2:
+        return None
+    row = {"game": record["game"], "class": record["class"], "set": record["set"],
+           "step": record["step"], "n": n, "excluded": excluded,
+           "types": record["types"], "declared": record.get("declared"),
+           "predicted": record["predicted"], "description": record.get("description", []),
+           "mean": {m: float(d.mean()) for m, d in diffs.items()},
+           "se": {m: float(d.std(ddof=1) / np.sqrt(n)) for m, d in diffs.items()},
+           "changed": float((diffs["win_score"] != 0).mean()),
+           "a0_win_score": float(values["win_score"][0].mean()),
+           "paired": {}, "unpaired": {}}
+    for m in ("win_score", "td_diff", "depth1", "depth2"):
+        row["paired"][m] = float(diffs[m].var(ddof=1))
+        row["unpaired"][m] = float(values[m][0].var(ddof=1) + values[m][1].var(ddof=1))
+    return row
+
+
 def analyze_outcomes(records, reps=2000, seed=0, largest=3):
     """Every table of the outcome report from stored outcome records."""
-    rows = []
-    for record in records:
-        diffs, values, excluded = outcome_differences(record)
-        n = len(diffs["win_score"])
-        if n < 2:
-            continue
-        row = {"game": record["game"], "class": record["class"], "set": record["set"],
-               "step": record["step"], "n": n, "excluded": excluded,
-               "types": record["types"], "declared": record.get("declared"),
-               "predicted": record["predicted"], "description": record.get("description", []),
-               "mean": {m: float(d.mean()) for m, d in diffs.items()},
-               "se": {m: float(d.std(ddof=1) / np.sqrt(n)) for m, d in diffs.items()},
-               "changed": float((diffs["win_score"] != 0).mean()),
-               "a0_win_score": float(values["win_score"][0].mean()),
-               "paired": {}, "unpaired": {}}
-        for m in ("win_score", "td_diff", "depth1", "depth2"):
-            row["paired"][m] = float(diffs[m].var(ddof=1))
-            row["unpaired"][m] = float(values[m][0].var(ddof=1) + values[m][1].var(ddof=1))
-        rows.append(row)
+    rows = [row for row in map(outcome_row, records) if row is not None]
     out = {"roots": len(rows), "games": len({r["game"] for r in rows}),
            "excluded_rollout_indices": int(sum(r["excluded"] for r in rows)),
            "rollout_pairs": int(sum(r["n"] for r in rows)), "sets": {}, "pairing": {},
@@ -568,6 +586,241 @@ def format_outcome_report(summary):
     return "\n".join(lines)
 
 
+# ---- the tail (numpy only) -----------------------------------------------------------------
+def screen_stats(returns):
+    """A root as a search seat sees it at a few rollouts: the alternative with the
+    largest paired mean gain over a0, that gain, and its standard error with the
+    pooled-variance floor of simulate_rule."""
+    returns = clean_returns(returns)
+    n = returns.shape[1]
+    mean, se = paired_gain(returns, np.arange(n))
+    best = int(np.argmax(mean))
+    floor = np.sqrt(returns.var(axis=1, ddof=1).mean() / n)
+    return {"best": best, "gain": float(mean[best]), "se": float(max(se[best], floor))}
+
+
+def screen_band(gain, se, delta=TAIL_DELTA, low=DELTA):
+    """"tail" for a gain above delta, "band" for one in (low, delta], each only
+    when the gain also exceeds two standard errors; else None."""
+    if not gain > 2.0 * se:
+        return None
+    if gain > delta:
+        return "tail"
+    return "band" if gain > low else None
+
+
+def select_tail(bands, cap=TAIL_CAP, seed=0):
+    """Which screened roots are played, from their bands alone (screening order).
+
+    tail     the first `cap` tail roots in screening order, not the largest
+    control  as many band roots, drawn uniformly without replacement, fixed seed
+
+    Returns (tail indices played, control indices), both ascending.
+    """
+    tail = [i for i, band in enumerate(bands) if band == "tail"][:cap]
+    band = [i for i, b in enumerate(bands) if b == "band"]
+    take = min(len(tail), len(band))
+    rng = np.random.default_rng(seed)
+    control = sorted(band[i] for i in rng.choice(len(band), size=take, replace=False).tolist()) \
+        if take else []
+    return tail, control
+
+
+def tail_counts(screened):
+    """Per game, the tail decisions the screen implies: for each class, the game's
+    searchable decisions times the tail share among those sampled. Returns
+    (games, {class or "all": estimated tail decisions}, {class or "all":
+    searchable decisions}), arrays aligned with `games`."""
+    games = sorted({r["game"] for r in screened})
+    index = {g: i for i, g in enumerate(games)}
+    classes = sorted({r["class"] for r in screened})
+    sampled = {c: np.zeros(len(games)) for c in classes}
+    tails = {c: np.zeros(len(games)) for c in classes}
+    searchable = {c: np.zeros(len(games)) for c in classes}
+    for r in screened:
+        i = index[r["game"]]
+        sampled[r["class"]][i] += 1
+        tails[r["class"]][i] += r["band"] == "tail"
+        searchable[r["class"]][i] = r["searchable"]
+    est = {c: searchable[c] * tails[c] / np.maximum(sampled[c], 1) for c in classes}
+    est["all"] = sum(est[c] for c in classes)
+    searchable["all"] = sum(searchable[c] for c in classes)
+    return np.array(games), est, searchable
+
+
+def per_game_bound(games, tail_per_game, root_games, root_gains, reps=2000, seed=0):
+    """(tail decisions per game) x (mean realized gain per played tail root), with
+    a percentile interval from one bootstrap over games that resamples both
+    factors together. An upper bound on a per-game effect: gains from several
+    deviations in one game do not add. Returns (point, low, high)."""
+    games, tail_per_game = np.asarray(games), np.asarray(tail_per_game, float)
+    root_games, root_gains = np.asarray(root_games), np.asarray(root_gains, float)
+    if len(root_gains) == 0:
+        return float("nan"), float("nan"), float("nan")
+    members = {g: np.flatnonzero(root_games == g) for g in games}
+    point = tail_per_game.mean() * root_gains.mean()
+    rng = np.random.default_rng(seed)
+    draws = []
+    for _ in range(reps):
+        pick = rng.integers(0, len(games), len(games))
+        rows = np.concatenate([members[games[i]] for i in pick])
+        if len(rows):
+            draws.append(tail_per_game[pick].mean() * root_gains[rows].mean())
+    lo, hi = np.percentile(draws, [2.5, 97.5])
+    return float(point), float(lo), float(hi)
+
+
+def tail_decision(td_interval, frequency, control_td_interval):
+    """The rule fixed before the run, applied to the report's numbers."""
+    above = td_interval[1] > 0.0
+    often = frequency[0] >= 0.01
+    if above and often:
+        text = ("GO: the tail's realized touchdown-difference gain is above zero and the tail "
+                "occurs at least once per hundred searched decisions. Next: the seat with "
+                "delta 0.10 on turn-level and after-declare decisions, then a whole-game pilot.")
+    else:
+        why = []
+        if not above:
+            why.append("the tail's realized touchdown-difference interval includes zero")
+        if not often:
+            why.append("the tail is rarer than once per hundred searched decisions")
+        text = ("STOP: " + " and ".join(why) + ". Rollout search on this evaluator stops; "
+                "the outcome head is the next design.")
+    if control_td_interval[1] > 0.0:
+        text += (" The control band's realized gain is also above zero, so delta should be "
+                 "lower than 0.10.")
+    return {"go": bool(above and often), "text": text}
+
+
+def analyze_tail(screened, records, reps=2000, seed=0, largest=5):
+    """Every table of the tail report from the screen and the outcome records."""
+    rows = [row for row in map(outcome_row, records) if row is not None]
+    for row in rows:
+        row["live"] = LIVE[0] < row["a0_win_score"] < LIVE[1]
+    games, est, searchable = tail_counts(screened)
+    out = {"screened": len(screened), "games": len(games),
+           "rollouts_per_candidate": screened[0]["rollouts"] if screened else 0,
+           "frequency": {}, "sets": {}, "types": [], "largest": [], "bounds": {}}
+    for cls in sorted(est):
+        group = [r for r in screened if cls in ("all", r["class"])]
+        out["frequency"][cls] = {
+            "sampled": len(group),
+            "tail": sum(r["band"] == "tail" for r in group),
+            "band": sum(r["band"] == "band" for r in group),
+            "searchable_per_game": float(searchable[cls].mean()),
+            "per_decision": ratio_bootstrap(games, est[cls], searchable[cls], reps, seed),
+            "per_game": ratio_bootstrap(games, est[cls], np.ones(len(games)), reps, seed)}
+    sets = {"tail": [r for r in rows if r["set"] == "tail"],
+            "tail, live": [r for r in rows if r["set"] == "tail" and r["live"]],
+            "tail, decided": [r for r in rows if r["set"] == "tail" and not r["live"]],
+            "control": [r for r in rows if r["set"] == "control"],
+            "control, live": [r for r in rows if r["set"] == "control" and r["live"]]}
+    for cls in TAIL_CLASSES:
+        sets[f"tail, {cls}"] = [r for r in rows if r["set"] == "tail" and r["class"] == cls]
+    for name, group in sets.items():
+        if not group:
+            continue
+        g, ones = [r["game"] for r in group], np.ones(len(group))
+        cell = {"roots": len(group), "games": len(set(g)),
+                "screen_gain": float(np.mean([r["predicted"]["gain_b"] for r in group]))}
+        for m in OUTCOME_METRICS:
+            cell[m] = ratio_bootstrap(g, [r["mean"][m] for r in group], ones, reps, seed)
+        out["sets"][name] = cell
+    tail = sets["tail"]
+    table = {}
+    for r in tail:
+        key = (r["class"] + (f" of {r['declared']}" if r["declared"] else ""),
+               r["types"][0], r["types"][1])
+        cell = table.setdefault(key, {"roots": 0, "live": 0, "td": 0.0, "win": 0.0, "screen": 0.0})
+        cell["roots"] += 1
+        cell["live"] += r["live"]
+        cell["td"] += r["mean"]["td_diff"]
+        cell["win"] += r["mean"]["win_score"]
+        cell["screen"] += r["predicted"]["gain_b"]
+    for (decision, a0, alt), cell in sorted(table.items(), key=lambda kv: -kv[1]["roots"]):
+        n = cell["roots"]
+        out["types"].append({"decision": decision, "a0": a0, "alternative": alt, "roots": n,
+                             "live": cell["live"], "screen_gain": cell["screen"] / n,
+                             "td_diff": cell["td"] / n, "win_score": cell["win"] / n})
+    for r in sorted(tail, key=lambda r: -r["predicted"]["gain_b"])[:largest]:
+        out["largest"].append({k: r[k] for k in ("game", "class", "step", "n", "live",
+                                                 "a0_win_score", "predicted", "description",
+                                                 "mean", "se")})
+    root_games = [r["game"] for r in tail]
+    for label, metric, live in (("td_diff", "td_diff", False), ("win_score", "win_score", False),
+                                ("td_diff, live games only", "td_diff", True),
+                                ("win_score, live games only", "win_score", True)):
+        # A decided game's deviation counts as zero gain in the live-only bound.
+        gains = [r["mean"][metric] * (r["live"] if live else 1.0) for r in tail]
+        out["bounds"][label] = per_game_bound(games, est["all"], root_games, gains, reps, seed)
+    out["tail_played"] = len(tail)
+    out["tail_live_share"] = float(np.mean([r["live"] for r in tail])) if tail else float("nan")
+    if tail and sets["control"]:
+        out["decision"] = tail_decision(out["sets"]["tail"]["td_diff"],
+                                        out["frequency"]["all"]["per_decision"],
+                                        out["sets"]["control"]["td_diff"])
+    return out
+
+
+def format_tail_report(summary):
+    f = summary["frequency"]
+    lines = [f"screen: {summary['screened']} roots from {summary['games']} games at "
+             f"{summary['rollouts_per_candidate']} rollouts per candidate; tail = predicted gain "
+             f"above {TAIL_DELTA} and above two standard errors (floored); control band = "
+             f"({DELTA}, {TAIL_DELTA}] likewise",
+             "intervals: 95% bootstrap over games", "",
+             "How often the tail occurs",
+             f"{'class':<14} sampled  tail  band  searchable/game  tail per searched decision   "
+             "tail per game per seat"]
+    for cls, cell in f.items():
+        lines.append(f"{cls:<14} {cell['sampled']:>7}  {cell['tail']:>4}  {cell['band']:>4}  "
+                     f"{cell['searchable_per_game']:>15.1f}  "
+                     f"{_ci(cell['per_decision'], 2, 100, '%'):<26}  {_ci(cell['per_game'], 2)}")
+    heads = (("td_diff", "TD difference", 3), ("win_score", "win score", 4),
+             ("win", "P(win)", 4), ("loss", "P(loss)", 4))
+    lines += ["", "Realized, to the end of the match (alternative minus a0, mean over roots)",
+              f"{'set':<20} roots games  " + "  ".join(f"{t:<26}" for _, t, _ in heads)]
+    for name, cell in summary["sets"].items():
+        lines.append(f"{name:<20} {cell['roots']:>5} {cell['games']:>5}  "
+                     + "  ".join(f"{_ci(cell[m], d):<26}" for m, _, d in heads))
+    lines += ["", "The screen's gain beside the same roots on fresh rollouts (shaped return)",
+              f"{'set':<20} screen   depth 1                     depth 2                     "
+              "depth 1 = touchdowns + other reward + value term"]
+    for name, cell in summary["sets"].items():
+        parts = " + ".join(f"{cell[m][0]:+.4f}" for m in
+                           ("depth1_touchdown", "depth1_other", "depth1_value"))
+        lines.append(f"{name:<20} {cell['screen_gain']:>6.4f}   {_ci(cell['depth1'], 4):<26}  "
+                     f"{_ci(cell['depth2'], 4):<26}  {parts}")
+    lines += ["", "What the tail deviations are (played tail roots)",
+              f"{'decision':<29} {'a0':<15} {'alternative':<16} roots  live  screen  "
+              "TD difference  win score"]
+    for t in summary["types"]:
+        lines.append(f"{t['decision']:<29} {t['a0']:<15} {t['alternative']:<16} {t['roots']:>5}  "
+                     f"{t['live']:>4}  {t['screen_gain']:>6.3f}  {t['td_diff']:>+13.3f}  "
+                     f"{t['win_score']:>+9.3f}")
+    lines += ["", "The largest screened gains, one root each (mean, standard error over rollouts)"]
+    for r in summary["largest"]:
+        lines.append(f"game {r['game']} step {r['step']} ({r['class']}, "
+                     f"{'live' if r['live'] else 'decided'}, a0 win score {r['a0_win_score']:.2f}, "
+                     f"{r['n']} pairs): screen {r['predicted']['gain_b']:.3f}")
+        for text in r["description"]:
+            lines.append("    " + text)
+        lines.append("    " + "; ".join(
+            f"{label} {r['mean'][m]:+.3f} ({r['se'][m]:.3f})" for m, label in
+            (("td_diff", "TD difference"), ("win_score", "win score"), ("depth1", "depth 1"),
+             ("depth2", "depth 2"))))
+    lines += ["", f"A per-game upper bound: tail deviations per game per seat "
+              f"({f['all']['per_game'][0]:.2f}) times the realized gain per deviation. Gains "
+              "from several deviations in one game do not add, so this bounds the effect from "
+              f"above. {summary['tail_live_share'] * 100:.0f}% of the played tail roots were in "
+              "live games."]
+    for label, (point, lo, hi) in summary["bounds"].items():
+        lines.append(f"    {label:<28} {point:+.3f} [{lo:+.3f}, {hi:+.3f}] per game")
+    if "decision" in summary:
+        lines += ["", "Decision rule (fixed before the run): " + summary["decision"]["text"]]
+    return "\n".join(lines)
+
+
 # ---- collection ---------------------------------------------------------------------------
 def action_label(tup, E):
     """An action's type, with the declared kind for a DECLARE."""
@@ -610,10 +863,11 @@ class Harness:
                 "reward_manifest_sha256": self.manifest["sha256"], "gamma": self.S.GAMMA,
                 "opponent_seed_offset": 1, "temperature": 1.0}
 
-    def play_game(self, engine_seed, a, per_class, totals):
+    def play_game(self, engine_seed, a, per_class, totals, classes=CLASSES):
         """One real game with seat A on side `a`. Returns (roots by class, A's
-        sampling seed, engine steps). A root holds a search clone taken at the
-        decision, A's two recurrent states, the root logits and support, and a0."""
+        sampling seed, engine steps, searchable decisions seen by class). A root
+        holds a search clone taken at the decision, A's two recurrent states, the
+        root logits and support, and a0. Only `classes` are sampled."""
         torch, E, S, T = self.torch, self.E, self.S, self.T
         seeds = [T.sampling_seed(engine_seed, side) for side in (0, 1)]
         seeds[1 - a] = (seeds[1 - a] + T.SEED_OFFSET_STRIDE) % (1 << 62)
@@ -646,7 +900,7 @@ class Harness:
                     totals["in_scope"][cls] += 1
                     if len(support) < 2:
                         totals["single_action"][cls] += 1
-                    else:
+                    elif cls in classes:
                         # Reservoir: a uniform sample of this game's searchable
                         # decisions of the class.
                         seen[cls] += 1
@@ -659,6 +913,8 @@ class Harness:
                                 "logits": outs[a]["logits"].copy(), "support": support,
                                 "a0": tuple(int(v) for v in outs[a]["tuple"]), "step": step,
                                 "declared": declared if cls == "after_declare" else None,
+                                "clock": (int(eng.match().half), int(eng.match().turn[a])),
+                                "score": (eng.score()[a], eng.score()[1 - a]),
                                 "flags": (was_declare, seats[1 - a]._after_declare)}
                             if slot < len(kept[cls]):
                                 kept[cls][slot]["clone"].close()
@@ -674,7 +930,7 @@ class Harness:
             if rc != E.STEP_OK:
                 raise SystemExit(f"engine refused a step: rc={rc}")
         eng.close()
-        return kept, seeds[a], step
+        return kept, seeds[a], step, seen
 
     def candidates(self, root, limit):
         """a0 first, then the most probable other actions of the root's support:
@@ -713,7 +969,7 @@ def collect(args):
                 break
             engine_seed = args.seed0 + game
             a = game % 2                                    # seat A's side this game
-            kept, seed, step = h.play_game(engine_seed, a, args.per_class, totals)
+            kept, seed, step, _ = h.play_game(engine_seed, a, args.per_class, totals)
             for cls in CLASSES:
                 for root in kept[cls]:
                     candidates, probs, rank, support = h.candidates(root, args.candidates)
@@ -853,7 +1109,7 @@ def outcomes_collect(args):
         for game in range(first_meta["games"]):
             engine_seed = first_meta["seed0"] + game
             a = game % 2
-            kept, seed, step = h.play_game(engine_seed, a, first_meta["per_class"], totals)
+            kept, seed, step, _ = h.play_game(engine_seed, a, first_meta["per_class"], totals)
             for cls in CLASSES:
                 for root in kept[cls]:
                     candidates, probs, rank, support = h.candidates(root, first_meta["candidates"])
@@ -923,6 +1179,175 @@ def outcomes_analyze(args):
     return 0
 
 
+def tail_collect(args):
+    h = Harness(args.checkpoint, args.manifest, args.mask)
+    E, S = h.E, h.S
+    os.makedirs(args.out_dir, exist_ok=True)
+    screen_path = os.path.join(args.out_dir, "screen.jsonl")
+    if os.path.exists(screen_path):
+        raise SystemExit(f"{screen_path} exists; choose a fresh --out-dir")
+    quick = [S.Rollouts(h.policy, seat, masks=h.masks) for seat in (0, 1)]
+    full = [S.Rollouts(h.policy, seat, masks=h.masks, horizon=S.HORIZON_MATCH,
+                       max_steps=1_000_000) for seat in (0, 1)]
+    totals = new_totals(S.STOPS)
+    screened, held = [], {}
+    started = time.time()
+    # 1. The screen: every sampled root, as a search seat would see it.
+    with open(screen_path, "w") as sink:
+        for game in range(args.first_game, args.first_game + args.games):
+            if time.time() - started > args.screen_budget_seconds:
+                print(f"screen budget reached before game {game}", flush=True)
+                break
+            engine_seed = args.seed0 + game
+            a = game % 2
+            kept, seed, step, seen = h.play_game(engine_seed, a, args.per_class, totals,
+                                                 classes=TAIL_CLASSES)
+            for cls in TAIL_CLASSES:
+                for root in kept[cls]:
+                    candidates, probs, rank, support = h.candidates(root, args.candidates)
+                    t0 = time.time()
+                    batch = quick[a].evaluate(
+                        root["clone"], root["own"], root["opp"], candidates,
+                        args.screen_rollouts, seed, root["step"], after_declare=root["flags"])
+                    totals["rollout_seconds"] += time.time() - t0
+                    totals["engine_steps"] += batch.engine_steps
+                    stats = screen_stats(batch.returns)
+                    band = screen_band(stats["gain"], stats["se"])
+                    record = {
+                        "schema": SCREEN_SCHEMA, "index": len(screened), "game": game,
+                        "engine_seed": engine_seed, "seat": a, "step": root["step"],
+                        "class": cls, "declared": root["declared"], "clock": root["clock"],
+                        "score": root["score"],
+                        # A screening-time reading only; the report's live split uses
+                        # a0's own win score in the outcome rollouts.
+                        "close_score": abs(root["score"][0] - root["score"][1]) <= 1,
+                        "searchable": seen[cls], "sampled": len(kept[cls]),
+                        "rollouts": args.screen_rollouts, "support": support,
+                        "tuples": [list(c) for c in candidates],
+                        "types": [action_label(c, E) for c in candidates], "probs": probs,
+                        "a0_rank": rank, "best": 1 + stats["best"], "gain": stats["gain"],
+                        "se": stats["se"], "band": band,
+                        "returns": [[None if not np.isfinite(v) else float(v) for v in row]
+                                    for row in batch.returns]}
+                    sink.write(json.dumps(record) + "\n")
+                    screened.append(record)
+                    if band:
+                        held[record["index"]] = (root, seed, candidates, probs)
+                    else:
+                        root["clone"].close()
+            totals["games"] += 1
+            rate = totals["engine_steps"] / max(totals["rollout_seconds"], 1e-9)
+            bands = [r["band"] for r in screened]
+            print(f"game {game + 1}/{args.first_game + args.games}: screened {len(screened)}, tail "
+                  f"{bands.count('tail')}, band {bands.count('band')}, rollout steps "
+                  f"{totals['engine_steps']} at {rate:.0f}/s, elapsed "
+                  f"{time.time() - started:.0f} s", flush=True)
+    screen_seconds = time.time() - started
+    screen_steps = totals["engine_steps"]
+    # 2. The selection, on disk before any outcome rollout.
+    bands = [r["band"] for r in screened]
+    tail, control = select_tail(bands, args.cap, args.selection_seed)
+    chosen = {i: "tail" for i in tail}
+    chosen.update({i: "control" for i in control})
+
+    def entry(i):
+        r = screened[i]
+        return {k: r[k] for k in ("index", "game", "engine_seed", "seat", "step", "class",
+                                  "declared", "clock", "score", "types", "best", "gain", "se")}
+
+    with open(os.path.join(args.out_dir, "tail_selection.json"), "w") as f:
+        json.dump({"tail_delta": TAIL_DELTA, "band": [DELTA, TAIL_DELTA], "cap": args.cap,
+                   "selection_seed": args.selection_seed, "screened": len(screened),
+                   "screen_rollouts": args.screen_rollouts, "seed0": args.seed0,
+                   "first_game": args.first_game, "games": totals["games"],
+                   "tail_found": bands.count("tail"), "band_found": bands.count("band"),
+                   "tail_played": [entry(i) for i in tail],
+                   "tail_not_played": [entry(i) for i, b in enumerate(bands)
+                                       if b == "tail" and i not in chosen],
+                   "control": [entry(i) for i in control]}, f, indent=1)
+    print(f"selection: tail {len(tail)} of {bands.count('tail')} found, control "
+          f"{len(control)} of {bands.count('band')} in the band", flush=True)
+    for i, (root, _, _, _) in held.items():
+        if i not in chosen:
+            root["clone"].close()
+    # 3. The chosen roots, a0 against the screen's best, to the end of the match.
+    played = 0
+    with open(os.path.join(args.out_dir, "outcomes.jsonl"), "w") as sink:
+        for i in sorted(chosen):
+            root, seed, candidates, probs = held[i]
+            r = screened[i]
+            pair = [candidates[0], candidates[r["best"]]]
+            t0 = time.time()
+            batch = full[r["seat"]].evaluate(
+                root["clone"], root["own"], root["opp"], pair, args.rollouts, seed, root["step"],
+                after_declare=root["flags"], first_index=FRESH_INDEX)
+            totals["rollout_seconds"] += time.time() - t0
+            totals["engine_steps"] += batch.engine_steps
+            totals["roots"] += 1
+            for stop in S.STOPS:
+                totals["stops"][stop] += batch.count(stop)
+            sink.write(json.dumps({
+                "schema": OUTCOME_SCHEMA, "index": i, "game": r["game"],
+                "engine_seed": r["engine_seed"], "seat": r["seat"], "step": r["step"],
+                "class": r["class"], "set": chosen[i], "declared": r["declared"],
+                "clock": r["clock"], "score": r["score"],
+                "tuples": [list(c) for c in pair], "types": [action_label(c, E) for c in pair],
+                "probs": [probs[0], probs[r["best"]]],
+                "predicted": {"gain_a": r["gain"], "gain_b": r["gain"], "gain_all": r["gain"],
+                              "se": r["se"]},
+                "description": describe_root(E, root["clone"], r["seat"], pair),
+                "mean_steps": batch.steps.mean(axis=1).tolist(),
+                "metrics": outcome_metrics(batch, 2, args.rollouts, S.GAMMA),
+            }) + "\n")
+            sink.flush()
+            root["clone"].close()
+            played += 1
+            rate = totals["engine_steps"] / max(totals["rollout_seconds"], 1e-9)
+            print(f"outcome {played}/{len(chosen)} ({chosen[i]}): rollout steps "
+                  f"{totals['engine_steps']} at {rate:.0f}/s, elapsed "
+                  f"{time.time() - started:.0f} s", flush=True)
+    meta = dict(h.meta(), seed0=args.seed0, first_game=args.first_game,
+                games=totals["games"], per_class=args.per_class,
+                classes=list(TAIL_CLASSES), screen_rollouts=args.screen_rollouts,
+                rollouts=args.rollouts, candidates=args.candidates, cap=args.cap,
+                selection_seed=args.selection_seed, first_index=FRESH_INDEX,
+                screened=len(screened), screen_seconds=round(screen_seconds, 1),
+                screen_engine_steps=screen_steps, **{k: v for k, v in totals.items()
+                                                    if k != "games"},
+                seconds=round(time.time() - started, 1))
+    with open(os.path.join(args.out_dir, "tail_meta.json"), "w") as f:
+        json.dump(meta, f, indent=1)
+    print("done", json.dumps(meta), flush=True)
+    return 0
+
+
+def tail_analyze(args):
+    # Batches are separate tail-collect runs over disjoint games of one seed
+    # block, each with its own selection file; they are read as one screen.
+    screened, records, selections, games = [], [], [], set()
+    for folder in [args.out_dir] + (args.more or []):
+        with open(os.path.join(folder, "screen.jsonl")) as f:
+            batch = [json.loads(line) for line in f]
+        if games & {r["game"] for r in batch}:
+            raise SystemExit(f"{folder} repeats a game of an earlier batch")
+        games |= {r["game"] for r in batch}
+        screened += batch
+        with open(os.path.join(folder, "outcomes.jsonl")) as f:
+            records += [json.loads(line) for line in f]
+        with open(os.path.join(folder, "tail_selection.json")) as f:
+            selections.append(json.load(f))
+    summary = analyze_tail(screened, records, reps=args.reps)
+    report = format_tail_report(summary)
+    with open(os.path.join(args.out_dir, "tail_selection_all.json"), "w") as f:
+        json.dump({"batches": selections}, f, indent=1)
+    with open(os.path.join(args.out_dir, "tail_summary.json"), "w") as f:
+        json.dump(summary, f, indent=1)
+    with open(os.path.join(args.out_dir, "tail_report.txt"), "w") as f:
+        f.write(report + "\n")
+    print(report)
+    return 0
+
+
 def analyze(args):
     roots = load_roots(os.path.join(args.out_dir, "roots.jsonl"))
     for root in roots:
@@ -976,8 +1401,32 @@ def main(argv=None):
     oa.add_argument("--out-dir", required=True)
     oa.add_argument("--reps", type=int, default=2000)
     oa.set_defaults(run=outcomes_analyze)
+    t = sub.add_parser("tail-collect")
+    t.add_argument("--checkpoint", required=True)
+    t.add_argument("--manifest",
+                   default=os.path.join(ROOT, "puffer", "config", "rewards", "r0_poss_half.json"))
+    t.add_argument("--out-dir", required=True)
+    t.add_argument("--games", type=int, default=40)
+    t.add_argument("--first-game", type=int, default=0,
+                   help="index of the first game: a later batch of the same seed block")
+    t.add_argument("--per-class", type=int, default=15, help="roots per class per game")
+    t.add_argument("--screen-rollouts", type=int, default=16, help="per candidate, the screen")
+    t.add_argument("--rollouts", type=int, default=128, help="per candidate, to the match end")
+    t.add_argument("--candidates", type=int, default=4)
+    t.add_argument("--cap", type=int, default=TAIL_CAP)
+    t.add_argument("--mask", action="append", default=None)
+    t.add_argument("--seed0", type=int, default=29_100_000)
+    t.add_argument("--selection-seed", type=int, default=0)
+    t.add_argument("--screen-budget-seconds", type=float, default=3600.0,
+                   help="start no new game of the screen after this long")
+    t.set_defaults(run=tail_collect)
+    ta = sub.add_parser("tail-analyze")
+    ta.add_argument("--out-dir", required=True)
+    ta.add_argument("--more", action="append", help="another batch's out-dir (repeatable)")
+    ta.add_argument("--reps", type=int, default=2000)
+    ta.set_defaults(run=tail_analyze)
     args = parser.parse_args(argv)
-    if args.command == "collect":
+    if args.command in ("collect", "tail-collect"):
         args.mask = args.mask or ["m1"]
     return args.run(args)
 
