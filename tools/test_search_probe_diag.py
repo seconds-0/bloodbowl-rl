@@ -198,5 +198,176 @@ class Report(unittest.TestCase):
         self.assertIsNone(D.decision_class({9, 19}, False, A))
 
 
+def make_outcome(game, cls, group, gain=0.0, n=64, seed=0, predicted=0.0, missing=()):
+    """An outcome record with a planted win-score gain of `gain`: a0 wins half its
+    rollouts, and the alternative lifts a share 4 * gain of them by half a point,
+    which only counts where a0 had lost. The two candidates share a0's results,
+    as common dice would."""
+    rng = np.random.default_rng(seed)
+    base = (rng.random(n) > 0.5).astype(float)
+    lift = rng.random(n) < abs(gain) * 4
+    alt = np.clip(base + np.sign(gain) * 0.5 * lift, 0.0, 1.0)
+    win = np.stack([base, alt])
+    td = np.stack([base * 2 - 1, alt * 2 - 1])
+    d1_td = np.stack([np.zeros(n), np.full(n, 0.02)])
+    d1_other = np.stack([np.full(n, 0.01), np.full(n, 0.03)])
+    d1_value = np.stack([rng.normal(1.0, 0.05, n), rng.normal(1.0 + predicted, 0.05, n)])
+    depth1 = d1_td + d1_other + d1_value
+    metrics = {"win_score": win, "win": (win == 1).astype(float),
+               "loss": (win == 0).astype(float), "td_diff": td, "depth1": depth1,
+               "depth2": depth1 + 0.01, "depth1_touchdown": d1_td, "depth1_other": d1_other,
+               "depth1_value": d1_value}
+    metrics = {m: v.tolist() for m, v in metrics.items()}
+    for c, j in missing:
+        for m in metrics:
+            metrics[m][c][j] = None
+    return {"schema": D.OUTCOME_SCHEMA, "game": game, "class": cls, "set": group, "step": seed,
+            "types": ["ACTIVATE", "ACTIVATE"], "declared": None,
+            "predicted": {"gain_a": predicted, "gain_b": predicted, "gain_all": predicted},
+            "description": [f"root {seed}"], "metrics": metrics}
+
+
+class Selection(unittest.TestCase):
+    def roots(self, flag_b=1.0):
+        roots = []
+        for game in range(20):
+            for i, cls in enumerate(D.CLASSES):
+                planted = 0.2 if (game % 4 == 0 and cls != "declare") else 0.0
+                root = make_root(game, cls, 1.0, [1.0 + planted, 0.95], seed=10 * game + i)
+                root["step"] = 100 + i
+                # Half B can say anything: it must not move the selection.
+                root["returns"][1, 64:] *= flag_b
+                roots.append(root)
+        return roots
+
+    def test_flagged_is_the_rule_on_half_a_and_control_is_a_balanced_fixed_draw(self):
+        chosen = D.select_outcome_roots(self.roots())
+        flagged = [r for r in chosen if r["set"] == "flagged"]
+        control = [r for r in chosen if r["set"] == "control"]
+        self.assertEqual({r["key"][:2] for r in flagged},
+                         {(g, c) for g in range(0, 20, 4) for c in ("turn", "after_declare")})
+        self.assertTrue(all(r["alt"] == 1 and r["gain_a"] > D.DELTA for r in flagged))
+        self.assertEqual(len(control), len(flagged))
+        self.assertFalse({r["key"] for r in flagged} & {r["key"] for r in control})
+        per_class = [sum(r["key"][1] == c for r in control) for c in D.CLASSES]
+        self.assertEqual(per_class, [4, 3, 3])
+        self.assertTrue(all(r["gain_a"] <= D.DELTA for r in control))
+        again = D.select_outcome_roots(self.roots())
+        self.assertEqual([(r["key"], r["set"], r["alt"]) for r in chosen],
+                         [(r["key"], r["set"], r["alt"]) for r in again])
+        other = D.select_outcome_roots(self.roots(), seed=1)
+        self.assertNotEqual({r["key"] for r in control},
+                            {r["key"] for r in other if r["set"] == "control"})
+
+    def test_the_selection_never_reads_half_b(self):
+        plain = D.select_outcome_roots(self.roots())
+        spoiled = D.select_outcome_roots(self.roots(flag_b=-3.0))
+        self.assertEqual([(r["key"], r["set"], r["alt"], r["gain_a"]) for r in plain],
+                         [(r["key"], r["set"], r["alt"], r["gain_a"]) for r in spoiled])
+        self.assertNotEqual([r["gain_b"] for r in plain], [r["gain_b"] for r in spoiled])
+
+    def test_a_class_that_runs_short_is_topped_up(self):
+        roots = [r for r in self.roots() if r["class"] != "declare" or r["game"] < 1]
+        chosen = D.select_outcome_roots(roots)
+        control = [r for r in chosen if r["set"] == "control"]
+        self.assertEqual(len(control), 10)
+        self.assertEqual(sum(r["key"][1] == "declare" for r in control), 1)
+
+
+class Outcomes(unittest.TestCase):
+    def test_a_rollout_index_missing_for_one_candidate_is_dropped_for_both(self):
+        record = make_outcome(0, "turn", "flagged", n=8, missing=[(1, 3)])
+        diffs, values, excluded = D.outcome_differences(record)
+        self.assertEqual((excluded, len(diffs["win_score"]), values["win_score"].shape),
+                         (1, 7, (2, 7)))
+        whole, _, none = D.outcome_differences(make_outcome(0, "turn", "flagged", n=8))
+        self.assertEqual(none, 0)
+        np.testing.assert_array_equal(diffs["td_diff"], np.delete(whole["td_diff"], 3))
+
+    def test_the_tables_recover_a_planted_win_gain_and_a_null(self):
+        records = []
+        for game in range(30):
+            records.append(make_outcome(game, D.CLASSES[game % 3], "flagged", gain=0.1, n=128,
+                                        seed=game, predicted=0.05 + 0.01 * (game % 5)))
+            records.append(make_outcome(game, D.CLASSES[game % 3], "control", gain=0.0,
+                                        seed=1000 + game))
+        summary = D.analyze_outcomes(records, reps=400)
+        self.assertEqual((summary["roots"], summary["games"]), (60, 30))
+        flagged, control = summary["sets"]["flagged"], summary["sets"]["control"]
+        point, lo, hi, _ = flagged["all"]["win_score"]
+        self.assertAlmostEqual(point, 0.1, delta=0.02)
+        self.assertGreater(lo, 0.05)
+        self.assertEqual(control["all"]["win_score"][0], 0.0)
+        self.assertEqual(flagged["turn"]["roots"], 10)
+        self.assertGreater(flagged["all"]["changed"], 0.15)
+        # The depth-1 gain is the sum of its three parts.
+        cell = flagged["all"]
+        self.assertAlmostEqual(cell["depth1"][0], cell["depth1_touchdown"][0]
+                               + cell["depth1_other"][0] + cell["depth1_value"][0], places=9)
+        self.assertAlmostEqual(cell["depth1_touchdown"][0], 0.02, places=9)
+        self.assertAlmostEqual(cell["depth2"][0], cell["depth1"][0], places=9)
+        # Shared result noise cancels in the pair; nothing is shared in the control's
+        # constant difference.
+        self.assertLess(summary["pairing"]["flagged"]["win_score"], 0.5)
+        self.assertEqual([r["predicted"]["gain_b"] for r in summary["largest"]], [0.09] * 3)
+        listed = summary["flagged_roots"]
+        self.assertEqual(len(listed), 30)
+        self.assertEqual([r["predicted"] for r in listed],
+                         sorted((r["predicted"] for r in listed), reverse=True))
+        self.assertAlmostEqual(np.mean([r["a0_win_score"] for r in listed]), 0.5, delta=0.05)
+        self.assertEqual(set(summary["correlation"]), {"all", "flagged", "control"})
+        self.assertEqual(len(summary["correlation"]["flagged"]["first_run_td"]), 6)
+        text = D.format_outcome_report(summary)
+        for heading in ("Realized, to the end of the match", "The evaluator's view",
+                        "Does the predicted gain track", "root 4", "Every flagged root",
+                        "realized touchdown difference"):
+            self.assertIn(heading, text)
+
+    def test_correlation_and_slope_with_a_cluster_bootstrap(self):
+        rng = np.random.default_rng(0)
+        x = rng.normal(0, 1, 60)
+        games = np.repeat(np.arange(20), 3)
+        r, lo, hi, slope, s_lo, s_hi = D.cluster_correlation(games, x, 2.0 * x, reps=300)
+        self.assertAlmostEqual(r, 1.0, places=9)
+        self.assertAlmostEqual(slope, 2.0, places=9)
+        self.assertAlmostEqual(s_lo, 2.0, places=6)
+        r, lo, hi, slope, s_lo, s_hi = D.cluster_correlation(games, x, rng.normal(0, 1, 60),
+                                                             reps=300)
+        self.assertLess(lo, 0.0)
+        self.assertGreater(hi, 0.0)
+        r, lo, hi, slope, _, _ = D.cluster_correlation(games, x, np.zeros(60), reps=50)
+        self.assertTrue(np.isnan(r) and np.isnan(lo))
+
+    def test_outcome_metrics_read_the_marks(self):
+        from types import SimpleNamespace
+        gamma = 0.5
+        batch = SimpleNamespace(
+            stops=["terminal", "terminal", "rejected", "terminal"],
+            scores=np.array([[[2, 1], [1, 1]], [[-1, -1], [0, 3]]]),
+            rewards=np.array([[1.0, 0.3], [0.0, -1.2]]),
+            touchdowns=np.array([[0.4, 0.0], [0.0, -0.8]]),
+            marks=[[(2, 0.3, 0.4, 1.0), (4, 0.5, 0.4, 2.0), (6, 0.9, 0.4, 3.0)],
+                   [(3, 0.2, 0.0, 0.8)], [], []])
+        got = D.outcome_metrics(batch, 2, 2, gamma)
+        # Two marks: depth 1 from the first, depth 2 from the second.
+        self.assertEqual(got["win_score"][0][0], 1.0)
+        self.assertEqual(got["td_diff"][0][0], 1.0)
+        self.assertAlmostEqual(got["depth1"][0][0], 0.3 + gamma ** 2 * 1.0)
+        self.assertAlmostEqual(got["depth2"][0][0], 0.5 + gamma ** 4 * 2.0)
+        self.assertEqual((got["depth1_touchdown"][0][0], got["depth1_value"][0][0]), (0.4, 0.25))
+        self.assertAlmostEqual(got["depth1_other"][0][0], -0.1)
+        # One mark: the match ended before a second own turn end, so depth 2 is all
+        # the reward the rollout collected.
+        self.assertEqual((got["win_score"][0][1], got["win"][0][1], got["loss"][0][1]),
+                         (0.5, 0.0, 0.0))
+        self.assertEqual(got["depth2"][0][1], 0.3)
+        # Rejected: nothing. No mark at all: the match ended inside the turn.
+        self.assertTrue(all(got[m][1][0] is None for m in D.OUTCOME_METRICS))
+        self.assertEqual((got["loss"][1][1], got["td_diff"][1][1]), (1.0, -3.0))
+        self.assertEqual((got["depth1"][1][1], got["depth1_touchdown"][1][1],
+                          got["depth1_value"][1][1]), (-1.2, -0.8, 0.0))
+        self.assertAlmostEqual(got["depth1_other"][1][1], -0.4)
+
+
 if __name__ == "__main__":
     unittest.main()
