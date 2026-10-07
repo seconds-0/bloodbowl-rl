@@ -587,6 +587,89 @@ def test_merge_needs_two_shards():
         D.merge_shards([two_shards()[0]])
 
 
+# ---- a run from a later game index (run --index0) --------------------------------------
+def test_tournament_argv_adds_index0_only_when_set(tmp_path, monkeypatch):
+    from play_harness import tournament as T
+    args = ({"x": f"/nope/{BLOB}"}, {"offense": "offense"}, [("x", "offense", 4)], 5, 2)
+    assert "--index0" not in D.tournament_argv(*args)
+    assert D.tournament_argv(*args) == D.tournament_argv(*args, index0=0)
+    argv = D.tournament_argv(*args, index0=200, out_dir=str(tmp_path / "o"), extra=["--mode", "sample"])
+    assert argv[argv.index("--index0") + 1] == "200" and argv[-2:] == ["--mode", "sample"]
+    assert build_run_args(["--index0", "200"]).index0 == 200 and build_run_args([]).index0 == 0
+    # The real parser takes it and schedules from that index, then stops at the missing blob.
+    seen = {}
+    real = T.schedule
+
+    def spy(*a, **kw):
+        seen["tasks"] = real(*a, **kw)
+        return seen["tasks"]
+    monkeypatch.setattr(T, "schedule", spy)
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    monkeypatch.delenv(T.GAMES_PER_WORKER_ENV, raising=False)
+    with pytest.raises(FileNotFoundError):
+        T.main(argv)
+    assert seen["tasks"] == [("x", "offense", i, leg) for i in (200, 201)
+                             for leg in ("A_home", "B_home")]
+
+
+@pytest.mark.parametrize("extra, needle", [
+    (["--tournament-arg=--index0", "--tournament-arg=4"], "not --tournament-arg"),
+    (["--tournament-arg=--index0=4"], "not --tournament-arg"),
+    (["--index0", "4", "--tournament-arg=--index0=4"], "not --tournament-arg"),
+    (["--index0", "-1"], "--index0 must be 0 or more"),
+])
+def test_an_index0_request_is_refused_before_anything_is_created(extra, needle):
+    """Argument checks only: the no-network fixture fails the test if cmd_run reads the
+    token, calls the API or runs git."""
+    args = build_run_args(["--bot", "c=contact", "--bot", "o=offense", "--pair", "c,o,2", *extra])
+    with pytest.raises(D.RunnerError, match=needle):
+        D.cmd_run(args)
+    assert D.index0_refusal(4, ["--mask", "S=m1"]) is None and D.index0_refusal(0, []) is None
+
+
+def sliced_games(pairs=PAIRS, seed0=7, index0=0):
+    return [game(pair=(a, b), index=i, leg=leg, engine_seed=seed0 + i)
+            for a, b, n in pairs for i in range(index0, index0 + n // 2)
+            for leg in ("A_home", "B_home")]
+
+
+def test_verify_run_holds_a_slice_to_its_index0():
+    ok = dict(complete={"complete": True}, commit="c0ffee", checkpoint_sha={"a": "ha", "b": "hb"},
+              pairs=PAIRS, seed0=7, bots={"bot": "offense"})
+    manifest = {**good_manifest_with_bot(), "index0": 10}
+    games = sliced_games(index0=10)
+    assert {g["game_index"] for g in games} == {10, 11}
+    assert D.verify_run(manifest, games=games, index0=10, **ok) == []
+    # The request was another index, or none.
+    for asked in (0, 9, 11):
+        problems = D.verify_run(manifest, games=games, index0=asked, **ok)
+        assert any(f"manifest index0 10 != requested {asked}" in p for p in problems)
+        assert any("missing" in p for p in problems) and any("outside the schedule" in p for p in problems)
+    # The manifest says the index and the games are from 0, or the other way round.
+    problems = D.verify_run(manifest, games=sliced_games(), index0=10, **ok)
+    assert any("6 scheduled games missing" in p for p in problems)
+    assert not any("manifest index0" in p for p in problems)
+    problems = D.verify_run(good_manifest_with_bot(), games=games, index0=10, **ok)
+    assert problems == ["manifest index0 0 != requested 10"]
+    # A game inside the range on a seed that is not seed0 + its index.
+    moved = [dict(games[0], engine_seed=7)] + games[1:]
+    assert any("wrong engine seed" in p for p in D.verify_run(manifest, games=moved, index0=10, **ok))
+    for bad in (-1, "10", 1.5, True, None):
+        assert any("manifest index0" in p for p in D.verify_run(
+            {**good_manifest_with_bot(), "index0": bad}, games=games, index0=10, **ok)), bad
+
+
+def test_schedule_problems_at_an_index0_agree_with_the_real_scheduler():
+    from play_harness import tournament as T
+    real = {((a, b), i, leg) for a, b, i, leg in
+            T.schedule(["a", "b", "bot"], None, 7, pairs=PAIRS, index0=10)}
+    assert real == {D._key(g) for g in sliced_games(index0=10)}
+    assert D.schedule_problems(sliced_games(index0=10), PAIRS, 7, 10) == []
+    assert D.schedule_problems(sliced_games(index0=10), PAIRS, 7, index0=10) == []
+    assert D.schedule_problems(sliced_games(), PAIRS, 7) == D.schedule_problems(sliced_games(), PAIRS, 7, 0) == []
+    assert any("outside the schedule" in p for p in D.schedule_problems(sliced_games(index0=10), PAIRS, 7))
+
+
 def test_a_full_account_is_a_blocker_not_a_reason_to_delete():
     assert D.limit_refusal(5, 10) is None and D.limit_refusal(9, 10) is None
     for existing in (10, 11):

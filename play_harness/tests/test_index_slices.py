@@ -7,7 +7,8 @@
                in one run and as two runs on consecutive index ranges: the same
                records;
   resume       a resume refuses another index0 and finishes an interrupted slice;
-  batching     batched workers play a slice's own indexes.
+  batching     batched workers play a slice's own indexes;
+  the droplet  tools/droplet_tournament.py verifies a slice against its index.
 
 Games use seeded random networks and the engine's scripted bots.
 """
@@ -22,6 +23,7 @@ import pytest
 
 from play_harness import tournament as T
 from play_harness.policy import random_policy
+from tools import droplet_tournament as D
 
 from .conftest import ROOT
 from .test_search_tournament import write_blob
@@ -281,3 +283,21 @@ def test_a_batched_slice_plays_its_own_indexes(blobs, tmp_path):
     for game in batched:
         if game["pair"] == ["off", "con"]:
             assert the_game(game) == the_game(unbatched[key(game)])
+
+
+# ---- the droplet tool: a slice is verified against its index -----------------------------------
+def test_the_droplet_tool_verifies_a_slice_against_its_index(plain_runs):
+    manifest, games = load(plain_runs / "s4")
+    request = dict(complete={"complete": True}, commit=T._git_head(),
+                   checkpoint_sha={n: c["sha256"] for n, c in manifest["checkpoints"].items()},
+                   pairs=[(a, b, 8) for a, b in PAIRS], seed0=SEED0,
+                   bots={"off": "offense", "con": "contact"})
+    assert D.verify_run(manifest, games=games, index0=4, **request) == []
+    problems = D.verify_run(manifest, games=games, **request)       # asked for index 0
+    assert any("manifest index0 4 != requested 0" in p for p in problems)
+    assert any("24 scheduled games missing" in p for p in problems)
+    assert any("24 games outside the schedule" in p for p in problems)
+    first, first_games = load(plain_runs / "s0")
+    assert D.verify_run(first, games=first_games, **request) == []
+    assert any("manifest index0 0 != requested 4" in p
+               for p in D.verify_run(first, games=first_games, index0=4, **request))

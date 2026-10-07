@@ -210,6 +210,16 @@ def search_refusal(search, checkpoints, bots, pairs, games_per_worker, extra):
     return None
 
 
+def index0_refusal(index0, extra):
+    """Why a run starting at this game index must not be launched, or None."""
+    if any(item == "--index0" or item.startswith("--index0=") for item in extra):
+        return ("pass the first game index with --index0, not --tournament-arg, so the "
+                "run is verified")
+    if int(index0) < 0:
+        return f"--index0 must be 0 or more, got {index0}"
+    return None
+
+
 def plan_pairs(pairs, players, games_per_pair):
     """[(a, b, n)] with every n resolved; the same rules tournament.schedule enforces."""
     if not pairs:
@@ -237,10 +247,11 @@ def remote_checkpoint_path(name, local_path):
 
 
 def tournament_argv(checkpoints, bots, pairs, seed0, workers, out_dir=REMOTE_OUT,
-                    extra=(), games_per_worker=1, search=None):
+                    extra=(), games_per_worker=1, search=None, index0=0):
     """argv after `python -m play_harness.tournament`, with droplet-side blob paths.
 
-    games_per_worker 1 adds nothing, so an unbatched run's command line is unchanged.
+    games_per_worker 1 and index0 0 add nothing, so the command line of an
+    unbatched run from game index 0 is unchanged.
     search maps a player to its requested setting ({"k", "n", "delta"})."""
     argv = []
     for name, local in checkpoints.items():
@@ -255,6 +266,8 @@ def tournament_argv(checkpoints, bots, pairs, seed0, workers, out_dir=REMOTE_OUT
         argv += ["--games-per-worker", str(int(games_per_worker))]
     for name, setting in (search or {}).items():
         argv += ["--search", f"{name}={setting['k']}:{setting['n']}:{setting['delta']}"]
+    if int(index0) != 0:
+        argv += ["--index0", str(int(index0))]
     return argv + list(extra)
 
 
@@ -419,10 +432,10 @@ def verify_files(directory, sums, required=RESULT_FILES + PROVENANCE_FILES):
     return problems
 
 
-def schedule_problems(games, pairs, seed0):
+def schedule_problems(games, pairs, seed0, index0=0):
     """Problems unless the games are exactly the schedule: every pair's indices
-    0..n/2-1, both legs, once each, on engine seed seed0 + index."""
-    want = {((a, b), i, leg) for a, b, n in pairs for i in range(int(n) // 2)
+    index0 .. index0 + n/2 - 1, both legs, once each, on engine seed seed0 + index."""
+    want = {((a, b), int(index0) + i, leg) for a, b, n in pairs for i in range(int(n) // 2)
             for leg in ("A_home", "B_home")}
     got = [_key(g) for g in games]
     problems = []
@@ -438,6 +451,15 @@ def schedule_problems(games, pairs, seed0):
         problems.append(f"{len(bad_seed)} games on the wrong engine seed, e.g. "
                         f"{_key(bad_seed[0])} on {bad_seed[0].get('engine_seed')}")
     return problems
+
+
+def manifest_index0(manifest):
+    """The first game index of a run, 0 for a manifest without the key (a run from
+    index 0 writes none). None when the value is not a game index."""
+    value = manifest.get("index0", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def manifest_games_per_worker(manifest):
@@ -510,9 +532,11 @@ def search_problems(manifest, games, search=None):
 
 
 def verify_run(manifest, complete, games, commit, checkpoint_sha, pairs, seed0, bots=None,
-               games_per_worker=1, search=None):
+               games_per_worker=1, search=None, index0=0):
     """Problems that mean the copied run is not the tournament that was asked for."""
     problems = search_problems(manifest, games, search)
+    if manifest_index0(manifest) != int(index0):
+        problems.append(f"manifest index0 {manifest.get('index0', 0)!r} != requested {index0}")
     if manifest_games_per_worker(manifest) != int(games_per_worker):
         problems.append(f"manifest games_per_worker {manifest.get('games_per_worker')} != "
                         f"requested {games_per_worker}")
@@ -537,7 +561,7 @@ def verify_run(manifest, complete, games, commit, checkpoint_sha, pairs, seed0, 
         problems.append(f"COMPLETE.json does not say complete: {complete}")
     if game_lines != tasks:
         problems.append(f"games.jsonl has {game_lines} games, expected {tasks}")
-    return problems + schedule_problems(games, pairs, seed0)
+    return problems + schedule_problems(games, pairs, seed0, index0)
 
 
 def integrity_totals(games):
@@ -1168,7 +1192,8 @@ def cmd_run(args):
                           f"got {args.games_per_worker}")
     search = {n: parse_search(v) for n, v in (parse_assignment(s, "search") for s in args.search)}
     refusal = search_refusal(search, checkpoints, bots, pairs, args.games_per_worker,
-                             args.tournament_arg)
+                             args.tournament_arg) or \
+        index0_refusal(args.index0, args.tournament_arg)
     if refusal:
         raise RunnerError(refusal)
     stale_seconds = args.stale_seconds if args.stale_seconds is not None else \
@@ -1202,7 +1227,9 @@ def cmd_run(args):
     price = float(size["price_hourly"])
     workers = args.workers or int(size["vcpus"])
     log(f"size {args.size}: {size['vcpus']} vCPU, {size['memory']} MB, ${price:.5f}/h; "
-        f"{tasks} games on {workers} workers; commit {commit[:12]}")
+        f"{tasks} games on {workers} workers"
+        + (f", game indexes from {args.index0}" if args.index0 else "")
+        + f"; commit {commit[:12]}")
     log(f"spend guard: --max-hours {args.max_hours} caps this run at about "
         f"${cost(args.max_hours * 3600, price):.2f}")
     limit = int(api.get("/account")["account"]["droplet_limit"])
@@ -1256,7 +1283,8 @@ def cmd_run(args):
 
         argv = tournament_argv(checkpoints, bots, pairs, args.seed0, workers,
                                extra=args.tournament_arg,
-                               games_per_worker=args.games_per_worker, search=search)
+                               games_per_worker=args.games_per_worker, search=search,
+                               index0=args.index0)
         remote.run(f"cat > {REMOTE_RUN}/job.sh", stdin_text=job_script(argv, workers, args.stats_reps))
         # No `cd &&` in front: a backgrounded list runs in a subshell that keeps ssh's
         # stdout open, and the launch would block until the tournament ends.
@@ -1286,7 +1314,7 @@ def cmd_run(args):
             games = [json.loads(line) for line in f if line.strip()]
         problems += verify_run(manifest, complete, games, commit, checkpoint_sha, pairs,
                                args.seed0, bots=bots, games_per_worker=args.games_per_worker,
-                               search=search)
+                               search=search, index0=args.index0)
         bad = {k: v for k, v in integrity_totals(games).items() if v}
         if bad:
             problems.append(f"nonzero integrity counters: {bad}")
@@ -1312,7 +1340,7 @@ def cmd_run(args):
                   "size": args.size, "region": args.region, "price_hourly": price,
                   "vcpus": size["vcpus"], "workers": workers,
                   "games_per_worker": args.games_per_worker, "search": search,
-                  "commit": commit,
+                  "index0": args.index0, "commit": commit,
                   "machine": machine, "tasks": tasks,
                   "games_per_second_wall": complete.get("games_per_second_wall"),
                   "tournament_wall_seconds": complete.get("wall_seconds"),
@@ -1477,6 +1505,9 @@ def build_parser():
     run.add_argument("--pair", action="append", default=[], metavar="A,B[,N]")
     run.add_argument("--games-per-pair", type=int, default=None)
     run.add_argument("--seed0", type=int, required=True)
+    run.add_argument("--index0", type=int, default=0, metavar="K",
+                     help="first game index of this run (default 0): a pair with N games "
+                          "plays indexes K .. K + N/2 - 1; the run is verified against K")
     run.add_argument("--workers", type=int, default=None, help="default: the size's vCPU count")
     run.add_argument("--games-per-worker", type=int, default=1, metavar="N",
                      help="games each worker batches into one forward (default 1 = unbatched; "
