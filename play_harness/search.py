@@ -46,11 +46,17 @@ MAX_ROLLOUT_STEPS = 200
 SEARCH_DICE_STREAM = 2
 assert SEARCH_DICE_STREAM != E.REAL_DICE_STREAM
 
+# How a rollout ended. After each engine step the checks run in this order: the
+# match ended (or the step failed), the searcher's team turn ended, max_steps.
 STOP_TURN = "turn"            # the searcher's team turn ended: bootstrapped
 STOP_TERMINAL = "terminal"    # the match ended: terminal reward, no bootstrap
 STOP_CUTOFF = "cutoff"        # max_steps reached: bootstrapped, and counted
-STOP_REJECTED = "rejected"    # engine error or decision cap: no return
-STOPS = (STOP_TURN, STOP_TERMINAL, STOP_CUTOFF, STOP_REJECTED)
+STOP_CAP = "cap"              # the clone hit the decision cap it inherited: no return
+STOP_ERROR = "error"          # an integrity failure inside the rollout: no return
+STOPS = (STOP_TURN, STOP_TERMINAL, STOP_CUTOFF, STOP_CAP, STOP_ERROR)
+# The two that leave a rollout without a return (nan). They are different things:
+# a cap ending is a property of where the real game stands, an error never is.
+REJECTED = (STOP_CAP, STOP_ERROR)
 
 # Where a rollout is meant to end. The search stops at the end of the searcher's
 # team turn. A rollout to the end of the match is for measurement: it shows what
@@ -123,12 +129,18 @@ class RolloutBatch:
     # with a value read there: (steps, rewards, touchdowns, V) as they stood. A
     # rollout stopped at the turn has exactly one, its own stop.
     marks: list = field(default_factory=list)
+    errors: list = field(default_factory=list)   # (rollout, what failed) per STOP_ERROR
     engine_steps: int = 0
     forward_rows: int = 0
     trails: list = field(default_factory=list)   # record=True: [(team, tuple, reward)]
 
     def count(self, stop):
         return sum(1 for s in self.stops if s == stop)
+
+    @property
+    def rejected(self):
+        """Rollouts without a return: decision-cap endings and errors."""
+        return sum(1 for s in self.stops if s in REJECTED)
 
 
 class Rollouts:
@@ -142,15 +154,23 @@ class Rollouts:
     horizon         HORIZON_TURN (the search's stop rule) or HORIZON_MATCH: play on
                     past the searcher's turn ends, marking each, to the end of
                     the match or max_steps.
+    reward_limit    when given, a step reward larger in magnitude is an error:
+                    the env's reward design cannot emit it (its clip threshold).
+
+    A rollout ends in STOP_ERROR, with no return, on any integrity failure: the
+    engine refuses a step or reports an error, a logit, value or reward is not
+    finite, a mask had to give way, or no action can be selected.
     """
 
     def __init__(self, policy, seat, masks=("m1",), opponent_masks=None, gamma=GAMMA,
-                 max_steps=MAX_ROLLOUT_STEPS, temperature=1.0, horizon=HORIZON_TURN):
+                 max_steps=MAX_ROLLOUT_STEPS, temperature=1.0, horizon=HORIZON_TURN,
+                 reward_limit=None):
         if seat not in (0, 1):
             raise ValueError("seat must be 0 (HOME) or 1 (AWAY)")
         if horizon not in (HORIZON_TURN, HORIZON_MATCH):
             raise ValueError(f"unknown horizon {horizon!r}")
         self.horizon = horizon
+        self.reward_limit = None if reward_limit is None else float(reward_limit)
         if not 0.0 < gamma <= 1.0:
             raise ValueError(f"gamma must be in (0, 1], got {gamma!r}")
         if max_steps < 1:
@@ -244,6 +264,10 @@ class Rollouts:
         turn_end = [None] * n                # a turn end passed, waiting for its value
         running, waiting_value = [], []
 
+        def fail(b, what):
+            out.stops[b], out.returns[b] = STOP_ERROR, np.nan
+            out.errors.append((b, what))
+
         def apply(b, action):
             """One engine step of rollout b; files it under running or waiting_value."""
             clone = clones[b]
@@ -251,9 +275,12 @@ class Rollouts:
             rc = clone.step(*action)
             out.engine_steps += 1
             if rc < 0:
-                out.stops[b], out.returns[b] = STOP_REJECTED, np.nan
-                return
+                return fail(b, f"the engine refused {tuple(action)}: rc={rc}")
             reward = clone.last_rewards()[seat]
+            if not np.isfinite(reward):
+                return fail(b, "a reward that is not finite")
+            if self.reward_limit is not None and abs(reward) > self.reward_limit:
+                return fail(b, f"a reward of {reward} beyond the limit {self.reward_limit}")
             before = score[b]
             final = clone.final_match() if rc == E.STEP_TERMINAL else None
             score[b] = (int(final.score[0]), int(final.score[1])) if final else clone.score()
@@ -269,12 +296,16 @@ class Rollouts:
                 if final.status == E.STATUS_MATCH_OVER:
                     out.stops[b], out.returns[b] = STOP_TERMINAL, out.rewards[b]
                     out.scores[b] = score[b][seat], score[b][1 - seat]
+                elif final.status == E.STATUS_DECISION and \
+                        not clone.counters()["error_episodes"]:
+                    # The env ends an episode that is still at a decision only at
+                    # its decision budget, which the clone inherited part-spent.
+                    out.stops[b], out.returns[b] = STOP_CAP, np.nan
                 else:
-                    out.stops[b], out.returns[b] = STOP_REJECTED, np.nan
+                    fail(b, f"the match ended in engine status {int(final.status)}")
                 return
             if clone.status != E.STATUS_DECISION:
-                out.stops[b], out.returns[b] = STOP_REJECTED, np.nan
-                return
+                return fail(b, f"engine status {clone.status} after a step")
             now = clone.turns_completed()[seat]
             if now != turns[b]:
                 turns[b] = now
@@ -305,21 +336,37 @@ class Rollouts:
             out.forward_rows += len(obs)
             state[0][:, own_rows] = hidden[:, :len(own_rows)]
             state[1][:, step_running] = hidden[:, len(own_rows):]
+            finite = (torch.isfinite(logits).all(dim=1) & torch.isfinite(value)).tolist()
             for i, b in enumerate(own_rows):
-                if turn_end[b] is not None:
+                if turn_end[b] is not None and finite[i]:
                     out.marks[b].append(turn_end[b] + (float(value[i]),))
-                    turn_end[b] = None
+                turn_end[b] = None
             for i, b in enumerate(step_value, start=len(step_running)):
+                if not finite[i]:
+                    fail(b, "a value or logit that is not finite")
+                    continue
                 out.bootstraps[b] = float(value[i])
                 out.returns[b] = out.rewards[b] + discount[b] * out.bootstraps[b]
             for i, b in enumerate(step_running):
+                if not (finite[i] and finite[len(own_rows) + i]):
+                    fail(b, "a value or logit that is not finite")
+                    continue
                 clone = clones[b]
                 view = 0 if clone.decision_team == seat else 1
                 row = i if view == 0 else len(own_rows) + i
                 support = clone.joint_support(rows[view])
                 if self.masks[view]:
-                    support, _ = restrict_support(support, self.masks[view], declared[b][view])
-                action, _, _ = select_joint(logits[row], support, "sample",
-                                            generators[b][view], temperature=self.temperature)
+                    support, events = restrict_support(support, self.masks[view],
+                                                       declared[b][view])
+                    if any(fallback for _, _, fallback in events.values()):
+                        fail(b, "a mask had to give way")
+                        continue
+                try:
+                    action, _, _ = select_joint(logits[row], support, "sample",
+                                                generators[b][view],
+                                                temperature=self.temperature)
+                except (ValueError, AssertionError, RuntimeError) as exc:
+                    fail(b, f"no action could be selected: {exc}")
+                    continue
                 apply(b, action)
         return out

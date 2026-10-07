@@ -215,7 +215,7 @@ def test_t3_a_search_leaves_the_seats_and_the_session_as_they_were(rewards, net)
             assert game.seats[0].state is own and game.seats[1].state is opp
             assert torch.equal(own, copies[0]) and torch.equal(opp, copies[1])
             assert batch.returns.shape == (len(candidates), 4)
-            assert np.isfinite(batch.returns).all() and batch.count(S.STOP_REJECTED) == 0
+            assert np.isfinite(batch.returns).all() and batch.rejected == 0
             # The same search again is the same search: nothing carried over.
             again = rollouts.evaluate(game.eng, own, opp, candidates, 4, game.seats[0].seed,
                                       game.steps, after_declare=_flags(game, 0))
@@ -480,13 +480,14 @@ def test_a_cutoff_is_bootstrapped_and_counted(rewards):
         sum(S.GAMMA ** i * r for i, r in enumerate(real)) + S.GAMMA ** 5 * 0.25, abs=1e-9)
 
 
-def test_a_rollout_that_ends_on_the_decision_cap_is_rejected(rewards):
+def test_a_rollout_that_ends_on_the_decision_cap_is_a_cap_rejection(rewards):
     seat = 0
     seed, trail, td = _first_touchdown(rewards, seat)
     start = td - 9
     root = _replayed(seed, rewards, trail, start, max_decisions=start + 4)
     batch = _scripted_rollout(root, seat, trail, start)
-    assert batch.stops == [S.STOP_REJECTED] and batch.count(S.STOP_REJECTED) == 1
+    assert batch.stops == [S.STOP_CAP] and batch.count(S.STOP_CAP) == 1
+    assert batch.rejected == 1 and batch.errors == []          # a cap ending is no error
     assert math.isnan(batch.returns[0])
     assert batch.steps[0] == 4 and batch.bootstraps[0] == 0.0
 
@@ -534,8 +535,8 @@ class UniformPolicy:
 
 
 @pytest.mark.parametrize("back,seat,max_steps,kinds", [
-    (6, 0, 5, {S.STOP_TERMINAL, S.STOP_CUTOFF, S.STOP_REJECTED}),
-    (20, 1, 3, {S.STOP_TURN, S.STOP_CUTOFF, S.STOP_REJECTED}),
+    (6, 0, 5, {S.STOP_TERMINAL, S.STOP_CUTOFF, S.STOP_ERROR}),
+    (20, 1, 3, {S.STOP_TURN, S.STOP_CUTOFF, S.STOP_ERROR}),
 ])
 def test_rows_that_stop_differently_share_a_batch(rewards, back, seat, max_steps, kinds):
     """One batch near the end of a game: rollouts that end the match, that run out
@@ -556,7 +557,9 @@ def test_rows_that_stop_differently_share_a_batch(rewards, back, seat, max_steps
     batch = rollouts.evaluate(root, state, state, [legal, refused], n, 7, start, record=True)
     assert set(batch.stops) == kinds
     assert (root.digest(), root.env_digest(), root.counters()) == before
-    assert batch.stops[n:] == [S.STOP_REJECTED] * n                 # the refused candidate
+    assert batch.stops[n:] == [S.STOP_ERROR] * n                    # the refused candidate
+    assert [b for b, _ in batch.errors] == list(range(n, 2 * n)) and batch.rejected == n
+    assert all("refused" in what for _, what in batch.errors)
     assert np.isnan(batch.returns[1]).all() and not batch.steps[1].any()
     assert not batch.bootstraps[1].any() and batch.trails[n:] == [[]] * n
     assert np.isfinite(batch.returns[0]).all()
@@ -578,6 +581,100 @@ def test_rows_that_stop_differently_share_a_batch(rewards, back, seat, max_steps
         alone = rollouts._play(root, state, state, [legal], [clone], generators, record=True)
         assert alone.stops == [stop] and alone.trails[0] == row
         assert alone.returns[0] == batch.returns[0, j]
+
+
+def test_stop_precedence_is_match_end_then_turn_end_then_cutoff(rewards):
+    """A turn that ends on the very step the budget runs out is a turn end, with
+    one mark; a match that ends on its last turn's end is a match end."""
+    seat = 0
+    seed, trail, td = _first_touchdown(rewards, seat)
+    start = td - 3                                           # the touchdown is step 4
+    batch = _scripted_rollout(_replayed(seed, rewards, trail, start), seat, trail, start,
+                              max_steps=4)
+    assert batch.stops == [S.STOP_TURN] and batch.steps[0] == 4 and len(batch.marks[0]) == 1
+    shorter = _scripted_rollout(_replayed(seed, rewards, trail, start), seat, trail, start,
+                                max_steps=3)
+    assert shorter.stops == [S.STOP_CUTOFF] and shorter.marks == [[]]
+    # The last step of a match also ends a team turn: it is the match end.
+    last = len(trail) - 1
+    final = _scripted_rollout(_replayed(seed, rewards, trail, last), seat, trail, last,
+                              max_steps=1)
+    assert final.stops == [S.STOP_TERMINAL] and final.bootstraps[0] == 0.0
+
+
+class BrokenPolicy(ScriptedPolicy):
+    """ScriptedPolicy whose forward number `at` returns `bad` logits or value."""
+
+    def __init__(self, script, at, logits=None, value=None):
+        super().__init__(script)
+        self.at, self.bad_logits, self.bad_value = at, logits, value
+
+    def forward_eval(self, obs, state):
+        call = self.calls
+        logits, value, state = super().forward_eval(obs, state)
+        if call == self.at:
+            if self.bad_logits is not None:
+                logits[:, 0] = self.bad_logits
+            if self.bad_value is not None:
+                value[:] = self.bad_value
+        return logits, value, state
+
+
+@pytest.mark.parametrize("fault", ["logits", "value", "reward", "mask", "select"])
+def test_an_integrity_failure_inside_a_rollout_is_an_error_not_a_rejection(
+        rewards, monkeypatch, fault):
+    """Each of these ends the rollout as STOP_ERROR with no return and a reason,
+    never as a cap rejection or a silent fallback."""
+    seat = 0
+    seed, trail, td = _first_touchdown(rewards, seat)
+    start = td - 9
+    root = _replayed(seed, rewards, trail, start)
+    script = [e["tuple"] for e in trail[start + 1:]]
+    kwargs = {}
+    policy = ScriptedPolicy(script)
+    if fault == "logits":
+        policy = BrokenPolicy(script, at=2, logits=float("nan"))
+    elif fault == "value":
+        policy = BrokenPolicy(script, at=2, value=float("inf"))
+    elif fault == "reward":
+        kwargs["reward_limit"] = 1e-9                       # any reward at all is too large
+    elif fault == "mask":
+        monkeypatch.setattr(S, "restrict_support",
+                            lambda support, masks, after: (support, {"m1": (True, None, True)}))
+        kwargs["masks"] = ("m1",)
+    elif fault == "select":
+        def refuse(*args, **kw):
+            raise ValueError("empty exact support at head 0")
+        monkeypatch.setattr(S, "select_joint", refuse)
+    kwargs.setdefault("masks", ())
+    rollouts = S.Rollouts(policy, seat, **kwargs)
+    state = policy.initial_state(1)
+    before = (root.digest(), root.env_digest(), root.counters())
+    batch = rollouts._play(root, state, state, [trail[start]["tuple"]],
+                           [_real_dice_clone(root)],
+                           [(torch.Generator().manual_seed(1), torch.Generator().manual_seed(2))])
+    assert batch.stops == [S.STOP_ERROR] and batch.count(S.STOP_CAP) == 0
+    assert batch.rejected == 1 and math.isnan(batch.returns[0])
+    assert len(batch.errors) == 1 and batch.errors[0][0] == 0
+    needle = {"logits": "not finite", "value": "not finite", "reward": "beyond the limit",
+              "mask": "give way", "select": "no action"}[fault]
+    assert needle in batch.errors[0][1]
+    assert (root.digest(), root.env_digest(), root.counters()) == before
+    # The same rollout without the fault is a rollout.
+    monkeypatch.undo()
+    clean = S.Rollouts(ScriptedPolicy(script), seat, masks=())._play(
+        root, state, state, [trail[start]["tuple"]], [_real_dice_clone(root)],
+        [(torch.Generator().manual_seed(1), torch.Generator().manual_seed(2))])
+    assert clean.stops == [S.STOP_TURN] and clean.errors == []
+
+
+def test_a_reward_inside_the_limit_is_not_an_error(rewards):
+    seat = 0
+    seed, trail, td = _first_touchdown(rewards, seat)
+    start = td - 9
+    root = _replayed(seed, rewards, trail, start)
+    batch = _scripted_rollout(root, seat, trail, start, reward_limit=1.0)
+    assert batch.stops == [S.STOP_TURN] and batch.errors == []
 
 
 # ---- real dice, at this level -----------------------------------------------------------

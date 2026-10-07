@@ -343,7 +343,7 @@ class Outcomes(unittest.TestCase):
         from types import SimpleNamespace
         gamma = 0.5
         batch = SimpleNamespace(
-            stops=["terminal", "terminal", "rejected", "terminal"],
+            stops=["terminal", "terminal", "error", "terminal"],
             scores=np.array([[[2, 1], [1, 1]], [[-1, -1], [0, 3]]]),
             rewards=np.array([[1.0, 0.3], [0.0, -1.2]]),
             touchdowns=np.array([[0.4, 0.0], [0.0, -0.8]]),
