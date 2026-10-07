@@ -2322,3 +2322,64 @@ Chain 56 (`50b88263...`, the rule arm from chain 49) completed 3B steps. From th
 - Retention contrasts (chain 56 + m1 minus chain 49 + m1) are written under `main/retention-chain49m1/` because the contrast script names its output by opponent only.
 - Not tested by execution: that the play-time mask and the trainer's env rule remove END_TURN in exactly the same states. Both were read and state the same condition.
 
+**D421 - CHAIN 56 (TRAINED UNDER THE RULE) READS INCONCLUSIVE: IT BEATS ITS CONTROL DIRECTLY BUT NOT ON BOTH HELD-OUT OPPONENTS; CHAIN 49 STAYS THE WARM START (2026-10-06 17:46 PDT; chain 57 is training, its gate has not been played)**
+
+Gate `c56-gate-20261006` as registered in D418, its first amendment and D420: mask harness `7d0d547`, seed block 22500000, eleven pairs, plan sha256 `ef07eff1...` committed in D420 at 17:08:19 PDT, shards launched at 17:09:18 PDT by the gate agent's report. Acceptance, by the same report run against that plan before scoring: `GATE-ACCEPTED 35200 games, 11 pairs, seed0 22500000, games_per_worker 32, commit 7d0d547` and `MASKS-ACCEPTED 41600 masked sides in 35200 games as registered, no sampling offsets, 0 truncated, 0 mask fallbacks`; every integrity counter zero; longest game 2,359 decisions against the cap of 4,096. By the gate agent's report it ran on six droplets (about $0.41) and all six were destroyed.
+
+| # | Pair (+m1 = played under the mask) | W / D / L | Decisive-Elo [95% seed-cluster] |
+|---|---|---|---|
+| 1 | chain 56 + m1 vs chain 55 + m1 | 1079 / 1324 / 797 | +52.6 [+39.0, +68.1] |
+| 2 | chain 56 + m1 vs chain 37 | 1721 / 1051 / 428 | +241.7 [+224.6, +258.6] |
+| 3 | chain 55 + m1 vs chain 37 | 1653 / 1069 / 478 | +215.5 [+199.3, +233.0] |
+| 4 | chain 49 + m1 vs chain 37 | 1569 / 1123 / 508 | +195.9 [+180.9, +212.1] |
+| 5 | chain 56 + m1 vs chain 46 | 1531 / 1173 / 496 | +195.8 [+179.4, +212.8] |
+| 6 | chain 55 + m1 vs chain 46 | 1598 / 1105 / 497 | +202.9 [+187.7, +220.0] |
+| 7 | chain 49 + m1 vs chain 46 | 1319 / 1266 / 615 | +132.5 [+117.2, +147.4] |
+| 8 | chain 56 + m1 vs chain 49 + m1 | 1244 / 1226 / 730 | +92.6 [+78.9, +107.3] |
+| 9 | chain 56 + m1 vs plain chain 55 (descriptive) | 1168 / 1214 / 818 | +61.9 [+47.3, +75.8] |
+| 10 | chain 56 + m1 vs offense bot | 906 / 1819 / 475 | +112.2 [+93.8, +131.6] |
+| 11 | chain 55 + m1 vs offense bot | 885 / 1847 / 468 | +110.7 [+92.2, +129.9] |
+
+| Paired contrast | Opponent | Decisive-Elo [95%] |
+|---|---|---|
+| chain 56 + m1 minus chain 55 + m1 | chain 37 | +26.2 [+3.1, +49.8] |
+| chain 56 + m1 minus chain 55 + m1 | chain 46 | -7.1 [-30.2, +13.6] |
+| chain 56 + m1 minus chain 55 + m1 | offense bot | +1.5 [-22.6, +26.0] |
+| chain 56 + m1 minus chain 49 + m1 (retention) | chain 37 | +45.8 [+23.8, +67.0] |
+| chain 56 + m1 minus chain 49 + m1 (retention) | chain 46 | +63.2 [+40.8, +85.5] |
+
+**Reading, labels applied in the registered order: Inconclusive.**
+- Not Negative: pair 1's interval is entirely above zero.
+- Not Positive: pair 1 is above +40 with its interval entirely above zero, but Positive also needs both held-out contrasts against the masked control entirely above zero. The chain 37 contrast is (+26.2 [+3.1, +49.8]); the chain 46 contrast is -7.1 with an interval that spans zero.
+- Not Flat: Flat is pair 1 within plus or minus 40 inclusive, and it is +52.6.
+- So Inconclusive.
+
+**Consequences.**
+- Training under the rule is not a candidate recipe component on this evidence and chain 56 is not a warm-start candidate. Chain 49 stays the warm start.
+- The retention contrasts against chain 49 + m1 are both entirely above zero. Under amendment item 6 they matter only together with a Positive, so they change nothing here.
+- As D416 registered for any reading but Positive: the rule remains a play-time option and is not trained under again without a new idea.
+- Nothing is concluded about the rule in general from one rung at one training seed.
+
+**Registered diagnostics, pair 1 (per team turn unless noted; difference is chain 56 + m1 minus chain 55 + m1 with a 95% seed-cluster interval).**
+
+| | chain 56 + m1 | chain 55 + m1 | difference |
+|---|---|---|---|
+| empty activations | 3.160 | 2.506 | +0.654 [+0.610, +0.699] |
+| activations | 7.067 | 6.783 | +0.284 [+0.237, +0.331] |
+| blocks (block targets chosen) | 0.628 | 0.622 | +0.006 [-0.004, +0.016] |
+| turnovers | 0.380 | 0.422 | -0.042 [-0.048, -0.036] |
+| own decisions per game | 614.0 | 643.8 | -29.8 [-33.3, -26.2] |
+| engine steps per game (both sides) | 1,257.7 | | |
+| touchdowns per game | 0.787 | 0.659 | +0.129 [+0.096, +0.162] |
+
+- For scale, from pair 9: plain chain 55 has 0.537 empty activations, 2.965 activations, 0.466 blocks and 0.326 turnovers per team turn.
+- Against chain 37 (pairs 2 to 4), empty activations per team turn are 2.884 for chain 56 + m1, 2.463 for chain 55 + m1 and 2.391 for chain 49 + m1; blocks are 0.724, 0.679 and 0.686.
+- What the diagnostics show: with the mask on at play time, the checkpoint trained under the rule has more empty activations (an activation ended with no move or action; D416 notes what an empty activation can still change) than the checkpoint trained without it, slightly more activations in total, fewer turnovers and more touchdowns. No increase in block targets per team turn is established against the masked control. The larger count of empty activations is consistent with the rule being met by filler; changed trajectories and opponents could also raise it.
+
+**Descriptive, not part of the reading.**
+- Pair 9: chain 56 + m1 against plain chain 55 is +61.9. It cannot be split into a mask part and a training part on this seed block (D420).
+- Chain 55 + m1 against chain 49 + m1 on the held-out opponents, from pairs 3, 4, 6 and 7: +215.5 against +195.9 on chain 37 and +202.9 against +132.5 on chain 46. No contrast was registered for it and none is computed here.
+- The two primary held-out contrasts differ in sign. The Bradley-Terry fit rejects transitivity (chi-square 31.5 on 5 degrees of freedom).
+- Raw roster-conditioned decisive share of chain 56 + m1 in pair 1: bash 0.485, agile 0.740, hybrid 0.576, stunty 0.645.
+- Home and away against the offense bot differ strongly for both masked checkpoints (chain 56 + m1: 667 / 688 / 245 at home, 239 / 1131 / 230 away).
+- Reviewed by Codex before this entry was written (`.codex-reviews/d421-review.md`): no other label is defensible; every number matches the artifacts; four corrections applied above.

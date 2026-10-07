@@ -331,3 +331,5 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 
 **Update 2026-10-06 08:55 (D419): chain 55 reads Inconclusive; chain 49 stays the warm start.** The plain continuation beats chain 49 directly by +101.3 decisive-Elo and does better than it against chain 46 (+60.9), but no improvement is established against chain 37 (-1.7 [-21.9, +19.3]) or the offense bot (-13.1 [-35.8, +8.6]). Chain 55 is the accepted control for chain 56 (training now, the rule arm) and chain 57 (the bot-seat arm).
 
+**Update 2026-10-06 17:50 (D420, D421): chain 56, trained under the no-early-END_TURN rule, reads Inconclusive; chain 49 stays the warm start.** Played under the mask against its masked control it is +52.6 [+39.0, +68.1] directly, +26.2 [+3.1, +49.8] against chain 37 and -7.1 [-30.2, +13.6] against chain 46. Under the mask it makes 7.07 activations per team turn with 3.16 of them empty (control: 6.78 and 2.51); no increase in blocks is established. The rule stays a play-time option and is not trained under again without a new idea. Chain 57 (bot seat) is training and is the last stage in the plan.
+
