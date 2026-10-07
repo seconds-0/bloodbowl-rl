@@ -158,8 +158,9 @@ class Rollouts:
                     the env's reward design cannot emit it (its clip threshold).
 
     A rollout ends in STOP_ERROR, with no return, on any integrity failure: the
-    engine refuses a step or reports an error, a logit, value or reward is not
-    finite, a mask had to give way, or no action can be selected.
+    engine refuses a step or reports an error, a logit, a value, either seat's
+    reward or the accumulated return is not finite, a mask had to give way, or
+    no action can be selected.
     """
 
     def __init__(self, policy, seat, masks=("m1",), opponent_masks=None, gamma=GAMMA,
@@ -276,11 +277,15 @@ class Rollouts:
             out.engine_steps += 1
             if rc < 0:
                 return fail(b, f"the engine refused {tuple(action)}: rc={rc}")
-            reward = clone.last_rewards()[seat]
-            if not np.isfinite(reward):
+            rewards = clone.last_rewards()
+            # Both seats' rewards are checked; only the searcher's is counted.
+            if not all(np.isfinite(r) for r in rewards):
                 return fail(b, "a reward that is not finite")
-            if self.reward_limit is not None and abs(reward) > self.reward_limit:
-                return fail(b, f"a reward of {reward} beyond the limit {self.reward_limit}")
+            if self.reward_limit is not None and \
+                    max(abs(r) for r in rewards) > self.reward_limit:
+                return fail(b, f"a reward of {max(rewards, key=abs)} beyond the limit "
+                               f"{self.reward_limit}")
+            reward = rewards[seat]
             before = score[b]
             final = clone.final_match() if rc == E.STEP_TERMINAL else None
             score[b] = (int(final.score[0]), int(final.score[1])) if final else clone.score()
@@ -289,6 +294,8 @@ class Rollouts:
             out.touchdowns[b] += discount[b] * reward_td * scored
             discount[b] *= self.gamma
             out.steps[b] += 1
+            if not np.isfinite(out.rewards[b]):
+                return fail(b, "an accumulated return that is not finite")
             declared[b][view] = action[0] == _DECLARE
             if record:
                 out.trails[b].append((rows[view], tuple(int(v) for v in action), reward))
@@ -347,6 +354,8 @@ class Rollouts:
                     continue
                 out.bootstraps[b] = float(value[i])
                 out.returns[b] = out.rewards[b] + discount[b] * out.bootstraps[b]
+                if not np.isfinite(out.returns[b]):
+                    fail(b, "an accumulated return that is not finite")
             for i, b in enumerate(step_running):
                 if not (finite[i] and finite[len(own_rows) + i]):
                     fail(b, "a value or logit that is not finite")

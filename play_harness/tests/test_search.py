@@ -620,7 +620,8 @@ class BrokenPolicy(ScriptedPolicy):
         return logits, value, state
 
 
-@pytest.mark.parametrize("fault", ["logits", "value", "reward", "mask", "select"])
+@pytest.mark.parametrize("fault", ["logits", "value", "reward", "opponent_reward",
+                                   "accumulated", "mask", "select"])
 def test_an_integrity_failure_inside_a_rollout_is_an_error_not_a_rejection(
         rewards, monkeypatch, fault):
     """Each of these ends the rollout as STOP_ERROR with no return and a reason,
@@ -638,6 +639,11 @@ def test_an_integrity_failure_inside_a_rollout_is_an_error_not_a_rejection(
         policy = BrokenPolicy(script, at=2, value=float("inf"))
     elif fault == "reward":
         kwargs["reward_limit"] = 1e-9                       # any reward at all is too large
+    elif fault == "opponent_reward":
+        # Seat 0 searches; seat 1's reward is not counted, and is still checked.
+        monkeypatch.setattr(E.Engine, "last_rewards", lambda self: (0.0, float("nan")))
+    elif fault == "accumulated":
+        monkeypatch.setattr(E.Engine, "last_rewards", lambda self: (1.7e308, 0.0))
     elif fault == "mask":
         monkeypatch.setattr(S, "restrict_support",
                             lambda support, masks, after: (support, {"m1": (True, None, True)}))
@@ -657,6 +663,8 @@ def test_an_integrity_failure_inside_a_rollout_is_an_error_not_a_rejection(
     assert batch.rejected == 1 and math.isnan(batch.returns[0])
     assert len(batch.errors) == 1 and batch.errors[0][0] == 0
     needle = {"logits": "not finite", "value": "not finite", "reward": "beyond the limit",
+              "opponent_reward": "a reward that is not finite",
+              "accumulated": "an accumulated return that is not finite",
               "mask": "give way", "select": "no action"}[fault]
     assert needle in batch.errors[0][1]
     assert (root.digest(), root.env_digest(), root.counters()) == before
@@ -717,7 +725,8 @@ def test_search_code_cannot_reach_real_dice():
     assert code.count("SEARCH_DICE_STREAM)") == 2
     # Outside tests, clones and generators are made in evaluate() and nowhere else.
     assert code.count("._play(") == 1 and code.count("torch.Generator()") == 2
-    assert code.count("last_rewards()") == 1 and "last_rewards()[seat]" in code
+    assert code.count("last_rewards()") == 1 and code.count("rewards[seat]") == 1
+    assert "rewards[1 - seat]" not in code
     assert S.SEARCH_DICE_STREAM != E.REAL_DICE_STREAM
 
 
