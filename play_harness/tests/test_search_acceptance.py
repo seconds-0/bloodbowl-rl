@@ -2,7 +2,9 @@
 are held to the registered plan, in the manifest and on every game, and each
 searched game's own account of its search has to add up.
 
-Synthetic records here; test_search_seat.py runs the same check on real runs.
+Synthetic records here, written with the tournament's own record functions, and
+one real run at the end. test_search_tournament.py runs the same check on its own
+real runs.
 """
 import copy
 import hashlib
@@ -13,12 +15,17 @@ import os
 import pytest
 
 from play_harness import search as S
+from play_harness import tournament as T
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPEC = importlib.util.spec_from_file_location(
     "search_acceptance", os.path.join(ROOT, "tools", "search_acceptance.py"))
 sa = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sa)
+GATE_SPEC = importlib.util.spec_from_file_location(
+    "gate_acceptance", os.path.join(ROOT, "tools", "gate_acceptance.py"))
+ga = importlib.util.module_from_spec(GATE_SPEC)
+GATE_SPEC.loader.exec_module(ga)
 
 SEED0 = 25100000
 LEGS = ("A_home", "B_home")
@@ -34,6 +41,7 @@ def plan():
     """A gate in miniature: S searches, C is the plain control on sampling offset
     1, chain37 and the bot are held out, I and P are the identity sample."""
     return {
+        "seed0": SEED0, "pairs": [[a, b, 4] for a, b in PAIRS],
         "players": {
             "S": {"checkpoint": "chain55", "masks": ["m1"], "search": copy.deepcopy(SETTING)},
             "C": {"checkpoint": "chain55", "masks": ["m1"], "sampling_offset": 1},
@@ -59,7 +67,8 @@ def manifest():
             players[name]["seed_offset"] = spec["sampling_offset"]
         if spec.get("search"):
             players[name]["search"] = spec["search"]
-    return {"players": players, "games_per_worker": 1,
+    return {"players": players, "games_per_worker": 1, "seed0": SEED0,
+            "pairs": [[a, b, 4] for a, b in PAIRS],
             "search": {"players": ["S", "I"], "reward_manifest": {"name": "r0_poss_half",
                                                                   "sha256": SHA},
                        "integrity_checks": list(CHECKS),
@@ -85,35 +94,41 @@ def stats(setting, steps=1200, deviations=(1, 2)):
 
 
 def game(pair, index, leg):
+    """One record, with the fields and the functions the tournament writes it
+    with: Match.record's dict wrapped by pair_record."""
     players = plan()["players"]
-    home, away = pair if leg == "A_home" else pair[::-1]
+    home, away, seed, _, _ = T.pair_seating(*pair, index, leg, SEED0)
     names = (home, away)
     settings = [players[n].get("search") for n in names]
     masks = [players[n].get("masks") or None for n in names]
     bots = [players[n].get("bot") for n in names]
+    offsets = [players[n].get("sampling_offset", 0) for n in names]
+    modes = [T.SCRIPTED_MODE if b else "sample" for b in bots]
     # The identity pair and its plain pair are the same game.
     key = ("I/P" if pair in (("I", "C"), ("P", "C")) else "/".join(pair), index, leg)
     digest = hashlib.sha256(repr(key).encode()).hexdigest()
-    rec = {"pair": list(pair), "game_index": index, "leg": leg, "home": home, "away": away,
-           "engine_seed": SEED0 + index, "natural": True, "truncated": False,
-           "integrity": {"illegal": 0, "error_episodes": 0}, "c_steps": 1200,
-           "forwards": [1200, 1200],
-           "modes": ["scripted" if b else "sample" for b in bots],
+    rec = {"engine_seed": seed, "episode": 0,
+           "mode": modes[0] if modes[0] == modes[1] else "mixed", "modes": modes,
            "temperatures": [None if b else 1.0 for b in bots], "bots": bots,
+           "sampling_seeds": [(T.sampling_seed(seed, side) + offsets[side]
+                               * T.SEED_OFFSET_STRIDE) % (1 << 62) for side in (0, 1)],
+           "team_ids": [3, 7], "teams": ["Chaos Chosen", "Human"], "score": [1, 0],
+           "natural": True, "truncated": False, "final_status": 2, "half": 2, "turns": [8, 8],
+           "c_steps": 1200, "forwards": [1200, 1200], "decisions": [700, 500],
+           "engine_decisions": 1200, "logprob_sum": [-500.25, -480.5],
+           "integrity": {k: 0 for k in T.HARD_COUNTERS}, "action_trail_sha256": digest,
+           "final_digest": digest[:16], "seconds": 1.5, "behaviour": [{}, {}],
            "masks": masks,
            "mask_stats": [{m: {"held": 9, "applied": 3, "fallback": 0, "mass": 0.2} for m in ms}
                           if ms else None for ms in masks],
-           "seed_offsets": [players[n].get("sampling_offset", 0) for n in names],
-           "action_trail_sha256": digest, "final_digest": digest[:16],
-           "logprob_sum": [-500.25, -480.5], "score": [1, 0], "team_ids": [3, 7],
-           "sampling_seeds": [11, 12]}
+           "seed_offsets": offsets}
     if any(settings):
         rec.update({"search": settings,
                     "search_stats": [stats(s) if s else None for s in settings],
                     "search_seconds": [300.0 if s else None for s in settings],
                     "reward_manifest_sha256": SHA, "integrity_checks": list(CHECKS),
                     "final_state_sha256": digest, "sampling_state_sha256": digest[::-1]})
-    return rec
+    return T.pair_record(*pair, index, leg, home, away, rec)
 
 
 def games():
@@ -168,12 +183,19 @@ def test_the_default_setting_is_what_a_plan_carries():
     assert set(seat.stats) == set(sa.STAT_KEYS)           # the harness writes these keys
 
 
+def test_the_names_this_tool_repeats_are_the_tournaments():
+    """The tool imports nothing from the harness, so it repeats these."""
+    assert sa.SCHEMA == T.SCHEMA and sa.LEGS == T.LEGS == ga.LEGS
+
+
 def test_a_run_without_search_needs_no_search_block(tmp_path):
     p = plan()
     p["players"] = {k: v for k, v in p["players"].items() if k in ("C", "chain37", "P")}
+    p["pairs"] = [["C", "chain37", 4], ["P", "C", 4]]
     del p["search"]
     m = manifest()
     m["players"] = {k: v for k, v in m["players"].items() if k in p["players"]}
+    m["pairs"] = [["P", "C", 4], ["C", "chain37", 4]]     # in any order
     del m["search"]
     m["games_per_worker"] = 32                            # plain games may batch
     rows = [r for r in games() if tuple(r["pair"]) in (("C", "chain37"), ("P", "C"))]
@@ -327,8 +349,12 @@ def test_a_game_off_the_plan_is_rejected(tmp_path, change, needle):
 def test_an_identity_pair_that_was_never_played_is_rejected(tmp_path):
     rows = [r for r in games() if tuple(r["pair"]) != ("I", "C")]
     problems, counts = sa.accept(write_run(tmp_path, manifest(), rows), plan())
-    assert problems == ["identity: no game of the pair ('I', 'C')"]
+    assert problems == ["('I', 'C'): 4 of the 4 registered games missing, e.g. "
+                        "[(0, 'A_home'), (0, 'B_home'), (1, 'A_home')]",
+                        "identity: no game of the pair ('I', 'C')"]
     assert counts["identity_games"] == 0
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), without_schedule(plan()))
+    assert problems == ["identity: no game of the pair ('I', 'C')"]
 
 
 def test_cap_rejections_are_held_to_the_ceiling_per_pair():
@@ -387,6 +413,166 @@ def test_an_incomplete_plan_is_refused_not_read_loosely(tmp_path, capsys, change
     change(p)
     with pytest.raises(ValueError, match=needle.replace("[", r"\[").replace("]", r"\]")):
         sa.registered(p)
+    run = write_run(tmp_path, manifest(), games())
+    path = tmp_path / "PLAN.json"
+    path.write_text(json.dumps(p))
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert sa.main([str(path), run, "--expect-sha256", sha]) == 1
+    assert capsys.readouterr().out.startswith("SEARCH-REJECTED plan: ")
+
+
+# ---- who played, where, on which seed (review finding 1) --------------------------------------
+def gate_plan():
+    """What tools/gate_acceptance.py is given for the same run."""
+    return {"seed0": SEED0, "games_per_worker": 1, "commit": "c" * 40,
+            "pairs": [(a, b, 4) for a, b in PAIRS], "checkpoints": {}}
+
+
+def without_schedule(p):
+    """The plan without its pairs and seed0: what a caller of accept() may pass."""
+    return {k: v for k, v in p.items() if k not in ("pairs", "seed0")}
+
+
+def test_plain_games_filed_under_a_searched_pair_are_rejected():
+    """The review's false pass: every record of the searched pair (S, C) replaced
+    by a plain game between two other registered players, the scheduled pair key
+    kept. gate_acceptance.py reads only that key and still passes, and this check
+    read the settings off the record's own home and away."""
+    rows = games()
+    plain = {(r["game_index"], r["leg"]): r for r in rows if r["pair"] == ["C", "chain37"]}
+    swapped = [dict(copy.deepcopy(plain[(r["game_index"], r["leg"])]), pair=["S", "C"])
+               if r["pair"] == ["S", "C"] else r for r in rows]
+    assert ga.check_games(swapped, gate_plan()) == []
+    needle = "home and away ('C', 'chain37') are not the pair ['S', 'C'] seated for this leg"
+    problems, _ = sa.check_games(swapped, without_schedule(plan()))
+    assert len(problems) == 4 and sum(needle in x for x in problems) == 2, problems
+    problems, _ = sa.check_games(swapped, plan())
+    assert len(problems) == 5 and sum("seated for this leg" in x for x in problems) == 4
+    assert problems[-1].startswith("('S', 'C'): 4 of the 4 registered games missing")
+
+
+def _move(row, index):
+    row.update(game_index=index, engine_seed=SEED0 + index)
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda g: g[0].update(pair=["C", "S"]), "are not the pair ['C', 'S'] seated for this leg"),
+    (lambda g: g[0].update(leg="B_home"), "are not the pair ['S', 'C'] seated for this leg"),
+    (lambda g: g[0].update(home="C", away="S"), "seated for this leg"),
+    (lambda g: g[0].update(away="chain37"), "seated for this leg"),
+    (lambda g: g[0].update(pair="S,C"), "pair is not a list of two different players"),
+    (lambda g: g[0].update(pair=["S", "C", "chain37"]), "pair is not a list of two different"),
+    (lambda g: g[0].update(pair=["S", "S"], away="S"), "pair is not a list of two different"),
+    (lambda g: g[0].pop("pair"), "pair is not a list of two different players"),
+    (lambda g: g[0].update(leg="C_home"), "leg 'C_home' is not one of"),
+    (lambda g: g[0].pop("leg"), "leg None is not one of"),
+    (lambda g: g[0].pop("home"), "an unregistered player"),
+    (lambda g: g[0].update(home=["S"]), "an unregistered player"),
+    (lambda g: g[0].update(pair=["S", "P"], away="P"), "the pair is not registered"),
+    (lambda g: g[0].update(pair=["C", "S"], home="C", away="S"), "the pair is not registered"),
+    (lambda g: g[0].update(game_index=1), "engine seed 25100000 is not seed0 25100000 + game "
+                                          "index 1"),
+    (lambda g: g[0].update(engine_seed=SEED0 + 1), "engine seed 25100001 is not seed0"),
+    (lambda g: g[0].update(engine_seed=str(SEED0)), "is not an integer"),
+    (lambda g: g[0].pop("engine_seed"), "engine seed None is not an integer"),
+    (lambda g: g[0].update(game_index=True), "game index True is not an integer >= 0"),
+    (lambda g: g[0].update(game_index=-1, engine_seed=SEED0 - 1), "game index -1 is not"),
+    (lambda g: g[0].pop("game_index"), "game index None is not an integer >= 0"),
+    (lambda g: _move(g[0], 2), "game index 2 is outside the pair's 4 registered games"),
+    (lambda g: g[0].update(episode=1), "episode 1 is not 0"),
+    (lambda g: g[0].pop("episode"), "episode None is not 0"),
+    (lambda g: g[0].update(schema="bbplay-exam-game-v1"), "schema 'bbplay-exam-game-v1'"),
+    (lambda g: g[0].pop("schema"), "schema None"),
+    (lambda g: g.append(copy.deepcopy(g[0])), "recorded more than once"),
+    (lambda g: g.remove(g[0]), "('S', 'C'): 1 of the 4 registered games missing, e.g. "
+                               "[(0, 'A_home')]"),
+    (lambda g: g.insert(0, ["not", "a", "record"]), "a game record is not an object"),
+])
+def test_a_game_that_is_not_its_scheduled_seat_and_seed_is_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+
+
+def test_a_plan_without_a_schedule_still_binds_seats_and_seeds(tmp_path, capsys):
+    """pairs and seed0 are optional for a caller of accept(): seats are held to
+    pair and leg and seeds to the manifest's seed0 either way. The command line
+    refuses such a plan when a player searches."""
+    p = without_schedule(plan())
+    rows = games()
+    run = write_run(tmp_path, manifest(), rows)
+    problems, counts = sa.accept(run, p)
+    assert problems == [] and counts["scheduled_pairs"] is None
+    assert "no pairs in the plan: no schedule held" in sa.accepted_line(counts)
+    for change, needle in (
+            (lambda g: g[0].update(leg="B_home"), "seated for this leg"),
+            (lambda g: g[0].update(engine_seed=SEED0 + 7), "is not seed0 25100000 + game index 0"),
+            (lambda g: g.append(copy.deepcopy(g[0])), "recorded more than once")):
+        rows = games()
+        change(rows)
+        problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), p)
+        assert any(needle in x for x in problems), problems
+    # Not held without the plan's pairs: a pair nobody scheduled, a missing game.
+    rows = games()
+    rows[0].update(pair=["S", "P"], away="P")
+    rows.remove(rows[5])
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), p)
+    assert not any("registered" in x and "pair" in x for x in problems)
+    assert not any("missing" in x for x in problems)
+    path = tmp_path / "PLAN.json"
+    path.write_text(json.dumps(p))
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert sa.main([str(path), run, "--expect-sha256", sha]) == 1
+    assert capsys.readouterr().out == ("SEARCH-REJECTED plan: pairs and seed0 are required "
+                                       "when a player searches\n")
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda m: m.update(seed0=SEED0 + 1), "manifest seed0 25100001 != registered 25100000"),
+    (lambda m: m.pop("seed0"), "manifest seed0 None is not an integer"),
+    (lambda m: m.update(seed0=True), "manifest seed0 True is not an integer"),
+    (lambda m: m["pairs"].pop(), "manifest pairs differ from the registered"),
+    (lambda m: m["pairs"][0].__setitem__(2, 6), "manifest pairs differ from the registered"),
+    (lambda m: m["pairs"].append(["S", "P", 4]), "manifest pairs differ from the registered"),
+    (lambda m: m["pairs"][0].reverse(), "manifest pairs differ from the registered"),
+    (lambda m: m.pop("pairs"), "manifest pairs differ from the registered"),
+])
+def test_a_manifest_off_the_schedule_is_rejected(change, needle):
+    m = manifest()
+    change(m)
+    assert any(needle in problem for problem in sa.check_manifest(m, plan())), needle
+
+
+def test_a_manifest_seed0_decides_the_seeds_when_the_plan_has_none(tmp_path):
+    m = manifest()
+    m["seed0"] = SEED0 + 100                               # the run says another block
+    problems, _ = sa.accept(write_run(tmp_path, m, games()), without_schedule(plan()))
+    assert sum("is not seed0 25100100 + game index" in p for p in problems) == 24
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda p: p.update(pairs="S,C,4"), "pairs is a list of"),
+    (lambda p: p["pairs"].append(["S", "C"]), "pairs is a list of"),
+    (lambda p: p["pairs"].append(["S", "stranger", 4]), "pair ['S', 'stranger', 4] needs two"),
+    (lambda p: p["pairs"].append(["S", "S", 4]), "pair ['S', 'S', 4] needs two"),
+    (lambda p: p["pairs"].append(["P", "S", 3]), "a positive even number of games"),
+    (lambda p: p["pairs"].append(["P", "S", 0]), "a positive even number of games"),
+    (lambda p: p["pairs"].append(["P", "S", True]), "a positive even number of games"),
+    (lambda p: p["pairs"].append(["C", "S", 4]), "pair ['C', 'S', 4] is listed twice"),
+    (lambda p: p.update(seed0="25100000"), "seed0 must be an integer"),
+    (lambda p: p.update(seed0=None), "seed0 must be an integer"),
+    (lambda p: p["pairs"].remove(["I", "C", 4]), "identity pair ['I', 'C'] is not in pairs"),
+    (lambda p: p["pairs"].remove(["P", "C", 4]), "identity's plain pair ['P', 'C'] is not in"),
+    (lambda p: p["pairs"].__setitem__(5, ["P", "C", 2]), "has fewer games than"),
+    (lambda p: p.pop("pairs"), "pairs and seed0 are required when a player searches"),
+    (lambda p: p.pop("seed0"), "pairs and seed0 are required when a player searches"),
+])
+def test_a_plan_with_a_broken_schedule_is_refused(tmp_path, capsys, change, needle):
+    p = plan()
+    change(p)
+    with pytest.raises(ValueError, match=needle.replace("[", r"\[").replace("]", r"\]")):
+        sa.registered(p, require_schedule=True)
     run = write_run(tmp_path, manifest(), games())
     path = tmp_path / "PLAN.json"
     path.write_text(json.dumps(p))
