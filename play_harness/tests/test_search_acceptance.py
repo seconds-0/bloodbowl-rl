@@ -16,6 +16,7 @@ import pytest
 
 from play_harness import search as S
 from play_harness import tournament as T
+from play_harness.policy import MaskedPolicySeat
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPEC = importlib.util.spec_from_file_location(
@@ -186,6 +187,10 @@ def test_the_default_setting_is_what_a_plan_carries():
 def test_the_names_this_tool_repeats_are_the_tournaments():
     """The tool imports nothing from the harness, so it repeats these."""
     assert sa.SCHEMA == T.SCHEMA and sa.LEGS == T.LEGS == ga.LEGS
+    assert sa.HARD_COUNTERS == T.HARD_COUNTERS
+    seat = MaskedPolicySeat.__new__(MaskedPolicySeat)
+    seat.masks = ("m1",)
+    assert tuple(seat._fresh_stats()["m1"]) == sa.MASK_STAT_KEYS
 
 
 def test_a_run_without_search_needs_no_search_block(tmp_path):
@@ -673,3 +678,83 @@ def test_the_identity_count_is_held_only_when_the_plan_gives_one(tmp_path):
     rows.remove(first(rows, "I")[0])
     problems, counts = sa.accept(write_run(tmp_path, manifest(), rows), without_schedule(plan()))
     assert problems == [] and counts["identity_games"] == 3
+
+
+# ---- integrity evidence (review finding 3) ----------------------------------------------------
+def test_a_record_without_its_integrity_evidence_is_rejected():
+    """The review's false pass: one hard counter of five and no mask statistics.
+    Only the counters present were read, and absent mask statistics had no
+    fallback."""
+    rows = games()
+    for row in rows:
+        row["integrity"] = {"illegal": 0}
+        del row["mask_stats"]
+    problems, _ = sa.check_games(rows, plan())
+    assert sum("integrity counters ['illegal'] are not exactly" in p for p in problems) == 24
+    assert sum("mask_stats is not a two-element list" in p for p in problems) == 24
+
+
+def _mask(rows, name="S", **change):
+    row, side = first(rows, name)
+    row["mask_stats"][side]["m1"].update(change)
+
+
+def _plain(rows):
+    return next(r for r in rows if r["pair"] == ["C", "chain37"])
+
+
+@pytest.mark.parametrize("change, needle", (
+    [(lambda g, k=k: g[0]["integrity"].update({k: 1}), f"integrity {{'{k}': 1}}")
+     for k in T.HARD_COUNTERS]
+    + [(lambda g, k=k: g[0]["integrity"].pop(k), "are not exactly ['illegal', "
+                                                 "'projection_collision', 'error_episodes', "
+                                                 "'rejected_submissions', 'precheck_collisions']")
+       for k in T.HARD_COUNTERS]
+    + [
+        (lambda g: g[0].pop("integrity"), "integrity counters None are not exactly"),
+        (lambda g: g[0].update(integrity={}), "integrity counters [] are not exactly"),
+        (lambda g: g[0].update(integrity=[0] * 5), "integrity counters [0, 0, 0, 0, 0] are not"),
+        (lambda g: g[0]["integrity"].update(missing=0), "are not exactly"),
+        (lambda g: g[0]["integrity"].update(illegal=False), "integrity {'illegal': False}"),
+        (lambda g: g[0]["integrity"].update(illegal=None), "integrity {'illegal': None}"),
+        (lambda g: g[0]["integrity"].update(illegal=0.0), "integrity {'illegal': 0.0}"),
+        (lambda g: g[0]["integrity"].update(illegal="0"), "integrity {'illegal': '0'}"),
+        (lambda g: _plain(g)["integrity"].pop("illegal"), "['C', 'chain37'] seed 25100000 "
+                                                          "A_home: integrity counters"),
+        # Mask statistics: there for exactly the masks of a masked side.
+        (lambda g: g[0].pop("mask_stats"), "mask_stats is not a two-element list"),
+        (lambda g: g[0].update(mask_stats=[]), "mask_stats is not a two-element list"),
+        (lambda g: g[0].update(mask_stats=[None, None]),
+         "S has mask statistics for None, registered masks ['m1']"),
+        (lambda g: g[0]["mask_stats"].__setitem__(1, {}),
+         "C has mask statistics for [], registered masks ['m1']"),
+        (lambda g: g[0]["mask_stats"][0].update(m2=dict(g[0]["mask_stats"][0]["m1"])),
+         "S has mask statistics for ['m1', 'm2'], registered masks ['m1']"),
+        (lambda g: _plain(g)["mask_stats"].__setitem__(1, {}),
+         "chain37 has mask statistics for [], registered masks []"),
+        (lambda g: _plain(g).update(mask_stats=[dict(_plain(g)["mask_stats"][0])] * 2),
+         "chain37 has mask statistics for ['m1'], registered masks []"),
+        (lambda g: g[0]["mask_stats"][0].update(m1=None), "S's mask m1 statistics None"),
+        (lambda g: g[0]["mask_stats"][0]["m1"].pop("fallback"), "S's mask m1 statistics"),
+        (lambda g: g[0]["mask_stats"][0]["m1"].pop("held"), "S's mask m1 statistics"),
+        (lambda g: _mask(g, extra=0), "S's mask m1 statistics"),
+        (lambda g: _mask(g, fallback=False), "S's mask m1 statistics"),
+        (lambda g: _mask(g, fallback="0"), "S's mask m1 statistics"),
+        (lambda g: _mask(g, fallback=None), "S's mask m1 statistics"),
+        (lambda g: _mask(g, fallback=0.0), "S's mask m1 statistics"),
+        (lambda g: _mask(g, held=-1), "S's mask m1 statistics"),
+        (lambda g: _mask(g, applied=1.5), "S's mask m1 statistics"),
+        (lambda g: _mask(g, mass=float("nan")), "S's mask m1 statistics"),
+        (lambda g: _mask(g, mass=None), "S's mask m1 statistics"),
+        (lambda g: _mask(g, name="C", fallback=2), "2 mask fallback(s)"),
+        # A plain game is held to it too.
+        (lambda g: _plain(g)["mask_stats"][0]["m1"].update(fallback=1),
+         "['C', 'chain37'] seed 25100000 A_home: 1 mask fallback(s)"),
+        (lambda g: _plain(g).pop("mask_stats"),
+         "['C', 'chain37'] seed 25100000 A_home: mask_stats is not a two-element list"),
+    ]))
+def test_a_game_without_its_integrity_evidence_is_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems

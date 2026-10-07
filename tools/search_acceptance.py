@@ -50,12 +50,16 @@ Checked:
              no (pair, game_index, leg) is recorded twice.
              Then, with the players the pair and leg name: masks, sampling
              offsets and search setting of each side equal to the plan's; a
-             natural untruncated ending, zero hard counters and one real forward
-             per seat per engine step; a game without a searching player carries
-             no search fields. For a game with one: the reward manifest hash,
-             the list of integrity checks, no mask fallback, one opponent-view
-             forward per engine step, the searching seat in sample mode at
-             temperature 1, and the search statistics: in scope >= searched >=
+             natural untruncated ending; exactly the tournament's five hard
+             counters, each an integer zero; mask statistics for exactly the
+             masks of a masked side and none for an unmasked side, each with
+             non-negative integer held, applied and fallback and a mass, and no
+             fallback; one real forward per seat per engine step; a game without
+             a searching player carries no search fields. For a game with one:
+             the reward manifest hash, the list of integrity checks, one
+             opponent-view forward per engine step, the searching seat in sample
+             mode at temperature 1, and the search statistics: in scope >=
+             searched >=
              deviations in every class of the setting's scope, one predicted
              gain and one deviation type per deviation, no error rollout,
              rollouts between 2n and kn per searched decision, every predicted
@@ -97,6 +101,9 @@ SEARCH_FIELDS = ("search", "search_stats", "search_seconds", "reward_manifest_sh
 # harness, so the names are repeated here and a test holds them equal.
 SCHEMA = "bbplay-tournament-game-v1"
 LEGS = ("A_home", "B_home")
+HARD_COUNTERS = ("illegal", "projection_collision", "error_episodes",
+                 "rejected_submissions", "precheck_collisions")
+MASK_STAT_KEYS = ("held", "applied", "fallback", "mass")
 MAX_PROBLEMS = 40
 
 
@@ -355,6 +362,43 @@ def _seat_problems(g, want, pairs):
     return out
 
 
+def _integrity_problems(g, names, want):
+    """What is wrong with a record's integrity evidence: the hard counters, and
+    the statistics of each mask a side played under. Missing evidence is a
+    problem like a nonzero counter."""
+    out = []
+    integrity = g.get("integrity")
+    if not isinstance(integrity, dict) or set(integrity) != set(HARD_COUNTERS):
+        got = list(integrity) if isinstance(integrity, dict) else integrity
+        out.append(f"integrity counters {got} are not exactly {list(HARD_COUNTERS)}")
+    if isinstance(integrity, dict):
+        bad = {k: v for k, v in integrity.items() if not _int(v) or v}
+        if bad:
+            out.append(f"integrity {bad}")
+    mask_stats = g.get("mask_stats")
+    if not _two(mask_stats):
+        return out + ["mask_stats is not a two-element list"]
+    fallbacks = 0
+    for name, got in zip(names, mask_stats):
+        masks = want[name]["masks"]
+        if (sorted(got) if isinstance(got, dict) else got) != (masks or None):
+            out.append(f"{name} has mask statistics for "
+                       f"{sorted(got) if isinstance(got, dict) else got}, registered masks "
+                       f"{masks}")
+            continue
+        for mask, stats in (got or {}).items():
+            if not isinstance(stats, dict) or set(stats) != set(MASK_STAT_KEYS) or \
+                    any(not _int(stats[k]) or stats[k] < 0 for k in MASK_STAT_KEYS[:3]) or \
+                    not _real(stats["mass"]) or stats["mass"] < 0:
+                out.append(f"{name}'s mask {mask} statistics {stats} are not non-negative "
+                           f"{list(MASK_STAT_KEYS)}")
+            else:
+                fallbacks += stats["fallback"]
+    if fallbacks:
+        out.append(f"{fallbacks} mask fallback(s)")
+    return out
+
+
 def _seed_problems(g, seed0, games_in_pair):
     """What is wrong with which game of its pair a record says it is."""
     out = []
@@ -422,9 +466,7 @@ def check_games(games, plan, seed0=None):
         if g.get("natural") is not True or g.get("truncated") is not False:
             problems.append(f"{where}: natural {g.get('natural')!r}, truncated "
                             f"{g.get('truncated')!r}")
-        bad = {k: v for k, v in (g.get("integrity") or {"missing": 1}).items() if v}
-        if bad:
-            problems.append(f"{where}: integrity {bad}")
+        problems += [f"{where}: {p}" for p in _integrity_problems(g, names, want)]
         if g.get("forwards") != [g.get("c_steps")] * 2:
             problems.append(f"{where}: forwards {g.get('forwards')} over {g.get('c_steps')} "
                             "steps")
@@ -439,10 +481,6 @@ def check_games(games, plan, seed0=None):
                             f"registered {block['reward_manifest_sha256']}")
         if g.get("integrity_checks") != block["integrity_checks"]:
             problems.append(f"{where}: its integrity checks are not the registered list")
-        fallbacks = sum(v.get("fallback", 0) for stats in g.get("mask_stats") or []
-                        if stats for v in stats.values())
-        if fallbacks:
-            problems.append(f"{where}: {fallbacks} mask fallback(s)")
         all_stats = g.get("search_stats") or [None, None]
         for side, name in enumerate(names):
             setting = want[name]["search"]
