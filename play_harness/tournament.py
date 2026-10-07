@@ -21,7 +21,10 @@ are interleaved by game index so a partial run stays balanced across pairs.
 
 Integrity. A game is accepted only when it ends naturally (MATCH_OVER), every
 hard counter is zero, and each seat made exactly one forward per engine step.
-Any violation aborts the whole run.
+Any violation aborts the whole run. A resume holds every record already in
+games.jsonl to the same contract and to the manifest's settings for its two
+players (recorded_game_problems) before it plays anything, and refuses the
+run directory when one fails.
 
 Batching (--games-per-worker N, default 1). With N > 1 a worker keeps N games in
 flight and runs ONE forward per policy per step over every seat that holds that
@@ -936,6 +939,104 @@ def check_record(rec):
     return problems
 
 
+SEARCH_RECORD_FIELDS = ("search", "search_stats", "search_seconds", "reward_manifest_sha256",
+                        "integrity_checks", "final_state_sha256", "sampling_state_sha256")
+MAX_RESUME_PROBLEMS = 5
+
+
+def _side(rec, field, side, default=None):
+    value = rec.get(field)
+    return value[side] if value else default
+
+
+def recorded_game_problems(rec, manifest, scheduled):
+    """Why a record found in games.jsonl is not a game this run writes.
+
+    manifest is the run's manifest as JSON holds it, scheduled the task keys of
+    its whole schedule. Checked: the record is a scheduled game on engine seed
+    seed0 + index with its pair seated as its leg seats it; check_record's
+    contract; on each side the bot, mode, temperature, masks, sampling offset and
+    search setting of that side's player in the manifest; for a game with a
+    searching player the reward manifest hash and the integrity checks of the
+    manifest's search entry; for any other game no search field at all.
+    """
+    try:
+        a, b = rec["pair"]
+        index, leg = rec["game_index"], rec["leg"]
+        if task_key(a, b, index, leg) not in scheduled:
+            return [f"{a},{b} game {index} {leg} is not in this run's schedule"]
+        problems = check_record(rec)
+        if rec.get("engine_seed") != manifest["seed0"] + index:
+            problems.append(f"engine seed {rec.get('engine_seed')} is not seed0 + {index}")
+        seats = (a, b) if leg == LEGS[0] else (b, a)
+        if (rec.get("home"), rec.get("away")) != seats:
+            problems.append(f"seats {rec.get('home')},{rec.get('away')} are not the leg's "
+                            f"{seats[0]},{seats[1]}")
+        searching = False
+        for side, name in enumerate(seats):
+            spec = manifest["players"][name]
+            bot = spec.get("bot")
+            searching = searching or bool(spec.get("search"))
+            for what, got, want in (
+                    ("bot", _side(rec, "bots", side), bot),
+                    ("mode", _side(rec, "modes", side), SCRIPTED_MODE if bot else spec["mode"]),
+                    ("temperature", _side(rec, "temperatures", side),
+                     None if bot else spec["temperature"]),
+                    ("masks", _side(rec, "masks", side) or None, spec.get("masks") or None),
+                    ("sampling offset", _side(rec, "seed_offsets", side, 0),
+                     int(spec.get("seed_offset") or 0)),
+                    ("search setting", _side(rec, "search", side), spec.get("search") or None)):
+                if got != want:
+                    problems.append(f"{name}'s {what} {got!r} is not the manifest's {want!r}")
+        if searching:
+            entry = manifest.get("search") or {}
+            if rec.get("reward_manifest_sha256") != (entry.get("reward_manifest") or {}).get("sha256"):
+                problems.append("its reward manifest is not the manifest's")
+            if rec.get("integrity_checks") != entry.get("integrity_checks"):
+                problems.append("its integrity checks are not the manifest's")
+        else:
+            extra = [field for field in SEARCH_RECORD_FIELDS if rec.get(field)]
+            if extra:
+                problems.append(f"no player of the game searches, yet it carries {extra}")
+        return problems
+    except (KeyError, TypeError, ValueError, AttributeError, IndexError) as exc:
+        return [f"malformed record ({type(exc).__name__}: {exc})"]
+
+
+def recorded_games(games_path, manifest, scheduled):
+    """The task keys already in games.jsonl, after holding every record to the
+    manifest. Raises SystemExit naming the first few records that are not games
+    of this run, so a resume never plays on beside them."""
+    done, bad = set(), []
+    if not os.path.exists(games_path):
+        return done
+    manifest = json.loads(json.dumps(manifest))      # tuples and floats as the records hold them
+    with open(games_path) as f:
+        for number, line in enumerate(f, 1):
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                bad.append(f"line {number}: not JSON")
+                continue
+            problems = recorded_game_problems(rec, manifest, scheduled)
+            if not problems:
+                key = task_key(*rec["pair"], rec["game_index"], rec["leg"])
+                if key in done:
+                    problems = [f"{key} is recorded twice"]
+                done.add(key)
+            if problems:
+                bad.append(f"line {number}: " + "; ".join(problems))
+    if bad:
+        more = f"\n  ... and {len(bad) - MAX_RESUME_PROBLEMS} more" \
+            if len(bad) > MAX_RESUME_PROBLEMS else ""
+        raise SystemExit(f"{games_path} holds {len(bad)} record(s) that are not games of this "
+                         "run; nothing was played, use a new --out-dir:\n  "
+                         + "\n  ".join(bad[:MAX_RESUME_PROBLEMS]) + more)
+    return done
+
+
 # ---- worker pool --------------------------------------------------------------
 _W = {}
 
@@ -1291,6 +1392,7 @@ def main(argv=None):
     os.makedirs(args.out_dir, exist_ok=True)
     games_path = os.path.join(args.out_dir, "games.jsonl")
     manifest_path = os.path.join(args.out_dir, "manifest.json")
+    scheduled = {task_key(*t) for t in tasks}
     if args.max_tasks is not None:
         tasks = tasks[:args.max_tasks]
 
@@ -1350,15 +1452,11 @@ def main(argv=None):
         if old.get("index0", 0) != args.index0:
             raise SystemExit(f"existing manifest differs on index0 ({old.get('index0', 0)!r} "
                              f"vs {args.index0!r}); use a new --out-dir")
+    # Before the manifest is rewritten and before anything is played.
+    done = recorded_games(games_path, manifest, scheduled)
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=1)
 
-    done = set()
-    if os.path.exists(games_path):
-        with open(games_path) as f:
-            for line in f:
-                rec = json.loads(line)
-                done.add(task_key(*rec["pair"], rec["game_index"], rec["leg"]))
     pending = [t for t in tasks if task_key(*t) not in done]
     print(f"{len(tasks)} tasks, {len(done)} already recorded, {len(pending)} to play, "
           f"{args.workers} workers"
