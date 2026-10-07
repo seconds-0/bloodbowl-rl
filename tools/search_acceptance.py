@@ -63,7 +63,8 @@ Checked:
              deviations in every class of the setting's scope, one predicted
              gain and one deviation type per deviation, no error rollout,
              rollouts between 2n and kn per searched decision, every predicted
-             gain at least delta, and no deviation at all when delta is inf.
+             gain a finite number at least delta, and no deviation at all when
+             delta is inf.
   each pair  every game the plan registers for it is there; the share of a
              searching player's searched decisions that had a cap rejection is
              at most the plan's ceiling.
@@ -312,6 +313,8 @@ def _stat_problems(stats, setting, c_steps):
     searched = sum(stats["searched"].values())
     deviations = sum(stats["deviations"].values())
     gains, types = stats["predicted_gains"], stats["deviation_types"]
+    if not isinstance(gains, list) or not all(_real(gain) for gain in gains):
+        return out + ["a predicted gain is not a finite number"]
     if len(gains) != deviations or sum(types.values()) != deviations:
         out.append(f"{deviations} deviations, {len(gains)} predicted gains, "
                    f"{sum(types.values())} deviation types")
@@ -337,7 +340,9 @@ def _stat_problems(stats, setting, c_steps):
     if setting["delta"] == "inf":
         if deviations:
             out.append(f"{deviations} deviation(s) at delta inf")
-    elif any(not isinstance(g, (int, float)) or g < setting["delta"] for g in gains):
+    elif any(gain < setting["delta"] for gain in gains):
+        # Not a strict comparison: the seat deviates on gain > delta and records
+        # the gain rounded to six decimals, which can equal delta.
         out.append(f"a predicted gain below delta {setting['delta']}")
     return out
 

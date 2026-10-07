@@ -758,3 +758,25 @@ def test_a_game_without_its_integrity_evidence_is_rejected(tmp_path, change, nee
     change(rows)
     problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
     assert any(needle in problem for problem in problems), problems
+
+
+# ---- predicted gains (review finding 4) -------------------------------------------------------
+@pytest.mark.parametrize("gain", [float("nan"), float("inf"), float("-inf"), True, "0.5", None,
+                                  [0.5]])
+def test_a_predicted_gain_that_is_not_a_finite_number_is_rejected(tmp_path, gain):
+    """The review's false pass: NaN and infinity are not below delta, so they
+    passed the comparison. A game is aborted before it records such a gain."""
+    rows = games()
+    _stat(rows, predicted_gains=[0.11, 0.12, gain])
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any("a predicted gain is not a finite number" in p for p in problems), problems
+
+
+def test_a_gain_recorded_at_delta_is_accepted():
+    """The seat deviates on gain > delta and records the gain rounded to six
+    decimals, so a recorded gain may equal delta and never lies below it."""
+    rows = games()
+    _stat(rows, predicted_gains=[0.1, 0.1, 0.100001])
+    assert sa.check_games(rows, plan())[0] == []
+    _stat(rows, predicted_gains=[0.1, 0.1, 0.099999])
+    assert any("a predicted gain below delta 0.1" in p for p in sa.check_games(rows, plan())[0])
