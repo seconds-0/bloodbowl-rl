@@ -252,10 +252,40 @@ def test_a_manifest_off_the_plan_is_rejected(change, needle):
     assert any(needle in problem for problem in sa.check_manifest(m, plan()))
 
 
-def test_a_manifest_without_games_per_worker_was_played_unbatched():
+@pytest.mark.parametrize("change, needle", [
+    # A harness that can search always writes games_per_worker.
+    (lambda m: m.pop("games_per_worker"), "games_per_worker None: a searched run is played"),
+    (lambda m: m.update(games_per_worker=True), "games_per_worker True: a searched run"),
+    (lambda m: m.update(games_per_worker="1"), "games_per_worker 1: a searched run"),
+    (lambda m: m.update(players=sorted(m["players"])), "manifest players are not an object"),
+    (lambda m: m.pop("players"), "manifest players are not an object"),
+    (lambda m: m["search"].update(players="SI"), "manifest search players SI != registered"),
+    (lambda m: m["search"].update(players=None), "manifest search players None != registered"),
+    (lambda m: m["search"].update(reward_manifest=SHA), "manifest reward manifest None"),
+    (lambda m: m["search"].pop("reward_manifest"), "manifest reward manifest None"),
+    (lambda m: m["search"].pop("integrity_checks"), "manifest's integrity checks"),
+    (lambda m: m.update(search=[]), "the manifest has no search entry"),
+])
+def test_a_manifest_that_cannot_be_read_is_rejected(change, needle):
     m = manifest()
-    del m["games_per_worker"]
-    assert sa.check_manifest(m, plan()) == []
+    change(m)
+    assert any(needle in problem for problem in sa.check_manifest(m, plan())), needle
+
+
+def test_a_run_without_search_has_no_search_entry_at_all():
+    p = plan()
+    p["players"] = {k: v for k, v in p["players"].items() if k in ("C", "chain37", "P")}
+    p["pairs"] = [["C", "chain37", 4], ["P", "C", 4]]
+    del p["search"]
+    m = manifest()
+    m["players"] = {k: v for k, v in m["players"].items() if k in p["players"]}
+    m["pairs"] = p["pairs"]
+    for entry in ({}, None, []):
+        m["search"] = entry
+        assert sa.check_manifest(m, p) == ["the manifest has a search entry and no player is "
+                                           "registered to search"]
+    del m["search"], m["games_per_worker"]                 # a plain run may predate batching
+    assert sa.check_manifest(m, p) == []
 
 
 # ---- the games --------------------------------------------------------------------------------

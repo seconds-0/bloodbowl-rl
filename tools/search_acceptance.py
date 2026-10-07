@@ -305,7 +305,9 @@ def check_manifest(manifest, plan):
         got = manifest.get("pairs")
         if not isinstance(got, list) or sorted(got, key=repr) != sorted(listed, key=repr):
             problems.append(f"manifest pairs differ from the registered: {got} != {listed}")
-    players = manifest.get("players") or {}
+    players = manifest.get("players")
+    if not isinstance(players, dict):
+        return problems + ["manifest players are not an object"]
     if sorted(players) != sorted(want):
         problems.append(f"manifest players {sorted(players)} != registered {sorted(want)}")
     for name, reg in want.items():
@@ -337,20 +339,22 @@ def check_manifest(manifest, plan):
     searching = sorted(name for name, reg in want.items() if reg["search"])
     entry = manifest.get("search")
     if not searching:
-        if entry:
+        # The tournament writes the key only into a run with a searching player.
+        if "search" in manifest:
             problems.append("the manifest has a search entry and no player is registered "
                             "to search")
         return problems
     gpw = manifest.get("games_per_worker")
-    if (1 if gpw is None else gpw) != 1:
+    if not _is(gpw, 1):
         problems.append(f"games_per_worker {gpw}: a searched run is played unbatched (1)")
     if not isinstance(entry, dict):
         problems.append("the manifest has no search entry")
         return problems
-    if sorted(entry.get("players") or []) != searching:
-        problems.append(f"manifest search players {entry.get('players')} != registered "
-                        f"{searching}")
-    got = (entry.get("reward_manifest") or {}).get("sha256")
+    listed = entry.get("players")
+    if not isinstance(listed, list) or sorted(listed, key=repr) != searching:
+        problems.append(f"manifest search players {listed} != registered {searching}")
+    got = entry.get("reward_manifest")
+    got = got.get("sha256") if isinstance(got, dict) else None
     if got != block["reward_manifest_sha256"]:
         problems.append(f"manifest reward manifest {got} != registered "
                         f"{block['reward_manifest_sha256']}")
