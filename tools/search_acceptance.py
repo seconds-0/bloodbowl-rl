@@ -531,8 +531,9 @@ def _integrity_problems(g, names, want):
 
 
 def _result_problems(g):
-    """What is wrong with a record's step count and result. a_td, b_td and
-    result_a are what a scorer reads, so they must be the score from A's side."""
+    """What is wrong with a record's step count, the digests of what was played
+    and the result. a_td, b_td and result_a are what a scorer reads, so they
+    must be the score from A's side."""
     out = []
     steps = g.get("c_steps")
     if not _int(steps) or steps <= 0:
@@ -540,6 +541,11 @@ def _result_problems(g):
     elif g.get("forwards") != [steps] * 2:
         out.append(f"forwards {g.get('forwards')} over {steps} steps")
     score = g.get("score")
+    # The step count, score and sampling seeds are held above and by the caller.
+    unusable = [f for f in ("action_trail_sha256", "final_digest", "logprob_sum", "team_ids")
+                if not IDENTITY_SHAPES[f](g.get(f))]
+    if unusable:
+        out.append(f"has no usable {unusable}")
     if not _two(score, lambda v: _int(v) and v >= 0):
         return out + [f"score {score} is not two integers >= 0"]
     a_td, b_td = score if g["leg"] == LEGS[0] else score[::-1]

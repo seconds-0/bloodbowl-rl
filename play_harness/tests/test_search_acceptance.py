@@ -1079,3 +1079,14 @@ def test_a_plan_whose_search_setting_cannot_be_read_is_refused(change):
     p["players"]["S"]["search"].update(change)
     with pytest.raises(ValueError, match="S's search setting needs k and n as integers >= 2"):
         sa.registered(p)
+
+
+@pytest.mark.parametrize("field", ["action_trail_sha256", "final_digest", "logprob_sum",
+                                   "team_ids"])
+def test_every_game_carries_the_fields_an_identity_check_would_compare(field):
+    """Held on the identity pairs by the comparison; a game of any other pair
+    is the same kind of record and must carry them too."""
+    rows = games()
+    del _plain(rows)[field]
+    problems, _ = sa.check_games(rows, plan())
+    assert problems == [f"['C', 'chain37'] seed 25100000 A_home: has no usable ['{field}']"]
