@@ -15,7 +15,10 @@ What it reads from the plan (other keys are ignored):
 
   "players": {NAME: {"masks": [...],            # [] or absent: unmasked
                      "sampling_offset": K,      # 0 or absent: none
-                     "search": {...}}},         # absent: the player does not search
+                     "mode": "sample",          # absent: sample
+                     "temperature": 1.0,        # absent: 1
+                     "search": {...}},          # absent: the player does not search
+              BOT: {"bot": "offense"}},         # a scripted bot: its kind and nothing else
   "pairs": [[A, B, GAMES], ...],                # the schedule, as the gate plan lists it
   "seed0": N,                                   # game i of a pair runs on seed N + i
   "search": {"reward_manifest_sha256": "...",   # required when a player searches
@@ -33,52 +36,83 @@ print(json.dumps(S.search_setting(), indent=1))"
 accept() takes a plan without them: seats and seeds are then still held (seeds
 to the manifest's seed0), but not which pairs played or how many games.
 
-Checked:
-  the plan   pairs are two different registered players with a positive even
-             number of games, no pair twice; seed0 is an integer; an identity
-             entry's two pairs are in pairs and the plain pair has as many games.
-  manifest   the registered players and no others; each one's masks, sampling
-             offset and search setting; an integer seed0, equal to the plan's;
-             pairs equal to the plan's. With a searching player: games_per_worker
-             1, the reward manifest hash and the list of integrity checks.
-             Without one: no search entry.
-  each game  the record is an object of the tournament's schema; pair is two
-             different players and leg is A_home or B_home; home and away are
-             the pair seated for that leg, both registered, and the pair is in
-             the plan's pairs; game_index is an integer >= 0 inside the pair's
-             registered games; engine_seed is seed0 + game_index; episode is 0;
-             no (pair, game_index, leg) is recorded twice.
-             Then, with the players the pair and leg name: masks, sampling
-             offsets and search setting of each side equal to the plan's; a
-             natural untruncated ending; exactly the tournament's five hard
-             counters, each an integer zero; mask statistics for exactly the
-             masks of a masked side and none for an unmasked side, each with
-             non-negative integer held, applied and fallback and a mass, and no
-             fallback; one real forward per seat per engine step; a game without
-             a searching player carries no search fields. For a game with one:
-             the reward manifest hash, the list of integrity checks, one
-             opponent-view forward per engine step, the searching seat in sample
-             mode at temperature 1, and the search statistics: in scope >=
-             searched >=
-             deviations in every class of the setting's scope, one predicted
-             gain and one deviation type per deviation, no error rollout,
-             rollouts between 2n and kn per searched decision, every predicted
-             gain a finite number at least delta, and no deviation at all when
-             delta is inf.
-  each pair  every game the plan registers for it is there; the share of a
-             searching player's searched decisions that had a cap rejection is
-             at most the plan's ceiling.
+A field a record or the manifest lacks is a problem, never a default. Checked:
+
+  the plan   every player can be read: a bot has a kind and nothing else; masks
+             are a list of names, the sampling offset an integer >= 0, the mode
+             sample or argmax, the temperature above 0; a search setting has
+             exactly its twelve keys, k and n integers >= 2, delta a number >= 0
+             or "inf", scope a list of classes, and its player is masked and
+             samples at temperature 1. With a searching player: the search
+             block's reward manifest hash (equal to each setting's), its list
+             of integrity checks and a ceiling in [0, 1]. An identity entry
+             names two pairs, the first with exactly one searching player at
+             delta inf, the second with none. pairs are two different registered
+             players with a positive even number of games, no pair twice; seed0
+             is an integer; an identity entry's pairs are in pairs and its plain
+             pair has at least as many games.
+  manifest   the registered players and no others; each one's bot kind, mode,
+             temperature, masks, sampling offset and search setting; an integer
+             seed0, equal to the plan's; pairs equal to the plan's. With a
+             searching player: games_per_worker is the integer 1, and the search
+             entry lists the searching players, the reward manifest hash and
+             the integrity checks. Without one: no search key.
+  each game  Who played: the record is an object of the tournament's schema;
+             pair is two different players and leg is A_home or B_home; home
+             and away are the pair seated for that leg, both registered;
+             game_index is an integer >= 0; engine_seed is seed0 + game_index;
+             episode is 0; no (pair, game_index, leg) is recorded twice. When
+             the plan lists pairs: the pair is one of them and game_index is
+             inside its registered games.
+             Each side, as the plan registers the player the pair and leg put
+             there: bot kind, mode, temperature, masks (null when unmasked),
+             sampling offset, and the sampling seed that the engine seed, the
+             side and the registered offset give.
+             The game: a natural untruncated ending; exactly the tournament's
+             five hard counters, each an integer zero; mask statistics for
+             exactly the masks of a masked side and none for an unmasked side,
+             each with non-negative integer held, applied and fallback and a
+             mass, and no fallback; c_steps a positive integer and one real
+             forward per seat per step; the action trail and final digest as hex
+             digests, two finite log-probability sums and two team ids; a score
+             of two integers >= 0, with a_td, b_td and result_a equal to it from
+             A's side.
+             A game without a searching player carries none of the search keys
+             (search [null, null] is let through).
+             A game with one: the reward manifest hash and the list of integrity
+             checks; final_state_sha256 and sampling_state_sha256 as sha256 hex;
+             search, search_stats and search_seconds as two-element lists; each
+             side's setting equal to the plan's; no statistics and no search
+             time on a side that does not search; a search time >= 0 on one that
+             does, and its statistics: exactly the thirteen keys; in scope >=
+             searched >= deviations in every class of the setting's scope, all
+             non-negative integers; at least one searched decision; one finite
+             predicted gain and one deviation type per deviation, the types
+             positive counts that match the deviations class by class; no error
+             rollout; one opponent-view forward per engine step; rollouts a
+             multiple of n, between 2n and kn per searched decision, and no
+             fewer rollout steps; cap rejections within the searched decisions
+             and the rollouts, and never on a decision that deviated; cutoff
+             rollouts within the rollouts; every predicted gain at least delta,
+             and no deviation at all when delta is inf.
+  the run    every registered searching player played a game; when the plan
+             lists pairs, every game it registers for a pair is there; per pair,
+             the share of a searching player's searched decisions that had a cap
+             rejection is at most the plan's ceiling.
   identity   for each listed pair of pairs: the `search` pair (whose searching
              player has delta inf) has a game, and every one of its games has
              exactly one game of the `plain` pair on the same seed and leg and
              equals it on action trail, final digest, log-probability sums,
              score, steps, rosters and sampling seeds. Each of those fields must
-             be there in both records and be what a game writes (a 64-digit and
-             a 16-digit hex digest, two finite numbers, two integers, a positive
-             integer). The searching seat's statistics pass the checks above,
-             with at least one searched decision, so at least 2n rollouts for
-             each, and no deviation. When the plan lists pairs, the number of
-             games that match is the number registered for the `search` pair.
+             be there in both records and be what a game writes. The searching
+             seat's statistics pass the checks above, so it searched at least
+             one decision, ran at least 2n rollouts for each and never deviated.
+             When the plan lists pairs, the number of games that match is the
+             number registered for the `search` pair.
+
+Not checked here: COMPLETE.json, the harness commit and the checkpoint hashes
+(gate_acceptance.py holds them), and the manifest's bot source hashes, compiled
+library hash and kernel, which no plan registers yet.
 
 Exit 0 and print SEARCH-ACCEPTED only when every check passes. Stdlib only.
 """
