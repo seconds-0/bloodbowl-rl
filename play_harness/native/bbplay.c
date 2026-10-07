@@ -14,7 +14,9 @@
 //   * a submitted tuple is checked against exact joint support BEFORE c_step,
 //     because c_step abort()s the process on an out-of-support tuple;
 //   * c_step auto-resets the env at the terminal step, so the natural final
-//     state is rebuilt by re-applying the terminal action to a pre-step copy.
+//     state is rebuilt by re-applying the terminal action to a pre-step copy;
+//   * a session can be copied for search (bbp_clone_for_search). A copy never
+//     carries the source's dice stream: see the clone section below.
 #include "bloodbowl.h"
 
 #define BBP_ABI_VERSION 5
@@ -28,6 +30,12 @@
 #define BBP_STEP_OVER -4          // session already reached a terminal step
 #define BBP_STEP_NOT_BOT_TURN -5  // scripted step while the other coach decides
 #define BBP_STEP_BAD_BOT -6       // unknown scripted bot type
+
+// Reasons bbp_clone_for_search and bbp_copy_into refuse.
+#define BBP_CLONE_OK 0
+#define BBP_CLONE_BAD_ARGS -1     // NULL, dst == src, or dst is not a clone
+#define BBP_CLONE_REAL_STREAM -2  // the stream id is the real dice stream's
+#define BBP_CLONE_TERMINAL -3     // the source already reached a terminal step
 
 // Scripted bot types, the env's scripted_opponent_type values (bloodbowl.ini).
 #define BBP_BOT_CONTACT 0         // bbe_contact_bot_pick (contact_bot.h)
@@ -55,6 +63,10 @@ typedef struct {
     // because c_step's auto-reset clears the env's own tally.
     bb_stall_tally pre_stall;
     bb_stall_tally final_stall;
+    // 1 for a search copy (bbp_clone_for_search): its dice are its own, it
+    // leaves the thread's stalling sink as it found it, and once terminal it
+    // gives no observation (the env has reset to the next procgen match).
+    int clone;
 } bbp_session;
 
 int bbp_abi_version(void) { return BBP_ABI_VERSION; }
@@ -276,13 +288,25 @@ int bbp_reward_table(bbp_session* s, float* out, int cap) {
     return BBP_REWARD_COUNT;
 }
 
-void bbp_destroy(bbp_session* s) { free(s); }
+// c_step leaves this thread's stalling sink on the env it stepped. Freeing
+// that env must not leave the sink pointing into freed memory.
+static void bbp_release(bbp_session* s) {
+    if (!s) return;
+    if (bb_stall_attached() == &s->env.ep_stall) bb_stall_attach(NULL);
+    free(s);
+}
 
+void bbp_destroy(bbp_session* s) { bbp_release(s); }
+
+// NULL for a terminal clone: what its buffers hold then is the next procgen
+// match, which a rollout must never read as the state after the game.
 const uint8_t* bbp_obs(bbp_session* s, int agent) {
+    if (s->clone && s->terminal) return NULL;
     return (agent == 0 || agent == 1) ? s->env.obs_ptr[agent] : NULL;
 }
 
 const unsigned char* bbp_mask(bbp_session* s, int agent) {
+    if (s->clone && s->terminal) return NULL;
     return (agent == 0 || agent == 1) ? s->env.action_mask_ptr[agent] : NULL;
 }
 
@@ -417,9 +441,7 @@ static int bbp_run_c_step(bbp_session* s, bb_action act, int agent) {
     return BBP_STEP_OK;
 }
 
-// Apply the deciding coach's tuple through the real c_step. Never aborts on
-// bad input: the tuple is validated against exact support first.
-int bbp_step(bbp_session* s, int t, int arg, int sq) {
+static int bbp_step_real(bbp_session* s, int t, int arg, int sq) {
     Bloodbowl* env = &s->env;
     if (s->terminal) return BBP_STEP_OVER;
     if (env->match.status != BB_STATUS_DECISION || env->n_legal <= 0) {
@@ -444,12 +466,31 @@ int bbp_step(bbp_session* s, int t, int arg, int sq) {
     return bbp_run_c_step(s, act, agent);
 }
 
+// After a step of a clone, on every return path: put this thread's stalling
+// sink back where it was (c_step moved it to the clone, which is scratch and
+// may be freed next), and drop the dice stream of a clone that just ended,
+// because the env's terminal reset reseeded it from the copied real seed.
+static int bbp_clone_step_done(bbp_session* s, bb_stall_tally* prev, int rc) {
+    if (s->clone) {
+        bb_stall_attach(prev);
+        if (rc == BBP_STEP_TERMINAL) memset(&s->env.rng, 0, sizeof s->env.rng);
+    }
+    return rc;
+}
+
+// Apply the deciding coach's tuple through the real c_step. Never aborts on
+// bad input: the tuple is validated against exact support first.
+int bbp_step(bbp_session* s, int t, int arg, int sq) {
+    bb_stall_tally* prev = bb_stall_attached();
+    return bbp_clone_step_done(s, prev, bbp_step_real(s, t, arg, sq));
+}
+
 // Let the engine's scripted bot decide for `team` through c_step's own
 // scripted_opponent branch: the env carries scripted_opponent = 1 with this
 // type and team for the one step (bank tag 0, the frozen-eval setting), then
 // the fields go back to the bbp_create values. Both action rows hold the NONE
 // tuple, which that branch never reads.
-int bbp_step_scripted(bbp_session* s, int bot_type, int team) {
+static int bbp_step_scripted_real(bbp_session* s, int bot_type, int team) {
     Bloodbowl* env = &s->env;
     if (s->terminal) return BBP_STEP_OVER;
     if (bot_type != BBP_BOT_CONTACT && bot_type != BBP_BOT_OFFENSE) {
@@ -473,6 +514,11 @@ int bbp_step_scripted(bbp_session* s, int bot_type, int team) {
     return rc;
 }
 
+int bbp_step_scripted(bbp_session* s, int bot_type, int team) {
+    bb_stall_tally* prev = bb_stall_attached();
+    return bbp_clone_step_done(s, prev, bbp_step_scripted_real(s, bot_type, team));
+}
+
 // Legal actions after applying a tuple on a scratch copy of the session.
 // Used for UI lookahead (the action menu shown before ACTIVATE is committed).
 // The real match, its dice stream and the policy are untouched. Returns the
@@ -484,12 +530,92 @@ int bbp_peek_legal(bbp_session* s, int t, int arg, int sq, uint8_t* actions4,
     if (!c) return -1;
     memcpy(c, s, sizeof(bbp_session));
     bbp_wire(c);
-    int rc = bbp_step(c, t, arg, sq);
+    bb_stall_tally* prev = bb_stall_attached();
+    int rc = bbp_step_real(c, t, arg, sq);
     int n = rc == BBP_STEP_OK ? bbp_legal(c, actions4, proj2, cap)
                               : (rc == BBP_STEP_TERMINAL ? -2 : -1);
     free(c);
-    bb_stall_attach(&s->env.ep_stall);
+    bb_stall_attach(prev);
     return n;
+}
+
+// ---- Search clones -----------------------------------------------------------
+//
+// A clone is a whole-session copy that can be stepped with bbp_step and read
+// like any session. The match holds dice already rolled and no future dice;
+// those live in env.rng, which a memcpy would carry over. So every exported
+// way to make a copy reseeds that stream, and none takes the real stream's id:
+// a search that steps a clone rolls its own dice, never the real game's next
+// ones. bbp_test_copy_dice below is the single exception, for tests.
+
+// c_reset seeds env.rng as PCG32 (seed + episode * 7919, stream 1).
+#define BBP_REAL_DICE_STREAM 1u
+
+// PCG32 keeps (stream << 1) | 1, so two ids that differ only in the top bit
+// name the same sequence.
+static int bbp_is_real_stream(uint64_t stream) {
+    return (stream << 1u) == ((uint64_t)BBP_REAL_DICE_STREAM << 1u);
+}
+
+// BBP_CLONE_OK when `src` may be copied onto the dice stream `stream`.
+int bbp_clone_refusal(const bbp_session* src, uint64_t stream) {
+    if (!src) return BBP_CLONE_BAD_ARGS;
+    if (bbp_is_real_stream(stream)) return BBP_CLONE_REAL_STREAM;
+    if (src->terminal) return BBP_CLONE_TERMINAL;
+    return BBP_CLONE_OK;
+}
+
+static void bbp_copy_reseeded(bbp_session* dst, const bbp_session* src,
+                              uint64_t seed, uint64_t stream) {
+    memcpy(dst, src, sizeof(bbp_session));
+    bbp_wire(dst);
+    dst->clone = 1;
+    // Zeroed first so no byte of the source's stream survives, padding
+    // included; bb_rng_seed then clears the script and sink pointers too.
+    memset(&dst->env.rng, 0, sizeof dst->env.rng);
+    bb_rng_seed(&dst->env.rng, seed, stream);
+}
+
+// A copy of `s` whose dice are PCG32 (seed, stream). NULL when refused
+// (bbp_clone_refusal) or out of memory. Free with bbp_free_clone.
+bbp_session* bbp_clone_for_search(const bbp_session* s, uint64_t seed,
+                                  uint64_t stream) {
+    if (bbp_clone_refusal(s, stream) != BBP_CLONE_OK) return NULL;
+    bbp_session* c = (bbp_session*)malloc(sizeof(bbp_session));
+    if (!c) return NULL;
+    bbp_copy_reseeded(c, s, seed, stream);
+    return c;
+}
+
+// bbp_clone_for_search into a clone that is already allocated. dst is left
+// untouched when the copy is refused.
+int bbp_copy_into(bbp_session* dst, const bbp_session* src, uint64_t seed,
+                  uint64_t stream) {
+    if (!dst || dst == src || !dst->clone) return BBP_CLONE_BAD_ARGS;
+    int refusal = bbp_clone_refusal(src, stream);
+    if (refusal != BBP_CLONE_OK) return refusal;
+    bbp_copy_reseeded(dst, src, seed, stream);
+    return BBP_CLONE_OK;
+}
+
+// Frees a clone; a real session is left alone (bbp_destroy owns those).
+void bbp_free_clone(bbp_session* s) {
+    if (s && s->clone) bbp_release(s);
+}
+
+// TEST ONLY. Gives dst the dice stream of src, so a clone can replay the real
+// game's dice (clone fidelity and oracle rollout tests) and a root's stream can
+// be replaced. This is the one way a copy comes to hold real dice; nothing
+// under play_harness/ outside tests/ may call it (test_search_clone.py greps).
+void bbp_test_copy_dice(bbp_session* dst, const bbp_session* src) {
+    dst->env.rng = src->env.rng;
+}
+
+// TEST ONLY. 1 when this thread's stalling sink is s's tally; with s NULL, 1
+// when no sink is attached.
+int bbp_test_stall_attached(const bbp_session* s) {
+    const bb_stall_tally* want = s ? &s->env.ep_stall : NULL;
+    return bb_stall_attached() == want;
 }
 
 // Integrity and bookkeeping counters.
@@ -556,7 +682,8 @@ uint64_t bbp_state_digest(bbp_session* s) {
 // legal list and its projections, the encode caches, the counters, the
 // stalling tally, both output buffers and the session's own flags. Reward
 // coefficients, reward state and the Log are left out, so two sessions that
-// differ only in their reward table share this digest at every step.
+// differ only in their reward table share this digest at every step. So do a
+// clone and its source while they hold the same dice.
 uint64_t bbp_env_digest(bbp_session* s) {
     const Bloodbowl* env = &s->env;
     uint64_t h = bbp_state_digest(s);

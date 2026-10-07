@@ -41,6 +41,15 @@ STEP_OVER = -4
 STEP_NOT_BOT_TURN = -5
 STEP_BAD_BOT = -6
 
+# The dice stream id of every real session (c_reset in bloodbowl.h). A search
+# clone is refused it.
+REAL_DICE_STREAM = 1
+CLONE_REFUSALS = {
+    -1: "bad arguments (the target must be a clone other than the source)",
+    -2: "the stream id is the real dice stream's",
+    -3: "the source session already reached a terminal step",
+}
+
 # The env's scripted_opponent_type values (puffer/config/bloodbowl.ini) and the
 # engine pick function each one dispatches to in c_step.
 BOT_TYPES = {"contact": 0, "offense": 1}
@@ -215,6 +224,12 @@ def load_library(path=None, build_if_missing=True):
         "bbp_reward_table": ([c_p, ctypes.POINTER(ctypes.c_float), ctypes.c_int],
                              ctypes.c_int),
         "bbp_destroy": ([c_p], None),
+        "bbp_clone_refusal": ([c_p, ctypes.c_uint64], ctypes.c_int),
+        "bbp_clone_for_search": ([c_p, ctypes.c_uint64, ctypes.c_uint64], c_p),
+        "bbp_copy_into": ([c_p, c_p, ctypes.c_uint64, ctypes.c_uint64], ctypes.c_int),
+        "bbp_free_clone": ([c_p], None),
+        "bbp_test_copy_dice": ([c_p, c_p], None),
+        "bbp_test_stall_attached": ([c_p], ctypes.c_int),
         "bbp_obs": ([c_p, ctypes.c_int], ctypes.POINTER(ctypes.c_uint8)),
         "bbp_mask": ([c_p, ctypes.c_int], ctypes.POINTER(ctypes.c_uint8)),
         "bbp_match": ([c_p], ctypes.POINTER(BbMatch)),
@@ -382,6 +397,14 @@ def load_reward_manifest(path, lib=None):
             "file_sha256": hashlib.sha256(raw).hexdigest(), "rewards": rewards}
 
 
+class CloneRefused(ValueError):
+    """The shim would not copy a session for search (CLONE_REFUSALS)."""
+
+
+def _u64(value):
+    return ctypes.c_uint64(int(value) & 0xFFFFFFFFFFFFFFFF)
+
+
 class Engine:
     """One match on the real env TU. Two agent rows, 0 = HOME, 1 = AWAY.
 
@@ -408,6 +431,10 @@ class Engine:
             self._ptr = self.lib.bbp_create_rewards(*args, table, len(table))
         if not self._ptr:
             raise MemoryError("bbp_create failed")
+        self.is_clone = False
+        self._alloc_buffers()
+
+    def _alloc_buffers(self):
         cap = self.lib.bbp_legal_max()
         self._act_buf = (ctypes.c_uint8 * (4 * cap))()
         self._proj_buf = (ctypes.c_uint16 * (2 * cap))()
@@ -416,8 +443,47 @@ class Engine:
 
     def close(self):
         if self._ptr:
-            self.lib.bbp_destroy(self._ptr)
+            (self.lib.bbp_free_clone if self.is_clone else self.lib.bbp_destroy)(self._ptr)
             self._ptr = None
+
+    # ---- search clones ---------------------------------------------------
+    def clone_for_search(self, seed, stream):
+        """A copy of this session on its own dice stream, PCG32(seed, stream).
+
+        The copy never holds this session's dice: it is always reseeded, and the
+        real stream's id is refused. Step and read it like any Engine; once it
+        reaches the end of the match it refuses steps and observations. Nothing
+        done to it changes this session.
+        """
+        ptr = self.lib.bbp_clone_for_search(self._ptr, _u64(seed), _u64(stream))
+        if not ptr:
+            refusal = self.lib.bbp_clone_refusal(self._ptr, _u64(stream))
+            if refusal:
+                raise CloneRefused(CLONE_REFUSALS[refusal])
+            raise MemoryError("bbp_clone_for_search failed")
+        clone = object.__new__(type(self))
+        clone.lib = self.lib
+        clone.seed, clone.episode = self.seed, self.episode
+        clone.home_team, clone.away_team = self.home_team, self.away_team
+        clone._ptr = ptr
+        clone.is_clone = True
+        clone._alloc_buffers()
+        return clone
+
+    def copy_from(self, source, seed, stream):
+        """clone_for_search into this clone, reusing its allocation."""
+        refusal = self.lib.bbp_copy_into(self._ptr, source._ptr, _u64(seed), _u64(stream))
+        if refusal:
+            raise CloneRefused(CLONE_REFUSALS[refusal])
+        return self
+
+    def _test_copy_dice_from(self, source):
+        """TEST ONLY: take `source`'s dice stream (bbp_test_copy_dice)."""
+        self.lib.bbp_test_copy_dice(self._ptr, source._ptr)
+
+    def _test_stall_attached(self):
+        """TEST ONLY: this thread's stalling sink is this session's tally."""
+        return bool(self.lib.bbp_test_stall_attached(self._ptr))
 
     def __del__(self):
         try:
@@ -428,10 +494,14 @@ class Engine:
     # ---- raw env surface -------------------------------------------------
     def obs(self, agent):
         ptr = self.lib.bbp_obs(self._ptr, int(agent))
+        if not ptr:
+            raise ValueError("no observation: bad agent, or a clone past the end of its match")
         return np.ctypeslib.as_array(ptr, shape=(OBS_SIZE,)).copy()
 
     def mask(self, agent):
         ptr = self.lib.bbp_mask(self._ptr, int(agent))
+        if not ptr:
+            raise ValueError("no mask: bad agent, or a clone past the end of its match")
         return np.ctypeslib.as_array(ptr, shape=(MASK_SIZE,)).copy()
 
     @property
