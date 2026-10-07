@@ -387,3 +387,38 @@ def test_t9_a_crowd_roll_is_counted_once_in_the_session_that_rolled_it(rewards, 
     assert busy.step(*trail[-1]) == E.STEP_OK
     assert busy.stall_counts() == want
     assert busy.digest() == plain.digest() == twin.digest()
+
+
+def test_t9_a_failed_step_of_a_clone_leaves_the_stalling_sink_alone(rewards):
+    """Every refusal of bbp_step and bbp_step_scripted on a clone, then the steps
+    that work, to the end of the clone's match: the sink stays on the real env."""
+    real = E.Engine(603, rewards=rewards)
+    _advance(real, random.Random(603), 200)
+    before = _readable(real)
+    clone = real.clone_for_search(1, STREAM)
+    team = clone.decision_team
+    contact = E.BOT_TYPES["contact"]
+
+    def sink_is_on_the_real_env():
+        return real._test_stall_attached() and not clone._test_stall_attached()
+
+    assert sink_is_on_the_real_env()
+    assert clone.step_scripted(7, team) == E.STEP_BAD_BOT
+    assert sink_is_on_the_real_env()
+    assert clone.step_scripted(contact, 1 - team) == E.STEP_NOT_BOT_TURN
+    assert sink_is_on_the_real_env()
+    assert clone.step(E.A["STEP"], 40, 999) == E.STEP_REJECTED
+    assert sink_is_on_the_real_env()
+    steps = 0
+    while True:
+        rc = clone.step_scripted(contact, clone.decision_team)
+        assert sink_is_on_the_real_env()
+        steps += 1
+        if rc == E.STEP_TERMINAL:
+            break
+        assert rc == E.STEP_OK
+    assert steps > 50
+    assert clone.step_scripted(contact, 0) == E.STEP_OVER
+    assert clone.step(E.A["STEP"], 40, 999) == E.STEP_OVER
+    assert sink_is_on_the_real_env()
+    assert _readable(real) == before
