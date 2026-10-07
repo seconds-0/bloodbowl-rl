@@ -583,6 +583,12 @@ class Engine:
     def match(self):
         return BbMatch.from_buffer_copy(self.lib.bbp_match(self._ptr).contents)
 
+    def turns_completed(self):
+        """(HOME, AWAY) team turns completed so far: the engine's monotonic counters,
+        bumped where a team turn ends, a touchdown that unwinds the turn included."""
+        m = self.lib.bbp_match(self._ptr).contents
+        return int(m.turns_completed[0]), int(m.turns_completed[1])
+
     def final_match(self):
         ptr = self.lib.bbp_final_match(self._ptr)
         return BbMatch.from_buffer_copy(ptr.contents) if ptr else None
