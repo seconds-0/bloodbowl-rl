@@ -547,11 +547,6 @@ def check_games(games, plan, seed0=None):
             if seen[(pair, g["game_index"], g["leg"])] == 2:
                 problems.append(f"{where}: recorded more than once")
         problems += [f"{where}: {p}" for p in _side_problems(g, names, want)]
-        settings = g.get("search") or [None, None]
-        for side, name in enumerate(names):
-            if (settings[side] or None) != want[name]["search"]:
-                problems.append(f"{where}: {name}'s search setting {settings[side]} != "
-                                f"registered {want[name]['search']}")
         if g.get("natural") is not True or g.get("truncated") is not False:
             problems.append(f"{where}: natural {g.get('natural')!r}, truncated "
                             f"{g.get('truncated')!r}")
@@ -560,8 +555,10 @@ def check_games(games, plan, seed0=None):
             problems.append(f"{where}: forwards {g.get('forwards')} over {g.get('c_steps')} "
                             "steps")
         if not any(want[name]["search"] for name in names):
-            extra = sorted(key for key in SEARCH_FIELDS if g.get(key))
-            if extra and not (extra == ["search"] and not any(settings)):
+            # The tournament writes none of these keys into such a game.
+            extra = sorted(key for key in SEARCH_FIELDS
+                           if key in g and (key != "search" or g[key] != [None, None]))
+            if extra:
                 problems.append(f"{where}: no registered search, yet the game carries {extra}")
             continue
         counts["searched_games"] += 1
@@ -570,13 +567,33 @@ def check_games(games, plan, seed0=None):
                             f"registered {block['reward_manifest_sha256']}")
         if g.get("integrity_checks") != block["integrity_checks"]:
             problems.append(f"{where}: its integrity checks are not the registered list")
-        all_stats = g.get("search_stats") or [None, None]
+        for key in ("final_state_sha256", "sampling_state_sha256"):
+            if not _hex(g.get(key), 64):
+                problems.append(f"{where}: {key} {g.get(key)!r} is not a sha256")
+        # A record without search or search_stats reads as one whose seats did
+        # not search, which the checks below then hold against the plan.
+        settings, all_stats = g.get("search", [None, None]), g.get("search_stats", [None, None])
+        seconds = g.get("search_seconds")
+        broken = [key for key, value in (("search", settings), ("search_stats", all_stats),
+                                         ("search_seconds", seconds)) if not _two(value)]
+        if broken:
+            problems += [f"{where}: {key} is not a two-element list" for key in broken]
+            continue
         for side, name in enumerate(names):
             setting = want[name]["search"]
+            if settings[side] != setting:
+                problems.append(f"{where}: {name}'s search setting {settings[side]} != "
+                                f"registered {setting}")
             if not setting:
-                if all_stats[side]:
+                if all_stats[side] is not None:
                     problems.append(f"{where}: {name} does not search and has search statistics")
+                if seconds[side] is not None:
+                    problems.append(f"{where}: {name} does not search and has search_seconds "
+                                    f"{seconds[side]}")
                 continue
+            if not _real(seconds[side]) or seconds[side] < 0:
+                problems.append(f"{where}: {name}'s search_seconds {seconds[side]} is not a "
+                                "number >= 0")
             found = _stat_problems(all_stats[side], setting, g.get("c_steps"))
             problems += [f"{where}: {name}: {p}" for p in found]
             if found:

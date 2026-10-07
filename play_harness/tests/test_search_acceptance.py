@@ -918,3 +918,44 @@ def test_a_plan_with_a_player_it_cannot_read_is_refused(change, needle):
     change(p)
     with pytest.raises(ValueError, match=needle.replace("[", r"\[").replace("]", r"\]")):
         sa.registered(p)
+
+
+# ---- the fields only a searched game carries (item 5) -----------------------------------------
+@pytest.mark.parametrize("change, needle", [
+    (lambda g: g[0].pop("search_seconds"), "search_seconds is not a two-element list"),
+    (lambda g: g[0].update(search_seconds=[300.0]), "search_seconds is not a two-element list"),
+    (lambda g: g[0].update(search_seconds=[None, None]),
+     "S's search_seconds None is not a number >= 0"),
+    (lambda g: g[0].update(search_seconds=[float("nan"), None]), "S's search_seconds nan is not"),
+    (lambda g: g[0].update(search_seconds=[-1.0, None]), "S's search_seconds -1.0 is not"),
+    (lambda g: g[0].update(search_seconds=[True, None]), "S's search_seconds True is not"),
+    (lambda g: g[0].update(search_seconds=[300.0, 0.0]),
+     "C does not search and has search_seconds 0.0"),
+    (lambda g: g[0].pop("final_state_sha256"), "final_state_sha256 None is not a sha256"),
+    (lambda g: g[0].update(final_state_sha256=""), "final_state_sha256 '' is not a sha256"),
+    (lambda g: g[0].update(final_state_sha256="A" * 64), "final_state_sha256 'AAAA"),
+    (lambda g: g[0].pop("sampling_state_sha256"), "sampling_state_sha256 None is not a sha256"),
+    (lambda g: g[0].update(sampling_state_sha256="0" * 63), "sampling_state_sha256 '0000"),
+    (lambda g: g[0].update(search={"S": copy.deepcopy(SETTING)}),
+     "search is not a two-element list"),
+    (lambda g: g[0].update(search=[copy.deepcopy(SETTING)]), "search is not a two-element list"),
+    (lambda g: g[0].update(search=[copy.deepcopy(SETTING), {}]), "C's search setting {} != "
+                                                                 "registered None"),
+    (lambda g: g[0].update(search_stats=[]), "search_stats is not a two-element list"),
+    (lambda g: g[0].update(search_stats={"S": stats(SETTING)}), "search_stats is not a two-"),
+    (lambda g: g[0]["search_stats"].__setitem__(1, {}),
+     "C does not search and has search statistics"),
+    # A game without a searching player carries none of them, empty or not.
+    (lambda g: _plain(g).update(search_stats=[]), "yet the game carries ['search_stats']"),
+    (lambda g: _plain(g).update(search_seconds=None), "yet the game carries ['search_seconds']"),
+    (lambda g: _plain(g).update(final_state_sha256=""), "carries ['final_state_sha256']"),
+    (lambda g: _plain(g).update(reward_manifest_sha256=None), "['reward_manifest_sha256']"),
+    (lambda g: _plain(g).update(search=[None, {}]), "yet the game carries ['search']"),
+    (lambda g: _plain(g).update(search=[]), "yet the game carries ['search']"),
+    (lambda g: _plain(g).update(search=None), "yet the game carries ['search']"),
+])
+def test_a_searched_game_without_its_own_fields_is_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
