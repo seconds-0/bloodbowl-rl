@@ -339,6 +339,16 @@ The review found the clone design sound and said milestones M1 to M3 can be buil
 
 **The value target (blocking for reading the pilot).** The study's citation for "the value loss covers waiting rows" is a telemetry comment about entropy, KL and clip fraction, not the value loss. Before the pilot is interpreted, the pinned trainer's reward storage, GAE and value target, row routing and recurrent resets are read from the trainer source (`/Users/alexanderhuth/Code/pufferlib-pr` and the rig's `vendor/PufferLib`), and gamma's application per engine step is confirmed there.
 
+**The value target, read from the trainer (2026-10-07 02:55 PDT).** This closes the "blocking for reading the pilot" item above. A read-only agent read a local PufferLib 4.0 tree with the project's patch files, and the operator then read the same kernel in the source that ran chain 55, on the rig (`vendor/PufferLib/src/pufferlib.cu` in the b3 checkout).
+- The advantage is GAE(gamma, lambda) with V-trace clips at 1.0, per agent row over consecutive buffer steps: `delta = rho * (r[t+1] + gamma * V[t+1] * nonterminal - V[t])` (rig source line 1533), and the value target is the stored value plus that advantage (line 1632). Chain 55's stage manifest records gamma 0.999 and 4-byte precision.
+- One buffer step is one env step, which is one applied decision by either side with all dice up to the next decision. Both teams' rows get a reward and a value on every step, waiting rows are in the value loss, and nothing is skipped for the waiting team. So gamma steps once per env step for the searching seat, on its own decisions and the opponent's alike, as the study assumed.
+- The value output is one linear column in raw shaped-reward units. There is no return normalisation, symlog or two-hot transform to invert. Rewards are hard-clamped before the target, and the project's integrity rule requires that clamp to change nothing.
+- The reward that arrives with the first step after the root is undiscounted, which is the study's `t = 0` term.
+- At the end of a match the env rebuilds the terminal reward (touchdown objective, result bonus, potential payback, with incidental shaping on that step suppressed) and the target has no bootstrap. A match cut at the decision cap takes the same path. A rollout must therefore take the env's own emitted reward on the final step and add no value.
+- Only learner rows train the value head, each from its own team's observation and reward.
+- Two limits on the value as a leaf score: it estimates the learner's on-policy return against its training opponent mix, not a minimax value; and in training the recurrent state is zeroed at the start of every 64-step segment, while at play time it persists for the whole match, as it already does for plain play in the harness.
+- Not read: the Torch backend, which the native trainer does not use.
+
 **Build safeguards (M1 to M3).**
 - The match struct holds already-realized dice results; "dice-free" means it holds no future dice stream. `bb_rng_seed` clears the script and sink pointers, so a reseeded clone has no route back to the real stream.
 - Save and restore the thread-local stalling attachment on every exit path of every clone call, failures included.
