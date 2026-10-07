@@ -1,0 +1,50 @@
+In-run loss diagnostics, chain 58 (GAE lambda 0.97) against chain 55 (0.95), from the two training logs on the rig.
+Training panels only (PUFFER_LOSS_JSON lines with phase_eval 0, epoch >= 0, no final reprint). Mean, 5th and 95th percentile over panels, and the mean of each third of the run.
+Read 2026-10-07 10:08 PDT, before chain 58's gate was scored. Script: /tmp/inrun_diag.py on the rig (copied below the table).
+
+keys ['clipfrac', 'clipfrac_deciding', 'deciding_frac', 'entropy', 'entropy_deciding', 'explained_variance', 'grad_norm', 'kl', 'kl_deciding', 'old_kl', 'policy', 'total', 'value']
+c58 panels 22888 last steps 2999975936.0
+c55 panels 22888 last steps 2999975936.0
+clipfrac                     | c58 mean 0.002933 [p5 0.0002975, p95 0.005745] thirds 0.00511 0.002979 0.0007103 | c55 mean 0.002821 [p5 0.0002823, p95 0.005615] thirds 0.004953 0.002832 0.0006796
+clipfrac_deciding            | c58 mean 0.005988 [p5 0.0006289, p95 0.01163] thirds 0.01037 0.006092 0.001502 | c55 mean 0.005874 [p5 0.000619, p95 0.01151] thirds 0.01019 0.005967 0.001465
+deciding_frac                | c58 mean 0.4843 [p5 0.4625, p95 0.5054] thirds 0.4927 0.4883 0.4718 | c55 mean 0.4739 [p5 0.4527, p95 0.4962] thirds 0.4859 0.4733 0.4625
+entropy                      | c58 mean 0.086 [p5 0.07012, p95 0.1041] thirds 0.0837 0.0857 0.0886 | c55 mean 0.08035 [p5 0.0666, p95 0.09529] thirds 0.0786 0.07908 0.08337
+entropy_deciding             | c58 mean 0.1778 [p5 0.1431, p95 0.2167] thirds 0.17 0.1756 0.1878 | c55 mean 0.1698 [p5 0.1387, p95 0.2034] thirds 0.1618 0.1672 0.1803
+explained_variance           | c58 mean 0.9097 [p5 0.8944, p95 0.9226] thirds 0.9041 0.9105 0.9145 | c55 mean 0.9328 [p5 0.9221, p95 0.9417] thirds 0.9288 0.9339 0.9357
+grad_norm                    | c58 mean 2.078 [p5 1.688, p95 2.475] thirds 2.321 1.97 1.945 | c55 mean 1.876 [p5 1.512, p95 2.327] thirds 2.113 1.774 1.741
+kl                           | c58 mean 0.000996 [p5 4.236e-05, p95 0.002586] thirds 0.001945 0.0008768 0.0001666 | c55 mean 0.000942 [p5 4.21e-05, p95 0.002567] thirds 0.001847 0.0008216 0.0001577
+kl_deciding                  | c58 mean 0.002029 [p5 9.031e-05, p95 0.005245] thirds 0.003944 0.001792 0.0003524 | c55 mean 0.001956 [p5 9.136e-05, p95 0.005279] thirds 0.003799 0.00173 0.0003398
+old_kl                       | c58 mean 0.0009066 [p5 2.717e-05, p95 0.00242] thirds 0.001743 0.0008151 0.0001623 | c55 mean 0.0009096 [p5 3.024e-05, p95 0.002479] thirds 0.00178 0.0007911 0.0001575
+policy                       | c58 mean 0.009544 [p5 -0.005038, p95 0.02643] thirds 0.006971 0.01022 0.01144 | c55 mean 0.008885 [p5 -0.002536, p95 0.02198] thirds 0.006964 0.009103 0.01059
+total                        | c58 mean 0.02291 [p5 0.008313, p95 0.03991] thirds 0.02038 0.02356 0.02478 | c55 mean 0.01824 [p5 0.006891, p95 0.03131] thirds 0.01637 0.01844 0.01991
+value                        | c58 mean 0.01414 [p5 0.01269, p95 0.01572] thirds 0.01416 0.01411 0.01414 | c55 mean 0.01008 [p5 0.009143, p95 0.01108] thirds 0.01012 0.01005 0.01008
+
+--- script ---
+import json,glob,sys,statistics as st
+def load(pat):
+    f=[p for p in glob.glob(pat) if p.endswith(".log")][0]
+    rows=[]
+    for line in open(f,errors="replace"):
+        if line.startswith("PUFFER_LOSS_JSON "):
+            try: d=json.loads(line[len("PUFFER_LOSS_JSON "):])
+            except Exception: continue
+            if d.get("_puffer_phase_eval")==0 and d.get("_puffer_epoch",-1)>=0 and not d.get("_puffer_final_reprint"):
+                rows.append(d)
+    return rows
+B="/home/rache/bloodbowl-rl-b3-20261006/runs/"
+runs={"c58":B+"ladder-d0-r0chain58*/screen-attempt1/*.log","c55":B+"ladder-d0-r0chain55*/screen-attempt1/*.log"}
+data={k:load(v) for k,v in runs.items()}
+keys=sorted(k for k in data["c58"][100] if not k.startswith("_"))
+print("keys",keys)
+for k in data: print(k,"panels",len(data[k]),"last steps",data[k][-1]["_puffer_agent_steps"])
+def q(v,p): 
+    v=sorted(v); return v[int(p*(len(v)-1))]
+for key in keys:
+    line=key.ljust(28)
+    for k in ("c58","c55"):
+        rows=data[k]
+        thirds=[rows[:len(rows)//3],rows[len(rows)//3:2*len(rows)//3],rows[2*len(rows)//3:]]
+        vals=[r[key] for r in rows if key in r]
+        if not vals: line+=" | %s n/a"%k; continue
+        line+=" | %s mean %.4g [p5 %.4g, p95 %.4g] thirds %s"%(k,st.fmean(vals),q(vals,.05),q(vals,.95)," ".join("%.4g"%st.fmean([r[key] for r in t if key in r]) for t in thirds))
+    print(line)

@@ -2613,3 +2613,84 @@ Chain 58 (`a03ed608...`, chain 55's rung with GAE lambda 0.97, from chain 49) co
 **Chain 59** (`r0chain59-cont49-s2042-20261007`) launched on its own at 10:00 PDT. Its stage manifest shows seed 2042, `gae_lambda` 0.95, gamma 0.999, the bot on tag 4, pool `2ae7448e...`, warm `a2d1d10d...` and the same source, module and patch bundle as chain 55's; the b3 checkout is at `fc25468` and clean. It should end at about 18:50 PDT. Rungs are taking about 8.7 hours plus the exam, so D422's clock estimates were about an hour late.
 
 **Still to register:** what the rig runs after chain 59. D422 bars a launch from any candidate before all three gates are read, and chain 59's gate cannot be read before its stage ends, so the next stage must start from chain 49. It is registered in its own entry before chain 59 ends.
+
+**D428 - CHAIN 58 (GAE LAMBDA 0.97) READS POSITIVE: IT BEATS ITS CONTROL DIRECTLY AND ON BOTH HELD-OUT OPPONENTS; LAMBDA 0.97 IS A CANDIDATE THAT NEEDS A SECOND POSITIVE PAIR, AND CHAIN 58 IS A WARM-START CANDIDATE; NOTHING IS ADOPTED AND CHAIN 49 STAYS THE WARM START (2026-10-07 10:28 PDT by the machine's clock at commit; chain 59 is training, its gate has not been played)**
+
+Gate `c58-gate-20261007` as registered in D422 and D427: mask harness `7d0d547`, seed block 22700000, eleven pairs, plan sha256 `399a3a6f...`, committed in D427 at 10:01:31 PDT (`8bd2762`) and pushed at 10:01:34; the six shard logs begin at 10:01:42 (the launcher printed its process ids at 10:01:41 by the operator's shell output). The launcher and the scoring script each checked the plan file against the hash passed to them, which was the value committed in D427. Acceptance, run before scoring: `GATE-ACCEPTED 35200 games, 11 pairs, seed0 22700000, games_per_worker 32, commit 7d0d547` and `MASKS-ACCEPTED 6400 masked sides in 35200 games as registered, no sampling offsets, 0 truncated, 0 mask fallbacks`; every integrity counter zero, no unnatural ending. Merged `games.jsonl` sha256 `1199166b...`. Six droplets, about $0.27 in total by the tool's own cost lines, all six deleted (HTTP 404 in each shard log; by the operator's shell output the tool's status listing showed no tagged droplet, no key and no live local state afterwards, which is not saved as a gate artifact).
+
+| # | Pair | W / D / L | Decisive-Elo [95% seed-cluster] |
+|---|---|---|---|
+| 1 | chain 58 vs chain 55 | 1154 / 1153 / 893 | +44.5 [+30.7, +58.2] |
+| 2 | chain 58 vs chain 37 | 1716 / 955 / 529 | +204.4 [+188.7, +220.5] |
+| 3 | chain 55 vs chain 37 | 1578 / 1017 / 605 | +166.5 [+153.1, +182.3] |
+| 4 | chain 49 vs chain 37 | 1589 / 1034 / 577 | +176.0 [+161.2, +191.7] |
+| 5 | chain 58 vs chain 46 | 1707 / 993 / 500 | +213.3 [+196.8, +229.8] |
+| 6 | chain 55 vs chain 46 | 1601 / 1049 / 550 | +185.6 [+170.5, +202.5] |
+| 7 | chain 49 vs chain 46 | 1334 / 1189 / 677 | +117.8 [+103.9, +132.7] |
+| 8 | chain 58 vs chain 49 (in pool, descriptive) | 1515 / 1017 / 668 | +142.3 [+127.3, +156.9] |
+| 9 | chain 58 vs offense bot | 892 / 1804 / 504 | +99.2 [+80.8, +118.3] |
+| 10 | chain 55 vs offense bot | 928 / 1763 / 509 | +104.3 [+85.6, +123.9] |
+| 11 | chain 58 + m1 vs chain 55 + m1 (descriptive) | 1071 / 1379 / 750 | +61.9 [+46.7, +76.1] |
+
+| Paired contrast | Opponent | Decisive-Elo [95%] |
+|---|---|---|
+| chain 58 minus chain 55 (label) | chain 37 | +37.9 [+17.7, +56.4] |
+| chain 58 minus chain 55 (label) | chain 46 | +27.7 [+5.9, +49.1] |
+| chain 58 minus chain 55 (registered, no label) | offense bot | -5.2 [-28.1, +17.4] |
+| chain 58 minus chain 49 (retention) | chain 37 | +28.4 [+7.5, +49.8] |
+| chain 58 minus chain 49 (retention) | chain 46 | +95.5 [+74.8, +116.2] |
+| chain 55 minus chain 49 (descriptive) | chain 37 | -9.4 [-30.5, +11.1] |
+| chain 55 minus chain 49 (descriptive) | chain 46 | +67.8 [+46.8, +89.0] |
+
+**Reading, labels applied in the registered order: Positive.**
+- Not Negative: pair 1's interval is entirely above zero, and the stage's chain 30 guard did not fire (D427).
+- Positive: pair 1's point estimate is +44.5, above +40 (by 4.5), with its interval entirely above zero, and both held-out contrasts (chain 58 minus chain 55 against chain 37 and against chain 46) have intervals entirely above zero. All three clauses of D422's Positive rule hold.
+- It is the first Positive of this round. Chains 55, 56 and 57 each left one held-out contrast spanning zero (D419, D421, D424).
+
+**Consequences, as registered in D422.**
+- GAE lambda 0.97 is a candidate recipe component. It is not adopted: adoption needs a second Positive pair at another training seed or parent, registered before it runs. Lambda stays 0.95 in the recipe until then.
+- Both retention contrasts (chain 58 minus chain 49) are entirely above zero, so chain 58 is a warm-start candidate (D418 amendment item 6).
+- Candidate selection among chains 57, 58 and 59 waits for chain 59's gate: chain 57 is out (D424), chain 58 stands. If chain 59 does not read Positive, chain 58 becomes the warm start; if it does, D422's direct comparison is registered first. Nothing is launched from chain 58 before chain 59's gate is read. Chain 49 stays the warm start until then.
+
+**How much this shows, and what it does not.**
+- It is one training seed per side, and the intervals above cover the evaluation seeds only, not what another training seed would give. Replicate-pair gaps in this ledger (D400, D401) are +14.2, +39.9, -15.7 and +15.4, so a direct gap of +44.5 from one seed pair is not far outside what two runs of one recipe have shown. Those four gaps come from older recipes and contexts and are context, not a measured seed variance for this rung.
+- The two held-out opponents, chain 37 and chain 46, are relatives in this lineage, not independent kinds of opponent. The label rule asks for the direct gap and both held-out contrasts together, and all three hold here; that is why the registered consequence is a candidate and a required replication, not adoption. Chain 59's gate tonight gives this round's own replicate gap (chain 59 against chain 55).
+- Pair 1 clears +40 by 4.5 and the chain 46 contrast's lower bound is +5.9. The label is not a wide margin.
+- The exam did not see it: every exam cell of chain 58 was at or a little below chain 55's (D427). It is another instance of the exam and the tournament disagreeing (D397 and D399; D417 lists more, chain 49 among them).
+
+**Registered style diagnostics (D422), not gates.** Per team turn unless noted, chain 58 then chain 55, with the difference and its 95% seed-cluster interval (`main/diagnostics.txt`).
+
+| Pair 1, plain | chain 58 | chain 55 | difference |
+|---|---|---|---|
+| activations | 3.171 | 2.839 | +0.332 [+0.296, +0.367] |
+| empty activations | 0.711 | 0.502 | +0.209 [+0.192, +0.227] |
+| non-empty activations | 2.460 | 2.337 | +0.123 [+0.097, +0.149] |
+| blocks | 0.474 | 0.440 | +0.034 [+0.027, +0.041] |
+| turnovers | 0.302 | 0.295 | +0.006 [+0.000, +0.012] |
+| own decisions per game | 374.4 | 355.6 | +18.8 [+15.6, +22.0] |
+| touchdowns per game | 0.899 | 0.784 | +0.115 [+0.078, +0.151] |
+
+| Pair 11, both under m1 | chain 58 | chain 55 | difference |
+|---|---|---|---|
+| activations | 6.992 | 6.982 | +0.010 [-0.036, +0.057] |
+| empty activations | 2.997 | 2.634 | +0.363 [+0.321, +0.405] |
+| non-empty activations | 3.994 | 4.348 | -0.353 [-0.383, -0.323] |
+| blocks | 0.593 | 0.582 | +0.011 [+0.002, +0.021] |
+| turnovers | 0.392 | 0.401 | -0.010 [-0.016, -0.004] |
+| own decisions per game | 630.9 | 655.3 | -24.4 [-28.1, -20.6] |
+| touchdowns per game | 0.758 | 0.607 | +0.151 [+0.118, +0.183] |
+
+- D422's hypothesis was that chain 58 activates more players per team turn than chain 55 in unmasked play, that the added activations are not all empty, and that it is no weaker. In pair 1 all three hold: +0.33 activations a team turn, of which +0.12 are non-empty and +0.21 empty, with a few more blocks. The size is small against the gap to human play (about 7 activations a team turn).
+- Against the held-out opponents the same direction shows: chain 58 has 2.89 and 2.88 activations a team turn against chain 37 and chain 46, chain 55 has 2.53 and 2.52; non-empty 2.32 and 2.29 against 2.14 and 2.12; blocks 0.513 and 0.509 against 0.463 and 0.460.
+- Under m1 (pair 11) both sides are held near 7 activations by the mask. There chain 58 has fewer non-empty activations than chain 55 and more empty ones, and still scores more.
+- In-run, from the two training logs (`docs/chain58-inrun-diagnostics-2026-10-07.txt`, read before the gate was scored): value loss 0.0141 against 0.0101 and explained variance 0.910 against 0.933, which is the direction longer targets would be expected to give (not shown to be the cause); KL (0.00100 against 0.00094), deciding-row KL (0.00203 against 0.00196) and clip fraction (0.0029 against 0.0028) are similar, each 4% to 6% higher; entropy on deciding rows 0.178 against 0.170.
+
+**Descriptive, not part of the reading.**
+- Against the offense bot no difference between chain 58 and chain 55 is established: -5.2 [-28.1, +17.4].
+- Raw roster-conditioned decisive share of chain 58 in pair 1: bash 0.464 [0.434, 0.494], agile 0.753, hybrid 0.517, stunty 0.654. With a bash roster chain 58 is below one half against chain 55, as chain 57 was (0.466, D424). Against the held-out opponents chain 58's bash share is above chain 55's: 0.675 against 0.619 (chain 37) and 0.679 against 0.637 (chain 46). These splits were not registered, a roster's raw share mixes the roster's strength with the policy's play, and they do not establish a weakness with bash rosters.
+- D419's two contrasts on a third seed block: chain 55 minus chain 49 is -9.4 [-30.5, +11.1] against chain 37 and +67.8 [+46.8, +89.0] against chain 46 (block 22400000: -1.7 and +60.9; block 22600000: +5.5 and +81.7).
+- The same pair across seed blocks: chain 49 against chain 37 is +176.0 here, +173.2 on 22600000, +178.0 on 22400000; chain 49 against chain 46 is +117.8, +94.4 and +118.6; chain 55 against chain 37 is +166.5, +178.7 and +176.3; chain 55 against chain 46 is +185.6, +176.0 and +179.5; chain 55 against the offense bot is +104.3, +108.9 and +79.2.
+- Under m1, chain 58 against chain 55 is +61.9 [+46.7, +76.1] (pair 11).
+- Touchdowns per game in pair 1: chain 58 0.899, chain 55 0.784.
+- No Bradley-Terry fit: the pair graph is not connected (pair 11's masked players meet nobody else).
+- Reviewed by Codex before this entry was written (`.codex-reviews/d428-review.md`): Positive is the only label the registration supports and no unread condition is triggered; its recount reproduced every W / D / L row, every contrast interval and every diagnostic; the diagnostics script differs from chain 56's only by the registered row. Corrections applied above: three double-rounded numbers, the exact commit, push and launch times, softer wording on the offense bot contrast and the in-run numbers, the limits of the replicate-gap comparison, and the count of exam disagreements.
