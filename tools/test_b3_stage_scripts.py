@@ -264,7 +264,8 @@ class B3RecipeTests(unittest.TestCase):
 class InheritedRuleFlagTests(unittest.TestCase):
     """A control rung must not train under the rule because the caller's environment had the flag set."""
 
-    WANT = {"b3_chain55.sh": "unset", "b3_chain57.sh": "unset", "b3_chain56.sh": "1", "b3_canary54.sh": "1"}
+    WANT = {"b3_chain55.sh": "unset", "b3_chain57.sh": "unset", "b3_chain58.sh": "unset", "b3_chain59.sh": "unset",
+            "b3_chain56.sh": "1", "b3_canary54.sh": "1"}
 
     def flag_after_preamble(self, name: str) -> str:
         lines = (B3 / name).read_text(encoding="utf-8").splitlines()
