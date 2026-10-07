@@ -1,0 +1,98 @@
+56 roots from 32 games, 5376 paired full-match rollouts; 0 rollout indices excluded (a candidate did not end its match naturally)
+every number is alternative minus a0, a mean over roots; intervals: 95% bootstrap over games
+
+Realized, to the end of the match
+set      class          roots  win score                   P(win)                      P(loss)                     TD difference               result changed
+flagged  all               28  0.0015 [-0.0109, 0.0166]    0.0128 [-0.0048, 0.0373]    0.0098 [-0.0039, 0.0240]    0.012 [-0.025, 0.053]        25.8%
+flagged  turn              10  0.0023 [-0.0117, 0.0117]    0.0141 [0.0023, 0.0281]     0.0094 [-0.0070, 0.0328]    0.005 [-0.045, 0.061]        19.8%
+flagged  declare            6  -0.0260 [-0.0417, -0.0098]  -0.0195 [-0.0352, -0.0026]  0.0326 [0.0000, 0.0716]     -0.049 [-0.081, -0.018]      26.7%
+flagged  after_declare     12  0.0146 [-0.0053, 0.0469]    0.0280 [-0.0117, 0.0872]    -0.0013 [-0.0220, 0.0144]   0.048 [-0.022, 0.147]        30.4%
+control  all               28  -0.0006 [-0.0090, 0.0083]   -0.0011 [-0.0086, 0.0066]   0.0000 [-0.0127, 0.0123]    -0.001 [-0.035, 0.027]       17.3%
+control  turn              10  -0.0063 [-0.0180, 0.0039]   -0.0078 [-0.0250, 0.0078]   0.0047 [-0.0031, 0.0141]    -0.019 [-0.070, 0.020]       15.8%
+control  declare            9  -0.0017 [-0.0043, 0.0000]   0.0000 [-0.0069, 0.0087]    0.0035 [-0.0052, 0.0156]    0.002 [-0.003, 0.007]         5.9%
+control  after_declare      9  0.0069 [-0.0127, 0.0264]    0.0052 [-0.0087, 0.0185]    -0.0087 [-0.0399, 0.0234]   0.017 [-0.038, 0.068]        30.4%
+
+The evaluator's view of the same rollouts (shaped return)
+set      class          first run  depth 1                     depth 2                     depth 1 = touchdowns + other reward + value term
+flagged  all               0.0631  0.0638 [0.0341, 0.1000]     0.0540 [0.0113, 0.0966]     +0.0000 + +0.0232 + +0.0406
+flagged  turn              0.0850  0.0851 [0.0222, 0.1754]     0.0558 [0.0036, 0.1174]     +0.0000 + +0.0501 + +0.0350
+flagged  declare           0.0329  0.0301 [0.0205, 0.0411]     0.0066 [-0.0403, 0.0474]    +0.0000 + -0.0156 + +0.0457
+flagged  after_declare     0.0600  0.0629 [0.0393, 0.0951]     0.0761 [0.0135, 0.1679]     +0.0000 + +0.0201 + +0.0427
+control  all               0.0017  0.0011 [-0.0015, 0.0037]    -0.0030 [-0.0064, -0.0003]  -0.0000 + +0.0004 + +0.0007
+control  turn              0.0024  0.0031 [0.0004, 0.0068]     -0.0025 [-0.0051, -0.0000]  -0.0001 + +0.0004 + +0.0027
+control  declare           0.0021  0.0021 [-0.0000, 0.0058]    -0.0000 [-0.0025, 0.0024]   +0.0000 + +0.0000 + +0.0020
+control  after_declare     0.0006  -0.0020 [-0.0101, 0.0028]   -0.0066 [-0.0156, -0.0000]  +0.0000 + +0.0008 + -0.0028
+
+Does the predicted gain track the realized win-score gain (across roots)
+roots    predictor                          r                        win score per unit of predicted gain
+all      first run's judged depth-1 gain    +0.14 [-0.08, +0.60]       +0.07 [-0.05, +0.70]
+all      depth-1 gain, these rollouts       +0.16 [-0.05, +0.63]       +0.07 [-0.02, +0.73]
+all      depth-2 gain, these rollouts       +0.47 [+0.01, +0.77]       +0.17 [+0.00, +0.33]
+flagged  first run's judged depth-1 gain    +0.17 [-0.06, +0.79]       +0.08 [-0.02, +1.21]
+flagged  depth-1 gain, these rollouts       +0.19 [+0.00, +0.82]       +0.09 [+0.00, +1.18]
+flagged  depth-2 gain, these rollouts       +0.55 [+0.05, +0.84]       +0.19 [+0.01, +0.37]
+control  first run's judged depth-1 gain    -0.15 [-0.50, +0.11]       -0.68 [-2.43, +0.87]
+control  depth-1 gain, these rollouts       -0.02 [-0.49, +0.16]       -0.07 [-1.92, +0.62]
+control  depth-2 gain, these rollouts       +0.17 [-0.10, +0.44]       +0.46 [-0.28, +1.75]
+
+The same against the realized touchdown difference (first run's gain only)
+roots    r                        touchdowns per unit of predicted gain (2.5 if the gain were all touchdowns)
+all      +0.38 [-0.16, +0.63]       +0.54 [-0.47, +1.95]
+flagged  +0.45 [+0.00, +0.82]       +0.64 [+0.01, +3.42]
+control  +0.15 [-0.27, +0.39]       +2.24 [-3.00, +8.96]
+
+Variance of the paired difference over the unpaired one
+set      win score  TD difference  depth 1  depth 2
+flagged      0.807          0.812    0.791    0.678
+control      0.428          0.442    0.092    0.062
+
+The largest predicted gains, one root each (mean, standard error over rollouts)
+game 23 step 1013 (turn, flagged, 128 pairs): first run 0.326
+    half 2, own turn 5, score 2-0, ball held by own Goblin Lineman at (25,8), standing, carrying the ball, 25 squares from the end zone the searcher attacks
+    a0: activate own Goblin Lineman at (24,6), standing
+    alternative: activate own Goblin Lineman at (25,8), standing, carrying the ball
+    win score +0.000 (0.000); P(win) +0.000 (0.000); P(loss) +0.000 (0.000); TD difference +0.211 (0.041)
+    depth 1 +0.348 (0.013); depth 2 +0.296 (0.020); touchdowns +0.000 (0.000); other reward +0.217 (0.011); value term +0.131 (0.009)
+game 28 step 834 (turn, flagged, 128 pairs): first run 0.325
+    half 2, own turn 3, score 1-0, ball on_ground at (2,8), 23 squares from the end zone the searcher attacks
+    a0: activate own Bull Centaur at (7,4), standing
+    alternative: activate own Flamesmith at (1,8), standing
+    win score -0.004 (0.014); P(win) -0.008 (0.028); P(loss) +0.000 (0.000); TD difference -0.039 (0.042)
+    depth 1 +0.318 (0.010); depth 2 +0.058 (0.020); touchdowns +0.000 (0.000); other reward +0.169 (0.008); value term +0.149 (0.005)
+game 28 step 1182 (after_declare, flagged, 128 pairs): first run 0.171
+    half 2, own turn 6, score 1-0, ball held by own Bull Centaur at (15,0), standing, carrying the ball, 10 squares from the end zone the searcher attacks
+    a0: STEP to (16,0) [acting: own Bull Centaur at (15,0), standing, carrying the ball]
+    alternative: STEP to (14,1) [acting: own Bull Centaur at (15,0), standing, carrying the ball]
+    win score +0.000 (0.000); P(win) +0.000 (0.000); P(loss) +0.000 (0.000); TD difference +0.227 (0.037)
+    depth 1 +0.181 (0.013); depth 2 +0.270 (0.033); touchdowns +0.000 (0.000); other reward -0.016 (0.004); value term +0.197 (0.013)
+
+Every flagged root, largest predicted gain first (mean, standard error over rollouts)
+decision                a0              alternative      first run  depth 1  depth 2  win score        TD difference    a0 win score
+turn                    ACTIVATE        ACTIVATE             0.326    0.348   +0.296  +0.000 (0.000)   +0.211 (0.041)   1.00
+turn                    ACTIVATE        ACTIVATE             0.325    0.318   +0.058  -0.004 (0.014)   -0.039 (0.042)   0.97
+after_declare of BLITZ  STEP            STEP                 0.171    0.181   +0.270  +0.000 (0.000)   +0.227 (0.037)   1.00
+after_declare of BLOCK  BLOCK_TARGET    END_ACTIVATION       0.137    0.141   +0.393  +0.152 (0.034)   +0.438 (0.085)   0.66
+after_declare of BLOCK  BLOCK_TARGET    BLOCK_TARGET         0.075    0.075   +0.070  +0.004 (0.049)   +0.016 (0.113)   0.54
+declare                 DECLARE:MOVE    DECLARE:BLITZ        0.056    0.054   +0.021  -0.047 (0.041)   -0.094 (0.101)   0.36
+after_declare of BLOCK  BLOCK_TARGET    END_ACTIVATION       0.055    0.065   +0.113  -0.008 (0.025)   -0.086 (0.063)   0.91
+declare                 DECLARE:MOVE    DECLARE:BLITZ        0.051    0.039   -0.098  -0.020 (0.024)   -0.039 (0.049)   0.69
+after_declare of MOVE   STEP            STEP                 0.048    0.052   +0.043  +0.008 (0.029)   +0.016 (0.058)   0.48
+after_declare of BLOCK  END_ACTIVATION  BLOCK_TARGET         0.048    0.015   -0.101  +0.000 (0.000)   -0.055 (0.040)   0.00
+turn                    ACTIVATE        ACTIVATE             0.047    0.025   +0.117  +0.016 (0.026)   -0.047 (0.084)   0.11
+after_declare of MOVE   STEP            STEP                 0.046    0.060   -0.032  +0.035 (0.034)   +0.055 (0.075)   0.52
+after_declare of BLOCK  BLOCK_TARGET    END_ACTIVATION       0.038    0.057   +0.081  +0.043 (0.038)   +0.055 (0.081)   0.46
+after_declare of MOVE   END_ACTIVATION  STAND_UP             0.033    0.038   +0.020  +0.008 (0.008)   +0.016 (0.016)   0.49
+turn                    ACTIVATE        ACTIVATE             0.031    0.029   -0.091  +0.012 (0.034)   +0.008 (0.086)   0.55
+turn                    ACTIVATE        ACTIVATE             0.030    0.023   +0.002  -0.055 (0.020)   -0.141 (0.079)   0.10
+after_declare of MOVE   STEP            STEP                 0.029    0.030   +0.004  -0.016 (0.016)   -0.031 (0.031)   0.14
+declare                 DECLARE:MOVE    DECLARE:HANDOFF      0.028    0.030   +0.076  +0.000 (0.000)   +0.000 (0.000)   0.50
+declare                 DECLARE:MOVE    DECLARE:PASS         0.026    0.024   +0.051  -0.004 (0.009)   -0.008 (0.018)   0.51
+declare                 DECLARE:MOVE    DECLARE:PASS         0.025    0.018   -0.019  -0.035 (0.030)   -0.055 (0.080)   0.75
+after_declare of BLOCK  END_ACTIVATION  BLOCK_TARGET         0.024    0.022   +0.032  -0.016 (0.008)   +0.016 (0.035)   1.00
+turn                    ACTIVATE        ACTIVATE             0.024    0.022   +0.022  +0.000 (0.000)   +0.000 (0.000)   1.00
+turn                    ACTIVATE        ACTIVATE             0.022    0.027   +0.034  +0.012 (0.014)   -0.023 (0.051)   0.96
+turn                    ACTIVATE        ACTIVATE             0.018    0.018   +0.021  +0.012 (0.014)   +0.023 (0.028)   0.55
+after_declare of MOVE   END_ACTIVATION  STEP                 0.016    0.020   +0.019  -0.035 (0.035)   -0.094 (0.086)   0.32
+turn                    ACTIVATE        ACTIVATE             0.014    0.015   +0.050  +0.012 (0.038)   +0.023 (0.083)   0.64
+declare                 DECLARE:BLITZ   DECLARE:HANDOFF      0.012    0.015   +0.009  -0.051 (0.027)   -0.102 (0.089)   0.29
+turn                    ACTIVATE        ACTIVATE             0.012    0.025   +0.049  +0.020 (0.020)   +0.039 (0.039)   0.53

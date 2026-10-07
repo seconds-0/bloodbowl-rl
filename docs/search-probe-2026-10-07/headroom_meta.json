@@ -1,0 +1,37 @@
+{
+ "checkpoint_sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+ "masks": [
+  "m1"
+ ],
+ "reward_manifest": "r0_poss_half",
+ "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
+ "gamma": 0.999,
+ "max_rollout_steps": 200,
+ "seed0": 29000000,
+ "games": 40,
+ "per_class": 2,
+ "rollouts": 128,
+ "candidates": 4,
+ "opponent_seed_offset": 1,
+ "temperature": 1.0,
+ "roots": 240,
+ "engine_steps": 3094857,
+ "rollout_seconds": 562.9335300922394,
+ "in_scope": {
+  "turn": 4461,
+  "declare": 4461,
+  "after_declare": 4445
+ },
+ "single_action": {
+  "turn": 349,
+  "declare": 334,
+  "after_declare": 1
+ },
+ "stops": {
+  "turn": 107520,
+  "terminal": 1792,
+  "cutoff": 0,
+  "rejected": 0
+ },
+ "seconds": 642.2
+}

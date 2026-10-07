@@ -1,0 +1,1542 @@
+{
+ "batches": [
+  {
+   "tail_delta": 0.1,
+   "band": [
+    0.02,
+    0.1
+   ],
+   "cap": 40,
+   "selection_seed": 0,
+   "screened": 1350,
+   "screen_rollouts": 16,
+   "seed0": 29100000,
+   "tail_found": 19,
+   "band_found": 106,
+   "tail_played": [
+    {
+     "index": 51,
+     "game": 1,
+     "engine_seed": 29100001,
+     "seat": 1,
+     "step": 477,
+     "class": "after_declare",
+     "declared": "PASS",
+     "clock": [
+      1,
+      6
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "STEP"
+     ],
+     "best": 1,
+     "gain": 0.4357324965844541,
+     "se": 0.02242681401875217
+    },
+    {
+     "index": 53,
+     "game": 1,
+     "engine_seed": 29100001,
+     "seat": 1,
+     "step": 903,
+     "class": "after_declare",
+     "declared": "BLOCK",
+     "clock": [
+      2,
+      4
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "END_ACTIVATION",
+      "BLOCK_TARGET"
+     ],
+     "best": 1,
+     "gain": 0.2724795554967477,
+     "se": 0.03609829260602573
+    },
+    {
+     "index": 126,
+     "game": 4,
+     "engine_seed": 29100004,
+     "seat": 0,
+     "step": 668,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      7
+     ],
+     "score": [
+      1,
+      1
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 3,
+     "gain": 0.10359394828227844,
+     "se": 0.02180520923159814
+    },
+    {
+     "index": 150,
+     "game": 5,
+     "engine_seed": 29100005,
+     "seat": 1,
+     "step": 1056,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      6
+     ],
+     "score": [
+      2,
+      1
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 2,
+     "gain": 0.1326090688786336,
+     "se": 0.0237094756592901
+    },
+    {
+     "index": 165,
+     "game": 5,
+     "engine_seed": 29100005,
+     "seat": 1,
+     "step": 1058,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      2,
+      6
+     ],
+     "score": [
+      2,
+      1
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "STEP"
+     ],
+     "best": 3,
+     "gain": 0.1090846994696541,
+     "se": 0.02599414641300669
+    },
+    {
+     "index": 262,
+     "game": 8,
+     "engine_seed": 29100008,
+     "seat": 0,
+     "step": 354,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      5
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "END_ACTIVATION",
+      "STEP",
+      "STEP",
+      "STEP"
+     ],
+     "best": 1,
+     "gain": 0.13229625716008814,
+     "se": 0.021487936097036427
+    },
+    {
+     "index": 716,
+     "game": 23,
+     "engine_seed": 29100023,
+     "seat": 1,
+     "step": 781,
+     "class": "after_declare",
+     "declared": "BLOCK",
+     "clock": [
+      1,
+      8
+     ],
+     "score": [
+      1,
+      1
+     ],
+     "types": [
+      "END_ACTIVATION",
+      "BLOCK_TARGET",
+      "BLOCK_TARGET"
+     ],
+     "best": 2,
+     "gain": 0.10716260369034548,
+     "se": 0.007184832887737254
+    },
+    {
+     "index": 732,
+     "game": 24,
+     "engine_seed": 29100024,
+     "seat": 0,
+     "step": 196,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      3
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 3,
+     "gain": 0.18054399266626725,
+     "se": 0.020239703225523632
+    },
+    {
+     "index": 764,
+     "game": 25,
+     "engine_seed": 29100025,
+     "seat": 1,
+     "step": 205,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      3
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 1,
+     "gain": 0.14669457491520077,
+     "se": 0.03894681304115817
+    },
+    {
+     "index": 780,
+     "game": 26,
+     "engine_seed": 29100026,
+     "seat": 0,
+     "step": 271,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      3
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 3,
+     "gain": 0.11018059140860834,
+     "se": 0.012538488895137057
+    },
+    {
+     "index": 795,
+     "game": 26,
+     "engine_seed": 29100026,
+     "seat": 0,
+     "step": 603,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      8
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "END_ACTIVATION",
+      "STEP",
+      "STEP",
+      "JUMP"
+     ],
+     "best": 1,
+     "gain": 0.366951764972801,
+     "se": 0.10036222402464609
+    },
+    {
+     "index": 823,
+     "game": 27,
+     "engine_seed": 29100027,
+     "seat": 1,
+     "step": 250,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      4
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 2,
+     "gain": 0.10712918187301733,
+     "se": 0.024012904910961207
+    },
+    {
+     "index": 825,
+     "game": 27,
+     "engine_seed": 29100027,
+     "seat": 1,
+     "step": 573,
+     "class": "after_declare",
+     "declared": "SECURE_BALL",
+     "clock": [
+      2,
+      2
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "END_ACTIVATION",
+      "STAND_UP"
+     ],
+     "best": 1,
+     "gain": 0.10524207195548554,
+     "se": 0.012328714734387545
+    },
+    {
+     "index": 910,
+     "game": 30,
+     "engine_seed": 29100030,
+     "seat": 0,
+     "step": 371,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      4
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 1,
+     "gain": 0.16074092364094883,
+     "se": 0.04356451756306016
+    },
+    {
+     "index": 1005,
+     "game": 33,
+     "engine_seed": 29100033,
+     "seat": 1,
+     "step": 1196,
+     "class": "after_declare",
+     "declared": "BLOCK",
+     "clock": [
+      2,
+      4
+     ],
+     "score": [
+      1,
+      0
+     ],
+     "types": [
+      "BLOCK_TARGET",
+      "BLOCK_TARGET",
+      "END_ACTIVATION"
+     ],
+     "best": 2,
+     "gain": 0.10874268295020176,
+     "se": 0.02999437496413274
+    },
+    {
+     "index": 1055,
+     "game": 35,
+     "engine_seed": 29100035,
+     "seat": 1,
+     "step": 1218,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      6
+     ],
+     "score": [
+      1,
+      2
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 2,
+     "gain": 0.12541789216858837,
+     "se": 0.022527472219668162
+    },
+    {
+     "index": 1141,
+     "game": 38,
+     "engine_seed": 29100038,
+     "seat": 0,
+     "step": 748,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      2
+     ],
+     "score": [
+      1,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 2,
+     "gain": 0.12257718607217097,
+     "se": 0.021713963086158156
+    },
+    {
+     "index": 1177,
+     "game": 39,
+     "engine_seed": 29100039,
+     "seat": 1,
+     "step": 258,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      4
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 2,
+     "gain": 0.1251858635474034,
+     "se": 0.03815666541601664
+    },
+    {
+     "index": 1192,
+     "game": 39,
+     "engine_seed": 29100039,
+     "seat": 1,
+     "step": 463,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      7
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "STEP"
+     ],
+     "best": 1,
+     "gain": 0.11816831885768031,
+     "se": 0.025066648775949583
+    }
+   ],
+   "tail_not_played": [],
+   "control": [
+    {
+     "index": 23,
+     "game": 0,
+     "engine_seed": 29100000,
+     "seat": 0,
+     "step": 949,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      2,
+      3
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "END_ACTIVATION",
+      "STEP"
+     ],
+     "best": 3,
+     "gain": 0.03244772623523974,
+     "se": 0.0038534884196249116
+    },
+    {
+     "index": 80,
+     "game": 2,
+     "engine_seed": 29100002,
+     "seat": 0,
+     "step": 982,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      2,
+      4
+     ],
+     "score": [
+      1,
+      1
+     ],
+     "types": [
+      "STEP",
+      "END_ACTIVATION",
+      "STEP",
+      "STEP"
+     ],
+     "best": 2,
+     "gain": 0.021635347146485233,
+     "se": 0.0072946498614410715
+    },
+    {
+     "index": 110,
+     "game": 3,
+     "engine_seed": 29100003,
+     "seat": 1,
+     "step": 328,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      5
+     ],
+     "score": [
+      1,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "STEP"
+     ],
+     "best": 3,
+     "gain": 0.027412101410226663,
+     "se": 0.0024054489459903903
+    },
+    {
+     "index": 280,
+     "game": 9,
+     "engine_seed": 29100009,
+     "seat": 1,
+     "step": 1067,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      7
+     ],
+     "score": [
+      1,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 1,
+     "gain": 0.03884690446428147,
+     "se": 0.01623371375603159
+    },
+    {
+     "index": 357,
+     "game": 11,
+     "engine_seed": 29100011,
+     "seat": 1,
+     "step": 1132,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      2,
+      7
+     ],
+     "score": [
+      2,
+      1
+     ],
+     "types": [
+      "STEP",
+      "END_ACTIVATION",
+      "STEP",
+      "STEP"
+     ],
+     "best": 1,
+     "gain": 0.027881604670975224,
+     "se": 7.166458808248763e-18
+    },
+    {
+     "index": 466,
+     "game": 15,
+     "engine_seed": 29100015,
+     "seat": 1,
+     "step": 39,
+     "class": "after_declare",
+     "declared": "BLOCK",
+     "clock": [
+      1,
+      1
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "BLOCK_TARGET",
+      "BLOCK_TARGET",
+      "END_ACTIVATION",
+      "BLOCK_TARGET"
+     ],
+     "best": 2,
+     "gain": 0.0239296706493458,
+     "se": 0.011015968714840195
+    },
+    {
+     "index": 648,
+     "game": 21,
+     "engine_seed": 29100021,
+     "seat": 1,
+     "step": 215,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      3
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "STEP"
+     ],
+     "best": 2,
+     "gain": 0.022510358529627225,
+     "se": 0.008267224467822562
+    },
+    {
+     "index": 692,
+     "game": 23,
+     "engine_seed": 29100023,
+     "seat": 1,
+     "step": 322,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      3
+     ],
+     "score": [
+      1,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 1,
+     "gain": 0.022302565637638855,
+     "se": 0.004868712443166484
+    },
+    {
+     "index": 741,
+     "game": 24,
+     "engine_seed": 29100024,
+     "seat": 0,
+     "step": 1362,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      2,
+      8
+     ],
+     "score": [
+      0,
+      1
+     ],
+     "types": [
+      "END_ACTIVATION",
+      "STEP",
+      "STEP",
+      "STEP"
+     ],
+     "best": 3,
+     "gain": 0.05545566978462965,
+     "se": 0.010332725144717197
+    },
+    {
+     "index": 748,
+     "game": 24,
+     "engine_seed": 29100024,
+     "seat": 0,
+     "step": 301,
+     "class": "after_declare",
+     "declared": "BLOCK",
+     "clock": [
+      1,
+      4
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "END_ACTIVATION",
+      "BLOCK_TARGET",
+      "BLOCK_TARGET"
+     ],
+     "best": 1,
+     "gain": 0.03193850948850758,
+     "se": 0.01051703448862436
+    },
+    {
+     "index": 760,
+     "game": 25,
+     "engine_seed": 29100025,
+     "seat": 1,
+     "step": 723,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      5
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 1,
+     "gain": 0.07457343056649487,
+     "se": 0.015210795768630669
+    },
+    {
+     "index": 763,
+     "game": 25,
+     "engine_seed": 29100025,
+     "seat": 1,
+     "step": 743,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      5
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 3,
+     "gain": 0.044827265447299335,
+     "se": 0.017554092988498186
+    },
+    {
+     "index": 803,
+     "game": 26,
+     "engine_seed": 29100026,
+     "seat": 0,
+     "step": 173,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      2
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "END_ACTIVATION"
+     ],
+     "best": 2,
+     "gain": 0.029637373763439494,
+     "se": 0.0027269261932341238
+    },
+    {
+     "index": 808,
+     "game": 26,
+     "engine_seed": 29100026,
+     "seat": 0,
+     "step": 143,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      2
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "END_ACTIVATION"
+     ],
+     "best": 2,
+     "gain": 0.04280384435668485,
+     "se": 0.008807791530340416
+    },
+    {
+     "index": 934,
+     "game": 31,
+     "engine_seed": 29100031,
+     "seat": 1,
+     "step": 838,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      6
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 1,
+     "gain": 0.03258237649108668,
+     "se": 0.01472431547979831
+    },
+    {
+     "index": 955,
+     "game": 31,
+     "engine_seed": 29100031,
+     "seat": 1,
+     "step": 482,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      8
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "END_ACTIVATION"
+     ],
+     "best": 3,
+     "gain": 0.028628292713830633,
+     "se": 0.002851522425187059
+    },
+    {
+     "index": 996,
+     "game": 33,
+     "engine_seed": 29100033,
+     "seat": 1,
+     "step": 370,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      4
+     ],
+     "score": [
+      1,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 3,
+     "gain": 0.04383381321201103,
+     "se": 0.012090223900392253
+    },
+    {
+     "index": 1221,
+     "game": 40,
+     "engine_seed": 29100040,
+     "seat": 0,
+     "step": 1032,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      2,
+      4
+     ],
+     "score": [
+      1,
+      2
+     ],
+     "types": [
+      "END_ACTIVATION",
+      "STAND_UP"
+     ],
+     "best": 1,
+     "gain": 0.023516114447187902,
+     "se": 2.533725810203382e-18
+    },
+    {
+     "index": 1289,
+     "game": 42,
+     "engine_seed": 29100042,
+     "seat": 0,
+     "step": 179,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      2
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "STEP"
+     ],
+     "best": 3,
+     "gain": 0.037676998354565144,
+     "se": 0.0005165007418220405
+    }
+   ]
+  },
+  {
+   "tail_delta": 0.1,
+   "band": [
+    0.02,
+    0.1
+   ],
+   "cap": 40,
+   "selection_seed": 0,
+   "screened": 660,
+   "screen_rollouts": 16,
+   "seed0": 29100000,
+   "first_game": 45,
+   "games": 22,
+   "tail_found": 10,
+   "band_found": 71,
+   "tail_played": [
+    {
+     "index": 19,
+     "game": 45,
+     "engine_seed": 29100045,
+     "seat": 1,
+     "step": 1026,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      2,
+      4
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "END_ACTIVATION"
+     ],
+     "best": 1,
+     "gain": 0.18981472874830002,
+     "se": 0.09114271795250646
+    },
+    {
+     "index": 102,
+     "game": 48,
+     "engine_seed": 29100048,
+     "seat": 0,
+     "step": 1172,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      6
+     ],
+     "score": [
+      2,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 1,
+     "gain": 0.16930717293198047,
+     "se": 0.02671542857880995
+    },
+    {
+     "index": 112,
+     "game": 48,
+     "engine_seed": 29100048,
+     "seat": 0,
+     "step": 1174,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      2,
+      6
+     ],
+     "score": [
+      2,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "STEP"
+     ],
+     "best": 3,
+     "gain": 0.11903713162459567,
+     "se": 0.026373478883689697
+    },
+    {
+     "index": 156,
+     "game": 50,
+     "engine_seed": 29100050,
+     "seat": 0,
+     "step": 1124,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      6
+     ],
+     "score": [
+      2,
+      1
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 1,
+     "gain": 0.1946145292937379,
+     "se": 0.07514415582208951
+    },
+    {
+     "index": 244,
+     "game": 53,
+     "engine_seed": 29100053,
+     "seat": 1,
+     "step": 576,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      7
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 2,
+     "gain": 0.13296956453965145,
+     "se": 0.04929716900340607
+    },
+    {
+     "index": 271,
+     "game": 54,
+     "engine_seed": 29100054,
+     "seat": 0,
+     "step": 93,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      2
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 3,
+     "gain": 0.10240836763730496,
+     "se": 0.036734014052649845
+    },
+    {
+     "index": 390,
+     "game": 58,
+     "engine_seed": 29100058,
+     "seat": 0,
+     "step": 529,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      6
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 3,
+     "gain": 0.10461955479058732,
+     "se": 0.03079794124159615
+    },
+    {
+     "index": 556,
+     "game": 63,
+     "engine_seed": 29100063,
+     "seat": 1,
+     "step": 228,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      3
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "END_ACTIVATION",
+      "STEP",
+      "STEP"
+     ],
+     "best": 1,
+     "gain": 0.10382909375238689,
+     "se": 0.01274416973741537
+    },
+    {
+     "index": 642,
+     "game": 66,
+     "engine_seed": 29100066,
+     "seat": 0,
+     "step": 626,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      7
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 2,
+     "gain": 0.3303825609674477,
+     "se": 0.06855091810785628
+    },
+    {
+     "index": 654,
+     "game": 66,
+     "engine_seed": 29100066,
+     "seat": 0,
+     "step": 527,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      6
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "END_ACTIVATION",
+      "STEP",
+      "STEP"
+     ],
+     "best": 1,
+     "gain": 0.10277776128103032,
+     "se": 0.0215227785744729
+    }
+   ],
+   "tail_not_played": [],
+   "control": [
+    {
+     "index": 21,
+     "game": 45,
+     "engine_seed": 29100045,
+     "seat": 1,
+     "step": 396,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      4
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "END_ACTIVATION",
+      "STEP"
+     ],
+     "best": 1,
+     "gain": 0.033511228599239676,
+     "se": 0.008491970580546073
+    },
+    {
+     "index": 47,
+     "game": 46,
+     "engine_seed": 29100046,
+     "seat": 0,
+     "step": 1210,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      2,
+      6
+     ],
+     "score": [
+      1,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "STEP"
+     ],
+     "best": 2,
+     "gain": 0.022312473658750397,
+     "se": 0.008313237809810522
+    },
+    {
+     "index": 95,
+     "game": 48,
+     "engine_seed": 29100048,
+     "seat": 0,
+     "step": 323,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      5
+     ],
+     "score": [
+      1,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 1,
+     "gain": 0.020922302138606463,
+     "se": 0.0006079700290445992
+    },
+    {
+     "index": 147,
+     "game": 49,
+     "engine_seed": 29100049,
+     "seat": 1,
+     "step": 224,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      2
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "STEP",
+      "STEP",
+      "STEP"
+     ],
+     "best": 1,
+     "gain": 0.020249570326406084,
+     "se": 0.004551000548910373
+    },
+    {
+     "index": 210,
+     "game": 52,
+     "engine_seed": 29100052,
+     "seat": 0,
+     "step": 327,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      4
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 2,
+     "gain": 0.08096062361671505,
+     "se": 0.03761589187678073
+    },
+    {
+     "index": 243,
+     "game": 53,
+     "engine_seed": 29100053,
+     "seat": 1,
+     "step": 961,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      5
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 3,
+     "gain": 0.021898800611983637,
+     "se": 0.008032181745314573
+    },
+    {
+     "index": 373,
+     "game": 57,
+     "engine_seed": 29100057,
+     "seat": 1,
+     "step": 1019,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      5
+     ],
+     "score": [
+      0,
+      1
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 1,
+     "gain": 0.0216443090281062,
+     "se": 0.0018098083330504943
+    },
+    {
+     "index": 425,
+     "game": 59,
+     "engine_seed": 29100059,
+     "seat": 1,
+     "step": 705,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      2,
+      1
+     ],
+     "score": [
+      1,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 1,
+     "gain": 0.05611955668045637,
+     "se": 0.017126022591363192
+    },
+    {
+     "index": 502,
+     "game": 61,
+     "engine_seed": 29100061,
+     "seat": 1,
+     "step": 213,
+     "class": "after_declare",
+     "declared": "MOVE",
+     "clock": [
+      1,
+      3
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "STEP",
+      "END_ACTIVATION",
+      "STEP",
+      "STEP"
+     ],
+     "best": 1,
+     "gain": 0.03263434084955084,
+     "se": 0.005301496531875728
+    },
+    {
+     "index": 546,
+     "game": 63,
+     "engine_seed": 29100063,
+     "seat": 1,
+     "step": 512,
+     "class": "turn",
+     "declared": null,
+     "clock": [
+      1,
+      6
+     ],
+     "score": [
+      0,
+      0
+     ],
+     "types": [
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE",
+      "ACTIVATE"
+     ],
+     "best": 2,
+     "gain": 0.03436732267241846,
+     "se": 0.0036277660934077474
+    }
+   ]
+  }
+ ]
+}
