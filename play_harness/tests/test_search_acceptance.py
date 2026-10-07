@@ -6,18 +6,21 @@ Synthetic records here, written with the tournament's own record functions, and
 one real run at the end. test_search_tournament.py runs the same check on its own
 real runs.
 """
+import contextlib
 import copy
 import hashlib
 import importlib.util
+import io
 import itertools
 import json
+import math
 import os
 
 import pytest
 
 from play_harness import search as S
 from play_harness import tournament as T
-from play_harness.policy import MaskedPolicySeat
+from play_harness.policy import MaskedPolicySeat, random_policy
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPEC = importlib.util.spec_from_file_location(
@@ -1090,3 +1093,263 @@ def test_every_game_carries_the_fields_an_identity_check_would_compare(field):
     del _plain(rows)[field]
     problems, _ = sa.check_games(rows, plan())
     assert problems == [f"['C', 'chain37'] seed 25100000 A_home: has no usable ['{field}']"]
+
+
+# ---- a real run: accepted, then changed one field at a time ----------------------------------
+REAL_SEED0 = 46200
+REAL_PAIRS = [["S", "C", 2], ["I", "C", 2], ["P", "C", 2], ["P", "offense", 2]]
+REAL_QUICK = S.search_setting(2, 2, 0.0)                 # deviates on any clear gain
+REAL_IDENTITY = S.search_setting(2, 2, math.inf)         # searches, never deviates
+
+
+@pytest.fixture(scope="module")
+def real_run(tmp_path_factory):
+    """A gate in miniature, played through the tournament's command line by a
+    seeded random network at k = 2, n = 2: S searches, I searches and never
+    deviates, P is I without the search, C is the control on sampling offset 1,
+    and a scripted bot. Eight games, four of them searched: about a minute."""
+    from .test_search_tournament import write_blob
+    blob = write_blob(tmp_path_factory.mktemp("blob"), random_policy(seed=11, scale=0.05))
+    out = tmp_path_factory.mktemp("real") / "run"
+    args = ["--bot", "offense=offense", "--sampling-offset", "C=1", "--search", "S=2:2:0",
+            "--search", "I=2:2:inf", "--seed0", str(REAL_SEED0), "--workers", "1",
+            "--out-dir", str(out)]
+    for a, b, n in REAL_PAIRS:
+        args += ["--pair", f"{a},{b},{n}"]
+    for name in "SIPC":
+        args += ["--checkpoint", f"{name}={blob}", "--mask", f"{name}=m1"]
+    patch = pytest.MonkeyPatch()
+    patch.setenv("OMP_NUM_THREADS", "1")
+    patch.delenv(T.GAMES_PER_WORKER_ENV, raising=False)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert T.main(args) == 0
+    finally:
+        patch.undo()
+    with open(out / "manifest.json") as f:
+        m = json.load(f)
+    with open(out / "games.jsonl") as f:
+        rows = [json.loads(line) for line in f]
+    gate = {"seed0": REAL_SEED0, "games_per_worker": 1, "commit": m["harness_git_head"],
+            "pairs": [tuple(p) for p in REAL_PAIRS],
+            "checkpoints": {name: entry["sha256"] for name, entry in m["checkpoints"].items()}}
+    return {"out": str(out), "manifest": m, "games": rows, "gate_plan": gate}
+
+
+def real_plan():
+    return {"seed0": REAL_SEED0, "pairs": copy.deepcopy(REAL_PAIRS),
+            "players": {"S": {"masks": ["m1"], "search": copy.deepcopy(REAL_QUICK)},
+                        "I": {"masks": ["m1"], "search": copy.deepcopy(REAL_IDENTITY)},
+                        "P": {"masks": ["m1"]}, "C": {"masks": ["m1"], "sampling_offset": 1},
+                        "offense": {"bot": "offense"}},
+            "search": {"reward_manifest_sha256": SHA, "integrity_checks": list(CHECKS),
+                       "cap_rejection_ceiling": 1.0,
+                       "identity": [{"search": ["I", "C"], "plain": ["P", "C"]}]}}
+
+
+def both_checks(real, m=None, rows=None):
+    """(this check's problems, gate_acceptance.py's) for the real run with a
+    changed manifest or changed records; COMPLETE.json is taken as present."""
+    m = real["manifest"] if m is None else m
+    rows = real["games"] if rows is None else rows
+    seed0 = m.get("seed0")
+    found, _ = sa.check_games(rows, real_plan(), seed0 if sa._int(seed0) else None)
+    return (sa.check_manifest(m, real_plan()) + found + sa.check_identity(rows, real_plan())[0],
+            ga.check_manifest(m, real["gate_plan"]) + ga.check_games(rows, real["gate_plan"]))
+
+
+def pick(rows, pair, leg="A_home"):
+    return next(r for r in rows if r["pair"] == list(pair) and r["leg"] == leg)
+
+
+def test_a_real_run_is_accepted_by_both_checks(real_run, tmp_path, capsys):
+    assert both_checks(real_run) == ([], [])
+    problems, counts = sa.accept(real_run["out"], real_plan(), require_schedule=True)
+    assert problems == [] and ga.accept(real_run["out"], real_run["gate_plan"]) == []
+    assert counts["games"] == 8 and counts["searched_games"] == 4
+    assert counts["identity_games"] == 2 and counts["scheduled_pairs"] == 4
+    assert sum(counts["searched"].values()) > 200 and sum(counts["deviations"].values()) > 0
+    path = tmp_path / "PLAN.json"
+    path.write_text(json.dumps(real_plan()))
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert sa.main([str(path), real_run["out"], "--expect-sha256", sha]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("SEARCH-ACCEPTED 4 searched games of 8 as registered; ")
+    assert "2 identity game(s) equal to the plain game; 4 pair(s) held to the plan's" in out
+
+
+def test_the_reviewed_false_passes_are_rejected_on_real_records(real_run):
+    """Each change the review made to a real run. gate_acceptance.py still passes
+    every one of them, so this check is the only one that can reject it."""
+    games_ = real_run["games"]
+
+    def rejected(rows, needle, times):
+        ours, gate = both_checks(real_run, rows=rows)
+        assert gate == [] and sum(needle in p for p in ours) == times, (needle, ours)
+
+    # 1. Plain games between other registered players under the searched pair's key.
+    rows = [dict(copy.deepcopy(pick(games_, ("P", "C"), r["leg"])), pair=["S", "C"])
+            if r["pair"] == ["S", "C"] else r for r in copy.deepcopy(games_)]
+    rejected(rows, "are not the pair ['S', 'C'] seated for this leg", 2)
+    # 2. Every identity comparison field removed from both records.
+    rows = copy.deepcopy(games_)
+    for row in rows:
+        if row["pair"] in (["I", "C"], ["P", "C"]):
+            for field in sa.IDENTITY_FIELDS:
+                del row[field]
+    rejected(rows, f"I', 'C') seed 46200 A_home: has no usable {list(sa.IDENTITY_FIELDS)}", 1)
+    assert sa.check_identity(rows, real_plan())[1] == 0
+    # 3. The identity games' searched and rollout counts at zero.
+    rows = copy.deepcopy(games_)
+    for row in rows:
+        if row["pair"] == ["I", "C"]:
+            st = row["search_stats"][side_of(row, "I")]
+            st.update(searched={c: 0 for c in st["searched"]}, rollouts=0, rollout_steps=0,
+                      rollout_forward_rows=0)
+    rejected(rows, "searched no decision", 4)              # twice per game: game, identity
+    assert sa.check_identity(rows, real_plan())[1] == 0
+    # 4. One hard counter of five and no mask statistics.
+    rows = copy.deepcopy(games_)
+    for row in rows:
+        row["integrity"] = {"illegal": 0}
+        del row["mask_stats"]
+    rejected(rows, "integrity counters ['illegal'] are not exactly", 8)
+    rejected(rows, "mask_stats is not a two-element list", 8)
+    # 5. A predicted gain that is not a number.
+    for gain in (float("nan"), float("inf")):
+        rows = copy.deepcopy(games_)
+        row = pick(rows, ("S", "C"))
+        row["search_stats"][side_of(row, "S")]["predicted_gains"][0] = gain
+        rejected(rows, "S: a predicted gain is not a finite number", 1)
+
+
+def _real_stat(rows, pair=("S", "C"), **change):
+    row = pick(rows, pair)
+    row["search_stats"][side_of(row, pair[0])].update(change)
+
+
+def _bump(rows, key, pair=("S", "C")):
+    row = pick(rows, pair)
+    st = row["search_stats"][side_of(row, pair[0])]
+    st[key] += 1
+
+
+REAL_CHANGES = [
+    # Who played, where, on which seed.
+    (lambda g: pick(g, ("S", "C")).update(home="C", away="S"), "seated for this leg"),
+    (lambda g: pick(g, ("S", "C")).update(leg="B_home"), "seated for this leg"),
+    (lambda g: pick(g, ("S", "C")).update(pair=["C", "S"]), "seated for this leg"),
+    (lambda g: pick(g, ("P", "C")).update(pair=["I", "C"], home="I"), "recorded more than once"),
+    (lambda g: pick(g, ("S", "C")).update(engine_seed=REAL_SEED0 + 1), "is not seed0 46200 + "),
+    (lambda g: pick(g, ("S", "C")).update(game_index=1), "is outside the pair's 2 registered"),
+    (lambda g: pick(g, ("S", "C")).update(episode=1), "episode 1 is not 0"),
+    (lambda g: g.append(copy.deepcopy(g[0])), "recorded more than once"),
+    (lambda g: g.pop(), "1 of the 2 registered games missing"),
+    # How each side was seated.
+    (lambda g: pick(g, ("S", "C"))["sampling_seeds"].reverse(), "S's sampling seed"),
+    (lambda g: pick(g, ("S", "C")).update(seed_offsets=[0, 0]), "C on sampling offset 0"),
+    (lambda g: pick(g, ("S", "C")).update(masks=[None, ["m1"]]), "S played under masks None"),
+    (lambda g: pick(g, ("P", "C")).update(masks=[["m1", "m2"], ["m1"]]), "P played under masks"),
+    (lambda g: pick(g, ("P", "offense")).update(bots=[None, None]), "offense played as bot None"),
+    (lambda g: pick(g, ("P", "offense")).update(bots=[None, "contact"]), "as bot 'contact'"),
+    (lambda g: pick(g, ("P", "C")).update(modes=["argmax", "sample"]), "P played in mode"),
+    (lambda g: pick(g, ("P", "C")).update(temperatures=[1.0, 0.5]), "C played in mode"),
+    (lambda g: pick(g, ("S", "C")).update(modes=["argmax", "sample"]), "S searched outside"),
+    # How the game ended and what it counted.
+    (lambda g: pick(g, ("P", "C")).update(natural=False), "natural False"),
+    (lambda g: pick(g, ("P", "C")).update(truncated=True), "truncated True"),
+    (lambda g: pick(g, ("P", "C"))["integrity"].update(error_episodes=1), "'error_episodes': 1"),
+    (lambda g: pick(g, ("P", "C"))["integrity"].pop("precheck_collisions"), "are not exactly"),
+    (lambda g: pick(g, ("P", "C"))["mask_stats"][0]["m1"].update(fallback=1), "1 mask fallback"),
+    (lambda g: pick(g, ("P", "C"))["mask_stats"].__setitem__(1, None), "C has mask statistics"),
+    (lambda g: pick(g, ("P", "C"))["forwards"].__setitem__(0, 1), "forwards [1, "),
+    (lambda g: pick(g, ("P", "C")).update(c_steps=None, forwards=[None, None]), "c_steps None"),
+    (lambda g: pick(g, ("P", "offense")).update(score=[9, 9]), "are not the score [9, 9]"),
+    (lambda g: pick(g, ("P", "offense")).update(result_a="W", a_td=5), "are not the score"),
+    (lambda g: pick(g, ("P", "offense")).pop("action_trail_sha256"), "has no usable"),
+    # The search: setting, session, statistics.
+    (lambda g: pick(g, ("S", "C"))["search"][0].update(k=4), "S's search setting"),
+    (lambda g: pick(g, ("S", "C")).update(search=[None, None]), "S's search setting None"),
+    (lambda g: pick(g, ("P", "C")).update(search=[copy.deepcopy(REAL_QUICK), None]),
+     "no registered search, yet the game carries ['search']"),
+    (lambda g: pick(g, ("S", "C")).update(reward_manifest_sha256="0" * 64), "reward manifest 0"),
+    (lambda g: pick(g, ("S", "C"))["integrity_checks"].pop(), "integrity checks are not"),
+    (lambda g: pick(g, ("S", "C")).update(search_seconds=[None, None]), "S's search_seconds"),
+    (lambda g: pick(g, ("S", "C")).update(final_state_sha256=""), "is not a sha256"),
+    (lambda g: pick(g, ("S", "C")).pop("sampling_state_sha256"), "is not a sha256"),
+    (lambda g: _bump(g, "rollouts"), "rollouts are not a multiple of n 2"),
+    (lambda g: _real_stat(g, rollouts=0), "0 rollouts for"),
+    (lambda g: _bump(g, "shadow_forwards"), "opponent-view forwards over"),
+    (lambda g: _bump(g, "error_rollouts"), "1 error rollout(s)"),
+    (lambda g: _real_stat(g, predicted_gains=[]), "0 predicted gains"),
+    (lambda g: _real_stat(g, deviation_types={}), "0 deviation types"),
+    (lambda g: pick(g, ("S", "C"))["search_stats"][0]["searched"].update(turn=10 ** 6),
+     "class turn: in scope"),
+    (lambda g: pick(g, ("S", "C"))["search_stats"][0]["predicted_gains"].__setitem__(0, -0.5),
+     "a predicted gain below delta 0.0"),
+    (lambda g: pick(g, ("S", "C"))["search_stats"].__setitem__(1, {}), "C does not search"),
+    # The identity sample.
+    (lambda g: pick(g, ("P", "C")).update(action_trail_sha256="0" * 64), "['action_trail_sha256']"),
+    (lambda g: pick(g, ("I", "C"))["logprob_sum"].__setitem__(0, -1.0), "['logprob_sum']"),
+    (lambda g: pick(g, ("I", "C"))["search_stats"][0]["deviations"].update(turn=1),
+     "at delta inf"),
+    (lambda g: g.remove(pick(g, ("P", "C"), "B_home")), "the plain pair ('P', 'C') has no such"),
+    (lambda g: g.remove(pick(g, ("I", "C"), "B_home")),
+     "identity ('I', 'C'): 1 of the 2 registered games equal the plain game"),
+]
+
+
+@pytest.mark.parametrize("index", range(len(REAL_CHANGES)))
+def test_one_change_to_a_real_record_is_rejected(real_run, index):
+    change, needle = REAL_CHANGES[index]
+    rows = copy.deepcopy(real_run["games"])
+    change(rows)
+    ours, _ = both_checks(real_run, rows=rows)
+    assert any(needle in problem for problem in ours), (needle, ours)
+
+
+# What a record or the manifest can lose without either check noticing. Timing,
+# the process id and the display names say nothing about how a game was played.
+# The rest restates what the held fields already fix (the half, turns and
+# decision counts of a game whose action trail is held on the identity pairs
+# only) or is fixed by the pinned commit (kernel default, decision cap).
+GAME_FIELDS_NOBODY_HOLDS = {"behaviour", "decisions", "engine_decisions", "final_status", "half",
+                            "turns", "mode", "pid", "seconds", "teams"}
+MANIFEST_FIELDS_THE_GATE_HOLDS = {"checkpoints", "harness_git_head", "mode"}
+MANIFEST_FIELDS_NOBODY_HOLDS = {
+    "bot_library_sha256", "bots", "games_per_pair", "host", "kernel", "legs", "max_decisions",
+    "omp_num_threads", "python", "rosters", "sampling_seed", "schema", "tasks", "torch",
+    "workers"}
+
+
+def test_which_fields_a_real_run_can_lose(real_run):
+    """Delete one field at a time from every real record and from the manifest.
+    Every field this check does not hold is listed above, so a new unheld field
+    fails here."""
+    games_, m = real_run["games"], real_run["manifest"]
+    unheld = set()
+    for key in sorted({key for row in games_ for key in row}):
+        verdicts = set()
+        for i, row in enumerate(games_):
+            if key in row:
+                rows = copy.deepcopy(games_)
+                del rows[i][key]
+                verdicts.add(bool(both_checks(real_run, rows=rows)[0]))
+        assert len(verdicts) == 1, f"{key}: held on some records and not on others"
+        if verdicts == {False}:
+            unheld.add(key)
+    assert unheld == GAME_FIELDS_NOBODY_HOLDS
+    for key in unheld:                                     # and the gate check reads none of them
+        rows = copy.deepcopy(games_)
+        for row in rows:
+            row.pop(key, None)
+        assert both_checks(real_run, rows=rows) == ([], [])
+    ours, gate = set(), set()
+    for key in m:
+        changed = {k: v for k, v in m.items() if k != key}
+        found = both_checks(real_run, m=changed)
+        ours |= {key} if found[0] else set()
+        gate |= {key} if found[1] else set()
+    assert ours == {"games_per_worker", "pairs", "players", "search", "seed0"}
+    assert gate - ours == MANIFEST_FIELDS_THE_GATE_HOLDS
+    assert set(m) - ours - gate == MANIFEST_FIELDS_NOBODY_HOLDS
