@@ -1,0 +1,27 @@
+plan ab-smoke-20261007 (f57e8d45c560da53e4ceac01c7b314993b2bc229041b26aa3f6eead6961f3e88): 1 engine seeds, both orientations, seat A against the same checkpoint (seat B, plain)
+intervals: percentile bootstrap at 2.5 and 97.5 over engine seeds, 2000 replicates, generator seed 0; both orientations of a seed and all arms are resampled together
+
+arm        games  W/D/L         win score              decisive share         decisive Elo               TD difference per game
+plain          2  0/1/1         0.250 [0.250, 0.250]   0.000 [0.000, 0.000]   -4800 [-4800, -4800]       -0.500 [-0.500, -0.500]
+s10            2  1/0/1         0.500 [0.500, 0.500]   0.500 [0.500, 0.500]   +0 [+0, +0]                +0.500 [+0.500, +0.500]
+s02            2  1/0/1         0.500 [0.500, 0.500]   0.500 [0.500, 0.500]   +0 [+0, +0]                +0.000 [+0.000, +0.000]
+replicates left out of decisive share and Elo for having no decisive game: none
+
+Each search arm minus the plain arm (same seeds, both estimates recomputed in every replicate)
+arm        pairs  decisive Elo               win score                  TD difference              same result  same game
+s10            2  +4800 [+4800, +4800]       +0.250 [+0.250, +0.250]    +1.000 [+1.000, +1.000]          50.0%       0.0%
+s02            2  +4800 [+4800, +4800]       +0.250 [+0.250, +0.250]    +0.500 [+0.500, +0.500]          50.0%       0.0%
+
+What the search did, per game
+arm        searched turn/after_declare     deviations turn/after_declare   mean predicted gain  rollout steps  cap-rejected decisions  cutoff rollouts  seconds  slowdown
+plain      74.0 / 75.0                     0.00 / 0.00                                       -              0       0 (0.00%)              0 (0.00%)      4.6      1.0x
+s10        88.0 / 90.0                     1.00 / 2.00                                   0.159         268558       0 (0.00%)              0 (0.00%)    214.1     46.1x
+s02        77.0 / 80.5                     5.00 / 6.50                                   0.047         279952       0 (0.00%)              0 (0.00%)    224.0     48.2x
+
+deviations of s10: after_declare: STEP -> STEP x2; turn: ACTIVATE -> ACTIVATE x2; after_declare: STEP -> END_ACTIVATION x1; after_declare: END_ACTIVATION -> BLOCK_TARGET x1
+
+deviations of s02: turn: ACTIVATE -> ACTIVATE x10; after_declare: STEP -> END_ACTIVATION x7; after_declare: STEP -> STEP x2; after_declare: END_ACTIVATION -> BLOCK_TARGET x1; after_declare: END_ACTIVATION -> STEP x1; after_declare: USE_REROLL -> DECLINE_REROLL x1; after_declare: BLOCK_TARGET -> BLOCK_TARGET x1
+
+identity: 2 game(s) of arm identity on shard(s) smoke-a equal the plain game on action trail, final state and sampling state, with 17344 rollouts run and discarded (149 searched decisions, 226080 rollout steps and 184.6 s per game, 39.7x plain)
+hosts: smoke-a: bb-harness-ab-smoke-smoke-a
+ACCEPTANCE: PASS

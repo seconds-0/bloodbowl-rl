@@ -1,0 +1,99 @@
+{
+ "schema": "search-ab-plan-v1",
+ "name": "ab-d425-20261007",
+ "source_commit": "544d5b356b93c99ecf69543b46511ba5382dcc4e",
+ "code_sha256": "69b20260f9dbf646aa2490394059b6ddd07737ef9fbeba78edb4e599550241ff",
+ "checkpoint_sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+ "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
+ "gamma": 0.999,
+ "temperature": 1.0,
+ "masks": {
+  "a": [
+   "m1"
+  ],
+  "b": [
+   "m1"
+  ]
+ },
+ "sampling_offsets": {
+  "a": 0,
+  "b": 1
+ },
+ "max_decisions": 4096,
+ "search": {
+  "scope": [
+   "turn",
+   "after_declare"
+  ],
+  "k": 4,
+  "n": 16,
+  "se_floor": "sqrt(mean over candidates of per-rollout return variance / n)",
+  "candidates": "a0, then the others by policy probability, ties in packed-tuple order",
+  "max_rollout_steps": 200
+ },
+ "arms": [
+  {
+   "name": "plain",
+   "delta": null
+  },
+  {
+   "name": "s10",
+   "delta": 0.1
+  }
+ ],
+ "identity": {
+  "arm": "identity",
+  "seeds_per_shard": 5
+ },
+ "shards": [
+  {
+   "name": "s1",
+   "seed_start": 29200000,
+   "seed_count": 100
+  },
+  {
+   "name": "s2",
+   "seed_start": 29200100,
+   "seed_count": 100
+  },
+  {
+   "name": "s3",
+   "seed_start": 29200200,
+   "seed_count": 100
+  },
+  {
+   "name": "s4",
+   "seed_start": 29200300,
+   "seed_count": 100
+  },
+  {
+   "name": "s5",
+   "seed_start": 29200400,
+   "seed_count": 100
+  },
+  {
+   "name": "s6",
+   "seed_start": 29200500,
+   "seed_count": 100
+  },
+  {
+   "name": "s7",
+   "seed_start": 29200600,
+   "seed_count": 100
+  },
+  {
+   "name": "s8",
+   "seed_start": 29200700,
+   "seed_count": 100
+  }
+ ],
+ "cap_rejection_ceiling": 0.01,
+ "bootstrap": {
+  "reps": 2000,
+  "seed": 0,
+  "quantiles": [
+   2.5,
+   97.5
+  ]
+ }
+}
