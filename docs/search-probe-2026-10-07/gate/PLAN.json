@@ -1,0 +1,332 @@
+{
+ "gate": "srch-gate-20261007",
+ "registered_in": "D430 (DECISIONS.md, branch opt/long-run-20261001): design, acceptance, labels, consequences, relaunch and budget rules",
+ "written_before_launch_at": "2026-10-07T13:57:19-0700",
+ "harness_commit": "06f0a5f7e67cc9089e8edaf5fa9b97dcfe440d99",
+ "harness_worktree": "~/Code/bb-harness-search",
+ "harness_branch": "feat/search-probe-20261007",
+ "main_checkout": "~/Code/bb-play-harness",
+ "main_checkout_commit": "b0099fbef60ac7223f5c1184a6d83df5506be6d9",
+ "checkpoint_store": "~/Code/bb-play-harness/.play-artifacts/checkpoints",
+ "out_root": "~/Code/bb-play-harness/.play-artifacts/tournaments",
+ "log_dir": "~/Code/bb-play-harness/.play-artifacts/logs",
+ "run_dir": "~/Code/bb-play-harness/.play-artifacts/tournaments/srch-gate-20261007/main",
+ "seed0": 25100000,
+ "games_per_pair": 3200,
+ "total_games": 12820,
+ "games_per_worker": 1,
+ "mode": "sample",
+ "kernel": "native",
+ "temperature": 1.0,
+ "starts": "kickoff",
+ "legs": [
+  "A_home",
+  "B_home"
+ ],
+ "mask_definition": {
+  "m1": "END_TURN is removed from the masked seat's exact joint support while an ACTIVATE is also legal; the policy is renormalized over what is left (play_harness/policy.py restrict_support, MaskedPolicySeat)"
+ },
+ "players": {
+  "c55m1s": {
+   "checkpoint": "chain55",
+   "masks": [
+    "m1"
+   ],
+   "search": {
+    "scope": [
+     "turn",
+     "after_declare"
+    ],
+    "k": 4,
+    "n": 16,
+    "delta": 0.1,
+    "max_rollout_steps": 200,
+    "horizon": "turn",
+    "gamma": 0.999,
+    "reward_manifest": "r0_poss_half",
+    "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
+    "opponent_model": "the seat's own network on the opponent's row, under the seat's own masks",
+    "candidates": "a0, then the others by policy probability, ties in packed-tuple order",
+    "se_floor": "sqrt(mean over candidates of per-rollout return variance / n)"
+   }
+  },
+  "c55m1": {
+   "checkpoint": "chain55",
+   "masks": [
+    "m1"
+   ]
+  },
+  "c55m1inf": {
+   "checkpoint": "chain55",
+   "masks": [
+    "m1"
+   ],
+   "search": {
+    "scope": [
+     "turn",
+     "after_declare"
+    ],
+    "k": 4,
+    "n": 16,
+    "delta": "inf",
+    "max_rollout_steps": 200,
+    "horizon": "turn",
+    "gamma": 0.999,
+    "reward_manifest": "r0_poss_half",
+    "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
+    "opponent_model": "the seat's own network on the opponent's row, under the seat's own masks",
+    "candidates": "a0, then the others by policy probability, ties in packed-tuple order",
+    "se_floor": "sqrt(mean over candidates of per-rollout return variance / n)"
+   }
+  },
+  "chain37": {
+   "checkpoint": "chain37",
+   "masks": []
+  },
+  "chain46": {
+   "checkpoint": "chain46",
+   "masks": []
+  }
+ },
+ "sampling_offsets": "none: no pair has the same checkpoint on both sides",
+ "pairs": [
+  [
+   "c55m1s",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1s",
+   "chain46",
+   3200
+  ],
+  [
+   "c55m1",
+   "chain46",
+   3200
+  ],
+  [
+   "c55m1inf",
+   "chain37",
+   20
+  ]
+ ],
+ "pair_notes": {
+  "1": "c55m1s v chain37: the search seat against held-out chain 37",
+  "2": "c55m1 v chain37: its control on the same seeds",
+  "3": "c55m1s v chain46: the search seat against held-out chain 46",
+  "4": "c55m1 v chain46: its control on the same seeds",
+  "5": "c55m1inf v chain37: identity sample, delta inf, the first game indexes of shard 1"
+ },
+ "checkpoints_sha256": {
+  "chain55": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+  "chain37": "268f1db08ca0c2bad88293ea56b3048a2a1c3a0ea9acdf0365fc023186c0f73f",
+  "chain46": "8eee9ac10f58eca57092013ac05db6f28fb5f7f2c6dc9ce850960c7bb2c7c467"
+ },
+ "bots": {},
+ "machine": "DigitalOcean droplets s-8vcpu-16gb-amd in sfo3, one per shard, tools/droplet_tournament.py run at the harness commit; 8 workers, one game per worker",
+ "droplet_size": "s-8vcpu-16gb-amd",
+ "max_hours": 15.0,
+ "shards": {
+  "srch-gate-20261007-s1": {
+   "index0": 0,
+   "pairs": [
+    "c55m1s,chain37,400",
+    "c55m1,chain37,400",
+    "c55m1s,chain46,400",
+    "c55m1,chain46,400",
+    "c55m1inf,chain37,20"
+   ]
+  },
+  "srch-gate-20261007-s2": {
+   "index0": 200,
+   "pairs": [
+    "c55m1s,chain37,400",
+    "c55m1,chain37,400",
+    "c55m1s,chain46,400",
+    "c55m1,chain46,400"
+   ]
+  },
+  "srch-gate-20261007-s3": {
+   "index0": 400,
+   "pairs": [
+    "c55m1s,chain37,400",
+    "c55m1,chain37,400",
+    "c55m1s,chain46,400",
+    "c55m1,chain46,400"
+   ]
+  },
+  "srch-gate-20261007-s4": {
+   "index0": 600,
+   "pairs": [
+    "c55m1s,chain37,400",
+    "c55m1,chain37,400",
+    "c55m1s,chain46,400",
+    "c55m1,chain46,400"
+   ]
+  },
+  "srch-gate-20261007-s5": {
+   "index0": 800,
+   "pairs": [
+    "c55m1s,chain37,400",
+    "c55m1,chain37,400",
+    "c55m1s,chain46,400",
+    "c55m1,chain46,400"
+   ]
+  },
+  "srch-gate-20261007-s6": {
+   "index0": 1000,
+   "pairs": [
+    "c55m1s,chain37,400",
+    "c55m1,chain37,400",
+    "c55m1s,chain46,400",
+    "c55m1,chain46,400"
+   ]
+  },
+  "srch-gate-20261007-s7": {
+   "index0": 1200,
+   "pairs": [
+    "c55m1s,chain37,400",
+    "c55m1,chain37,400",
+    "c55m1s,chain46,400",
+    "c55m1,chain46,400"
+   ]
+  },
+  "srch-gate-20261007-s8": {
+   "index0": 1400,
+   "pairs": [
+    "c55m1s,chain37,400",
+    "c55m1,chain37,400",
+    "c55m1s,chain46,400",
+    "c55m1,chain46,400"
+   ]
+  }
+ },
+ "launch": {
+  "script": "launch_from_plan.py",
+  "runner": "tools/droplet_tournament.py",
+  "runner_sha256": "bb0ece1c9592fa46000924b0fc5ec1e15720c2ad10165f3829499a4bf6b921f2",
+  "rule": "refuses unless this file hashes to the committed sha256, both checkouts are clean at their commits, every checkpoint blob has its registered sha256, the runner is the registered one, and the shards' index slices cover every pair exactly once from index 0",
+  "script_sha256": "b0beed330303f009efba443b9dbedcab784e7b8572381201f75e6fd3f02549d3"
+ },
+ "merge": "tools/droplet_tournament.py merge --out <run_dir> --shard <each shard>/main (shards must share commit, seed block, settings, torch and compiled shim; a pair's index slices must be disjoint and cover it from index 0 without a gap)",
+ "acceptance": {
+  "script": "accept_from_plan.py",
+  "tool": "tools/gate_acceptance.py at the harness commit",
+  "tool_sha256": "76db76577ab7ef596d50378a1260d6ef0e7f18ede300ebad8fc9f4c058cb7c8f",
+  "search_tool": "tools/search_acceptance.py at the harness commit",
+  "search_tool_sha256": "2b429a42c199581c3a2504d9e2d18da49b15fc01251b1d42e4f247ac8cf6f2d9",
+  "against": "this file, whose sha256 is committed to the ledger before launch",
+  "script_sha256": "3404e28b06ee27cb946d6365207bb449613d9c9511f6dfde315cd42c585a9e03"
+ },
+ "search": {
+  "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
+  "integrity_checks": [
+   "real game: the engine's return code on every step",
+   "real game: hard counters after every step and at the end (illegal, projection_collision, error_episodes, rejected_submissions, precheck_collisions)",
+   "real game: both seats' logits and values finite on every step",
+   "real game: the opponent-view state and value finite on every step (search arms)",
+   "real game: both seats' emitted rewards finite and within the clip threshold on every step",
+   "real game: no mask fallback",
+   "rollouts: the engine's return code and status on every step",
+   "rollouts: the same hard counters of every clone at its rollout's end",
+   "rollouts: both seats' emitted rewards finite and within the clip threshold on every step",
+   "rollouts: logits and values finite on every forward",
+   "rollouts: the accumulated return finite",
+   "rollouts: no mask fallback, and an action selectable at every decision",
+   "search: every return the deviation rule reads is finite"
+  ],
+  "cap_rejection_ceiling": 0.01,
+  "identity": [
+   {
+    "search": [
+     "c55m1inf",
+     "chain37"
+    ],
+    "plain": [
+     "c55m1",
+     "chain37"
+    ]
+   }
+  ]
+ },
+ "scoring": {
+  "script": "score_from_plan.py",
+  "rule": "merge, then accept_from_plan.py, then the report, contrasts and diagnostics only if accepted",
+  "script_sha256": "f8c1028f42850c45a3a5c18d24c56215ec72b1d8120617fbe08e5081d39e30d9"
+ },
+ "statistic": "decisive-Elo with 95% seed-cluster intervals from play_harness.tournament_stats (report.json, report.txt), 2,000 replicates",
+ "contrasts": {
+  "script": "paired_contrasts.py",
+  "replicates": 2000,
+  "generator_seed": 0,
+  "sets": [
+   {
+    "name": "label (c55m1s minus c55m1)",
+    "arm": "c55m1s",
+    "control": "c55m1",
+    "opponents": [
+     "chain37",
+     "chain46"
+    ],
+    "run_dir": "<run_dir>",
+    "outputs": [
+     "chain37_contrast.json",
+     "chain46_contrast.json"
+    ]
+   }
+  ],
+  "script_sha256": "722ece95b24eed07f017062c4a837d44d4a49c4e97a7082fbb6fa2c37cef6002"
+ },
+ "diagnostics": {
+  "script": "gate_diagnostics.py",
+  "registered": "the style table per side for pairs 1 to 4 and the search seat's statistics for pairs 1 and 3 against their controls",
+  "pairs": [
+   [
+    "c55m1s",
+    "chain37"
+   ],
+   [
+    "c55m1",
+    "chain37"
+   ],
+   [
+    "c55m1s",
+    "chain46"
+   ],
+   [
+    "c55m1",
+    "chain46"
+   ]
+  ],
+  "search_pairs": [
+   {
+    "search": [
+     "c55m1s",
+     "chain37"
+    ],
+    "control": [
+     "c55m1",
+     "chain37"
+    ]
+   },
+   {
+    "search": [
+     "c55m1s",
+     "chain46"
+    ],
+    "control": [
+     "c55m1",
+     "chain46"
+    ]
+   }
+  ],
+  "script_sha256": "1defdd33893dbb846fe5b309dcb26d14fce6064fc3442f60466989c9a7d88b99"
+ },
+ "reading": "labels are applied by the operator from these outputs, in the order the ledger entry registers"
+}
