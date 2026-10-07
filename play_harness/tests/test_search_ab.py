@@ -328,24 +328,22 @@ def test_a_search_arm_deviates_and_then_plays_another_game(shard):
         assert searched["cutoff_rollouts"] >= 0 and searched["error_rollouts"] == 0
 
 
-def test_the_report_passes_this_shard_and_refuses_it_without_the_test_switch(shard, tmp_path,
-                                                                             capsys):
-    out = tmp_path / "report"
+def test_the_report_reads_this_shard_and_refuses_it_without_the_test_switch(shard, capsys):
     base = ["report", "--plan", shard["plan"], "--expect-sha256", shard["sha"], shard["out"]]
-    assert AB.main(base + ["--allow-test-policy", "--out-dir", str(out)]) == 0
+    code = AB.main(base + ["--allow-test-policy"])
     text = capsys.readouterr().out
-    assert "ACCEPTANCE: PASS" in text and "decisive Elo" in text and "identity: 2 game(s)" in text
-    sums = dict(line.split("  ")[::-1] for line in open(out / "SHA256SUMS").read().splitlines())
-    assert set(sums) == {"t1/games.jsonl", "report.txt", "report.json", "plan.json"}
-    assert sums["plan.json"] == shard["sha"]
-    assert sums["report.txt"] == hashlib.sha256((out / "report.txt").read_bytes()).hexdigest()
-    with open(os.path.join(shard["out"], "games.jsonl"), "rb") as f:
-        assert sums["t1/games.jsonl"] == hashlib.sha256(f.read()).hexdigest()
+    if code == 0:
+        assert "ACCEPTANCE: PASS" in text and "identity: 2 game(s)" in text
+    else:
+        # A random network mostly draws 0-0: the one thing acceptance may hold
+        # against these games is an arm without a decisive game.
+        failures = [line for line in text.splitlines() if line.startswith("  - ")]
+        assert failures and all("no decisive game" in line for line in failures), text
     # A test policy is not a checkpoint: no statistic is printed for it.
     assert AB.main(base) == 2
     text = capsys.readouterr().out
     assert text.startswith("ACCEPTANCE: FAIL") and "test policy" in text
-    assert "win score" not in text and "Elo" not in text
+    assert "win score" not in text and "W/D/L" not in text and "TD difference" not in text
 
 
 @pytest.fixture(scope="module")
@@ -589,7 +587,9 @@ def test_an_accepted_run_has_no_problems_and_the_statistics_recover_what_was_pla
     assert base["mean_predicted_gain"] is None
     assert summary["identity"]["games"] == 8 and summary["identity"]["shards"] == ["t1", "t2"]
     assert summary["hosts"] == {"t1": ["host-t1"], "t2": ["host-t2"]}
+    assert summary["libraries"] == {"t1": ["c" * 64], "t2": ["c" * 64]}
     text = AB.format_report(plan, sha, summary)
+    assert f"t1           1: host-t1{'':<45} {'c' * 64}" in text
     for needle in ("ACCEPTANCE: PASS", "percentile bootstrap at 2.5 and 97.5",
                    "200 replicates, generator seed 0", "Each search arm minus the plain arm",
                    "identity: 8 game(s)", "replicates left out"):
@@ -612,7 +612,9 @@ def test_a_replicate_without_a_decisive_game_is_left_out_and_counted():
     for r in records:
         if r["arm"] == "plain" and r["engine_seed"] == 1000 and r["leg"] == "A_home":
             r.update(result_a="W", a_td=2)
-    assert AB.accept(plan, sha, records) == []
+    # An arm with no decisive game has no Elo: acceptance fails, and names it.
+    assert AB.accept(plan, sha, records) == [
+        "arm s10: no decisive game, so its decisive Elo is undefined"]
     summary = AB.summarize(plan, records)
     plain, arm = summary["arms"]["plain"], summary["arms"]["s10"]
     assert 0 < plain["replicates_without_a_decisive_game"] < 200
@@ -666,6 +668,13 @@ IDENT = (1000, "A_home", "identity")
      "shard t1: library_sha256 differs"),
     (lambda rs, p, s: _edit(rs, KEY, runtime={"torch": "2.13.0"}), "shard t1: torch differs"),
     (lambda rs, p, s: _edit(rs, KEY, runtime={"abi": 4}), "shard t1: abi differs"),
+    (lambda rs, p, s: [dict(r, runtime=dict(r["runtime"], library_sha256="d" * 64))
+                       if r["shard"] == "t2" else r for r in rs],
+     "library_sha256 differs across shards"),
+    (lambda rs, p, s: [dict(r, result_a="D", a_td=1, b_td=1) if r["arm"] == "plain" else r
+                       for r in rs], "arm plain: no decisive game"),
+    (lambda rs, p, s: _edit(rs, KEY, integrity_checks=["none"]),
+     "integrity_checks is not this tool's list"),
     (lambda rs, p, s: [dict(r, runtime=dict(r["runtime"], torch_threads=2))
                        if r["shard"] == "t2" else r for r in rs], "more than one torch thread"),
     (lambda rs, p, s: _edit(rs, IDENT, action_trail_sha256="e" * 64),
@@ -697,6 +706,7 @@ def test_acceptance_allows_a_cap_rejection_share_at_the_ceiling_and_another_host
     summary = AB.summarize(plan, records)
     assert summary["arms"]["s10"]["cap_rejection_share"] == pytest.approx(0.01, abs=1e-4)
     assert summary["hosts"]["t2"] == ["host-t2", "host-t2-relaunched"]
+    assert "t2           2: host-t2, host-t2-relaunched" in AB.format_report(plan, sha, summary)
     plan_test, _ = synthetic_plan(seeds=40)
     plan_test["checkpoint_sha256"] = POLICY
     with_test = [dict(r, hashes=dict(r["hashes"], checkpoint_sha256=POLICY))
@@ -713,11 +723,24 @@ def test_report_prints_no_statistic_for_a_run_it_does_not_accept(tmp_path, capsy
         folder.mkdir()
         (folder / "run.json").write_text(json.dumps({"plan_sha256": sha, "shard": name}))
         records = [r for r in synthetic_records(plan, sha, lift=0.5) if r["shard"] == name]
-        if name == "t2":
-            records = records[:-1]                             # one game short
         (folder / "games.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
     args = ["report", "--plan", path, "--expect-sha256", sha, str(tmp_path / "t1"),
             str(tmp_path / "t2"), "--out-dir", str(tmp_path / "out")]
+    # Complete and clean: the report, and the hashes of what it read and wrote.
+    assert AB.main(args[:-2] + ["--out-dir", str(tmp_path / "passed")]) == 0
+    text = capsys.readouterr().out
+    assert "ACCEPTANCE: PASS" in text and "decisive Elo" in text
+    out = tmp_path / "passed"
+    sums = dict(line.split("  ")[::-1] for line in open(out / "SHA256SUMS").read().splitlines())
+    assert set(sums) == {"t1/games.jsonl", "t2/games.jsonl", "report.txt", "report.json",
+                         "plan.json"}
+    assert sums["plan.json"] == sha
+    assert sums["report.txt"] == hashlib.sha256((out / "report.txt").read_bytes()).hexdigest()
+    assert sums["t2/games.jsonl"] == hashlib.sha256(
+        (tmp_path / "t2" / "games.jsonl").read_bytes()).hexdigest()
+    # One game short: nothing but the failure is printed.
+    lines = (tmp_path / "t2" / "games.jsonl").read_text().splitlines(keepends=True)
+    (tmp_path / "t2" / "games.jsonl").write_text("".join(lines[:-1]))
     assert AB.main(args) == 2
     text = capsys.readouterr().out
     assert text.startswith("ACCEPTANCE: FAIL") and "1 planned game(s) missing" in text

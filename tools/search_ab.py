@@ -83,7 +83,9 @@ resampled together, so a contrast between arms is computed inside each
 replicate. A replicate with no decisive game for an arm has no decisive share:
 it is left out of that arm's decisive-share and Elo percentiles, and the report
 says how many were. A replicate with wins and no losses (or the reverse) has a
-share of 1 (or 0), which the Elo transform clips to about +4800 (or -4800).
+share of 1 (or 0), which the Elo transform clips to about +4800 (or -4800). An
+arm with no decisive game at all fails acceptance: its Elo is undefined. So
+does a native library hash that differs between shards.
 """
 from __future__ import annotations
 
@@ -743,6 +745,14 @@ def accept(plan, plan_sha256, records, allow_test_policy=False):
                                 f"{values}")
         if any(r["runtime"].get("torch_threads") != 1 for r in games):
             problems.append(f"shard {shard['name']}: a game ran with more than one torch thread")
+    libraries = sorted({str(r["runtime"].get("library_sha256")) for r in records})
+    if len(libraries) > 1:
+        problems.append(f"library_sha256 differs across shards: {libraries}")
+    for arm in plan["arms"]:
+        games = [r for r in records if r["arm"] == arm["name"]]
+        if games and not any(r["result_a"] in ("W", "L") for r in games):
+            problems.append(f"arm {arm['name']}: no decisive game, so its decisive Elo is "
+                            "undefined")
     plain = {(r["engine_seed"], r["leg"]): r for r in records if r["arm"] == plain_arm(plan)}
     identity = [r for r in records if r["arm"] == plan["identity"]["arm"]]
     differ = [record_key(r) for r in identity
@@ -878,6 +888,9 @@ def summarize(plan, records):
     out["hosts"] = {shard["name"]: sorted({r["runtime"]["hostname"] for r in records
                                            if r["shard"] == shard["name"]})
                     for shard in plan["shards"]}
+    out["libraries"] = {shard["name"]: sorted({r["runtime"]["library_sha256"] for r in records
+                                               if r["shard"] == shard["name"]})
+                        for shard in plan["shards"]}
     return out
 
 
@@ -941,9 +954,12 @@ def format_report(plan, plan_sha256, summary):
               f"discarded ({ident['searched_per_game']:.0f} searched decisions, "
               f"{ident['rollout_steps_per_game']:.0f} rollout steps and "
               f"{ident['seconds_per_game']:.1f} s per game, {ident['slowdown']:.1f}x plain)",
-              "hosts: " + "; ".join(f"{name}: {', '.join(hosts)}"
-                                    for name, hosts in summary["hosts"].items()),
-              "ACCEPTANCE: PASS"]
+              "", "shard        games' hosts (more than one: the shard was relaunched)   "
+              "native library sha256"]
+    for name, hosts in summary["hosts"].items():
+        lines.append(f"{name:<12} {len(hosts)}: {', '.join(hosts):<52} "
+                     f"{', '.join(summary['libraries'][name])}")
+    lines.append("ACCEPTANCE: PASS")
     return "\n".join(lines)
 
 
