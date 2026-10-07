@@ -63,11 +63,17 @@ Checked:
   each pair  every game the plan registers for it is there; the share of a
              searching player's searched decisions that had a cap rejection is
              at most the plan's ceiling.
-  identity   for each listed pair of pairs: every game of the `search` pair
-             (whose searching player has delta inf) equals the `plain` pair's
-             game for the same seed and leg on action trail, final digest,
-             log-probability sums, score, steps, rosters and sampling seeds,
-             and ran rollouts.
+  identity   for each listed pair of pairs: the `search` pair (whose searching
+             player has delta inf) has a game, and every one of its games has
+             exactly one game of the `plain` pair on the same seed and leg and
+             equals it on action trail, final digest, log-probability sums,
+             score, steps, rosters and sampling seeds. Each of those fields must
+             be there in both records and be what a game writes (a 64-digit and
+             a 16-digit hex digest, two finite numbers, two integers, a positive
+             integer). The searching seat's statistics pass the checks above,
+             with at least one searched decision, so at least 2n rollouts for
+             each, and no deviation. When the plan lists pairs, the number of
+             games that match is the number registered for the `search` pair.
 
 Exit 0 and print SEARCH-ACCEPTED only when every check passes. Stdlib only.
 """
@@ -75,6 +81,7 @@ import argparse
 import collections
 import hashlib
 import json
+import math
 import os
 import sys
 
@@ -86,8 +93,6 @@ STAT_KEYS = ("in_scope", "searched", "deviations", "deviation_types", "predicted
              "cap_rejected_decisions", "cutoff_rollouts", "error_rollouts", "shadow_forwards")
 SEARCH_FIELDS = ("search", "search_stats", "search_seconds", "reward_manifest_sha256",
                  "integrity_checks", "final_state_sha256", "sampling_state_sha256")
-IDENTITY_FIELDS = ("action_trail_sha256", "final_digest", "logprob_sum", "score", "c_steps",
-                   "team_ids", "sampling_seeds")
 # As play_harness/tournament.py writes them. This tool imports nothing from the
 # harness, so the names are repeated here and a test holds them equal.
 SCHEMA = "bbplay-tournament-game-v1"
@@ -99,9 +104,34 @@ def _int(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _real(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and \
+        math.isfinite(value)
+
+
+def _hex(value, length):
+    return isinstance(value, str) and len(value) == length and \
+        set(value) <= set("0123456789abcdef")
+
+
 def _two(value, test=lambda item: True):
     """A list of exactly two items that each pass `test`."""
     return isinstance(value, list) and len(value) == 2 and all(test(item) for item in value)
+
+
+# What an identity game and its plain game are compared on, and what each field
+# has to be before it counts as evidence: a field absent from both records, or
+# empty in both, is equal and proves nothing.
+IDENTITY_SHAPES = {
+    "action_trail_sha256": lambda v: _hex(v, 64),
+    "final_digest": lambda v: _hex(v, 16),
+    "logprob_sum": lambda v: _two(v, _real),
+    "score": lambda v: _two(v, _int),
+    "c_steps": lambda v: _int(v) and v > 0,
+    "team_ids": lambda v: _two(v, _int),
+    "sampling_seeds": lambda v: _two(v, _int),
+}
+IDENTITY_FIELDS = tuple(IDENTITY_SHAPES)
 
 
 def sha256_file(path):
@@ -454,36 +484,65 @@ def check_games(games, plan, seed0=None):
 
 
 def check_identity(games, plan):
-    """(problems, identity games that matched) for the plan's identity entries."""
+    """(problems, identity games that matched) for the plan's identity entries.
+
+    A game of the `search` pair matches when the `plain` pair has exactly one
+    game on its seed and leg, every compared field is there in both and equal,
+    and the searching seat's statistics add up, searched at least one decision
+    and never deviated. Every game of the pair must match, and when the plan
+    lists pairs, as many as it registers for the pair."""
     want, block = registered(plan)
+    pairs, _ = scheduled(plan, want)
     problems, matched = [], 0
-    by_pair = collections.defaultdict(dict)
+    by_pair = collections.defaultdict(lambda: collections.defaultdict(list))
     for g in games:
-        if not isinstance(g, dict):
-            continue                                        # check_games reports it
-        by_pair[tuple(g.get("pair") or ())][(g.get("engine_seed"), g.get("leg"))] = g
+        # check_games reports a record this cannot place.
+        if isinstance(g, dict) and _two(g.get("pair"), lambda name: isinstance(name, str)) \
+                and _int(g.get("engine_seed")) and g.get("leg") in LEGS:
+            by_pair[tuple(g["pair"])][(g["engine_seed"], g["leg"])].append(g)
     for item in block.get("identity") or []:
         search, plain = tuple(item["search"]), tuple(item["plain"])
         name = next(n for n in search if want[n]["search"])
         if not by_pair.get(search):
             problems.append(f"identity: no game of the pair {search}")
             continue
-        for key, game in sorted(by_pair[search].items(), key=str):
+        here = 0
+        for key, found in sorted(by_pair[search].items()):
             where = f"identity {search} seed {key[0]} {key[1]}"
-            base = by_pair.get(plain, {}).get(key)
-            if base is None:
+            base = by_pair.get(plain, {}).get(key, [])
+            if not base:
                 problems.append(f"{where}: the plain pair {plain} has no such game")
                 continue
-            differ = [f for f in IDENTITY_FIELDS if game.get(f) != base.get(f)]
+            if len(found) > 1 or len(base) > 1:
+                problems.append(f"{where}: recorded more than once")
+                continue
+            game, base = found[0], base[0]
+            unusable = [[f for f, usable in IDENTITY_SHAPES.items() if not usable(rec.get(f))]
+                        for rec in (game, base)]
+            if unusable[0] or unusable[1]:
+                problems.append(f"{where}: has no usable {unusable[0]}" if unusable[0] else
+                                f"{where}: the plain game has no usable {unusable[1]}")
+                continue
+            differ = [f for f in IDENTITY_FIELDS if game[f] != base[f]]
             if differ:
                 problems.append(f"{where}: differs from the plain game on {differ}")
                 continue
-            stats = (game.get("search_stats") or [None, None])[
-                (game.get("home"), game.get("away")).index(name)] or {}
-            if sum((stats.get("searched") or {}).values()) and not stats.get("rollouts"):
+            # The seat the pair and leg give the searching player.
+            side = search.index(name) if key[1] == LEGS[0] else 1 - search.index(name)
+            stats = game.get("search_stats")
+            stats = stats[side] if _two(stats) else None
+            wrong = _stat_problems(stats, want[name]["search"], game["c_steps"])
+            if wrong:
+                problems.append(f"{where}: {wrong[0]}")
+                continue
+            if not sum(stats["searched"].values()):
                 problems.append(f"{where}: ran no search")
                 continue
-            matched += 1
+            here += 1
+        matched += here
+        if pairs is not None and here != pairs[search]:
+            problems.append(f"identity {search}: {here} of the {pairs[search]} registered "
+                            "games equal the plain game")
     return problems, matched
 
 

@@ -579,3 +579,97 @@ def test_a_plan_with_a_broken_schedule_is_refused(tmp_path, capsys, change, need
     sha = hashlib.sha256(path.read_bytes()).hexdigest()
     assert sa.main([str(path), run, "--expect-sha256", sha]) == 1
     assert capsys.readouterr().out.startswith("SEARCH-REJECTED plan: ")
+
+
+# ---- identity evidence (review finding 2) -----------------------------------------------------
+def _identity_rows(rows, names=("I", "P")):
+    return [r for r in rows if r["pair"][0] in names and r["pair"][1] == "C"]
+
+
+def _idle(row):
+    """The record of an identity game whose seat searched nothing."""
+    st = row["search_stats"][side_of(row, "I")]
+    st.update(searched={c: 0 for c in st["searched"]}, rollouts=0, rollout_steps=0,
+              rollout_forward_rows=0, cutoff_rollouts=0)
+
+
+def test_identity_games_without_the_compared_fields_do_not_match():
+    """The review's false pass: with every compared field removed from both
+    records, absent equalled absent and all four identity games matched."""
+    rows = games()
+    for row in _identity_rows(rows):
+        for field in sa.IDENTITY_FIELDS:
+            del row[field]
+    problems, matched = sa.check_identity(rows, plan())
+    assert matched == 0
+    assert sum(f"has no usable {list(sa.IDENTITY_FIELDS)}" in p for p in problems) == 4
+
+
+def test_identity_games_that_searched_nothing_do_not_match():
+    """The review's second false pass: searched and rollout counts at zero went
+    around the "ran no search" rejection, which asked for searched decisions
+    first."""
+    rows = games()
+    for row in _identity_rows(rows, names=("I",)):
+        _idle(row)
+    assert sa.check_games(rows, plan())[0] == []           # each record adds up on its own
+    problems, matched = sa.check_identity(rows, plan())
+    assert matched == 0 and sum("ran no search" in p for p in problems) == 4
+
+
+def _both(rows, **change):
+    """The same change on the first identity game and on its plain game."""
+    for name in ("I", "P"):
+        first(rows, name)[0].update(change)
+
+
+@pytest.mark.parametrize("change, needle", (
+    [(lambda g, f=f: first(g, "I")[0].pop(f), f"has no usable ['{f}']")
+     for f in sa.IDENTITY_FIELDS]
+    + [(lambda g, f=f: first(g, "P")[0].pop(f), f"the plain game has no usable ['{f}']")
+       for f in sa.IDENTITY_FIELDS]
+    + [(lambda g, f=f: _both(g, **{f: None}), f"has no usable ['{f}']")
+       for f in sa.IDENTITY_FIELDS]
+    + [  # Equal on both sides, and nothing a game could have recorded.
+        (lambda g: _both(g, action_trail_sha256=""), "has no usable ['action_trail_sha256']"),
+        (lambda g: _both(g, action_trail_sha256="F" * 64), "['action_trail_sha256']"),
+        (lambda g: _both(g, final_digest="same"), "has no usable ['final_digest']"),
+        (lambda g: _both(g, logprob_sum=[]), "has no usable ['logprob_sum']"),
+        (lambda g: _both(g, logprob_sum=[float("nan"), 0.0]), "has no usable ['logprob_sum']"),
+        (lambda g: _both(g, score="1-0"), "has no usable ['score']"),
+        (lambda g: _both(g, c_steps=0, forwards=[0, 0]), "has no usable ['c_steps']"),
+        (lambda g: _both(g, team_ids=[3]), "has no usable ['team_ids']"),
+        (lambda g: _both(g, sampling_seeds=[True, False]), "has no usable ['sampling_seeds']"),
+        # What the searching seat recorded.
+        (lambda g: _idle(first(g, "I")[0]), "identity ('I', 'C') seed 25100000 A_home: ran no "
+                                            "search"),
+        (lambda g: first(g, "I")[0].update(search_stats=[None, None]),
+         "identity ('I', 'C') seed 25100000 A_home: search statistics need exactly"),
+        (lambda g: first(g, "I")[0].pop("search_stats"),
+         "identity ('I', 'C') seed 25100000 A_home: search statistics need exactly"),
+        (lambda g: _stat(g, name="I", rollouts=2 * 16 * 210 - 16),
+         "identity ('I', 'C') seed 25100000 A_home: 6704 rollouts for 210 searched"),
+        (lambda g: _nested(g, "deviations", "turn", 1, name="I"),
+         "identity ('I', 'C') seed 25100000 A_home: "),
+        (lambda g: g.append(copy.deepcopy(first(g, "I")[0])),
+         "identity ('I', 'C') seed 25100000 A_home: recorded more than once"),
+        (lambda g: g.append(copy.deepcopy(first(g, "P")[0])),
+         "identity ('I', 'C') seed 25100000 A_home: recorded more than once"),
+        (lambda g: g.remove(first(g, "I")[0]),
+         "identity ('I', 'C'): 3 of the 4 registered games equal the plain game"),
+        (lambda g: first(g, "I")[0].update(score=[0, 1]),
+         "identity ('I', 'C'): 3 of the 4 registered games equal the plain game"),
+    ]))
+def test_an_identity_game_without_its_evidence_does_not_match(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, counts = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+    assert counts["identity_games"] == 3
+
+
+def test_the_identity_count_is_held_only_when_the_plan_gives_one(tmp_path):
+    rows = games()
+    rows.remove(first(rows, "I")[0])
+    problems, counts = sa.accept(write_run(tmp_path, manifest(), rows), without_schedule(plan()))
+    assert problems == [] and counts["identity_games"] == 3
