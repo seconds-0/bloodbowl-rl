@@ -19,6 +19,14 @@ build on the droplet, tournament and stats under nohup, polling, copy back,
 sha256 and manifest verification, teardown, cost. A whole run lives on one
 machine because the manifest pins the compiled shim and a resume refuses another.
 
+A tournament too long for one droplet is split into runs and joined with `merge`,
+by pair (each run holds other pairs) or by game index within a pair: `run
+--index0 K --pair A,B,N` plays indexes K .. K + N/2 - 1 of the pair, and runs
+whose ranges tile 0 .. total/2 - 1 merge into the run one machine would have
+played from index 0. Eight droplets for one 3,200-game pair:
+  run --name g-0 --pair A,B,400 --index0 0, run --name g-1 --pair A,B,400
+  --index0 200, ... run --name g-7 --pair A,B,400 --index0 1400.
+
 The DigitalOcean token is read at run time from DIGITALOCEAN_TOKEN or the env
 file; it is never written to disk, logs or the droplet. Stdlib only.
 """
@@ -665,25 +673,69 @@ MERGE_EQUAL_KEYS = ("schema", "seed0", "mode", "kernel", "max_decisions", "omp_n
                     "rosters", "legs", "sampling_seed", "harness_git_head", "torch", "python")
 
 
+def slice_order(shards):
+    """Shards by first game index, ties in the order given, so the slices of a
+    pair are joined in index order whatever the order of the --shard arguments."""
+    return sorted(shards, key=lambda shard: manifest_index0(shard["manifest"]) or 0)
+
+
+def slice_problems(slices):
+    """Problems unless each pair's game-index ranges tile 0 .. total/2 - 1.
+
+    slices: {frozenset pair: [(first index, end index, shard name, (a, b))]}, the
+    end exclusive. A pair in one shard is one range and must start at 0; a pair in
+    several needs ranges that neither overlap nor leave a gap."""
+    problems = []
+    for parts in slices.values():
+        parts = sorted(parts, key=lambda part: part[:2])
+        a, b = parts[0][3]
+        ranges = ", ".join(f"{name} [{lo}, {hi})" for lo, hi, name, _ in parts)
+        for _, _, name, label in parts[1:]:
+            if label != (a, b):
+                problems.append(f"{name}: pair {label[0]},{label[1]} is also in "
+                                f"{parts[0][2]} as {a},{b}")
+        if parts[0][0] != 0:
+            problems.append(f"pair {a},{b}: game indexes do not start at 0: {ranges}")
+        end = parts[0][1]
+        for lo, hi, _, _ in parts[1:]:
+            if lo < end:
+                problems.append(f"pair {a},{b}: game index ranges overlap: {ranges}")
+                break
+            if lo > end:
+                problems.append(f"pair {a},{b}: game index ranges leave a gap: {ranges}")
+                break
+            end = hi
+    return problems
+
+
 def merge_shards(shards):
-    """One manifest and game list from shards that split a tournament by pair.
+    """One manifest and game list from shards that split a tournament by pair,
+    by game index within a pair, or both.
 
     shards: [{"name", "manifest", "complete", "games", "machine"}]. A game depends
-    only on (pair, engine seed, leg), never on which other pairs share its run, and
-    droplets of one image build a byte-identical shim, so shards may run on
-    different droplets. Refused unless
+    only on (pair, engine seed, leg), never on which other pairs or game indexes
+    share its run, and droplets of one image build a byte-identical shim, so
+    shards may run on different droplets. Refused unless
     the shards share the commit, seed block, settings, torch and compiled shim,
-    give shared players the same checkpoint and spec, and cover disjoint pairs.
+    give shared players the same checkpoint and spec, and give each pair game
+    index ranges that tile 0 .. total/2 - 1 (slice_problems). A pair that several
+    shards share is listed once, with the summed game count, and the merged
+    manifest carries no index0: it is the run one machine plays from index 0.
     Returns (manifest, complete, games); raises RunnerError listing every problem.
     """
     if len(shards) < 2:
         raise RunnerError("merge needs at least two shards")
     problems = []
+    shards = slice_order(shards)
     first = shards[0]
-    checkpoints, bots, players, pairs, games, seen_pairs = {}, {}, {}, [], [], {}
+    checkpoints, bots, players, pairs, games, slices = {}, {}, {}, {}, [], {}
     search_entry = None
     for shard in shards:
         name, m = shard["name"], shard["manifest"]
+        index0 = manifest_index0(m)
+        if index0 is None:
+            problems.append(f"{name}: manifest index0 {m.get('index0')!r} is not a game index")
+            index0 = 0
         for key in MERGE_EQUAL_KEYS:
             if m.get(key) != first["manifest"].get(key):
                 problems.append(f"{name}: {key} {m.get(key)!r} != {first['name']}'s "
@@ -725,13 +777,15 @@ def merge_shards(shards):
                                              | set(entry.get("players") or []))
         for a, b, n in m.get("pairs") or []:
             key = frozenset((a, b))
-            if key in seen_pairs:
-                problems.append(f"{name}: pair {a},{b} is also in {seen_pairs[key]}")
-            seen_pairs[key] = name
-            pairs.append([a, b, n])
+            if n % 2:
+                problems.append(f"{name}: pair {a},{b} has an odd game count {n}")
+            slices.setdefault(key, []).append((index0, index0 + n // 2, name, (a, b)))
+            pairs.setdefault(key, [a, b, 0])[2] += n
         problems += [f"{name}: {p}" for p in schedule_problems(
-            shard["games"], [tuple(p) for p in m.get("pairs") or []], m.get("seed0", 0))]
+            shard["games"], [tuple(p) for p in m.get("pairs") or []], m.get("seed0", 0),
+            index0)]
         games += shard["games"]
+    problems += slice_problems(slices)
     if len({_key(g) for g in games}) != len(games):
         problems.append("duplicate (pair, game_index, leg) across shards")
     searching = sorted(name for name, spec in players.items() if spec.get("search"))
@@ -743,7 +797,8 @@ def merge_shards(shards):
     lib = first["machine"]["library_sha256"]
     manifest = {key: first["manifest"].get(key) for key in MERGE_EQUAL_KEYS}
     manifest.update({
-        "checkpoints": checkpoints, "bots": bots, "players": players, "pairs": pairs,
+        "checkpoints": checkpoints, "bots": bots, "players": players,
+        "pairs": list(pairs.values()),
         "bot_library_sha256": lib if bots else None, "library_sha256": lib,
         "games_per_pair": None, "tasks": len(games), "host": "merged",
         "games_per_worker": manifest_games_per_worker(first["manifest"]),
@@ -754,7 +809,11 @@ def merge_shards(shards):
                          "cpu_model": (s.get("machine") or {}).get("cpu_model"),
                          "games_sha256": s.get("games_sha256"),
                          "wall_seconds": (s.get("complete") or {}).get("wall_seconds"),
-                         "games_per_second_wall": (s.get("complete") or {}).get("games_per_second_wall")}
+                         "games_per_second_wall": (s.get("complete") or {}).get("games_per_second_wall"),
+                         # Only a shard that is a later slice carries the key, so a
+                         # merge by pair writes the provenance it always wrote.
+                         **({"index0": s["manifest"]["index0"]}
+                            if s["manifest"].get("index0") else {})}
                         for s in shards]})
     if search_entry:
         manifest["search"] = search_entry
@@ -1478,6 +1537,7 @@ def cmd_merge(args):
         shard["games"] = [json.loads(line) for line in shard["lines"]]
         shard["games_sha256"] = sha256_file(os.path.join(d, "games.jsonl"))
         shards.append(shard)
+    shards = slice_order(shards)                             # the order the games are written in
     manifest, complete, games = merge_shards(shards)
     os.makedirs(out_dir)
     with open(os.path.join(out_dir, "games.jsonl"), "w") as f:
@@ -1507,7 +1567,9 @@ def build_parser():
     run.add_argument("--seed0", type=int, required=True)
     run.add_argument("--index0", type=int, default=0, metavar="K",
                      help="first game index of this run (default 0): a pair with N games "
-                          "plays indexes K .. K + N/2 - 1; the run is verified against K")
+                          "plays indexes K .. K + N/2 - 1. Split one pair over several "
+                          "droplets with consecutive ranges, then `merge` them; the run is "
+                          "verified against K")
     run.add_argument("--workers", type=int, default=None, help="default: the size's vCPU count")
     run.add_argument("--games-per-worker", type=int, default=1, metavar="N",
                      help="games each worker batches into one forward (default 1 = unbatched; "
@@ -1550,7 +1612,8 @@ def build_parser():
     compare.add_argument("--ref-dir", required=True)
     compare.add_argument("--json", default=None)
     compare.set_defaults(func=cmd_compare)
-    merge = sub.add_parser("merge", help="join runs that split one tournament by pair")
+    merge = sub.add_parser("merge", help="join runs that split one tournament by pair or by "
+                                         "game index (run --index0)")
     merge.add_argument("--out", required=True, help="new run directory, e.g. .../NAME/main")
     merge.add_argument("--shard", action="append", required=True, metavar="RUN_DIR",
                        help="repeatable; a verified run directory from `run`")

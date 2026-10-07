@@ -1,4 +1,5 @@
-"""A run of the tournament that starts at a later game index (--index0).
+"""A tournament played as several runs on consecutive game-index ranges
+(tournament --index0) and merged is the run one machine plays from index 0.
 
   the flag     --index0 shifts the game indexes and the engine seeds, the manifest
                carries the key only when it is not 0, and a run without the flag
@@ -8,29 +9,42 @@
                records;
   resume       a resume refuses another index0 and finishes an interrupted slice;
   batching     batched workers play a slice's own indexes;
-  the droplet  tools/droplet_tournament.py verifies a slice against its index.
+  the droplet  tools/droplet_tournament.py verifies a slice against its index;
+  equality     the two slices merged (droplet_tournament.py merge): the whole
+               run's records, manifest pairs and statistics report. Once more
+               for a pair with a search seat;
+  acceptance   tools/gate_acceptance.py and tools/search_acceptance.py accept the
+               merged run; gate_acceptance rejects a run that lacks a slice.
 
-Games use seeded random networks and the engine's scripted bots.
+Games use seeded random networks and the engine's scripted bots. The searched
+pair runs at k = 2, n = 2 as in test_search_tournament.
 """
+import argparse
 import contextlib
 import io
 import json
 import os
+import platform
 import subprocess
 import sys
 
 import pytest
 
 from play_harness import tournament as T
+from play_harness import tournament_stats as TS
 from play_harness.policy import random_policy
 from tools import droplet_tournament as D
+from tools import gate_acceptance as GA
+from tools import search_acceptance as SA
 
 from .conftest import ROOT
-from .test_search_tournament import write_blob
+from .test_search_tournament import QUICK, gate_plan, write_blob
 
 # The fields of a game record that are not the game: wall time and the worker's
 # process id. Every other field must be equal between a split and an unsplit run.
 NOT_THE_GAME = ("seconds", "pid")
+# A searched record also times its search.
+NOT_THE_GAME_SEARCHED = NOT_THE_GAME + ("search_seconds",)
 # The last commit before --index0 existed.
 BEFORE_INDEX0 = "33428b3098e74317b2c2bdd2e7fb03f516f2b969"
 SEED0 = 51000
@@ -40,10 +54,10 @@ PAIRS = (("A", "B"), ("A", "off"), ("off", "con"))
 @pytest.fixture(scope="module")
 def blobs(tmp_path_factory):
     """Two seeded random networks as checkpoint blobs: the networks of
-    test_tournament."""
+    test_tournament (A, B) and the network of test_search_tournament (S)."""
     folder = tmp_path_factory.mktemp("blobs")
     out = {}
-    for name, seed in (("A", 1), ("B", 2)):
+    for name, seed in (("A", 1), ("B", 2), ("S", 11)):
         os.makedirs(folder / name)
         out[name] = write_blob(folder / name, random_policy(seed=seed, scale=0.05))
     return out
@@ -301,3 +315,204 @@ def test_the_droplet_tool_verifies_a_slice_against_its_index(plain_runs):
     assert D.verify_run(first, games=first_games, **request) == []
     assert any("manifest index0 0 != requested 4" in p
                for p in D.verify_run(first, games=first_games, index0=4, **request))
+
+
+# ---- equality: the merged slices are the whole run --------------------------------------------
+def searched_args(blobs, n, seed0=SEED0 + 500):
+    return ["--checkpoint", f"S={blobs['S']}", "--checkpoint", f"C={blobs['S']}",
+            "--pair", f"S,C,{n}", "--mask", "S=m1", "--mask", "C=m1",
+            "--sampling-offset", "C=1", "--search", "S=2:2:0", "--seed0", str(seed0)]
+
+
+def as_copied_back(folder):
+    """Give a finished tournament directory the files `droplet_tournament.py run`
+    copies back beside it, so `merge` takes it as a shard. The merge reads the
+    statistics report only to check its hash."""
+    folder = str(folder)
+    with open(os.path.join(folder, "machine.json"), "w") as f:
+        json.dump({"library_sha256": T.library_sha256(), "cpu_model": platform.processor(),
+                   "host": platform.node()}, f)
+    for name in ("report.json", "report.txt"):
+        with open(os.path.join(folder, name), "w") as f:
+            f.write("{}\n")
+    names = D.RESULT_FILES + ("report.txt", "machine.json")
+    with open(os.path.join(folder, "SHA256SUMS"), "w") as f:
+        f.writelines(f"{D.sha256_file(os.path.join(folder, name))}  {name}\n" for name in names)
+    return folder
+
+
+def merge(out, *shards):
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert D.cmd_merge(argparse.Namespace(out=str(out), shard=[str(s) for s in shards])) == 0
+    return str(out)
+
+
+def report_text(games, reps=200):
+    """The statistics report as the tool writes it to --json."""
+    return json.dumps(TS._jsonable(TS.report(games, reps=reps)), indent=1)
+
+
+@pytest.fixture(scope="module")
+def plain_merged(plain_runs):
+    """The two slices of plain_runs as shards, merged. Given out of order."""
+    for name in ("s0", "s4"):
+        as_copied_back(plain_runs / name)
+    merge(plain_runs / "merged", plain_runs / "s4", plain_runs / "s0")
+    return plain_runs
+
+
+def test_the_merged_slices_are_the_whole_run_record_for_record(plain_merged):
+    whole_manifest, whole = load(plain_merged / "whole")
+    merged_manifest, merged = load(plain_merged / "merged")
+    assert len(whole) == len(merged) == 48
+    # One worker plays the schedule in order and the merge writes the slices in
+    # index order, so the two files hold the same records in the same order.
+    assert [key(g) for g in merged] == [key(g) for g in whole]
+    for ours, theirs in zip(merged, whole):
+        assert list(ours) == list(theirs)
+        assert the_game(ours) == the_game(theirs), key(ours)
+    # The merged file is the slices' own lines: nothing is rewritten on the way.
+    lines = [open(plain_merged / name / "games.jsonl").read() for name in ("s0", "s4", "merged")]
+    assert lines[2] == lines[0] + lines[1]
+
+
+def test_the_merged_manifest_is_the_whole_runs_manifest(plain_merged):
+    whole, _ = load(plain_merged / "whole")
+    merged, _ = load(plain_merged / "merged")
+    assert merged["pairs"] == whole["pairs"] == [[a, b, 16] for a, b in PAIRS]
+    assert "index0" not in merged and "index0" not in whole
+    for name in D.MERGE_EQUAL_KEYS + ("checkpoints", "bots", "players", "tasks",
+                                      "games_per_worker", "bot_library_sha256"):
+        assert merged[name] == whole[name], name
+    assert "search" not in merged and "search" not in whole
+    # What is left says it is a merge and of what.
+    assert sorted(set(merged) ^ set(whole)) == ["library_sha256", "merged_from"]
+    assert {k for k in whole if merged[k] != whole[k]} == {"host", "workers"}
+    assert merged["host"] == "merged" and merged["workers"] == [1, 1]
+    assert [(m["name"], m.get("index0"), m["tasks"]) for m in merged["merged_from"]] == \
+        [("s0", None, 24), ("s4", 4, 24)]
+    with open(plain_merged / "merged" / "COMPLETE.json") as f:
+        assert json.load(f)["complete"] is True
+
+
+def test_the_statistics_report_of_the_merged_slices_is_the_whole_runs(plain_merged):
+    _, whole = load(plain_merged / "whole")
+    _, merged = load(plain_merged / "merged")
+    assert report_text(merged) == report_text(whole)
+    # The seed-cluster bootstrap resamples engine seeds, so it has eight clusters
+    # either way and does not depend on the order of the records.
+    seeds, cells, counts = TS.cluster_counts(merged)
+    assert seeds == list(range(SEED0, SEED0 + 8)) and cells == sorted(PAIRS)
+    for other in (whole, merged[::-1], merged[24:] + merged[:24]):
+        again = TS.cluster_counts(other)
+        assert again[:2] == (seeds, cells) and (again[2] == counts).all()
+        assert json.dumps(TS._jsonable(TS.seed_cluster_bootstrap(other, reps=200))) == \
+            json.dumps(TS._jsonable(TS.seed_cluster_bootstrap(merged, reps=200)))
+    # A pair with decisive games both ways has a Bradley-Terry ranking; that part
+    # of the report is equal too.
+    bots = [[g for g in games if g["pair"] == ["off", "con"]] for games in (whole, merged)]
+    assert TS.report(bots[0], reps=200)["ranking"] is not None
+    assert report_text(bots[0]) == report_text(bots[1])
+
+
+def gate_plan_for(manifest, n):
+    return {"seed0": SEED0, "games_per_worker": 1, "commit": T._git_head(),
+            "pairs": [(a, b, n) for a, b in PAIRS],
+            "checkpoints": {name: c["sha256"] for name, c in manifest["checkpoints"].items()}}
+
+
+def test_gate_acceptance_takes_the_merged_slices_and_no_single_slice(plain_merged, tmp_path):
+    manifest, games = load(plain_merged / "merged")
+    plan = gate_plan_for(manifest, 16)
+    assert GA.accept(str(plain_merged / "merged"), plan) == []
+    assert GA.accept(str(plain_merged / "whole"), plan) == []
+    # Either slice alone is half the registered run.
+    for name in ("s0", "s4"):
+        problems = GA.accept(str(plain_merged / name), plan)
+        assert any("pairs differ from the registered plan" in p for p in problems)
+        assert sum("8 scheduled games missing" in p for p in problems) == 3
+        assert any("24 games recorded != 48 registered" in p for p in problems)
+    # The merged manifest over the games of one slice only.
+    for kept, lost in ((range(0, 4), range(4, 8)), (range(4, 8), range(0, 4))):
+        partial = tmp_path / f"lost{lost[0]}"
+        os.makedirs(partial)
+        for name in ("manifest.json", "COMPLETE.json"):
+            with open(plain_merged / "merged" / name) as src, open(partial / name, "w") as dst:
+                dst.write(src.read())
+        with open(partial / "games.jsonl", "w") as f:
+            f.writelines(json.dumps(g) + "\n" for g in games if g["game_index"] in kept)
+        problems = GA.accept(str(partial), plan)
+        assert sum("8 scheduled games missing" in p for p in problems) == 3
+        assert any(str((SEED0 + lost[0], "A_home")) in p for p in problems)
+
+
+# ---- the same with a search seat ------------------------------------------------------------
+@pytest.fixture(scope="module")
+def searched_runs(tmp_path_factory, blobs):
+    """A pair with a search seat: game indexes 0 and 1 in one run, and as two
+    runs of one index each, merged."""
+    folder = tmp_path_factory.mktemp("searched")
+    tournament(folder / "whole", *searched_args(blobs, 4), workers=2)
+    tournament(folder / "s0", *searched_args(blobs, 2), workers=2)
+    tournament(folder / "s1", *searched_args(blobs, 2), "--index0", "1", workers=2)
+    for name in ("s0", "s1"):
+        as_copied_back(folder / name)
+    merge(folder / "merged", folder / "s0", folder / "s1")
+    return folder
+
+
+def test_a_searched_pair_split_and_merged_is_the_whole_run(searched_runs):
+    whole_manifest, whole = load(searched_runs / "whole")
+    merged_manifest, merged = load(searched_runs / "merged")
+    assert len(whole) == len(merged) == 4
+    by_key = {key(g): g for g in whole}
+    assert sorted(by_key) == sorted(map(key, merged)) == [
+        (("S", "C"), i, leg) for i in (0, 1) for leg in T.LEGS]
+    for game in merged:
+        twin = by_key[key(game)]
+        assert list(game) == list(twin)
+        assert the_game(game, NOT_THE_GAME_SEARCHED) == the_game(twin, NOT_THE_GAME_SEARCHED)
+        side = T.LEGS.index(game["leg"])
+        assert game["search"][side] == QUICK and game["search"][1 - side] is None
+        assert sum(game["search_stats"][side]["searched"].values()) > 50
+        assert game["search_stats"] == twin["search_stats"]
+    assert sum(sum(g["search_stats"][T.LEGS.index(g["leg"])]["deviations"].values())
+               for g in merged) > 0                            # the search changed the play
+    assert merged_manifest["pairs"] == whole_manifest["pairs"] == [["S", "C", 4]]
+    assert "index0" not in merged_manifest
+    for name in D.MERGE_EQUAL_KEYS + ("checkpoints", "players", "tasks", "games_per_worker",
+                                      "search"):
+        assert merged_manifest[name] == whole_manifest[name], name
+    slice_manifest, _ = load(searched_runs / "s1")
+    assert slice_manifest["index0"] == 1 and slice_manifest["search"] == whole_manifest["search"]
+    # Two workers finish in any order, so the records are put in schedule order
+    # before the report: its mean log-probability is a sum in record order.
+    ordered = [sorted(games, key=key) for games in (whole, merged)]
+    assert report_text(ordered[0]) == report_text(ordered[1])
+
+
+def test_both_acceptance_checks_take_the_merged_searched_slices(searched_runs):
+    plan = gate_plan({"S": {"checkpoint": "test", "masks": ["m1"], "search": QUICK},
+                      "C": {"checkpoint": "test", "masks": ["m1"], "sampling_offset": 1}})
+    problems, counts = SA.accept(str(searched_runs / "merged"), plan)
+    assert problems == []
+    assert counts["games"] == counts["searched_games"] == 4
+    whole_problems, whole_counts = SA.accept(str(searched_runs / "whole"), plan)
+    assert whole_problems == [] and whole_counts == counts     # the same search, in total
+    manifest, games = load(searched_runs / "merged")
+    registered = {"seed0": SEED0 + 500, "games_per_worker": 1, "commit": T._git_head(),
+                  "pairs": [("S", "C", 4)],
+                  "checkpoints": {n: c["sha256"] for n, c in manifest["checkpoints"].items()}}
+    assert GA.accept(str(searched_runs / "merged"), registered) == []
+    assert D.search_problems(manifest, games, {"S": D.parse_search("2:2:0")}) == []
+    # A slice alone is not the registered run. gate_acceptance is the check that
+    # holds a run to its schedule; search_acceptance reads settings and search
+    # statistics and no schedule, so the two are run together.
+    for name in ("s0", "s1"):
+        problems = GA.accept(str(searched_runs / name), registered)
+        assert any("2 scheduled games missing" in p for p in problems)
+        assert any("pairs differ from the registered plan" in p for p in problems)
+    slice_manifest, slice_games = load(searched_runs / "s1")
+    assert D.verify_run(slice_manifest, {"complete": True}, slice_games, T._git_head(),
+                        registered["checkpoints"], [("S", "C", 2)], SEED0 + 500,
+                        search={"S": D.parse_search("2:2:0")}, index0=1) == []

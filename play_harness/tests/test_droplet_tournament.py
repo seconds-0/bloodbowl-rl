@@ -670,6 +670,167 @@ def test_schedule_problems_at_an_index0_agree_with_the_real_scheduler():
     assert any("outside the schedule" in p for p in D.schedule_problems(sliced_games(index0=10), PAIRS, 7))
 
 
+# ---- merging slices: one pair split by game index ---------------------------------------
+def slice_shard(name, index0, n=4, pair=("a", "b"), **manifest_over):
+    """A shard that holds game indexes index0 .. index0 + n/2 - 1 of one pair."""
+    if index0:
+        manifest_over.setdefault("index0", index0)
+    out = shard(name, [(*pair, n)], sliced_games([(*pair, n)], index0=index0), **manifest_over)
+    out["manifest"]["checkpoints"]["b"] = {"sha256": "hb", "path": "/srv/b"}
+    return out
+
+
+def three_slices():
+    return slice_shard("s0", 0), slice_shard("s2", 2), slice_shard("s4", 4)
+
+
+def test_merge_joins_the_slices_of_one_pair_into_a_run_from_index_0():
+    manifest, complete, games = D.merge_shards(list(three_slices()))
+    assert manifest["pairs"] == [["a", "b", 12]] and manifest["tasks"] == 12 == len(games)
+    assert "index0" not in manifest and manifest["seed0"] == 7
+    assert sorted(D._key(g) for g in games) == sorted(
+        (("a", "b"), i, leg) for i in range(6) for leg in ("A_home", "B_home"))
+    assert D.schedule_problems(games, [("a", "b", 12)], 7) == []        # one run from index 0
+    assert [(m["name"], m.get("index0"), m["pairs"]) for m in manifest["merged_from"]] == \
+        [("s0", None, [["a", "b", 4]]), ("s2", 2, [["a", "b", 4]]), ("s4", 4, [["a", "b", 4]])]
+    assert "index0" not in manifest["merged_from"][0]
+    assert complete == {"played": 12, "complete": True, "shards": 3, "wall_seconds": 104.0,
+                        "shard_games_per_second_wall_sum": 4.5}
+    # The order of the shard arguments does not matter: the slices are joined by index.
+    s0, s2, s4 = three_slices()
+    again = D.merge_shards([s4, s0, s2])
+    assert again == (manifest, complete, games)
+    assert [g["game_index"] for g in again[2]] == [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
+    assert [s["name"] for s in D.slice_order([s4, s0, s2])] == ["s0", "s2", "s4"]
+
+
+def test_merge_takes_slices_of_unequal_length_and_whole_pairs_beside_them():
+    s0 = slice_shard("s0", 0, n=2)
+    s1 = slice_shard("s1", 1, n=6)
+    whole = two_shards()[1]                                  # a,bot from index 0, one shard
+    manifest, _, games = D.merge_shards([whole, s1, s0])
+    assert manifest["pairs"] == [["a", "bot", 2], ["a", "b", 8]] and len(games) == 10
+    assert [m["name"] for m in manifest["merged_from"]] == ["s2", "s0", "s1"]
+    # A shard may hold a slice of one pair and the whole of another only from index 0.
+    both = shard("s0", [("a", "b", 2), ("a", "bot", 2)],
+                 sliced_games([("a", "b", 2), ("a", "bot", 2)]),
+                 bots={"bot": {"kind": "offense"}}, bot_library_sha256="lib1")
+    both["manifest"]["checkpoints"]["b"] = {"sha256": "hb", "path": "/srv/b"}
+    manifest, _, games = D.merge_shards([both, slice_shard("s1", 1, n=6)])
+    assert manifest["pairs"] == [["a", "b", 8], ["a", "bot", 2]] and len(games) == 10
+
+
+@pytest.mark.parametrize("build, needle", [
+    # overlap
+    (lambda: [slice_shard("s0", 0), slice_shard("s1", 1)],
+     "pair a,b: game index ranges overlap: s0 [0, 2), s1 [1, 3)"),
+    (lambda: [slice_shard("s0", 0), slice_shard("again", 0)],
+     "pair a,b: game index ranges overlap: s0 [0, 2), again [0, 2)"),
+    (lambda: [slice_shard("s0", 0, n=8), slice_shard("s2", 2), slice_shard("s4", 4)],
+     "pair a,b: game index ranges overlap: s0 [0, 4), s2 [2, 4), s4 [4, 6)"),
+    # a gap
+    (lambda: [slice_shard("s0", 0), slice_shard("s3", 3)],
+     "pair a,b: game index ranges leave a gap: s0 [0, 2), s3 [3, 5)"),
+    (lambda: [slice_shard("s0", 0), slice_shard("s4", 4), slice_shard("s8", 8)],
+     "pair a,b: game index ranges leave a gap: s0 [0, 2), s4 [4, 6), s8 [8, 10)"),
+    # not from index 0, as slices and as a pair that one shard holds
+    (lambda: [slice_shard("s2", 2), slice_shard("s4", 4)],
+     "pair a,b: game indexes do not start at 0: s2 [2, 4), s4 [4, 6)"),
+    (lambda: [two_shards()[1], slice_shard("s2", 2)],
+     "pair a,b: game indexes do not start at 0: s2 [2, 4)"),
+    # the same pair the other way round is another pair's records
+    (lambda: [slice_shard("s0", 0), slice_shard("s2", 2, pair=("b", "a"))],
+     "s2: pair b,a is also in s0 as a,b"),
+])
+def test_merge_refuses_slices_that_do_not_tile_the_pair_from_index_0(build, needle):
+    with pytest.raises(D.RunnerError) as err:
+        D.merge_shards(build())
+    assert needle in str(err.value), str(err.value)
+
+
+@pytest.mark.parametrize("mutate, needle", [
+    (lambda a, b: b["manifest"]["players"]["a"].update(temperature=0.5), "players[a]"),
+    (lambda a, b: b["manifest"]["players"]["a"].update(masks=["m1"]), "players[a]"),
+    (lambda a, b: (a["manifest"]["players"].update(b={"mode": "sample", "temperature": 1.0}),
+                   b["manifest"]["players"].update(b={"mode": "argmax", "temperature": 1.0})),
+     "players[b]"),
+    (lambda a, b: b["manifest"].update(games_per_worker=8), "games_per_worker"),
+    (lambda a, b: (a["manifest"].update(games_per_worker=8),
+                   b["manifest"].update(games_per_worker=16)), "games_per_worker"),
+    (lambda a, b: b["manifest"].update(seed0=8), "seed0"),
+    (lambda a, b: b["manifest"].update(harness_git_head="other"), "harness_git_head"),
+    (lambda a, b: b["machine"].update(library_sha256="lib2"), "compiled shim"),
+    (lambda a, b: b["manifest"]["checkpoints"]["b"].update(sha256="swapped"), "checkpoints[b]"),
+    (lambda a, b: b["manifest"].update(index0=-2), "index0 -2 is not a game index"),
+    (lambda a, b: b["manifest"].update(index0="2"), "index0 '2' is not a game index"),
+    (lambda a, b: b["manifest"].update(pairs=[["a", "b", 3]]), "odd game count 3"),
+    # The slice's own games are not the indexes its manifest names.
+    (lambda a, b: b["manifest"].update(index0=3), "s2: 2 scheduled games missing"),
+    (lambda a, b: b["games"][0].update(engine_seed=7), "s2: 1 games on the wrong engine seed"),
+    (lambda a, b: b["games"].pop(), "manifest says"),
+    (lambda a, b: b["complete"].update(complete=False), "not complete"),
+])
+def test_merge_holds_slices_to_everything_it_held_shards_to(mutate, needle):
+    s0, s2 = slice_shard("s0", 0), slice_shard("s2", 2)
+    mutate(s0, s2)
+    with pytest.raises(D.RunnerError) as err:
+        D.merge_shards([s0, s2])
+    assert needle in str(err.value), str(err.value)
+
+
+def test_merge_writes_the_slices_in_index_order(tmp_path):
+    """cmd_merge end to end on files: shards given out of order come out as one
+    run from index 0 with the games in index order."""
+    dirs = []
+    for s in three_slices()[::-1]:
+        d = tmp_path / s["name"] / "main"
+        d.mkdir(parents=True)
+        (d / "games.jsonl").write_text("".join(json.dumps(g) + "\n" for g in s["games"]))
+        for fname, payload in (("manifest.json", s["manifest"]), ("COMPLETE.json", s["complete"]),
+                               ("machine.json", s["machine"]), ("report.json", {})):
+            (d / fname).write_text(json.dumps(payload))
+        (d / "SHA256SUMS").write_text("".join(
+            f"{D.sha256_file(str(d / f))}  {f}\n" for f in D.RESULT_FILES + D.PROVENANCE_FILES))
+        dirs.append(str(d))
+    out = tmp_path / "all" / "main"
+    assert D.main(["merge", "--out", str(out), *(a for d in dirs for a in ("--shard", d))]) == 0
+    games = [json.loads(line) for line in (out / "games.jsonl").read_text().splitlines()]
+    assert [(g["game_index"], g["leg"]) for g in games] == [
+        (i, leg) for i in range(6) for leg in ("A_home", "B_home")]
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["pairs"] == [["a", "b", 12]] and "index0" not in manifest
+    assert [m["name"] for m in manifest["merged_from"]] == ["s0", "s2", "s4"]
+    assert [m["games_sha256"] for m in manifest["merged_from"]] == [
+        D.sha256_file(os.path.join(d, "games.jsonl")) for d in dirs[::-1]]
+    assert json.loads((out / "COMPLETE.json").read_text())["complete"] is True
+
+
+def test_a_merge_cannot_see_a_missing_last_slice_and_gate_acceptance_can(tmp_path):
+    """Slices [0, 2) and [2, 4) of a pair registered for indexes 0..5 tile a run
+    from index 0, so they merge. Only the registered plan knows the pair's total:
+    tools/gate_acceptance.py rejects the merged run."""
+    from tools import gate_acceptance as GA
+    s0, s2, s4 = three_slices()
+    plan = {"seed0": 7, "games_per_worker": 1, "commit": "c0ffee", "pairs": [("a", "b", 12)],
+            "checkpoints": {"a": "ha", "b": "hb"}}
+
+    def accept(shards, name):
+        manifest, complete, games = D.merge_shards(shards)
+        folder = tmp_path / name
+        folder.mkdir()
+        rows = [dict(g, modes=["sample", "sample"], temperatures=[1.0, 1.0]) for g in games]
+        (folder / "games.jsonl").write_text("".join(json.dumps(g) + "\n" for g in rows))
+        (folder / "manifest.json").write_text(json.dumps(manifest))
+        (folder / "COMPLETE.json").write_text(json.dumps(complete))
+        return GA.accept(str(folder), plan)
+
+    assert accept([s0, s2, s4], "all") == []
+    problems = accept([s0, s2], "short")
+    assert any("pairs differ from the registered plan" in p for p in problems)
+    assert any("4 scheduled games missing" in p for p in problems)
+    assert any("8 games recorded != 12 registered" in p for p in problems)
+
+
 def test_a_full_account_is_a_blocker_not_a_reason_to_delete():
     assert D.limit_refusal(5, 10) is None and D.limit_refusal(9, 10) is None
     for existing in (10, 11):
