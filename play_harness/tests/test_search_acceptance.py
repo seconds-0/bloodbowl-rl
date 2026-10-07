@@ -2,23 +2,35 @@
 are held to the registered plan, in the manifest and on every game, and each
 searched game's own account of its search has to add up.
 
-Synthetic records here; test_search_seat.py runs the same check on real runs.
+Synthetic records here, written with the tournament's own record functions, and
+one real run at the end. test_search_tournament.py runs the same check on its own
+real runs.
 """
+import contextlib
 import copy
 import hashlib
 import importlib.util
+import io
+import itertools
 import json
+import math
 import os
 
 import pytest
 
 from play_harness import search as S
+from play_harness import tournament as T
+from play_harness.policy import MaskedPolicySeat, random_policy
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPEC = importlib.util.spec_from_file_location(
     "search_acceptance", os.path.join(ROOT, "tools", "search_acceptance.py"))
 sa = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(sa)
+GATE_SPEC = importlib.util.spec_from_file_location(
+    "gate_acceptance", os.path.join(ROOT, "tools", "gate_acceptance.py"))
+ga = importlib.util.module_from_spec(GATE_SPEC)
+GATE_SPEC.loader.exec_module(ga)
 
 SEED0 = 25100000
 LEGS = ("A_home", "B_home")
@@ -34,6 +46,7 @@ def plan():
     """A gate in miniature: S searches, C is the plain control on sampling offset
     1, chain37 and the bot are held out, I and P are the identity sample."""
     return {
+        "seed0": SEED0, "pairs": [[a, b, 4] for a, b in PAIRS],
         "players": {
             "S": {"checkpoint": "chain55", "masks": ["m1"], "search": copy.deepcopy(SETTING)},
             "C": {"checkpoint": "chain55", "masks": ["m1"], "sampling_offset": 1},
@@ -59,7 +72,8 @@ def manifest():
             players[name]["seed_offset"] = spec["sampling_offset"]
         if spec.get("search"):
             players[name]["search"] = spec["search"]
-    return {"players": players, "games_per_worker": 1,
+    return {"players": players, "games_per_worker": 1, "seed0": SEED0,
+            "pairs": [[a, b, 4] for a, b in PAIRS],
             "search": {"players": ["S", "I"], "reward_manifest": {"name": "r0_poss_half",
                                                                   "sha256": SHA},
                        "integrity_checks": list(CHECKS),
@@ -85,35 +99,41 @@ def stats(setting, steps=1200, deviations=(1, 2)):
 
 
 def game(pair, index, leg):
+    """One record, with the fields and the functions the tournament writes it
+    with: Match.record's dict wrapped by pair_record."""
     players = plan()["players"]
-    home, away = pair if leg == "A_home" else pair[::-1]
+    home, away, seed, _, _ = T.pair_seating(*pair, index, leg, SEED0)
     names = (home, away)
     settings = [players[n].get("search") for n in names]
     masks = [players[n].get("masks") or None for n in names]
     bots = [players[n].get("bot") for n in names]
+    offsets = [players[n].get("sampling_offset", 0) for n in names]
+    modes = [T.SCRIPTED_MODE if b else "sample" for b in bots]
     # The identity pair and its plain pair are the same game.
     key = ("I/P" if pair in (("I", "C"), ("P", "C")) else "/".join(pair), index, leg)
     digest = hashlib.sha256(repr(key).encode()).hexdigest()
-    rec = {"pair": list(pair), "game_index": index, "leg": leg, "home": home, "away": away,
-           "engine_seed": SEED0 + index, "natural": True, "truncated": False,
-           "integrity": {"illegal": 0, "error_episodes": 0}, "c_steps": 1200,
-           "forwards": [1200, 1200],
-           "modes": ["scripted" if b else "sample" for b in bots],
+    rec = {"engine_seed": seed, "episode": 0,
+           "mode": modes[0] if modes[0] == modes[1] else "mixed", "modes": modes,
            "temperatures": [None if b else 1.0 for b in bots], "bots": bots,
+           "sampling_seeds": [(T.sampling_seed(seed, side) + offsets[side]
+                               * T.SEED_OFFSET_STRIDE) % (1 << 62) for side in (0, 1)],
+           "team_ids": [3, 7], "teams": ["Chaos Chosen", "Human"], "score": [1, 0],
+           "natural": True, "truncated": False, "final_status": 2, "half": 2, "turns": [8, 8],
+           "c_steps": 1200, "forwards": [1200, 1200], "decisions": [700, 500],
+           "engine_decisions": 1200, "logprob_sum": [-500.25, -480.5],
+           "integrity": {k: 0 for k in T.HARD_COUNTERS}, "action_trail_sha256": digest,
+           "final_digest": digest[:16], "seconds": 1.5, "behaviour": [{}, {}],
            "masks": masks,
            "mask_stats": [{m: {"held": 9, "applied": 3, "fallback": 0, "mass": 0.2} for m in ms}
                           if ms else None for ms in masks],
-           "seed_offsets": [players[n].get("sampling_offset", 0) for n in names],
-           "action_trail_sha256": digest, "final_digest": digest[:16],
-           "logprob_sum": [-500.25, -480.5], "score": [1, 0], "team_ids": [3, 7],
-           "sampling_seeds": [11, 12]}
+           "seed_offsets": offsets}
     if any(settings):
         rec.update({"search": settings,
                     "search_stats": [stats(s) if s else None for s in settings],
                     "search_seconds": [300.0 if s else None for s in settings],
                     "reward_manifest_sha256": SHA, "integrity_checks": list(CHECKS),
                     "final_state_sha256": digest, "sampling_state_sha256": digest[::-1]})
-    return rec
+    return T.pair_record(*pair, index, leg, home, away, rec)
 
 
 def games():
@@ -168,12 +188,27 @@ def test_the_default_setting_is_what_a_plan_carries():
     assert set(seat.stats) == set(sa.STAT_KEYS)           # the harness writes these keys
 
 
+def test_the_names_this_tool_repeats_are_the_tournaments():
+    """The tool imports nothing from the harness, so it repeats these."""
+    assert sa.SCHEMA == T.SCHEMA and sa.LEGS == T.LEGS == ga.LEGS
+    assert sa.HARD_COUNTERS == T.HARD_COUNTERS
+    seat = MaskedPolicySeat.__new__(MaskedPolicySeat)
+    seat.masks = ("m1",)
+    assert tuple(seat._fresh_stats()["m1"]) == sa.MASK_STAT_KEYS
+    assert sa.SCRIPTED_MODE == T.SCRIPTED_MODE and T.BotSeat.temperature is None
+    for seed, side, offset in itertools.product((0, 7, SEED0, (1 << 61) + 5), (0, 1), (0, 1, 9)):
+        assert sa.sampling_seed(seed, side, offset) == (
+            T.sampling_seed(seed, side) + offset * T.SEED_OFFSET_STRIDE) % (1 << 62)
+
+
 def test_a_run_without_search_needs_no_search_block(tmp_path):
     p = plan()
     p["players"] = {k: v for k, v in p["players"].items() if k in ("C", "chain37", "P")}
+    p["pairs"] = [["C", "chain37", 4], ["P", "C", 4]]
     del p["search"]
     m = manifest()
     m["players"] = {k: v for k, v in m["players"].items() if k in p["players"]}
+    m["pairs"] = [["P", "C", 4], ["C", "chain37", 4]]     # in any order
     del m["search"]
     m["games_per_worker"] = 32                            # plain games may batch
     rows = [r for r in games() if tuple(r["pair"]) in (("C", "chain37"), ("P", "C"))]
@@ -220,10 +255,40 @@ def test_a_manifest_off_the_plan_is_rejected(change, needle):
     assert any(needle in problem for problem in sa.check_manifest(m, plan()))
 
 
-def test_a_manifest_without_games_per_worker_was_played_unbatched():
+@pytest.mark.parametrize("change, needle", [
+    # A harness that can search always writes games_per_worker.
+    (lambda m: m.pop("games_per_worker"), "games_per_worker None: a searched run is played"),
+    (lambda m: m.update(games_per_worker=True), "games_per_worker True: a searched run"),
+    (lambda m: m.update(games_per_worker="1"), "games_per_worker 1: a searched run"),
+    (lambda m: m.update(players=sorted(m["players"])), "manifest players are not an object"),
+    (lambda m: m.pop("players"), "manifest players are not an object"),
+    (lambda m: m["search"].update(players="SI"), "manifest search players SI != registered"),
+    (lambda m: m["search"].update(players=None), "manifest search players None != registered"),
+    (lambda m: m["search"].update(reward_manifest=SHA), "manifest reward manifest None"),
+    (lambda m: m["search"].pop("reward_manifest"), "manifest reward manifest None"),
+    (lambda m: m["search"].pop("integrity_checks"), "manifest's integrity checks"),
+    (lambda m: m.update(search=[]), "the manifest has no search entry"),
+])
+def test_a_manifest_that_cannot_be_read_is_rejected(change, needle):
     m = manifest()
-    del m["games_per_worker"]
-    assert sa.check_manifest(m, plan()) == []
+    change(m)
+    assert any(needle in problem for problem in sa.check_manifest(m, plan())), needle
+
+
+def test_a_run_without_search_has_no_search_entry_at_all():
+    p = plan()
+    p["players"] = {k: v for k, v in p["players"].items() if k in ("C", "chain37", "P")}
+    p["pairs"] = [["C", "chain37", 4], ["P", "C", 4]]
+    del p["search"]
+    m = manifest()
+    m["players"] = {k: v for k, v in m["players"].items() if k in p["players"]}
+    m["pairs"] = p["pairs"]
+    for entry in ({}, None, []):
+        m["search"] = entry
+        assert sa.check_manifest(m, p) == ["the manifest has a search entry and no player is "
+                                           "registered to search"]
+    del m["search"], m["games_per_worker"]                 # a plain run may predate batching
+    assert sa.check_manifest(m, p) == []
 
 
 # ---- the games --------------------------------------------------------------------------------
@@ -327,8 +392,14 @@ def test_a_game_off_the_plan_is_rejected(tmp_path, change, needle):
 def test_an_identity_pair_that_was_never_played_is_rejected(tmp_path):
     rows = [r for r in games() if tuple(r["pair"]) != ("I", "C")]
     problems, counts = sa.accept(write_run(tmp_path, manifest(), rows), plan())
-    assert problems == ["identity: no game of the pair ('I', 'C')"]
+    assert problems == ["I is registered to search and played no game",
+                        "('I', 'C'): 4 of the 4 registered games missing, e.g. "
+                        "[(0, 'A_home'), (0, 'B_home'), (1, 'A_home')]",
+                        "identity: no game of the pair ('I', 'C')"]
     assert counts["identity_games"] == 0
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), without_schedule(plan()))
+    assert problems == ["I is registered to search and played no game",
+                        "identity: no game of the pair ('I', 'C')"]
 
 
 def test_cap_rejections_are_held_to_the_ceiling_per_pair():
@@ -393,3 +464,951 @@ def test_an_incomplete_plan_is_refused_not_read_loosely(tmp_path, capsys, change
     sha = hashlib.sha256(path.read_bytes()).hexdigest()
     assert sa.main([str(path), run, "--expect-sha256", sha]) == 1
     assert capsys.readouterr().out.startswith("SEARCH-REJECTED plan: ")
+
+
+# ---- who played, where, on which seed (review finding 1) --------------------------------------
+def gate_plan():
+    """What tools/gate_acceptance.py is given for the same run."""
+    return {"seed0": SEED0, "games_per_worker": 1, "commit": "c" * 40,
+            "pairs": [(a, b, 4) for a, b in PAIRS], "checkpoints": {}}
+
+
+def without_schedule(p):
+    """The plan without its pairs and seed0: what a caller of accept() may pass."""
+    return {k: v for k, v in p.items() if k not in ("pairs", "seed0")}
+
+
+def test_plain_games_filed_under_a_searched_pair_are_rejected():
+    """The review's false pass: every record of the searched pair (S, C) replaced
+    by a plain game between two other registered players, the scheduled pair key
+    kept. gate_acceptance.py reads only that key and still passes, and this check
+    read the settings off the record's own home and away."""
+    rows = games()
+    plain = {(r["game_index"], r["leg"]): r for r in rows if r["pair"] == ["C", "chain37"]}
+    swapped = [dict(copy.deepcopy(plain[(r["game_index"], r["leg"])]), pair=["S", "C"])
+               if r["pair"] == ["S", "C"] else r for r in rows]
+    assert ga.check_games(swapped, gate_plan()) == []
+    needle = "home and away ('C', 'chain37') are not the pair ['S', 'C'] seated for this leg"
+    problems, _ = sa.check_games(swapped, without_schedule(plan()))
+    assert len(problems) == 4 and sum(needle in x for x in problems) == 2, problems
+    problems, _ = sa.check_games(swapped, plan())
+    assert len(problems) == 5 and sum("seated for this leg" in x for x in problems) == 4
+    assert problems[-1].startswith("('S', 'C'): 4 of the 4 registered games missing")
+
+
+def _move(row, index):
+    row.update(game_index=index, engine_seed=SEED0 + index)
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda g: g[0].update(pair=["C", "S"]), "are not the pair ['C', 'S'] seated for this leg"),
+    (lambda g: g[0].update(leg="B_home"), "are not the pair ['S', 'C'] seated for this leg"),
+    (lambda g: g[0].update(home="C", away="S"), "seated for this leg"),
+    (lambda g: g[0].update(away="chain37"), "seated for this leg"),
+    (lambda g: g[0].update(pair="S,C"), "pair is not a list of two different players"),
+    (lambda g: g[0].update(pair=["S", "C", "chain37"]), "pair is not a list of two different"),
+    (lambda g: g[0].update(pair=["S", "S"], away="S"), "pair is not a list of two different"),
+    (lambda g: g[0].pop("pair"), "pair is not a list of two different players"),
+    (lambda g: g[0].update(leg="C_home"), "leg 'C_home' is not one of"),
+    (lambda g: g[0].pop("leg"), "leg None is not one of"),
+    (lambda g: g[0].pop("home"), "an unregistered player"),
+    (lambda g: g[0].update(home=["S"]), "an unregistered player"),
+    (lambda g: g[0].update(pair=["S", "P"], away="P"), "the pair is not registered"),
+    (lambda g: g[0].update(pair=["C", "S"], home="C", away="S"), "the pair is not registered"),
+    (lambda g: g[0].update(game_index=1), "engine seed 25100000 is not seed0 25100000 + game "
+                                          "index 1"),
+    (lambda g: g[0].update(engine_seed=SEED0 + 1), "engine seed 25100001 is not seed0"),
+    (lambda g: g[0].update(engine_seed=str(SEED0)), "is not an integer"),
+    (lambda g: g[0].pop("engine_seed"), "engine seed None is not an integer"),
+    (lambda g: g[0].update(game_index=True), "game index True is not an integer >= 0"),
+    (lambda g: g[0].update(game_index=-1, engine_seed=SEED0 - 1), "game index -1 is not"),
+    (lambda g: g[0].pop("game_index"), "game index None is not an integer >= 0"),
+    (lambda g: _move(g[0], 2), "game index 2 is outside the pair's 4 registered games"),
+    (lambda g: g[0].update(episode=1), "episode 1 is not 0"),
+    (lambda g: g[0].pop("episode"), "episode None is not 0"),
+    (lambda g: g[0].update(schema="bbplay-exam-game-v1"), "schema 'bbplay-exam-game-v1'"),
+    (lambda g: g[0].pop("schema"), "schema None"),
+    (lambda g: g.append(copy.deepcopy(g[0])), "recorded more than once"),
+    (lambda g: g.remove(g[0]), "('S', 'C'): 1 of the 4 registered games missing, e.g. "
+                               "[(0, 'A_home')]"),
+    (lambda g: g.insert(0, ["not", "a", "record"]), "a game record is not an object"),
+])
+def test_a_game_that_is_not_its_scheduled_seat_and_seed_is_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+
+
+def test_a_plan_without_a_schedule_still_binds_seats_and_seeds(tmp_path, capsys):
+    """pairs and seed0 are optional for a caller of accept(): seats are held to
+    pair and leg and seeds to the manifest's seed0 either way. The command line
+    refuses such a plan when a player searches."""
+    p = without_schedule(plan())
+    rows = games()
+    run = write_run(tmp_path, manifest(), rows)
+    problems, counts = sa.accept(run, p)
+    assert problems == [] and counts["scheduled_pairs"] is None
+    assert "no pairs in the plan: no schedule held" in sa.accepted_line(counts)
+    for change, needle in (
+            (lambda g: g[0].update(leg="B_home"), "seated for this leg"),
+            (lambda g: g[0].update(engine_seed=SEED0 + 7), "is not seed0 25100000 + game index 0"),
+            (lambda g: g.append(copy.deepcopy(g[0])), "recorded more than once")):
+        rows = games()
+        change(rows)
+        problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), p)
+        assert any(needle in x for x in problems), problems
+    # Not held without the plan's pairs: a pair nobody scheduled, a missing game.
+    rows = games()
+    rows[0].update(pair=["S", "P"], away="P")
+    rows.remove(rows[5])
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), p)
+    assert not any("registered" in x and "pair" in x for x in problems)
+    assert not any("missing" in x for x in problems)
+    path = tmp_path / "PLAN.json"
+    path.write_text(json.dumps(p))
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert sa.main([str(path), run, "--expect-sha256", sha]) == 1
+    assert capsys.readouterr().out == ("SEARCH-REJECTED plan: pairs and seed0 are required "
+                                       "when a player searches\n")
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda m: m.update(seed0=SEED0 + 1), "manifest seed0 25100001 != registered 25100000"),
+    (lambda m: m.pop("seed0"), "manifest seed0 None is not an integer"),
+    (lambda m: m.update(seed0=True), "manifest seed0 True is not an integer"),
+    (lambda m: m["pairs"].pop(), "manifest pairs differ from the registered"),
+    (lambda m: m["pairs"][0].__setitem__(2, 6), "manifest pairs differ from the registered"),
+    (lambda m: m["pairs"].append(["S", "P", 4]), "manifest pairs differ from the registered"),
+    (lambda m: m["pairs"][0].reverse(), "manifest pairs differ from the registered"),
+    (lambda m: m.pop("pairs"), "manifest pairs differ from the registered"),
+])
+def test_a_manifest_off_the_schedule_is_rejected(change, needle):
+    m = manifest()
+    change(m)
+    assert any(needle in problem for problem in sa.check_manifest(m, plan())), needle
+
+
+def test_a_manifest_seed0_decides_the_seeds_when_the_plan_has_none(tmp_path):
+    m = manifest()
+    m["seed0"] = SEED0 + 100                               # the run says another block
+    problems, _ = sa.accept(write_run(tmp_path, m, games()), without_schedule(plan()))
+    assert sum("is not seed0 25100100 + game index" in p for p in problems) == 24
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda p: p.update(pairs="S,C,4"), "pairs is a list of"),
+    (lambda p: p["pairs"].append(["S", "C"]), "pairs is a list of"),
+    (lambda p: p["pairs"].append(["S", "stranger", 4]), "pair ['S', 'stranger', 4] needs two"),
+    (lambda p: p["pairs"].append(["S", "S", 4]), "pair ['S', 'S', 4] needs two"),
+    (lambda p: p["pairs"].append(["P", "S", 3]), "a positive even number of games"),
+    (lambda p: p["pairs"].append(["P", "S", 0]), "a positive even number of games"),
+    (lambda p: p["pairs"].append(["P", "S", True]), "a positive even number of games"),
+    (lambda p: p["pairs"].append(["C", "S", 4]), "pair ['C', 'S', 4] is listed twice"),
+    (lambda p: p.update(seed0="25100000"), "seed0 must be an integer"),
+    (lambda p: p.update(seed0=None), "seed0 must be an integer"),
+    (lambda p: p["pairs"].remove(["I", "C", 4]), "identity pair ['I', 'C'] is not in pairs"),
+    (lambda p: p["pairs"].remove(["P", "C", 4]), "identity's plain pair ['P', 'C'] is not in"),
+    (lambda p: p["pairs"].__setitem__(5, ["P", "C", 2]), "has fewer games than"),
+    (lambda p: p.pop("pairs"), "pairs and seed0 are required when a player searches"),
+    (lambda p: p.pop("seed0"), "pairs and seed0 are required when a player searches"),
+])
+def test_a_plan_with_a_broken_schedule_is_refused(tmp_path, capsys, change, needle):
+    p = plan()
+    change(p)
+    with pytest.raises(ValueError, match=needle.replace("[", r"\[").replace("]", r"\]")):
+        sa.registered(p, require_schedule=True)
+    run = write_run(tmp_path, manifest(), games())
+    path = tmp_path / "PLAN.json"
+    path.write_text(json.dumps(p))
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert sa.main([str(path), run, "--expect-sha256", sha]) == 1
+    assert capsys.readouterr().out.startswith("SEARCH-REJECTED plan: ")
+
+
+# ---- identity evidence (review finding 2) -----------------------------------------------------
+def _identity_rows(rows, names=("I", "P")):
+    return [r for r in rows if r["pair"][0] in names and r["pair"][1] == "C"]
+
+
+def _idle(row):
+    """The record of an identity game whose seat searched nothing."""
+    st = row["search_stats"][side_of(row, "I")]
+    st.update(searched={c: 0 for c in st["searched"]}, rollouts=0, rollout_steps=0,
+              rollout_forward_rows=0, cutoff_rollouts=0)
+
+
+def test_identity_games_without_the_compared_fields_do_not_match():
+    """The review's false pass: with every compared field removed from both
+    records, absent equalled absent and all four identity games matched."""
+    rows = games()
+    for row in _identity_rows(rows):
+        for field in sa.IDENTITY_FIELDS:
+            del row[field]
+    problems, matched = sa.check_identity(rows, plan())
+    assert matched == 0
+    assert sum(f"has no usable {list(sa.IDENTITY_FIELDS)}" in p for p in problems) == 4
+
+
+def test_identity_games_that_searched_nothing_do_not_match():
+    """The review's second false pass: searched and rollout counts at zero went
+    around the "ran no search" rejection, which asked for searched decisions
+    first."""
+    rows = games()
+    for row in _identity_rows(rows, names=("I",)):
+        _idle(row)
+    problems, matched = sa.check_identity(rows, plan())
+    assert matched == 0 and sum("searched no decision" in p for p in problems) == 4
+    assert sum("I: searched no decision" in p for p in sa.check_games(rows, plan())[0]) == 4
+
+
+def _both(rows, **change):
+    """The same change on the first identity game and on its plain game."""
+    for name in ("I", "P"):
+        first(rows, name)[0].update(change)
+
+
+@pytest.mark.parametrize("change, needle", (
+    [(lambda g, f=f: first(g, "I")[0].pop(f), f"has no usable ['{f}']")
+     for f in sa.IDENTITY_FIELDS]
+    + [(lambda g, f=f: first(g, "P")[0].pop(f), f"the plain game has no usable ['{f}']")
+       for f in sa.IDENTITY_FIELDS]
+    + [(lambda g, f=f: _both(g, **{f: None}), f"has no usable ['{f}']")
+       for f in sa.IDENTITY_FIELDS]
+    + [  # Equal on both sides, and nothing a game could have recorded.
+        (lambda g: _both(g, action_trail_sha256=""), "has no usable ['action_trail_sha256']"),
+        (lambda g: _both(g, action_trail_sha256="F" * 64), "['action_trail_sha256']"),
+        (lambda g: _both(g, final_digest="same"), "has no usable ['final_digest']"),
+        (lambda g: _both(g, logprob_sum=[]), "has no usable ['logprob_sum']"),
+        (lambda g: _both(g, logprob_sum=[float("nan"), 0.0]), "has no usable ['logprob_sum']"),
+        (lambda g: _both(g, score="1-0"), "has no usable ['score']"),
+        (lambda g: _both(g, c_steps=0, forwards=[0, 0]), "has no usable ['c_steps']"),
+        (lambda g: _both(g, team_ids=[3]), "has no usable ['team_ids']"),
+        (lambda g: _both(g, sampling_seeds=[True, False]), "has no usable ['sampling_seeds']"),
+        # What the searching seat recorded.
+        (lambda g: _idle(first(g, "I")[0]), "identity ('I', 'C') seed 25100000 A_home: "
+                                            "searched no decision"),
+        (lambda g: first(g, "I")[0].update(search_stats=[None, None]),
+         "identity ('I', 'C') seed 25100000 A_home: search statistics need exactly"),
+        (lambda g: first(g, "I")[0].pop("search_stats"),
+         "identity ('I', 'C') seed 25100000 A_home: search statistics need exactly"),
+        (lambda g: _stat(g, name="I", rollouts=2 * 16 * 210 - 16),
+         "identity ('I', 'C') seed 25100000 A_home: 6704 rollouts for 210 searched"),
+        (lambda g: _nested(g, "deviations", "turn", 1, name="I"),
+         "identity ('I', 'C') seed 25100000 A_home: "),
+        (lambda g: g.append(copy.deepcopy(first(g, "I")[0])),
+         "identity ('I', 'C') seed 25100000 A_home: recorded more than once"),
+        (lambda g: g.append(copy.deepcopy(first(g, "P")[0])),
+         "identity ('I', 'C') seed 25100000 A_home: recorded more than once"),
+        (lambda g: g.remove(first(g, "I")[0]),
+         "identity ('I', 'C'): 3 of the 4 registered games equal the plain game"),
+        (lambda g: first(g, "I")[0].update(score=[0, 1]),
+         "identity ('I', 'C'): 3 of the 4 registered games equal the plain game"),
+    ]))
+def test_an_identity_game_without_its_evidence_does_not_match(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, counts = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+    assert counts["identity_games"] == 3
+
+
+def test_the_identity_count_is_held_only_when_the_plan_gives_one(tmp_path):
+    rows = games()
+    rows.remove(first(rows, "I")[0])
+    problems, counts = sa.accept(write_run(tmp_path, manifest(), rows), without_schedule(plan()))
+    assert problems == [] and counts["identity_games"] == 3
+
+
+# ---- integrity evidence (review finding 3) ----------------------------------------------------
+def test_a_record_without_its_integrity_evidence_is_rejected():
+    """The review's false pass: one hard counter of five and no mask statistics.
+    Only the counters present were read, and absent mask statistics had no
+    fallback."""
+    rows = games()
+    for row in rows:
+        row["integrity"] = {"illegal": 0}
+        del row["mask_stats"]
+    problems, _ = sa.check_games(rows, plan())
+    assert sum("integrity counters ['illegal'] are not exactly" in p for p in problems) == 24
+    assert sum("mask_stats is not a two-element list" in p for p in problems) == 24
+
+
+def _mask(rows, name="S", **change):
+    row, side = first(rows, name)
+    row["mask_stats"][side]["m1"].update(change)
+
+
+def _plain(rows):
+    return next(r for r in rows if r["pair"] == ["C", "chain37"])
+
+
+@pytest.mark.parametrize("change, needle", (
+    [(lambda g, k=k: g[0]["integrity"].update({k: 1}), f"integrity {{'{k}': 1}}")
+     for k in T.HARD_COUNTERS]
+    + [(lambda g, k=k: g[0]["integrity"].pop(k), "are not exactly ['illegal', "
+                                                 "'projection_collision', 'error_episodes', "
+                                                 "'rejected_submissions', 'precheck_collisions']")
+       for k in T.HARD_COUNTERS]
+    + [
+        (lambda g: g[0].pop("integrity"), "integrity counters None are not exactly"),
+        (lambda g: g[0].update(integrity={}), "integrity counters [] are not exactly"),
+        (lambda g: g[0].update(integrity=[0] * 5), "integrity counters [0, 0, 0, 0, 0] are not"),
+        (lambda g: g[0]["integrity"].update(missing=0), "are not exactly"),
+        (lambda g: g[0]["integrity"].update(illegal=False), "integrity {'illegal': False}"),
+        (lambda g: g[0]["integrity"].update(illegal=None), "integrity {'illegal': None}"),
+        (lambda g: g[0]["integrity"].update(illegal=0.0), "integrity {'illegal': 0.0}"),
+        (lambda g: g[0]["integrity"].update(illegal="0"), "integrity {'illegal': '0'}"),
+        (lambda g: _plain(g)["integrity"].pop("illegal"), "['C', 'chain37'] seed 25100000 "
+                                                          "A_home: integrity counters"),
+        # Mask statistics: there for exactly the masks of a masked side.
+        (lambda g: g[0].pop("mask_stats"), "mask_stats is not a two-element list"),
+        (lambda g: g[0].update(mask_stats=[]), "mask_stats is not a two-element list"),
+        (lambda g: g[0].update(mask_stats=[None, None]),
+         "S has mask statistics for None, registered masks ['m1']"),
+        (lambda g: g[0]["mask_stats"].__setitem__(1, {}),
+         "C has mask statistics for [], registered masks ['m1']"),
+        (lambda g: g[0]["mask_stats"][0].update(m2=dict(g[0]["mask_stats"][0]["m1"])),
+         "S has mask statistics for ['m1', 'm2'], registered masks ['m1']"),
+        (lambda g: _plain(g)["mask_stats"].__setitem__(1, {}),
+         "chain37 has mask statistics for [], registered masks []"),
+        (lambda g: _plain(g).update(mask_stats=[dict(_plain(g)["mask_stats"][0])] * 2),
+         "chain37 has mask statistics for ['m1'], registered masks []"),
+        (lambda g: g[0]["mask_stats"][0].update(m1=None), "S's mask m1 statistics None"),
+        (lambda g: g[0]["mask_stats"][0]["m1"].pop("fallback"), "S's mask m1 statistics"),
+        (lambda g: g[0]["mask_stats"][0]["m1"].pop("held"), "S's mask m1 statistics"),
+        (lambda g: _mask(g, extra=0), "S's mask m1 statistics"),
+        (lambda g: _mask(g, fallback=False), "S's mask m1 statistics"),
+        (lambda g: _mask(g, fallback="0"), "S's mask m1 statistics"),
+        (lambda g: _mask(g, fallback=None), "S's mask m1 statistics"),
+        (lambda g: _mask(g, fallback=0.0), "S's mask m1 statistics"),
+        (lambda g: _mask(g, held=-1), "S's mask m1 statistics"),
+        (lambda g: _mask(g, applied=1.5), "S's mask m1 statistics"),
+        (lambda g: _mask(g, mass=float("nan")), "S's mask m1 statistics"),
+        (lambda g: _mask(g, mass=None), "S's mask m1 statistics"),
+        (lambda g: _mask(g, name="C", fallback=2), "2 mask fallback(s)"),
+        # A plain game is held to it too.
+        (lambda g: _plain(g)["mask_stats"][0]["m1"].update(fallback=1),
+         "['C', 'chain37'] seed 25100000 A_home: 1 mask fallback(s)"),
+        (lambda g: _plain(g).pop("mask_stats"),
+         "['C', 'chain37'] seed 25100000 A_home: mask_stats is not a two-element list"),
+    ]))
+def test_a_game_without_its_integrity_evidence_is_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+
+
+# ---- predicted gains (review finding 4) -------------------------------------------------------
+@pytest.mark.parametrize("gain", [float("nan"), float("inf"), float("-inf"), True, "0.5", None,
+                                  [0.5]])
+def test_a_predicted_gain_that_is_not_a_finite_number_is_rejected(tmp_path, gain):
+    """The review's false pass: NaN and infinity are not below delta, so they
+    passed the comparison. A game is aborted before it records such a gain."""
+    rows = games()
+    _stat(rows, predicted_gains=[0.11, 0.12, gain])
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any("a predicted gain is not a finite number" in p for p in problems), problems
+
+
+def test_a_gain_recorded_at_delta_is_accepted():
+    """The seat deviates on gain > delta and records the gain rounded to six
+    decimals, so a recorded gain may equal delta and never lies below it."""
+    rows = games()
+    _stat(rows, predicted_gains=[0.1, 0.1, 0.100001])
+    assert sa.check_games(rows, plan())[0] == []
+    _stat(rows, predicted_gains=[0.1, 0.1, 0.099999])
+    assert any("a predicted gain below delta 0.1" in p for p in sa.check_games(rows, plan())[0])
+
+
+# ---- each side's seat: nothing read off a default (item 5) ------------------------------------
+def _bot_game(rows):
+    return next(r for r in rows if r["pair"] == ["S", "offense"])
+
+
+def _unshifted(row, name):
+    """The sampling seed `name` would have had without its sampling offset."""
+    side = side_of(row, name)
+    row["sampling_seeds"][side] = T.sampling_seed(row["engine_seed"], side)
+
+
+@pytest.mark.parametrize("change, needle", [
+    # Absent used to read as "unmasked", "offset 0", "any mode".
+    (lambda g: _plain(g).pop("masks"), "masks is not a two-element list"),
+    (lambda g: next(r for r in g if r["pair"] == ["S", "chain37"]).pop("seed_offsets"),
+     "['S', 'chain37'] seed 25100000 A_home: seed_offsets is not a two-element list"),
+    (lambda g: _plain(g).pop("modes"), "modes is not a two-element list"),
+    (lambda g: _plain(g).pop("temperatures"), "temperatures is not a two-element list"),
+    (lambda g: _plain(g).pop("bots"), "bots is not a two-element list"),
+    (lambda g: _plain(g).pop("sampling_seeds"), "sampling_seeds is not a two-element list"),
+    (lambda g: _plain(g).update(masks=[["m1"]]), "masks is not a two-element list"),
+    # Bots.
+    (lambda g: g[0].update(bots=[None, "offense"]), "C played as bot 'offense', registered None"),
+    (lambda g: _bot_game(g).update(bots=[None, None]),
+     "offense played as bot None, registered 'offense'"),
+    (lambda g: _bot_game(g).update(bots=[None, "contact"]),
+     "offense played as bot 'contact', registered 'offense'"),
+    # Mode and temperature of a seat that does not search.
+    (lambda g: g[0].update(modes=["sample", "argmax"]),
+     "C played in mode 'argmax' at temperature 1.0, registered 'sample' at 1.0"),
+    (lambda g: g[0].update(temperatures=[1.0, 0.5]),
+     "C played in mode 'sample' at temperature 0.5, registered 'sample' at 1.0"),
+    (lambda g: _plain(g).update(temperatures=[1.0, None]),
+     "chain37 played in mode 'sample' at temperature None, registered 'sample' at 1.0"),
+    (lambda g: _plain(g).update(temperatures=[True, 1.0]), "C played in mode 'sample' at "
+                                                           "temperature True"),
+    (lambda g: _bot_game(g).update(modes=["sample", "sample"], temperatures=[1.0, 1.0]),
+     "offense played in mode 'sample' at temperature 1.0, registered 'scripted' at None"),
+    (lambda g: g[0].update(temperatures=[True, 1.0]), "S searched outside sample mode"),
+    # Masks, as the tournament writes them: a list, or None for an unmasked side.
+    (lambda g: g[0].update(masks=[["m1"], None]), "C played under masks None, registered ['m1']"),
+    (lambda g: g[0].update(masks=[["m1"], "m1"]), "C played under masks m1, registered ['m1']"),
+    (lambda g: _plain(g).update(masks=[["m1"], []]),
+     "chain37 played under masks [], registered None"),
+    # Sampling offsets and the seeds they give.
+    (lambda g: g[0].update(seed_offsets=[False, 1]), "S on sampling offset False, registered 0"),
+    (lambda g: g[0].update(seed_offsets=[0, "1"]), "C on sampling offset 1, registered 1"),
+    (lambda g: _unshifted(g[0], "C"), "C's sampling seed 25100075300018 is not 25101075300025, "
+                                      "what engine seed 25100000 gives side 1 at sampling "
+                                      "offset 1"),
+    (lambda g: g[0]["sampling_seeds"].reverse(), "S's sampling seed"),
+    (lambda g: g[0]["sampling_seeds"].__setitem__(0, 11), "S's sampling seed 11 is not"),
+    (lambda g: g[0]["sampling_seeds"].__setitem__(0, None), "S's sampling seed None is not"),
+    (lambda g: _both(g, sampling_seeds=[11, 12]), "I's sampling seed 11 is not"),
+])
+def test_a_side_that_was_not_seated_as_registered_is_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+
+
+def test_the_plan_decides_mode_and_temperature(tmp_path):
+    """A player the plan registers at another mode or temperature is held to
+    that; one it says nothing about samples at temperature 1."""
+    p, m, rows = plan(), manifest(), games()
+    p["players"]["chain37"].update(mode="argmax", temperature=0.5)
+    assert any("player chain37: manifest mode 'sample' at temperature 1.0 != registered "
+               "'argmax' at 0.5" in x for x in sa.check_manifest(m, p))
+    assert sum("chain37 played in mode 'sample' at temperature 1.0, registered 'argmax' at 0.5"
+               in x for x in sa.check_games(rows, p)[0]) == 8
+    m["players"]["chain37"].update(mode="argmax", temperature=0.5)
+    for row in rows:
+        if "chain37" in row["pair"]:
+            side = side_of(row, "chain37")
+            row["modes"][side], row["temperatures"][side] = "argmax", 0.5
+    assert sa.accept(write_run(tmp_path, m, rows), p)[0] == []
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda m: m["players"].update(offense={"bot": "contact"}),
+     "player offense: manifest bot 'contact' != registered 'offense'"),
+    (lambda m: m["players"].update(offense={"mode": "sample", "temperature": 1.0}),
+     "player offense: manifest bot None != registered 'offense'"),
+    (lambda m: m["players"]["offense"].update(mode="sample"),
+     "player offense: manifest mode 'sample' at temperature None != registered None at None"),
+    (lambda m: m["players"]["chain37"].update(bot="offense"),
+     "player chain37: manifest bot 'offense' != registered None"),
+    (lambda m: m["players"]["C"].update(mode="argmax"),
+     "player C: manifest mode 'argmax' at temperature 1.0 != registered 'sample' at 1.0"),
+    (lambda m: m["players"]["C"].update(temperature=0.7), "player C: manifest mode 'sample' at "
+                                                          "temperature 0.7"),
+    (lambda m: m["players"]["C"].pop("temperature"), "player C: manifest mode 'sample' at "
+                                                     "temperature None"),
+    (lambda m: m["players"]["C"].pop("mode"), "player C: manifest mode None"),
+    (lambda m: m["players"].update(C="chain55"), "player C: manifest spec 'chain55' is not an "
+                                                 "object"),
+])
+def test_a_manifest_player_off_the_plan_is_rejected(change, needle):
+    m = manifest()
+    change(m)
+    assert any(needle in problem for problem in sa.check_manifest(m, plan())), needle
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda p: p["players"].update(S="chain55"), "player S is not an object"),
+    (lambda p: p["players"]["offense"].update(masks=["m1"]), "bot offense takes a kind and no"),
+    (lambda p: p["players"]["offense"].update(mode="sample"), "bot offense takes a kind and no"),
+    (lambda p: p["players"]["offense"].update(bot=1), "bot offense takes a kind and no"),
+    (lambda p: p["players"]["C"].update(mode="greedy"), "player C's mode is sample or argmax"),
+    (lambda p: p["players"]["C"].update(temperature=0), "player C's temperature must be a "
+                                                        "number above 0"),
+    (lambda p: p["players"]["C"].update(temperature=True), "player C's temperature must be"),
+    (lambda p: p["players"]["S"].update(mode="argmax"), "S searches outside sample mode at "
+                                                        "temperature 1"),
+    (lambda p: p["players"]["S"].update(temperature=0.5), "S searches outside sample mode at "
+                                                          "temperature 1"),
+    (lambda p: p["players"]["C"].update(masks="m1"), "player C's masks must be a list of names"),
+    (lambda p: p["players"]["C"].update(masks=["m1", "m1"]), "player C's masks must be a list"),
+    (lambda p: p["players"]["C"].update(sampling_offset="1"), "player C's sampling_offset must "
+                                                              "be an integer >= 0"),
+    (lambda p: p["players"]["C"].update(sampling_offset=-1), "player C's sampling_offset must"),
+    (lambda p: p["players"]["C"].update(sampling_offset=1.5), "player C's sampling_offset must"),
+    (lambda p: p["players"]["C"].update(search={}), "C's search setting needs exactly"),
+    (lambda p: p["players"]["C"].update(search=False), "C's search setting needs exactly"),
+])
+def test_a_plan_with_a_player_it_cannot_read_is_refused(change, needle):
+    p = plan()
+    change(p)
+    with pytest.raises(ValueError, match=needle.replace("[", r"\[").replace("]", r"\]")):
+        sa.registered(p)
+
+
+# ---- the fields only a searched game carries (item 5) -----------------------------------------
+@pytest.mark.parametrize("change, needle", [
+    (lambda g: g[0].pop("search_seconds"), "search_seconds is not a two-element list"),
+    (lambda g: g[0].update(search_seconds=[300.0]), "search_seconds is not a two-element list"),
+    (lambda g: g[0].update(search_seconds=[None, None]),
+     "S's search_seconds None is not a number >= 0"),
+    (lambda g: g[0].update(search_seconds=[float("nan"), None]), "S's search_seconds nan is not"),
+    (lambda g: g[0].update(search_seconds=[-1.0, None]), "S's search_seconds -1.0 is not"),
+    (lambda g: g[0].update(search_seconds=[True, None]), "S's search_seconds True is not"),
+    (lambda g: g[0].update(search_seconds=[300.0, 0.0]),
+     "C does not search and has search_seconds 0.0"),
+    (lambda g: g[0].pop("final_state_sha256"), "final_state_sha256 None is not a sha256"),
+    (lambda g: g[0].update(final_state_sha256=""), "final_state_sha256 '' is not a sha256"),
+    (lambda g: g[0].update(final_state_sha256="A" * 64), "final_state_sha256 'AAAA"),
+    (lambda g: g[0].pop("sampling_state_sha256"), "sampling_state_sha256 None is not a sha256"),
+    (lambda g: g[0].update(sampling_state_sha256="0" * 63), "sampling_state_sha256 '0000"),
+    (lambda g: g[0].update(search={"S": copy.deepcopy(SETTING)}),
+     "search is not a two-element list"),
+    (lambda g: g[0].update(search=[copy.deepcopy(SETTING)]), "search is not a two-element list"),
+    (lambda g: g[0].update(search=[copy.deepcopy(SETTING), {}]), "C's search setting {} != "
+                                                                 "registered None"),
+    (lambda g: g[0].update(search_stats=[]), "search_stats is not a two-element list"),
+    (lambda g: g[0].update(search_stats={"S": stats(SETTING)}), "search_stats is not a two-"),
+    (lambda g: g[0]["search_stats"].__setitem__(1, {}),
+     "C does not search and has search statistics"),
+    # A game without a searching player carries none of them, empty or not.
+    (lambda g: _plain(g).update(search_stats=[]), "yet the game carries ['search_stats']"),
+    (lambda g: _plain(g).update(search_seconds=None), "yet the game carries ['search_seconds']"),
+    (lambda g: _plain(g).update(final_state_sha256=""), "carries ['final_state_sha256']"),
+    (lambda g: _plain(g).update(reward_manifest_sha256=None), "['reward_manifest_sha256']"),
+    (lambda g: _plain(g).update(search=[None, {}]), "yet the game carries ['search']"),
+    (lambda g: _plain(g).update(search=[None, {}]), "chain37's search setting {} != registered "
+                                                    "None"),
+    (lambda g: _plain(g).update(search=[copy.deepcopy(SETTING), None]),
+     "['C', 'chain37'] seed 25100000 A_home: C's search setting {'scope': "),
+    (lambda g: _plain(g).update(search=[]), "yet the game carries ['search']"),
+    (lambda g: _plain(g).update(search=None), "yet the game carries ['search']"),
+])
+def test_a_searched_game_without_its_own_fields_is_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+
+
+# ---- the steps and the result (item 5) --------------------------------------------------------
+def _b_leg(rows):
+    return next(r for r in rows if r["leg"] == "B_home")
+
+
+@pytest.mark.parametrize("change, needle", [
+    # forwards == [c_steps, c_steps] also held for [None, None] over None.
+    (lambda g: (g[0].pop("c_steps"), g[0].pop("forwards")), "c_steps None is not a positive"),
+    (lambda g: g[0].update(c_steps=0, forwards=[0, 0]), "c_steps 0 is not a positive integer"),
+    (lambda g: g[0].update(c_steps=True, forwards=[True, True]), "c_steps True is not a"),
+    (lambda g: g[0].update(c_steps="1200", forwards=["1200"] * 2), "c_steps '1200' is not a"),
+    (lambda g: _plain(g).update(c_steps=None, forwards=[None, None]),
+     "['C', 'chain37'] seed 25100000 A_home: c_steps None is not a positive integer"),
+    # What a scorer reads: a_td, b_td and result_a are the score, from A's side.
+    (lambda g: g[0].pop("score"), "score None is not two integers >= 0"),
+    (lambda g: g[0].update(score=[1, -1]), "score [1, -1] is not two integers >= 0"),
+    (lambda g: g[0].update(score=[1, 0, 0]), "score [1, 0, 0] is not two integers >= 0"),
+    (lambda g: g[0].update(a_td=0), "a_td 0, b_td 0, result_a 'W' are not the score [1, 0]"),
+    (lambda g: g[0].update(result_a="L"), "a_td 1, b_td 0, result_a 'L' are not the score"),
+    (lambda g: g[0].pop("result_a"), "a_td 1, b_td 0, result_a None are not the score"),
+    (lambda g: g[0].update(score=[0, 1]), "a_td 1, b_td 0, result_a 'W' are not the score"),
+    (lambda g: _b_leg(g).update(a_td=1, b_td=0, result_a="W"),
+     "B_home: a_td 1, b_td 0, result_a 'W' are not the score [1, 0]"),
+    (lambda g: _plain(g).update(a_td=2, b_td=2, result_a="D"), "are not the score [1, 0]"),
+])
+def test_a_game_whose_steps_or_result_do_not_add_up_is_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+
+
+def test_the_result_is_read_from_the_side_the_leg_gives():
+    rows = games()
+    assert [(r["a_td"], r["b_td"], r["result_a"]) for r in rows[:2]] == [(1, 0, "W"), (0, 1, "L")]
+    for row in rows:
+        row.update(score=[2, 2], a_td=2, b_td=2, result_a="D")
+    assert sa.check_games(rows, plan())[0] == []
+
+
+# ---- search statistics that only look like they add up (item 5) ------------------------------
+def _run_idle(rows):
+    for row in rows:
+        if row["pair"] == ["S", "offense"]:
+            st = row["search_stats"][side_of(row, "S")]
+            st.update(searched={c: 0 for c in st["searched"]}, rollouts=0, rollout_steps=0,
+                      rollout_forward_rows=0, cutoff_rollouts=0, predicted_gains=[],
+                      deviations={c: 0 for c in st["deviations"]}, deviation_types={})
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda g: _stat(g, searched=["turn", "after_declare"]), "searched classes ['turn', "
+                                                             "'after_declare'] != the setting"),
+    (lambda g: _stat(g, in_scope=None), "in_scope classes None != the setting's scope"),
+    (lambda g: _stat(g, deviation_types=[]), "deviation types [] are not counts above 0"),
+    (lambda g: _stat(g, deviation_types={"turn: ACTIVATE -> ACTIVATE": 5,
+                                         "after_declare: STEP -> STEP": -2}),
+     "are not counts above 0"),
+    (lambda g: _stat(g, deviation_types={"turn: ACTIVATE -> ACTIVATE": 1.0,
+                                         "after_declare: STEP -> STEP": 2.0}),
+     "are not counts above 0"),
+    (lambda g: _stat(g, deviation_types={"turn: ACTIVATE -> ACTIVATE": 3}),
+     "class turn: 1 deviations, 3 deviation types"),
+    (lambda g: _stat(g, deviation_types={"turn: ACTIVATE -> ACTIVATE": 2,
+                                         "after_declare: END_ACTIVATION -> STEP": 1}),
+     "class after_declare: 2 deviations, 1 deviation types"),
+    (lambda g: _stat(g, rollouts=4 * 16 * 210 - 49), "13391 rollouts are not a multiple of n 16"),
+    (lambda g: _stat(g, cap_rejected_decisions=208, cap_rejected_rollouts=208),
+     "3 deviations and 208 cap-rejected decisions among 210 searched"),
+    # A seat that searched nothing in a whole game did not play as a search seat.
+    (_run_idle, "['S', 'offense'] seed 25100000 A_home: S: searched no decision"),
+])
+def test_statistics_that_do_not_add_up_are_rejected(tmp_path, change, needle):
+    rows = games()
+    change(rows)
+    problems, _ = sa.accept(write_run(tmp_path, manifest(), rows), plan())
+    assert any(needle in problem for problem in problems), problems
+
+
+@pytest.mark.parametrize("change", [
+    dict(k=1), dict(n=0), dict(k=4.0), dict(n=True), dict(n="16"), dict(delta="0.1"),
+    dict(delta=-0.1), dict(delta=float("nan")), dict(delta=None), dict(delta=True),
+    dict(scope=[]), dict(scope="turn"), dict(scope=["turn", "turn"]), dict(scope=[1, 2])])
+def test_a_plan_whose_search_setting_cannot_be_read_is_refused(change):
+    p = plan()
+    p["players"]["S"]["search"].update(change)
+    with pytest.raises(ValueError, match="S's search setting needs k and n as integers >= 2"):
+        sa.registered(p)
+
+
+@pytest.mark.parametrize("field", ["action_trail_sha256", "final_digest", "logprob_sum",
+                                   "team_ids"])
+def test_every_game_carries_the_fields_an_identity_check_would_compare(field):
+    """Held on the identity pairs by the comparison; a game of any other pair
+    is the same kind of record and must carry them too."""
+    rows = games()
+    del _plain(rows)[field]
+    problems, _ = sa.check_games(rows, plan())
+    assert problems == [f"['C', 'chain37'] seed 25100000 A_home: has no usable ['{field}']"]
+
+
+# ---- a real run: accepted, then changed one field at a time ----------------------------------
+REAL_SEED0 = 46200
+REAL_PAIRS = [["S", "C", 2], ["I", "C", 2], ["P", "C", 2], ["P", "offense", 2]]
+REAL_QUICK = S.search_setting(2, 2, 0.0)                 # deviates on any clear gain
+REAL_IDENTITY = S.search_setting(2, 2, math.inf)         # searches, never deviates
+
+
+@pytest.fixture(scope="module")
+def real_run(tmp_path_factory):
+    """A gate in miniature, played through the tournament's command line by a
+    seeded random network at k = 2, n = 2: S searches, I searches and never
+    deviates, P is I without the search, C is the control on sampling offset 1,
+    and a scripted bot. Eight games, four of them searched: about a minute."""
+    from .test_search_tournament import write_blob
+    blob = write_blob(tmp_path_factory.mktemp("blob"), random_policy(seed=11, scale=0.05))
+    out = tmp_path_factory.mktemp("real") / "run"
+    args = ["--bot", "offense=offense", "--sampling-offset", "C=1", "--search", "S=2:2:0",
+            "--search", "I=2:2:inf", "--seed0", str(REAL_SEED0), "--workers", "1",
+            "--out-dir", str(out)]
+    for a, b, n in REAL_PAIRS:
+        args += ["--pair", f"{a},{b},{n}"]
+    for name in "SIPC":
+        args += ["--checkpoint", f"{name}={blob}", "--mask", f"{name}=m1"]
+    patch = pytest.MonkeyPatch()
+    patch.setenv("OMP_NUM_THREADS", "1")
+    patch.delenv(T.GAMES_PER_WORKER_ENV, raising=False)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert T.main(args) == 0
+    finally:
+        patch.undo()
+    with open(out / "manifest.json") as f:
+        m = json.load(f)
+    with open(out / "games.jsonl") as f:
+        rows = [json.loads(line) for line in f]
+    gate = {"seed0": REAL_SEED0, "games_per_worker": 1, "commit": m["harness_git_head"],
+            "pairs": [tuple(p) for p in REAL_PAIRS],
+            "checkpoints": {name: entry["sha256"] for name, entry in m["checkpoints"].items()}}
+    return {"out": str(out), "manifest": m, "games": rows, "gate_plan": gate}
+
+
+def real_plan():
+    return {"seed0": REAL_SEED0, "pairs": copy.deepcopy(REAL_PAIRS),
+            "players": {"S": {"masks": ["m1"], "search": copy.deepcopy(REAL_QUICK)},
+                        "I": {"masks": ["m1"], "search": copy.deepcopy(REAL_IDENTITY)},
+                        "P": {"masks": ["m1"]}, "C": {"masks": ["m1"], "sampling_offset": 1},
+                        "offense": {"bot": "offense"}},
+            "search": {"reward_manifest_sha256": SHA, "integrity_checks": list(CHECKS),
+                       "cap_rejection_ceiling": 1.0,
+                       "identity": [{"search": ["I", "C"], "plain": ["P", "C"]}]}}
+
+
+def both_checks(real, m=None, rows=None):
+    """(this check's problems, gate_acceptance.py's) for the real run with a
+    changed manifest or changed records; COMPLETE.json is taken as present."""
+    m = real["manifest"] if m is None else m
+    rows = real["games"] if rows is None else rows
+    seed0 = m.get("seed0")
+    found, _ = sa.check_games(rows, real_plan(), seed0 if sa._int(seed0) else None)
+    return (sa.check_manifest(m, real_plan()) + found + sa.check_identity(rows, real_plan())[0],
+            ga.check_manifest(m, real["gate_plan"]) + ga.check_games(rows, real["gate_plan"]))
+
+
+def pick(rows, pair, leg="A_home"):
+    return next(r for r in rows if r["pair"] == list(pair) and r["leg"] == leg)
+
+
+def test_a_real_run_is_accepted_by_both_checks(real_run, tmp_path, capsys):
+    assert both_checks(real_run) == ([], [])
+    problems, counts = sa.accept(real_run["out"], real_plan(), require_schedule=True)
+    assert problems == [] and ga.accept(real_run["out"], real_run["gate_plan"]) == []
+    assert counts["games"] == 8 and counts["searched_games"] == 4
+    assert counts["identity_games"] == 2 and counts["scheduled_pairs"] == 4
+    assert sum(counts["searched"].values()) > 200 and sum(counts["deviations"].values()) > 0
+    path = tmp_path / "PLAN.json"
+    path.write_text(json.dumps(real_plan()))
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert sa.main([str(path), real_run["out"], "--expect-sha256", sha]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("SEARCH-ACCEPTED 4 searched games of 8 as registered; ")
+    assert "2 identity game(s) equal to the plain game; 4 pair(s) held to the plan's" in out
+
+
+def test_the_reviewed_false_passes_are_rejected_on_real_records(real_run):
+    """Each change the review made to a real run. gate_acceptance.py still passes
+    every one of them, so this check is the only one that can reject it."""
+    games_ = real_run["games"]
+
+    def rejected(rows, needle, times):
+        ours, gate = both_checks(real_run, rows=rows)
+        assert gate == [] and sum(needle in p for p in ours) == times, (needle, ours)
+
+    # 1. Plain games between other registered players under the searched pair's key.
+    rows = [dict(copy.deepcopy(pick(games_, ("P", "C"), r["leg"])), pair=["S", "C"])
+            if r["pair"] == ["S", "C"] else r for r in copy.deepcopy(games_)]
+    rejected(rows, "are not the pair ['S', 'C'] seated for this leg", 2)
+    # 2. Every identity comparison field removed from both records.
+    rows = copy.deepcopy(games_)
+    for row in rows:
+        if row["pair"] in (["I", "C"], ["P", "C"]):
+            for field in sa.IDENTITY_FIELDS:
+                del row[field]
+    rejected(rows, f"I', 'C') seed 46200 A_home: has no usable {list(sa.IDENTITY_FIELDS)}", 1)
+    assert sa.check_identity(rows, real_plan())[1] == 0
+    # 3. The identity games' searched and rollout counts at zero.
+    rows = copy.deepcopy(games_)
+    for row in rows:
+        if row["pair"] == ["I", "C"]:
+            st = row["search_stats"][side_of(row, "I")]
+            st.update(searched={c: 0 for c in st["searched"]}, rollouts=0, rollout_steps=0,
+                      rollout_forward_rows=0)
+    rejected(rows, "searched no decision", 4)              # twice per game: game, identity
+    assert sa.check_identity(rows, real_plan())[1] == 0
+    # 4. One hard counter of five and no mask statistics.
+    rows = copy.deepcopy(games_)
+    for row in rows:
+        row["integrity"] = {"illegal": 0}
+        del row["mask_stats"]
+    rejected(rows, "integrity counters ['illegal'] are not exactly", 8)
+    rejected(rows, "mask_stats is not a two-element list", 8)
+    # 5. A predicted gain that is not a number.
+    for gain in (float("nan"), float("inf")):
+        rows = copy.deepcopy(games_)
+        row = pick(rows, ("S", "C"))
+        row["search_stats"][side_of(row, "S")]["predicted_gains"][0] = gain
+        rejected(rows, "S: a predicted gain is not a finite number", 1)
+
+
+def _real_stat(rows, pair=("S", "C"), **change):
+    row = pick(rows, pair)
+    row["search_stats"][side_of(row, pair[0])].update(change)
+
+
+def _bump(rows, key, pair=("S", "C")):
+    row = pick(rows, pair)
+    st = row["search_stats"][side_of(row, pair[0])]
+    st[key] += 1
+
+
+REAL_CHANGES = [
+    # Who played, where, on which seed.
+    (lambda g: pick(g, ("S", "C")).update(home="C", away="S"), "seated for this leg"),
+    (lambda g: pick(g, ("S", "C")).update(leg="B_home"), "seated for this leg"),
+    (lambda g: pick(g, ("S", "C")).update(pair=["C", "S"]), "seated for this leg"),
+    (lambda g: pick(g, ("P", "C")).update(pair=["I", "C"], home="I"), "recorded more than once"),
+    (lambda g: pick(g, ("S", "C")).update(engine_seed=REAL_SEED0 + 1), "is not seed0 46200 + "),
+    (lambda g: pick(g, ("S", "C")).update(game_index=1), "is outside the pair's 2 registered"),
+    (lambda g: pick(g, ("S", "C")).update(episode=1), "episode 1 is not 0"),
+    (lambda g: g.append(copy.deepcopy(g[0])), "recorded more than once"),
+    (lambda g: g.pop(), "1 of the 2 registered games missing"),
+    # How each side was seated.
+    (lambda g: pick(g, ("S", "C"))["sampling_seeds"].reverse(), "S's sampling seed"),
+    (lambda g: pick(g, ("S", "C")).update(seed_offsets=[0, 0]), "C on sampling offset 0"),
+    (lambda g: pick(g, ("S", "C")).update(masks=[None, ["m1"]]), "S played under masks None"),
+    (lambda g: pick(g, ("P", "C")).update(masks=[["m1", "m2"], ["m1"]]), "P played under masks"),
+    (lambda g: pick(g, ("P", "offense")).update(bots=[None, None]), "offense played as bot None"),
+    (lambda g: pick(g, ("P", "offense")).update(bots=[None, "contact"]), "as bot 'contact'"),
+    (lambda g: pick(g, ("P", "C")).update(modes=["argmax", "sample"]), "P played in mode"),
+    (lambda g: pick(g, ("P", "C")).update(temperatures=[1.0, 0.5]), "C played in mode"),
+    (lambda g: pick(g, ("S", "C")).update(modes=["argmax", "sample"]), "S searched outside"),
+    # How the game ended and what it counted.
+    (lambda g: pick(g, ("P", "C")).update(natural=False), "natural False"),
+    (lambda g: pick(g, ("P", "C")).update(truncated=True), "truncated True"),
+    (lambda g: pick(g, ("P", "C"))["integrity"].update(error_episodes=1), "'error_episodes': 1"),
+    (lambda g: pick(g, ("P", "C"))["integrity"].pop("precheck_collisions"), "are not exactly"),
+    (lambda g: pick(g, ("P", "C"))["mask_stats"][0]["m1"].update(fallback=1), "1 mask fallback"),
+    (lambda g: pick(g, ("P", "C"))["mask_stats"].__setitem__(1, None), "C has mask statistics"),
+    (lambda g: pick(g, ("P", "C"))["forwards"].__setitem__(0, 1), "forwards [1, "),
+    (lambda g: pick(g, ("P", "C")).update(c_steps=None, forwards=[None, None]), "c_steps None"),
+    (lambda g: pick(g, ("P", "offense")).update(score=[9, 9]), "are not the score [9, 9]"),
+    (lambda g: pick(g, ("P", "offense")).update(result_a="W", a_td=5), "are not the score"),
+    (lambda g: pick(g, ("P", "offense")).pop("action_trail_sha256"), "has no usable"),
+    # The search: setting, session, statistics.
+    (lambda g: pick(g, ("S", "C"))["search"][0].update(k=4), "S's search setting"),
+    (lambda g: pick(g, ("S", "C")).update(search=[None, None]), "S's search setting None"),
+    (lambda g: pick(g, ("P", "C")).update(search=[copy.deepcopy(REAL_QUICK), None]),
+     "no registered search, yet the game carries ['search']"),
+    (lambda g: pick(g, ("S", "C")).update(reward_manifest_sha256="0" * 64), "reward manifest 0"),
+    (lambda g: pick(g, ("S", "C"))["integrity_checks"].pop(), "integrity checks are not"),
+    (lambda g: pick(g, ("S", "C")).update(search_seconds=[None, None]), "S's search_seconds"),
+    (lambda g: pick(g, ("S", "C")).update(final_state_sha256=""), "is not a sha256"),
+    (lambda g: pick(g, ("S", "C")).pop("sampling_state_sha256"), "is not a sha256"),
+    (lambda g: _bump(g, "rollouts"), "rollouts are not a multiple of n 2"),
+    (lambda g: _real_stat(g, rollouts=0), "0 rollouts for"),
+    (lambda g: _bump(g, "shadow_forwards"), "opponent-view forwards over"),
+    (lambda g: _bump(g, "error_rollouts"), "1 error rollout(s)"),
+    (lambda g: _real_stat(g, predicted_gains=[]), "0 predicted gains"),
+    (lambda g: _real_stat(g, deviation_types={}), "0 deviation types"),
+    (lambda g: pick(g, ("S", "C"))["search_stats"][0]["searched"].update(turn=10 ** 6),
+     "class turn: in scope"),
+    (lambda g: pick(g, ("S", "C"))["search_stats"][0]["predicted_gains"].__setitem__(0, -0.5),
+     "a predicted gain below delta 0.0"),
+    (lambda g: pick(g, ("S", "C"))["search_stats"].__setitem__(1, {}), "C does not search"),
+    # The identity sample.
+    (lambda g: pick(g, ("P", "C")).update(action_trail_sha256="0" * 64), "['action_trail_sha256']"),
+    (lambda g: pick(g, ("I", "C"))["logprob_sum"].__setitem__(0, -1.0), "['logprob_sum']"),
+    (lambda g: pick(g, ("I", "C"))["search_stats"][0]["deviations"].update(turn=1),
+     "at delta inf"),
+    (lambda g: g.remove(pick(g, ("P", "C"), "B_home")), "the plain pair ('P', 'C') has no such"),
+    (lambda g: g.remove(pick(g, ("I", "C"), "B_home")),
+     "identity ('I', 'C'): 1 of the 2 registered games equal the plain game"),
+]
+
+
+@pytest.mark.parametrize("index", range(len(REAL_CHANGES)))
+def test_one_change_to_a_real_record_is_rejected(real_run, index):
+    change, needle = REAL_CHANGES[index]
+    rows = copy.deepcopy(real_run["games"])
+    change(rows)
+    ours, _ = both_checks(real_run, rows=rows)
+    assert any(needle in problem for problem in ours), (needle, ours)
+
+
+# What a record or the manifest can lose without either check noticing. Timing,
+# the process id and the display names say nothing about how a game was played.
+# The rest restates what the held fields already fix (the half, turns and
+# decision counts of a game whose action trail is held on the identity pairs
+# only) or is fixed by the pinned commit (kernel default, decision cap).
+GAME_FIELDS_NOBODY_HOLDS = {"behaviour", "decisions", "engine_decisions", "final_status", "half",
+                            "turns", "mode", "pid", "seconds", "teams"}
+MANIFEST_FIELDS_THE_GATE_HOLDS = {"checkpoints", "harness_git_head", "mode"}
+MANIFEST_FIELDS_NOBODY_HOLDS = {
+    "bot_library_sha256", "bots", "games_per_pair", "host", "kernel", "legs", "max_decisions",
+    "omp_num_threads", "python", "rosters", "sampling_seed", "schema", "tasks", "torch",
+    "workers"}
+
+
+def test_which_fields_a_real_run_can_lose(real_run):
+    """Delete one field at a time from every real record and from the manifest.
+    Every field this check does not hold is listed above, so a new unheld field
+    fails here."""
+    games_, m = real_run["games"], real_run["manifest"]
+    unheld = set()
+    for key in sorted({key for row in games_ for key in row}):
+        verdicts = set()
+        for i, row in enumerate(games_):
+            if key in row:
+                rows = copy.deepcopy(games_)
+                del rows[i][key]
+                verdicts.add(bool(both_checks(real_run, rows=rows)[0]))
+        assert len(verdicts) == 1, f"{key}: held on some records and not on others"
+        if verdicts == {False}:
+            unheld.add(key)
+    assert unheld == GAME_FIELDS_NOBODY_HOLDS
+    for key in unheld:                                     # and the gate check reads none of them
+        rows = copy.deepcopy(games_)
+        for row in rows:
+            row.pop(key, None)
+        assert both_checks(real_run, rows=rows) == ([], [])
+    ours, gate = set(), set()
+    for key in m:
+        changed = {k: v for k, v in m.items() if k != key}
+        found = both_checks(real_run, m=changed)
+        ours |= {key} if found[0] else set()
+        gate |= {key} if found[1] else set()
+    assert ours == {"games_per_worker", "pairs", "players", "search", "seed0"}
+    assert gate - ours == MANIFEST_FIELDS_THE_GATE_HOLDS
+    assert set(m) - ours - gate == MANIFEST_FIELDS_NOBODY_HOLDS
+
+
+# ---- the last defaults (item 5) --------------------------------------------------------------
+def test_a_searching_player_without_a_game_is_rejected(tmp_path):
+    """Without the plan's pairs nothing else says the searching player had to
+    play, and a run with no searched game at all was accepted."""
+    p = without_schedule(plan())
+    rows = [r for r in games() if "S" not in r["pair"]]
+    m = manifest()
+    problems, counts = sa.accept(write_run(tmp_path, m, rows), p)
+    assert problems == ["S is registered to search and played no game"]
+    problems, _ = sa.accept(write_run(tmp_path, m, []), p)
+    assert problems == ["I is registered to search and played no game",
+                        "S is registered to search and played no game",
+                        "identity: no game of the pair ('I', 'C')"]
+
+
+@pytest.mark.parametrize("change, needle", [
+    (lambda p: p["players"]["offense"].update(bot=""), "bot offense takes a kind and no"),
+    (lambda p: p.update(search=[p["search"]]), "plan: search must be an object"),
+    (lambda p: p["search"].update(identity={"search": ["I", "C"], "plain": ["P", "C"]}),
+     "an identity entry is"),
+    (lambda p: p["search"].update(identity=[["I", "C"], ["P", "C"]]), "an identity entry is"),
+    (lambda p: p["search"].update(identity=[{"search": "IC", "plain": "PC"}]),
+     "an identity entry is"),
+    (lambda p: p["search"].update(cap_rejection_ceiling="0.01"), "in [0, 1]"),
+    (lambda p: p["search"].update(cap_rejection_ceiling=[0.01]), "in [0, 1]"),
+    (lambda p: p["search"].update(cap_rejection_ceiling=True), "in [0, 1]"),
+    (lambda p: p["search"].update(cap_rejection_ceiling=float("nan")), "in [0, 1]"),
+])
+def test_a_plan_whose_search_block_cannot_be_read_is_refused(change, needle):
+    p = plan()
+    change(p)
+    with pytest.raises(ValueError, match=needle.replace("[", r"\[").replace("]", r"\]")):
+        sa.registered(p)
+
+
+def test_a_run_that_cannot_be_read_is_rejected_not_a_crash(tmp_path, capsys):
+    path = tmp_path / "PLAN.json"
+    path.write_text(json.dumps(plan()))
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert sa.main([str(path), str(tmp_path / "nowhere"), "--expect-sha256", sha]) == 1
+    assert capsys.readouterr().out.startswith("SEARCH-REJECTED the run cannot be read: ")
+    run = tmp_path / "run"
+    run.mkdir()
+    write_run(run, manifest(), games())
+    for name, text in (("games.jsonl", '{"pair": ["S", "C"]\n'), ("manifest.json", "[]")):
+        original = (run / name).read_text()
+        (run / name).write_text(text)
+        assert sa.main([str(path), str(run), "--expect-sha256", sha]) == 1
+        assert capsys.readouterr().out.startswith("SEARCH-REJECTED ")
+        (run / name).write_text(original)
+    assert sa.main([str(path), str(run), "--expect-sha256", sha]) == 0
