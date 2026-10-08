@@ -1,0 +1,415 @@
+{
+ "gate": "tctl-gate-20261008",
+ "registered_in": "D435 (DECISIONS.md, branch opt/long-run-20261001): design, acceptance, reading rules, relaunch and budget rules",
+ "written_before_launch_at": "2026-10-08T02:53:18-0700",
+ "harness_commit": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6",
+ "harness_worktree": "~/Code/bb-harness-search",
+ "harness_branch": "feat/search-probe-20261007",
+ "main_checkout": "~/Code/bb-play-harness",
+ "main_checkout_commit": "b0099fbef60ac7223f5c1184a6d83df5506be6d9",
+ "checkpoint_store": "~/Code/bb-play-harness/.play-artifacts/checkpoints",
+ "out_root": "~/Code/bb-play-harness/.play-artifacts/tournaments",
+ "log_dir": "~/Code/bb-play-harness/.play-artifacts/logs",
+ "run_dir": "~/Code/bb-play-harness/.play-artifacts/tournaments/tctl-gate-20261008/main",
+ "seed0": 25100000,
+ "games_per_pair": 3200,
+ "total_games": 25600,
+ "games_per_worker": 1,
+ "mode": "sample",
+ "kernel": "native",
+ "temperature": "1.0 for every player whose entry in 'players' names no temperature",
+ "temperature_definition": "play_harness/policy.py select_joint divides every head's logits by T before masking and selection: each head's conditional distribution is tempered, not the joint",
+ "starts": "kickoff",
+ "legs": [
+  "A_home",
+  "B_home"
+ ],
+ "mask_definition": {
+  "m1": "END_TURN is removed from the masked seat's exact joint support while an ACTIVATE is also legal; the policy is renormalized over what is left (play_harness/policy.py restrict_support, MaskedPolicySeat)"
+ },
+ "players": {
+  "c55m1t075": {
+   "checkpoint": "chain55",
+   "masks": [
+    "m1"
+   ],
+   "temperature": 0.75
+  },
+  "c55m1t05": {
+   "checkpoint": "chain55",
+   "masks": [
+    "m1"
+   ],
+   "temperature": 0.5
+  },
+  "c55m1t025": {
+   "checkpoint": "chain55",
+   "masks": [
+    "m1"
+   ],
+   "temperature": 0.25
+  },
+  "c55m1": {
+   "checkpoint": "chain55",
+   "masks": [
+    "m1"
+   ]
+  },
+  "chain37": {
+   "checkpoint": "chain37",
+   "masks": []
+  },
+  "chain46": {
+   "checkpoint": "chain46",
+   "masks": []
+  }
+ },
+ "sampling_offsets": "none: no pair has the same checkpoint on both sides",
+ "pairs": [
+  [
+   "c55m1t075",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1t05",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1t025",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1t075",
+   "chain46",
+   3200
+  ],
+  [
+   "c55m1t05",
+   "chain46",
+   3200
+  ],
+  [
+   "c55m1t025",
+   "chain46",
+   3200
+  ],
+  [
+   "c55m1",
+   "chain46",
+   3200
+  ]
+ ],
+ "pair_notes": {
+  "1": "c55m1t075 v chain37: chain 55 + m1 at temperature 0.75",
+  "2": "c55m1t05 v chain37: chain 55 + m1 at temperature 0.5",
+  "3": "c55m1t025 v chain37: chain 55 + m1 at temperature 0.25",
+  "4": "c55m1 v chain37: the control at temperature 1, a replay of the reference run's games",
+  "5": "c55m1t075 v chain46: chain 55 + m1 at temperature 0.75",
+  "6": "c55m1t05 v chain46: chain 55 + m1 at temperature 0.5",
+  "7": "c55m1t025 v chain46: chain 55 + m1 at temperature 0.25",
+  "8": "c55m1 v chain46: the control at temperature 1, a replay of the reference run's games"
+ },
+ "reference": {
+  "gate": "srch-gate-20261007",
+  "run_dir": "~/Code/bb-play-harness/.play-artifacts/tournaments/srch-gate-20261007/main",
+  "games_sha256": "b634d44b67110e1f96bb9a294f18f9038905b5cded124fe69cd277c832e8c536",
+  "library_sha256": "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0",
+  "harness_commit": "06f0a5f7e67cc9089e8edaf5fa9b97dcfe440d99",
+  "replay": [
+   {
+    "pair": [
+     "c55m1",
+     "chain37"
+    ],
+    "reference_pair": [
+     "c55m1",
+     "chain37"
+    ]
+   },
+   {
+    "pair": [
+     "c55m1",
+     "chain46"
+    ],
+    "reference_pair": [
+     "c55m1",
+     "chain46"
+    ]
+   }
+  ],
+  "fields": [
+   "action_trail_sha256",
+   "final_digest",
+   "score",
+   "c_steps",
+   "decisions",
+   "engine_decisions",
+   "team_ids",
+   "sampling_seeds",
+   "turns",
+   "half",
+   "final_status"
+  ],
+  "rule": "every game of the replayed pairs equals the reference run's game on the same engine seed and leg in the listed fields and in its seats; this run's compiled library is the reference run's; reference records on engine seeds outside this plan's block of games_per_pair / 2 seeds are not used; the reference directory is only read"
+ },
+ "checkpoints_sha256": {
+  "chain55": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+  "chain37": "268f1db08ca0c2bad88293ea56b3048a2a1c3a0ea9acdf0365fc023186c0f73f",
+  "chain46": "8eee9ac10f58eca57092013ac05db6f28fb5f7f2c6dc9ce850960c7bb2c7c467"
+ },
+ "bots": {},
+ "machine": "DigitalOcean droplets s-8vcpu-16gb-amd in sfo3, one per shard, tools/droplet_tournament.py run at the harness commit; 8 workers, one game per worker",
+ "droplet_size": "s-8vcpu-16gb-amd",
+ "max_hours": 4.0,
+ "shards": {
+  "tctl-gate-20261008-s1": {
+   "index0": 0,
+   "pairs": [
+    "c55m1t075,chain37,800",
+    "c55m1t05,chain37,800",
+    "c55m1t025,chain37,800",
+    "c55m1,chain37,800",
+    "c55m1t075,chain46,800",
+    "c55m1t05,chain46,800",
+    "c55m1t025,chain46,800",
+    "c55m1,chain46,800"
+   ]
+  },
+  "tctl-gate-20261008-s2": {
+   "index0": 400,
+   "pairs": [
+    "c55m1t075,chain37,800",
+    "c55m1t05,chain37,800",
+    "c55m1t025,chain37,800",
+    "c55m1,chain37,800",
+    "c55m1t075,chain46,800",
+    "c55m1t05,chain46,800",
+    "c55m1t025,chain46,800",
+    "c55m1,chain46,800"
+   ]
+  },
+  "tctl-gate-20261008-s3": {
+   "index0": 800,
+   "pairs": [
+    "c55m1t075,chain37,800",
+    "c55m1t05,chain37,800",
+    "c55m1t025,chain37,800",
+    "c55m1,chain37,800",
+    "c55m1t075,chain46,800",
+    "c55m1t05,chain46,800",
+    "c55m1t025,chain46,800",
+    "c55m1,chain46,800"
+   ]
+  },
+  "tctl-gate-20261008-s4": {
+   "index0": 1200,
+   "pairs": [
+    "c55m1t075,chain37,800",
+    "c55m1t05,chain37,800",
+    "c55m1t025,chain37,800",
+    "c55m1,chain37,800",
+    "c55m1t075,chain46,800",
+    "c55m1t05,chain46,800",
+    "c55m1t025,chain46,800",
+    "c55m1,chain46,800"
+   ]
+  }
+ },
+ "launch": {
+  "script": "launch_from_plan.py",
+  "runner": "tools/droplet_tournament.py",
+  "runner_sha256": "bb0ece1c9592fa46000924b0fc5ec1e15720c2ad10165f3829499a4bf6b921f2",
+  "rule": "refuses unless this file hashes to the committed sha256, both checkouts are clean at their commits, every checkpoint blob has its registered sha256, the runner is the registered one, and the shards' index slices cover every pair exactly once from index 0",
+  "script_sha256": "9f22b152f28e2c3472d3906ead0a9f953fae14fb2a68765afac2e58b9b1a0e9e"
+ },
+ "merge": "tools/droplet_tournament.py merge --out <run_dir> --shard <each shard>/main (shards must share commit, seed block, settings, torch and compiled shim; a pair's index slices must be disjoint and cover it from index 0 without a gap)",
+ "acceptance": {
+  "script": "accept_from_plan.py",
+  "tool": "tools/gate_acceptance.py at the harness commit",
+  "tool_sha256": "71cb6d6b9d0944e06ab8af6cfeaee76caba0da43f3b4e2367c9ce9a2bde015ad",
+  "search_tool": "tools/search_acceptance.py at the harness commit",
+  "search_tool_sha256": "2b429a42c199581c3a2504d9e2d18da49b15fc01251b1d42e4f247ac8cf6f2d9",
+  "against": "this file, whose sha256 is committed to the ledger before launch",
+  "script_sha256": "fa3152e543fe0d738e3c5334c2a7d30684880aaf553f3784ef9cd68c3adcc6f6"
+ },
+ "scoring": {
+  "script": "score_from_plan.py",
+  "rule": "merge, then accept_from_plan.py (four checks), then the report, contrasts and diagnostics only if accepted",
+  "script_sha256": "a93ffc0721ea94c25e6d06f8168ce31d09d24ed35b09bed849bd01709f2adc9d"
+ },
+ "statistic": "decisive-Elo with 95% seed-cluster intervals from play_harness.tournament_stats (report.json, report.txt), 2,000 replicates",
+ "contrasts": {
+  "script": "paired_contrasts.py",
+  "replicates": 2000,
+  "generator_seed": 0,
+  "sets": [
+   {
+    "name": "gain (c55m1t075 minus c55m1)",
+    "arm": "c55m1t075",
+    "control": "c55m1",
+    "opponents": [
+     "chain37",
+     "chain46"
+    ],
+    "run_dir": "<run_dir>/gain_t075",
+    "outputs": [
+     "gain_t075/chain37_contrast.json",
+     "gain_t075/chain46_contrast.json"
+    ]
+   },
+   {
+    "name": "gain (c55m1t05 minus c55m1)",
+    "arm": "c55m1t05",
+    "control": "c55m1",
+    "opponents": [
+     "chain37",
+     "chain46"
+    ],
+    "run_dir": "<run_dir>/gain_t05",
+    "outputs": [
+     "gain_t05/chain37_contrast.json",
+     "gain_t05/chain46_contrast.json"
+    ]
+   },
+   {
+    "name": "gain (c55m1t025 minus c55m1)",
+    "arm": "c55m1t025",
+    "control": "c55m1",
+    "opponents": [
+     "chain37",
+     "chain46"
+    ],
+    "run_dir": "<run_dir>/gain_t025",
+    "outputs": [
+     "gain_t025/chain37_contrast.json",
+     "gain_t025/chain46_contrast.json"
+    ]
+   },
+   {
+    "name": "margin (c55m1s of the reference run minus c55m1t075)",
+    "arm": "c55m1s",
+    "control": "c55m1t075",
+    "opponents": [
+     "chain37",
+     "chain46"
+    ],
+    "run_dir": "<run_dir>/margin_t075",
+    "reference_pairs": [
+     [
+      "c55m1s",
+      "chain37"
+     ],
+     [
+      "c55m1s",
+      "chain46"
+     ]
+    ],
+    "reference_games": 6400,
+    "outputs": [
+     "margin_t075/chain37_contrast.json",
+     "margin_t075/chain46_contrast.json"
+    ]
+   },
+   {
+    "name": "margin (c55m1s of the reference run minus c55m1t05)",
+    "arm": "c55m1s",
+    "control": "c55m1t05",
+    "opponents": [
+     "chain37",
+     "chain46"
+    ],
+    "run_dir": "<run_dir>/margin_t05",
+    "reference_pairs": [
+     [
+      "c55m1s",
+      "chain37"
+     ],
+     [
+      "c55m1s",
+      "chain46"
+     ]
+    ],
+    "reference_games": 6400,
+    "outputs": [
+     "margin_t05/chain37_contrast.json",
+     "margin_t05/chain46_contrast.json"
+    ]
+   },
+   {
+    "name": "margin (c55m1s of the reference run minus c55m1t025)",
+    "arm": "c55m1s",
+    "control": "c55m1t025",
+    "opponents": [
+     "chain37",
+     "chain46"
+    ],
+    "run_dir": "<run_dir>/margin_t025",
+    "reference_pairs": [
+     [
+      "c55m1s",
+      "chain37"
+     ],
+     [
+      "c55m1s",
+      "chain46"
+     ]
+    ],
+    "reference_games": 6400,
+    "outputs": [
+     "margin_t025/chain37_contrast.json",
+     "margin_t025/chain46_contrast.json"
+    ]
+   }
+  ],
+  "script_sha256": "722ece95b24eed07f017062c4a837d44d4a49c4e97a7082fbb6fa2c37cef6002"
+ },
+ "diagnostics": {
+  "script": "gate_diagnostics.py",
+  "registered": "the style table per side for the eight pairs",
+  "pairs": [
+   [
+    "c55m1t075",
+    "chain37"
+   ],
+   [
+    "c55m1t05",
+    "chain37"
+   ],
+   [
+    "c55m1t025",
+    "chain37"
+   ],
+   [
+    "c55m1",
+    "chain37"
+   ],
+   [
+    "c55m1t075",
+    "chain46"
+   ],
+   [
+    "c55m1t05",
+    "chain46"
+   ],
+   [
+    "c55m1t025",
+    "chain46"
+   ],
+   [
+    "c55m1",
+    "chain46"
+   ]
+  ],
+  "search_pairs": [],
+  "script_sha256": "1defdd33893dbb846fe5b309dcb26d14fce6064fc3442f60466989c9a7d88b99"
+ },
+ "reading": "labels are applied by the operator from these outputs, in the order the ledger entry registers"
+}
