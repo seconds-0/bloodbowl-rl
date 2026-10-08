@@ -7,6 +7,10 @@ the exact pairs, games per pair, seed block, both legs of every seed exactly
 once, games per worker, harness commit, checkpoint identities, sample mode at
 unit temperature, natural endings and zero integrity counters.
 
+A plan may register other temperatures: plan["temperatures"] maps a player name
+to its temperature (--temperature NAME=T), every other checkpoint player stays
+at 1.0, and then each side of every game is held to its own player's value.
+
 Exit 0 and print GATE-ACCEPTED only when every check passes.
 """
 import argparse
@@ -23,6 +27,21 @@ def parse_pair(text):
     if len(parts) != 3:
         raise argparse.ArgumentTypeError(f"--pair wants A,B,N, got {text!r}")
     return parts[0], parts[1], int(parts[2])
+
+
+def parse_temperature(text):
+    name, sep, value = text.partition("=")
+    try:
+        t = float(value)
+    except ValueError:
+        t = float("nan")
+    if not sep or not name or not (0.0 < t < float("inf")):
+        raise argparse.ArgumentTypeError(f"--temperature wants NAME=T with T above 0, got {text!r}")
+    return name, t
+
+
+def registered_temperature(plan, name):
+    return float((plan.get("temperatures") or {}).get(name, 1.0))
 
 
 def parse_checkpoint(text):
@@ -50,11 +69,18 @@ def check_manifest(manifest, plan):
         missing = [p for p in want_pairs if p not in got_pairs]
         extra = [p for p in got_pairs if p not in want_pairs]
         problems.append(f"pairs differ from the registered plan: missing {missing}, unexpected {extra}")
-    for name, spec in (manifest.get("players") or {}).items():
+    players = manifest.get("players") or {}
+    for name, spec in players.items():
         if "bot" in spec:
+            if name in (plan.get("temperatures") or {}):
+                problems.append(f"a temperature is registered for the scripted bot {name}")
             continue
-        if spec.get("mode") != "sample" or spec.get("temperature") != 1.0:
-            problems.append(f"player {name} is not sample mode at temperature 1.0: {spec}")
+        want = registered_temperature(plan, name)
+        if spec.get("mode") != "sample" or spec.get("temperature") != want:
+            problems.append(f"player {name} is not sample mode at temperature {want}: {spec}")
+    unknown = sorted(set(plan.get("temperatures") or {}) - set(players))
+    if unknown:
+        problems.append(f"temperatures registered for players the manifest does not have: {unknown}")
     checkpoints = manifest.get("checkpoints") or {}
     for name, sha in plan["checkpoints"].items():
         got = (checkpoints.get(name) or {}).get("sha256")
@@ -63,6 +89,25 @@ def check_manifest(manifest, plan):
     unexpected = sorted(set(checkpoints) - set(plan["checkpoints"]))
     if unexpected:
         problems.append(f"unregistered checkpoints in the manifest: {unexpected}")
+    return problems
+
+
+def side_temperature_problems(game, pair, plan):
+    """With registered temperatures, each side's value is its own player's (None for a scripted side)."""
+    where = f"{pair} seed {game.get('engine_seed')} {game.get('leg')}"
+    seats = (game.get("home"), game.get("away"))
+    if game.get("leg") not in LEGS or set(seats) != set(pair) or \
+            seats[0] != pair[0 if game.get("leg") == "A_home" else 1]:
+        return [f"{where}: home {seats[0]!r} and away {seats[1]!r} are not the pair's seats for this leg"]
+    modes, temperatures = game.get("modes"), game.get("temperatures")
+    if not (isinstance(modes, list) and isinstance(temperatures, list)
+            and len(modes) == len(temperatures) == 2):
+        return [f"{where}: modes {modes!r} and temperatures {temperatures!r} are not one value a side"]
+    problems = []
+    for name, mode, temperature in zip(seats, modes, temperatures):
+        want = None if mode == "scripted" else registered_temperature(plan, name)
+        if isinstance(temperature, bool) or temperature != want:
+            problems.append(f"{where}: {name} played at temperature {temperature!r}, registered {want!r}")
     return problems
 
 
@@ -84,9 +129,12 @@ def check_games(games, plan):
         for mode in game.get("modes") or [game.get("mode")]:
             if mode not in ("sample", "scripted"):
                 problems.append(f"{pair} seed {game.get('engine_seed')}: mode {mode!r}")
-        for temperature in game.get("temperatures") or []:
-            if temperature not in (None, 1.0):
-                problems.append(f"{pair} seed {game.get('engine_seed')}: temperature {temperature}")
+        if plan.get("temperatures"):
+            problems += side_temperature_problems(game, pair, plan)
+        else:
+            for temperature in game.get("temperatures") or []:
+                if temperature not in (None, 1.0):
+                    problems.append(f"{pair} seed {game.get('engine_seed')}: temperature {temperature}")
     for pair, n in sorted(want.items()):
         if n % len(LEGS):
             problems.append(f"{pair}: {n} games is not a whole number of seeds")
@@ -132,9 +180,12 @@ def main(argv=None):
     parser.add_argument("--commit", required=True, help="full harness commit the gate was registered at")
     parser.add_argument("--pair", type=parse_pair, action="append", required=True, metavar="A,B,N")
     parser.add_argument("--checkpoint", type=parse_checkpoint, action="append", default=[], metavar="NAME=SHA256")
+    parser.add_argument("--temperature", type=parse_temperature, action="append", default=[], metavar="NAME=T",
+                        help="repeatable; a player registered at a temperature other than 1.0")
     args = parser.parse_args(argv)
     plan = {"seed0": args.seed0, "games_per_worker": args.games_per_worker, "commit": args.commit,
-            "pairs": list(args.pair), "checkpoints": dict(args.checkpoint)}
+            "pairs": list(args.pair), "checkpoints": dict(args.checkpoint),
+            "temperatures": dict(args.temperature)}
     problems = accept(args.run_dir, plan)
     if problems:
         for problem in problems:
