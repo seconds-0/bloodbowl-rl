@@ -1,0 +1,350 @@
+SMOKE, NOT EVIDENCE: unregistered local records, held only to their own COMPLETE.json.
+Intervals over a handful of games mean nothing.
+
+0. Runs
+  chain55: 2 games, 33 root lines, 33 used; dropped none; rollouts lost to the decision cap {'turn': 0, 'forced': 0, 'match': 0}; identity roots 6; library de32df7b5446
+      checks {'identity_roots': 6, 'identity_eligible': 6, 'identity_max_abs': 0.0, 'component_sum_max_abs': 1.887379141862766e-15, 'step_residual_max_abs': 1.3969838619232178e-08, 'depth1_max_abs': 1.1102230246251565e-16, 'forced_max': 1}
+  chain58: 2 games, 32 root lines, 32 used; dropped none; rollouts lost to the decision cap {'turn': 0, 'forced': 0, 'match': 0}; identity roots 5; library de32df7b5446
+      checks {'identity_roots': 5, 'identity_eligible': 5, 'identity_max_abs': 0.0, 'component_sum_max_abs': 1.7763568394002505e-15, 'step_residual_max_abs': 1.3969838619232178e-08, 'depth1_max_abs': 1.1802254684667446e-07, 'forced_max': 1}
+
+1. Turn arm (E1, E7, E8, E9): most probable alternative minus the action played, under the
+   checkpoint's own evaluator (shaped reward to the actual end of the team turn plus its own
+   critic there). Per decision.
+  chain55: activations per own team turn in these games +3.219 [+3.062, +3.375]; END_TURN chosen per own team turn +0.562 [+0.500, +0.625]
+    end_turn       roots    18 of 18 decisions | return -0.0226 [-0.0309, -0.0122]
+                   = reward part +0.0026 [+0.0006, +0.0043] + critic value -0.0205 [-0.0281, -0.0109] + discount on the bootstrap -0.0048 [-0.0071, -0.0019]
+                   critic value after the action played +0.785; alternative runs 7.1 engine steps, holds 0.02 further activations (none in 98% of rollouts), throws a block in 11% and moves 2.6 squares
+                   return of the action played minus the critic's value at the root -0.0172 [-0.0232, -0.0098]; rollout indices dropped per root 0.000
+                   share of decisions with the alternative's margin above zero: as measured +0.111 [+0.000, +0.250]; with half the discount part +0.111 [+0.000, +0.250]; without it +0.167 [+0.000, +0.375]; without minus as measured +0.056 [+0.000, +0.125]
+    decline_block  roots     7 of 7 decisions | return -0.0732 [-0.0739, -0.0693]
+                   = reward part -0.0992 [-0.1043, -0.0684] + critic value +0.0264 [+0.0006, +0.0308] + discount on the bootstrap -0.0005 [-0.0015, -0.0003]
+                   critic value after the action played +0.279; alternative runs 15.6 engine steps, holds 1.63 further activations (none in 44% of rollouts), throws a block in 10% and moves 3.9 squares
+                   return of the action played minus the critic's value at the root -0.0427 [-0.0661, -0.0388]; rollout indices dropped per root 0.000
+                   share of decisions with the alternative's margin above zero: as measured +0.000 [+0.000, +0.000]; with half the discount part +0.000 [+0.000, +0.000]; without it +0.000 [+0.000, +0.000]; without minus as measured +0.000 [+0.000, +0.000]
+    activate       roots     8 of 103 decisions | return -0.0578 [-0.1087, -0.0115]
+                   = reward part -0.1125 [-0.1654, -0.0646] + critic value +0.0434 [+0.0374, +0.0489] + discount on the bootstrap +0.0114 [+0.0042, +0.0193]
+                   critic value after the action played +0.675; alternative runs 1.0 engine steps, holds 0.00 further activations (none in 100% of rollouts), throws a block in 0% and moves 0.0 squares
+                   return of the action played minus the critic's value at the root +0.0021 [-0.0006, +0.0050]; rollout indices dropped per root 0.000
+                   share of decisions with the alternative's margin above zero: as measured +0.500 [+0.500, +0.500]; with half the discount part +0.500 [+0.500, +0.500]; without it +0.500 [+0.500, +0.500]; without minus as measured +0.000 [+0.000, +0.000]
+  chain58: activations per own team turn in these games +3.156 [+2.312, +4.000]; END_TURN chosen per own team turn +0.656 [+0.625, +0.688]
+    end_turn       roots    21 of 21 decisions | return -0.0026 [-0.0134, +0.0094]
+                   = reward part +0.0066 [+0.0042, +0.0094] + critic value -0.0055 [-0.0166, +0.0069] + discount on the bootstrap -0.0038 [-0.0069, -0.0009]
+                   critic value after the action played +0.734; alternative runs 5.7 engine steps, holds 0.01 further activations (none in 99% of rollouts), throws a block in 11% and moves 1.3 squares
+                   return of the action played minus the critic's value at the root -0.0040 [-0.0058, -0.0024]; rollout indices dropped per root 0.000
+                   share of decisions with the alternative's margin above zero: as measured +0.190 [+0.091, +0.300]; with half the discount part +0.190 [+0.091, +0.300]; without it +0.238 [+0.091, +0.400]; without minus as measured +0.048 [+0.000, +0.100]
+    decline_block  roots     3 of 3 decisions | return -0.0874 [-0.0874, -0.0874]
+                   = reward part -0.1006 [-0.1006, -0.1006] + critic value +0.0133 [+0.0133, +0.0133] + discount on the bootstrap -0.0001 [-0.0001, -0.0001]
+                   critic value after the action played +0.101; alternative runs 24.5 engine steps, holds 3.24 further activations (none in 33% of rollouts), throws a block in 21% and moves 7.6 squares
+                   return of the action played minus the critic's value at the root +0.0004 [+0.0004, +0.0004]; rollout indices dropped per root 0.000
+                   share of decisions with the alternative's margin above zero: as measured +0.000 [+0.000, +0.000]; with half the discount part +0.000 [+0.000, +0.000]; without it +0.000 [+0.000, +0.000]; without minus as measured +0.000 [+0.000, +0.000]
+    activate       roots     8 of 101 decisions | return -0.0533 [-0.0594, -0.0498]
+                   = reward part -0.0618 [-0.0803, -0.0511] + critic value -0.0047 [-0.0068, -0.0034] + discount on the bootstrap +0.0132 [+0.0048, +0.0277]
+                   critic value after the action played +0.671; alternative runs 1.0 engine steps, holds 0.00 further activations (none in 100% of rollouts), throws a block in 0% and moves 0.0 squares
+                   return of the action played minus the critic's value at the root +0.0346 [+0.0184, +0.0440]; rollout indices dropped per root 0.000
+                   share of decisions with the alternative's margin above zero: as measured +0.408 [+0.250, +0.500]; with half the discount part +0.408 [+0.250, +0.500]; without it +0.250 [+0.250, +0.250]; without minus as measured -0.158 [-0.250, +0.000]
+
+2. Forced arm (E2, end_turn roots): exactly one more activation, then END_TURN, minus END_TURN now.
+  chain55: return -0.0222 [-0.0309, -0.0114] = reward part +0.0026 [+0.0006, +0.0043] + critic value -0.0201 [-0.0281, -0.0101] + discount -0.0047 [-0.0071, -0.0018]
+           the turn was ended by the rule in 96% of rollouts; free continuation minus forced (E1 - E2) -0.0004 [-0.0009, +0.0000]
+  chain58: return -0.0023 [-0.0129, +0.0094] = reward part +0.0066 [+0.0042, +0.0094] + critic value -0.0052 [-0.0162, +0.0069] + discount -0.0038 [-0.0069, -0.0009]
+           the turn was ended by the rule in 96% of rollouts; free continuation minus forced (E1 - E2) -0.0002 [-0.0005, +0.0000]
+
+3. E3, a noisy test over up to three alternatives: the one with the highest mean gain on rollout
+   indices 0 to 31, judged on indices 32 to 63. Shares of decisions (better: above +0.02; large:
+   above +0.1; worse: below -0.02; each also by more than two standard errors).
+  chain55 end_turn       all                        n=   18 better +0.111 [+0.100, +0.125] large +0.000 [+0.000, +0.000] worse +0.444 [+0.375, +0.500] | judged gain -0.0111 [-0.0162, -0.0048]
+  chain55 end_turn       open (a0 < 0.99)           n=    4 better +0.000 [+0.000, +0.000] large +0.000 [+0.000, +0.000] worse +0.750 [+0.667, +1.000] | judged gain -0.0208 [-0.0332, -0.0166]
+  chain55 end_turn       sharp (0.99 to 0.999999)   n=    8 better +0.125 [+0.000, +0.200] large +0.000 [+0.000, +0.000] worse +0.125 [+0.000, +0.200] | judged gain -0.0024 [-0.0104, +0.0024]
+  chain55 end_turn       saturated (>= 0.999999)    n=    6 better +0.167 [+0.167, +0.167] large +0.000 [+0.000, +0.000] worse +0.667 [+0.667, +0.667] | judged gain -0.0163 [-0.0163, -0.0163]
+  chain55 decline_block  all                        n=    7 better +0.000 [+0.000, +0.000] large +0.000 [+0.000, +0.000] worse +1.000 [+1.000, +1.000] | judged gain -0.0772 [-0.0789, -0.0673]
+  chain55 activate       all                        n=    8 better +0.369 [+0.250, +0.500] large +0.000 [+0.000, +0.000] worse +0.500 [+0.500, +0.500] | judged gain -0.0514 [-0.0962, -0.0107]
+  chain58 end_turn       all                        n=   21 better +0.286 [+0.182, +0.400] large +0.048 [+0.000, +0.100] worse +0.048 [+0.000, +0.100] | judged gain +0.0137 [-0.0008, +0.0297]
+  chain58 end_turn       open (a0 < 0.99)           n=    4 better +0.000 [+0.000, +0.000] large +0.000 [+0.000, +0.000] worse +0.000 [+0.000, +0.000] | judged gain -0.0097 [-0.0110, -0.0060]
+  chain58 end_turn       sharp (0.99 to 0.999999)   n=    8 better +0.125 [+0.000, +0.167] large +0.000 [+0.000, +0.000] worse +0.000 [+0.000, +0.000] | judged gain -0.0008 [-0.0016, -0.0006]
+  chain58 end_turn       saturated (>= 0.999999)    n=    9 better +0.556 [+0.500, +0.571] large +0.111 [+0.000, +0.143] worse +0.111 [+0.000, +0.143] | judged gain +0.0371 [+0.0140, +0.0437]
+  chain58 decline_block  all                        n=    3 better +0.000 [+0.000, +0.000] large +0.000 [+0.000, +0.000] worse +1.000 [+1.000, +1.000] | judged gain -0.0968 [-0.0968, -0.0968]
+  chain58 activate       all                        n=    8 better +0.092 [+0.000, +0.250] large +0.000 [+0.000, +0.000] worse +0.500 [+0.500, +0.500] | judged gain -0.0480 [-0.0565, -0.0431]
+
+4. Match arm (E4, E6, a sample of end_turn roots): most probable ACTIVATE minus END_TURN, each
+   played to the end of the match. depth k = shaped reward to the k-th own turn end plus the
+   critic there.
+  chain55: 6 roots, valid pairs 100.0%, spread of one pair's difference to the match end 0.560
+    critic at depth 1 -0.0207 [-0.0283, -0.0112] | depth 2 +0.0017 [-0.0015, +0.0042] | depth 3 +0.0113 [-0.0012, +0.0269]
+    realised shaped return to the match end: gamma 0.999 +0.0148 [-0.0033, +0.0293] | 0.9995 +0.0174 [-0.0096, +0.0391] | 1.0 +0.0200 [-0.0193, +0.0514]
+    critic at depth 1 minus realised (gamma 0.999) -0.0355 [-0.0576, -0.0078]
+    touchdown difference -0.0110 [-0.0573, +0.0260] | win score +0.0014 [-0.0130, +0.0130]
+  chain58: 6 roots, valid pairs 100.0%, spread of one pair's difference to the match end 0.613
+    critic at depth 1 +0.0201 [-0.0122, +0.0556] | depth 2 +0.0057 [-0.0329, +0.0481] | depth 3 +0.0103 [-0.0314, +0.0562]
+    realised shaped return to the match end: gamma 0.999 +0.0083 [-0.0508, +0.0732] | 0.9995 +0.0045 [-0.0611, +0.0766] | 1.0 -0.0011 [-0.0753, +0.0804]
+    critic at depth 1 minus realised (gamma 0.999) +0.0118 [-0.0176, +0.0386]
+    touchdown difference -0.0308 [-0.0729, +0.0156] | win score -0.0134 [-0.0208, -0.0052]
+
+5. Reward components (E5, match arm): alternative minus END_TURN, discounted at 0.999, summed to
+   the match end and to the second own turn end. Families are PLAN.md's. The single components'
+   equal-weight-per-game versions are in the JSON summary only.
+  chain55:
+   family block and rush charges   match end -0.0106 [-0.0112, -0.0101] | second own turn end -0.0149 [-0.0150, -0.0148]
+   family block pay (exposure)     match end +0.0220 [+0.0199, +0.0237] | second own turn end +0.0260 [+0.0161, +0.0339]
+   family ball                     match end -0.0004 [-0.0079, +0.0055] | second own turn end -0.0099 [-0.0189, -0.0027]
+   family result and final step    match end +0.0038 [-0.0041, +0.0101] | second own turn end +0.0000 [+0.0000, +0.0000]
+     block_exposure         match end +0.0220 [+0.0199, +0.0237] | second own turn end +0.0260 [+0.0161, +0.0339]
+     distance_endzone       match end +0.0099 [+0.0088, +0.0113] | second own turn end -0.0087 [-0.0182, -0.0012]
+     block_sequence         match end -0.0095 [-0.0106, -0.0082] | second own turn end -0.0094 [-0.0096, -0.0090]
+     block_turnover         match end -0.0051 [-0.0055, -0.0048] | second own turn end -0.0055 [-0.0056, -0.0054]
+     touchdown              match end -0.0047 [-0.0138, +0.0025] | second own turn end -0.0006 [-0.0011, +0.0000]
+     rush                   match end +0.0040 [+0.0024, +0.0053] | second own turn end -0.0001 [-0.0002, +0.0000]
+     terminal_or_residual   match end +0.0038 [-0.0041, +0.0101] | second own turn end +0.0000 [+0.0000, +0.0000]
+     distance_ball          match end -0.0025 [-0.0039, -0.0008] | second own turn end -0.0000 [-0.0002, +0.0002]
+     ball_gain              match end -0.0021 [-0.0027, -0.0012] | second own turn end -0.0003 [-0.0006, -0.0000]
+     possession             match end -0.0010 [-0.0034, +0.0009] | second own turn end -0.0002 [-0.0003, -0.0002]
+  chain58:
+   family block and rush charges   match end -0.0071 [-0.0248, +0.0089] | second own turn end -0.0112 [-0.0255, +0.0019]
+   family block pay (exposure)     match end +0.0380 [+0.0050, +0.0743] | second own turn end +0.0473 [-0.0005, +0.0998]
+   family ball                     match end -0.0146 [-0.0487, +0.0230] | second own turn end -0.0111 [-0.0156, -0.0061]
+   family result and final step    match end -0.0080 [-0.0159, +0.0007] | second own turn end +0.0000 [+0.0000, +0.0000]
+     block_exposure         match end +0.0380 [+0.0050, +0.0743] | second own turn end +0.0473 [-0.0005, +0.0998]
+     touchdown              match end -0.0087 [-0.0155, -0.0012] | second own turn end -0.0006 [-0.0014, +0.0000]
+     terminal_or_residual   match end -0.0080 [-0.0159, +0.0007] | second own turn end +0.0000 [+0.0000, +0.0000]
+     block_sequence         match end -0.0051 [-0.0138, +0.0027] | second own turn end -0.0073 [-0.0156, +0.0003]
+     distance_endzone       match end -0.0050 [-0.0298, +0.0222] | second own turn end -0.0088 [-0.0128, -0.0044]
+     block_turnover         match end -0.0032 [-0.0101, +0.0030] | second own turn end -0.0049 [-0.0104, +0.0001]
+     distance_ball          match end -0.0013 [-0.0019, -0.0008] | second own turn end +0.0003 [+0.0000, +0.0006]
+     rush                   match end +0.0012 [-0.0009, +0.0031] | second own turn end +0.0010 [+0.0004, +0.0016]
+     possession             match end +0.0009 [+0.0009, +0.0009] | second own turn end -0.0005 [-0.0006, -0.0004]
+     ball_gain              match end -0.0004 [-0.0035, +0.0030] | second own turn end -0.0015 [-0.0028, -0.0000]
+
+6. Contrasts between checkpoints (paired by seed). 'detectable' = 2.8 bootstrap standard errors
+   (80% power, 5% two-sided).
+   chain58 - chain55 (lambda 0.97 - 0.95, seed 42)  (+1*chain58 -1*chain55)
+      E1, turn arm, end_turn             +0.0200 [-0.0012, +0.0402]  detectable 0.0403
+      E1, critic value part              +0.0150 [-0.0057, +0.0350]  detectable 0.0397
+      E1, discount part                  +0.0010 [+0.0002, +0.0010]  detectable 0.0009
+      E2, forced arm                     +0.0199 [-0.0016, +0.0402]  detectable 0.0407
+      realised margin, gamma 0.999       -0.0065 [-0.0475, +0.0439]  detectable 0.0891
+      critic minus realised              +0.0473 [+0.0400, +0.0473]  detectable 0.0084
+      touchdown difference               -0.0198 [-0.0198, -0.0104]  detectable 0.0106
+      activations per own team turn      -0.062 [-0.750, +0.625]  detectable 1.339
+
+7. Readings by PLAN.md's rules (sections 5 and 8). Each line states the rule's numbers; a rule that
+   cannot be evaluated says so.
+   Q1: chain55's E1 is -0.0226 [-0.0309, -0.0122]: entirely below zero. The exploratory margin repeats.
+   Q2 chain55: E1 - E2 is -0.0004 [-0.0009, +0.0000] (inside +-0.002); a further activation in 1.7% of free rollouts (under 10%): E1 prices one more activation.
+   Q2 chain58: E1 - E2 is -0.0002 [-0.0005, +0.0000] (inside +-0.002); a further activation in 0.9% of free rollouts (under 10%): E1 prices one more activation.
+   Q3 chain55: realised margin +0.0148 [-0.0033, +0.0293] (spans zero); critic at depth 1 minus realised -0.0355 [-0.0576, -0.0078] (entirely below zero).
+   Q3 chain58: realised margin +0.0083 [-0.0508, +0.0732] (spans zero); critic at depth 1 minus realised +0.0118 [-0.0176, +0.0386] (spans zero).
+   Q4 chain55: families whose interval excludes zero: block and rush charges at the match end (below zero); block and rush charges at the second turn end (below zero); block pay (exposure) at the match end (above zero); block pay (exposure) at the second turn end (above zero); ball at the second turn end (below zero).
+   Q4 chain58: families whose interval excludes zero: block pay (exposure) at the match end (above zero); ball at the second turn end (below zero).
+   Q7: not evaluated (needs chain55, chain58 and chain59).
+   R (reward pointer, chain58): realised margin +0.0083 [-0.0508, +0.0732] below zero: no; block and rush charges at the match end -0.0071 [-0.0248, +0.0089] below zero: no; at least half the realised margin: yes; ball family -0.0146 [-0.0487, +0.0230] also below zero: no. R holds: no.
+   G (gamma, chain58): critic minus realised +0.0118 [-0.0176, +0.0386] below zero: no; E1 -0.0026 [-0.0134, +0.0094] below zero: no; discount part -0.0038 at least a quarter of E1: yes; share flipped without the discount +0.048 [+0.000, +0.100] at least 0.10 with its interval above zero: no; the two point conditions also hold for chain55 and chain59: [False, None]. G holds: no.
+   L (lambda): not evaluated (needs chain55 and chain59). L holds: no.
+   Section 8 outcome: No rule holds: reported without a recommendation.
+
+8. Every estimate and contrast above with equal weight per game (games without a root of the
+   kind left out). The readings of section 7 use the per-decision versions.
+   chain55: activations per own team turn                                                           +3.219 [+3.062, +3.375]
+   chain55: END_TURN chosen per own team turn                                                       +0.562 [+0.500, +0.625]
+   chain55: turn arm, end_turn, d                                                                   -0.0216 [-0.0309, -0.0122]
+   chain55: turn arm, end_turn, d_reward                                                            +0.0024 [+0.0006, +0.0043]
+   chain55: turn arm, end_turn, d_value                                                             -0.0195 [-0.0281, -0.0109]
+   chain55: turn arm, end_turn, d_tax                                                               -0.0045 [-0.0071, -0.0019]
+   chain55: turn arm, end_turn, v_a0                                                                +0.7449 [+0.3801, +1.1097]
+   chain55: turn arm, end_turn, steps_alt                                                           +6.9711 [+5.9922, +7.9500]
+   chain55: turn arm, end_turn, more                                                                +0.0195 [+0.0000, +0.0391]
+   chain55: turn arm, end_turn, more_none                                                           +0.9805 [+0.9609, +1.0000]
+   chain55: turn arm, end_turn, td_a0                                                               -0.0165 [-0.0232, -0.0098]
+   chain55: turn arm, end_turn, pos                                                                 +0.125 [+0.000, +0.250]
+   chain55: turn arm, end_turn, pos_half                                                            +0.125 [+0.000, +0.250]
+   chain55: turn arm, end_turn, pos_none                                                            +0.188 [+0.000, +0.375]
+   chain55: turn arm, end_turn, flip                                                                +0.0625 [+0.0000, +0.1250]
+   chain55: turn arm, end_turn, alt_block                                                           +0.1109 [+0.0969, +0.1250]
+   chain55: turn arm, end_turn, alt_steps                                                           +2.4475 [+1.2949, +3.6000]
+   chain55: turn arm, end_turn, dropped                                                             +0.0000 [+0.0000, +0.0000]
+   chain55: turn arm, decline_block, d                                                              -0.0716 [-0.0739, -0.0693]
+   chain55: turn arm, decline_block, d_reward                                                       -0.0864 [-0.1043, -0.0684]
+   chain55: turn arm, decline_block, d_value                                                        +0.0157 [+0.0006, +0.0308]
+   chain55: turn arm, decline_block, d_tax                                                          -0.0009 [-0.0015, -0.0003]
+   chain55: turn arm, decline_block, v_a0                                                           +0.5539 [+0.1696, +0.9382]
+   chain55: turn arm, decline_block, steps_alt                                                      +13.9258 [+11.5938, +16.2578]
+   chain55: turn arm, decline_block, more                                                           +1.2253 [+0.6562, +1.7943]
+   chain55: turn arm, decline_block, more_none                                                      +0.3997 [+0.3438, +0.4557]
+   chain55: turn arm, decline_block, td_a0                                                          -0.0524 [-0.0661, -0.0388]
+   chain55: turn arm, decline_block, pos                                                            +0.000 [+0.000, +0.000]
+   chain55: turn arm, decline_block, pos_half                                                       +0.000 [+0.000, +0.000]
+   chain55: turn arm, decline_block, pos_none                                                       +0.000 [+0.000, +0.000]
+   chain55: turn arm, decline_block, flip                                                           +0.0000 [+0.0000, +0.0000]
+   chain55: turn arm, decline_block, alt_block                                                      +0.0599 [+0.0000, +0.1198]
+   chain55: turn arm, decline_block, alt_steps                                                      +3.6562 [+3.2812, +4.0312]
+   chain55: turn arm, decline_block, dropped                                                        +0.0000 [+0.0000, +0.0000]
+   chain55: turn arm, activate, d                                                                   -0.0601 [-0.1087, -0.0115]
+   chain55: turn arm, activate, d_reward                                                            -0.1150 [-0.1654, -0.0646]
+   chain55: turn arm, activate, d_value                                                             +0.0432 [+0.0374, +0.0489]
+   chain55: turn arm, activate, d_tax                                                               +0.0117 [+0.0042, +0.0193]
+   chain55: turn arm, activate, v_a0                                                                +0.6927 [+0.3250, +1.0604]
+   chain55: turn arm, activate, steps_alt                                                           +1.0078 [+1.0000, +1.0156]
+   chain55: turn arm, activate, more                                                                +0.0000 [+0.0000, +0.0000]
+   chain55: turn arm, activate, more_none                                                           +1.0000 [+1.0000, +1.0000]
+   chain55: turn arm, activate, td_a0                                                               +0.0022 [-0.0006, +0.0050]
+   chain55: turn arm, activate, pos                                                                 +0.500 [+0.500, +0.500]
+   chain55: turn arm, activate, pos_half                                                            +0.500 [+0.500, +0.500]
+   chain55: turn arm, activate, pos_none                                                            +0.500 [+0.500, +0.500]
+   chain55: turn arm, activate, flip                                                                +0.0000 [+0.0000, +0.0000]
+   chain55: turn arm, activate, alt_block                                                           +0.0000 [+0.0000, +0.0000]
+   chain55: turn arm, activate, alt_steps                                                           +0.0000 [+0.0000, +0.0000]
+   chain55: turn arm, activate, dropped                                                             +0.0000 [+0.0000, +0.0000]
+   chain58: activations per own team turn                                                           +3.156 [+2.312, +4.000]
+   chain58: END_TURN chosen per own team turn                                                       +0.656 [+0.625, +0.688]
+   chain58: turn arm, end_turn, d                                                                   -0.0020 [-0.0134, +0.0094]
+   chain58: turn arm, end_turn, d_reward                                                            +0.0068 [+0.0042, +0.0094]
+   chain58: turn arm, end_turn, d_value                                                             -0.0049 [-0.0166, +0.0069]
+   chain58: turn arm, end_turn, d_tax                                                               -0.0039 [-0.0069, -0.0009]
+   chain58: turn arm, end_turn, v_a0                                                                +0.7578 [+0.2573, +1.2582]
+   chain58: turn arm, end_turn, steps_alt                                                           +5.7459 [+5.1136, +6.3781]
+   chain58: turn arm, end_turn, more                                                                +0.0085 [+0.0000, +0.0170]
+   chain58: turn arm, end_turn, more_none                                                           +0.9915 [+0.9830, +1.0000]
+   chain58: turn arm, end_turn, td_a0                                                               -0.0041 [-0.0058, -0.0024]
+   chain58: turn arm, end_turn, pos                                                                 +0.195 [+0.091, +0.300]
+   chain58: turn arm, end_turn, pos_half                                                            +0.195 [+0.091, +0.300]
+   chain58: turn arm, end_turn, pos_none                                                            +0.245 [+0.091, +0.400]
+   chain58: turn arm, end_turn, flip                                                                +0.0500 [+0.0000, +0.1000]
+   chain58: turn arm, end_turn, alt_block                                                           +0.1158 [+0.0440, +0.1875]
+   chain58: turn arm, end_turn, alt_steps                                                           +1.2850 [+0.9091, +1.6609]
+   chain58: turn arm, end_turn, dropped                                                             +0.0000 [+0.0000, +0.0000]
+   chain58: turn arm, decline_block, d                                                              -0.0874 [-0.0874, -0.0874]
+   chain58: turn arm, decline_block, d_reward                                                       -0.1006 [-0.1006, -0.1006]
+   chain58: turn arm, decline_block, d_value                                                        +0.0133 [+0.0133, +0.0133]
+   chain58: turn arm, decline_block, d_tax                                                          -0.0001 [-0.0001, -0.0001]
+   chain58: turn arm, decline_block, v_a0                                                           +0.1015 [+0.1015, +0.1015]
+   chain58: turn arm, decline_block, steps_alt                                                      +24.5365 [+24.5365, +24.5365]
+   chain58: turn arm, decline_block, more                                                           +3.2448 [+3.2448, +3.2448]
+   chain58: turn arm, decline_block, more_none                                                      +0.3281 [+0.3281, +0.3281]
+   chain58: turn arm, decline_block, td_a0                                                          +0.0004 [+0.0004, +0.0004]
+   chain58: turn arm, decline_block, pos                                                            +0.000 [+0.000, +0.000]
+   chain58: turn arm, decline_block, pos_half                                                       +0.000 [+0.000, +0.000]
+   chain58: turn arm, decline_block, pos_none                                                       +0.000 [+0.000, +0.000]
+   chain58: turn arm, decline_block, flip                                                           +0.0000 [+0.0000, +0.0000]
+   chain58: turn arm, decline_block, alt_block                                                      +0.2083 [+0.2083, +0.2083]
+   chain58: turn arm, decline_block, alt_steps                                                      +7.6458 [+7.6458, +7.6458]
+   chain58: turn arm, decline_block, dropped                                                        +0.0000 [+0.0000, +0.0000]
+   chain58: turn arm, activate, d                                                                   -0.0546 [-0.0594, -0.0498]
+   chain58: turn arm, activate, d_reward                                                            -0.0657 [-0.0803, -0.0511]
+   chain58: turn arm, activate, d_value                                                             -0.0051 [-0.0068, -0.0034]
+   chain58: turn arm, activate, d_tax                                                               +0.0163 [+0.0048, +0.0277]
+   chain58: turn arm, activate, v_a0                                                                +0.7845 [+0.3606, +1.2084]
+   chain58: turn arm, activate, steps_alt                                                           +1.0000 [+1.0000, +1.0000]
+   chain58: turn arm, activate, more                                                                +0.0000 [+0.0000, +0.0000]
+   chain58: turn arm, activate, more_none                                                           +1.0000 [+1.0000, +1.0000]
+   chain58: turn arm, activate, td_a0                                                               +0.0312 [+0.0184, +0.0440]
+   chain58: turn arm, activate, pos                                                                 +0.375 [+0.250, +0.500]
+   chain58: turn arm, activate, pos_half                                                            +0.375 [+0.250, +0.500]
+   chain58: turn arm, activate, pos_none                                                            +0.250 [+0.250, +0.250]
+   chain58: turn arm, activate, flip                                                                -0.1250 [-0.2500, +0.0000]
+   chain58: turn arm, activate, alt_block                                                           +0.0000 [+0.0000, +0.0000]
+   chain58: turn arm, activate, alt_steps                                                           +0.0000 [+0.0000, +0.0000]
+   chain58: turn arm, activate, dropped                                                             +0.0000 [+0.0000, +0.0000]
+   chain55: forced arm, f                                                                           -0.0211 [-0.0309, -0.0114]
+   chain55: forced arm, f_reward                                                                    +0.0024 [+0.0006, +0.0043]
+   chain55: forced arm, f_value                                                                     -0.0191 [-0.0281, -0.0101]
+   chain55: forced arm, f_tax                                                                       -0.0044 [-0.0071, -0.0018]
+   chain55: forced arm, f_share                                                                     +0.958 [+0.951, +0.966]
+   chain55: forced arm, d_minus_f                                                                   -0.0004 [-0.0009, +0.0000]
+   chain58: forced arm, f                                                                           -0.0018 [-0.0129, +0.0094]
+   chain58: forced arm, f_reward                                                                    +0.0068 [+0.0042, +0.0094]
+   chain58: forced arm, f_value                                                                     -0.0047 [-0.0162, +0.0069]
+   chain58: forced arm, f_tax                                                                       -0.0039 [-0.0069, -0.0009]
+   chain58: forced arm, f_share                                                                     +0.956 [+0.933, +0.979]
+   chain58: forced arm, d_minus_f                                                                   -0.0002 [-0.0005, +0.0000]
+   chain55: E3, end_turn, all, better                                                               +0.113 [+0.100, +0.125]
+   chain55: E3, end_turn, all, big                                                                  +0.000 [+0.000, +0.000]
+   chain55: E3, end_turn, all, worse                                                                +0.438 [+0.375, +0.500]
+   chain55: E3, end_turn, all, judged                                                               -0.010 [-0.016, -0.005]
+   chain55: E3, end_turn, open (a0 < 0.99), better                                                  +0.000 [+0.000, +0.000]
+   chain55: E3, end_turn, open (a0 < 0.99), big                                                     +0.000 [+0.000, +0.000]
+   chain55: E3, end_turn, open (a0 < 0.99), worse                                                   +0.833 [+0.667, +1.000]
+   chain55: E3, end_turn, open (a0 < 0.99), judged                                                  -0.025 [-0.033, -0.017]
+   chain55: E3, end_turn, sharp (0.99 to 0.999999), better                                          +0.100 [+0.000, +0.200]
+   chain55: E3, end_turn, sharp (0.99 to 0.999999), big                                             +0.000 [+0.000, +0.000]
+   chain55: E3, end_turn, sharp (0.99 to 0.999999), worse                                           +0.100 [+0.000, +0.200]
+   chain55: E3, end_turn, sharp (0.99 to 0.999999), judged                                          -0.004 [-0.010, +0.002]
+   chain55: E3, end_turn, saturated (>= 0.999999), better                                           +0.167 [+0.167, +0.167]
+   chain55: E3, end_turn, saturated (>= 0.999999), big                                              +0.000 [+0.000, +0.000]
+   chain55: E3, end_turn, saturated (>= 0.999999), worse                                            +0.667 [+0.667, +0.667]
+   chain55: E3, end_turn, saturated (>= 0.999999), judged                                           -0.016 [-0.016, -0.016]
+   chain55: E3, decline_block, all, better                                                          +0.000 [+0.000, +0.000]
+   chain55: E3, decline_block, all, big                                                             +0.000 [+0.000, +0.000]
+   chain55: E3, decline_block, all, worse                                                           +1.000 [+1.000, +1.000]
+   chain55: E3, decline_block, all, judged                                                          -0.073 [-0.079, -0.067]
+   chain55: E3, activate, all, better                                                               +0.375 [+0.250, +0.500]
+   chain55: E3, activate, all, big                                                                  +0.000 [+0.000, +0.000]
+   chain55: E3, activate, all, worse                                                                +0.500 [+0.500, +0.500]
+   chain55: E3, activate, all, judged                                                               -0.053 [-0.096, -0.011]
+   chain58: E3, end_turn, all, better                                                               +0.291 [+0.182, +0.400]
+   chain58: E3, end_turn, all, big                                                                  +0.050 [+0.000, +0.100]
+   chain58: E3, end_turn, all, worse                                                                +0.050 [+0.000, +0.100]
+   chain58: E3, end_turn, all, judged                                                               +0.014 [-0.001, +0.030]
+   chain58: E3, end_turn, open (a0 < 0.99), better                                                  +0.000 [+0.000, +0.000]
+   chain58: E3, end_turn, open (a0 < 0.99), big                                                     +0.000 [+0.000, +0.000]
+   chain58: E3, end_turn, open (a0 < 0.99), worse                                                   +0.000 [+0.000, +0.000]
+   chain58: E3, end_turn, open (a0 < 0.99), judged                                                  -0.008 [-0.011, -0.006]
+   chain58: E3, end_turn, sharp (0.99 to 0.999999), better                                          +0.083 [+0.000, +0.167]
+   chain58: E3, end_turn, sharp (0.99 to 0.999999), big                                             +0.000 [+0.000, +0.000]
+   chain58: E3, end_turn, sharp (0.99 to 0.999999), worse                                           +0.000 [+0.000, +0.000]
+   chain58: E3, end_turn, sharp (0.99 to 0.999999), judged                                          -0.001 [-0.002, -0.001]
+   chain58: E3, end_turn, saturated (>= 0.999999), better                                           +0.536 [+0.500, +0.571]
+   chain58: E3, end_turn, saturated (>= 0.999999), big                                              +0.071 [+0.000, +0.143]
+   chain58: E3, end_turn, saturated (>= 0.999999), worse                                            +0.071 [+0.000, +0.143]
+   chain58: E3, end_turn, saturated (>= 0.999999), judged                                           +0.029 [+0.014, +0.044]
+   chain58: E3, decline_block, all, better                                                          +0.000 [+0.000, +0.000]
+   chain58: E3, decline_block, all, big                                                             +0.000 [+0.000, +0.000]
+   chain58: E3, decline_block, all, worse                                                           +1.000 [+1.000, +1.000]
+   chain58: E3, decline_block, all, judged                                                          -0.097 [-0.097, -0.097]
+   chain58: E3, activate, all, better                                                               +0.125 [+0.000, +0.250]
+   chain58: E3, activate, all, big                                                                  +0.000 [+0.000, +0.000]
+   chain58: E3, activate, all, worse                                                                +0.500 [+0.500, +0.500]
+   chain58: E3, activate, all, judged                                                               -0.050 [-0.056, -0.043]
+   chain55: match arm, m_depth1                                                                     -0.0197 [-0.0283, -0.0112]
+   chain55: match arm, m_depth2                                                                     +0.0013 [-0.0015, +0.0042]
+   chain55: match arm, m_depth3                                                                     +0.0129 [-0.0012, +0.0269]
+   chain55: match arm, m_end_0.999                                                                  +0.0130 [-0.0033, +0.0293]
+   chain55: match arm, m_end_0.9995                                                                 +0.0147 [-0.0096, +0.0391]
+   chain55: match arm, m_end_1.0                                                                    +0.0161 [-0.0193, +0.0514]
+   chain55: match arm, m_cmr                                                                        -0.0327 [-0.0576, -0.0078]
+   chain55: match arm, m_td                                                                         -0.0156 [-0.0573, +0.0260]
+   chain55: match arm, m_win                                                                        +0.0000 [-0.0130, +0.0130]
+   chain55: match arm, m_pair_sd_end                                                                +0.5585 [+0.5447, +0.5722]
+   chain55: match arm, m_valid_share                                                                +1.000 [+1.000, +1.000]
+   chain58: match arm, m_depth1                                                                     +0.0217 [-0.0122, +0.0556]
+   chain58: match arm, m_depth2                                                                     +0.0076 [-0.0329, +0.0481]
+   chain58: match arm, m_depth3                                                                     +0.0124 [-0.0314, +0.0562]
+   chain58: match arm, m_end_0.999                                                                  +0.0112 [-0.0508, +0.0732]
+   chain58: match arm, m_end_0.9995                                                                 +0.0077 [-0.0611, +0.0766]
+   chain58: match arm, m_end_1.0                                                                    +0.0026 [-0.0753, +0.0804]
+   chain58: match arm, m_cmr                                                                        +0.0105 [-0.0176, +0.0386]
+   chain58: match arm, m_td                                                                         -0.0286 [-0.0729, +0.0156]
+   chain58: match arm, m_win                                                                        -0.0130 [-0.0208, -0.0052]
+   chain58: match arm, m_pair_sd_end                                                                +0.6200 [+0.4641, +0.7758]
+   chain58: match arm, m_valid_share                                                                +1.000 [+1.000, +1.000]
+   chain55: family block and rush charges, match end                                                -0.0107 [-0.0112, -0.0101]
+   chain55: family block and rush charges, second turn end                                          -0.0149 [-0.0150, -0.0148]
+   chain55: family block pay (exposure), match end                                                  +0.0218 [+0.0199, +0.0237]
+   chain55: family block pay (exposure), second turn end                                            +0.0250 [+0.0161, +0.0339]
+   chain55: family ball, match end                                                                  -0.0012 [-0.0079, +0.0055]
+   chain55: family ball, second turn end                                                            -0.0108 [-0.0189, -0.0027]
+   chain55: family result and final step, match end                                                 +0.0030 [-0.0041, +0.0101]
+   chain55: family result and final step, second turn end                                           +0.0000 [+0.0000, +0.0000]
+   chain58: family block and rush charges, match end                                                -0.0079 [-0.0248, +0.0089]
+   chain58: family block and rush charges, second turn end                                          -0.0118 [-0.0255, +0.0019]
+   chain58: family block pay (exposure), match end                                                  +0.0397 [+0.0050, +0.0743]
+   chain58: family block pay (exposure), second turn end                                            +0.0497 [-0.0005, +0.0998]
+   chain58: family ball, match end                                                                  -0.0129 [-0.0487, +0.0230]
+   chain58: family ball, second turn end                                                            -0.0109 [-0.0156, -0.0061]
+   chain58: family result and final step, match end                                                 -0.0076 [-0.0159, +0.0007]
+   chain58: family result and final step, second turn end                                           +0.0000 [+0.0000, +0.0000]
+   contrast chain58 - chain55 (lambda 0.97 - 0.95, seed 42): E1, turn arm, end_turn                 +0.0195 [-0.0012, +0.0402]
+   contrast chain58 - chain55 (lambda 0.97 - 0.95, seed 42): E1, critic value part                  +0.0146 [-0.0057, +0.0350]
+   contrast chain58 - chain55 (lambda 0.97 - 0.95, seed 42): E1, discount part                      +0.0006 [+0.0002, +0.0009]
+   contrast chain58 - chain55 (lambda 0.97 - 0.95, seed 42): E2, forced arm                         +0.0193 [-0.0016, +0.0402]
+   contrast chain58 - chain55 (lambda 0.97 - 0.95, seed 42): realised margin, gamma 0.999           -0.0018 [-0.0475, +0.0439]
+   contrast chain58 - chain55 (lambda 0.97 - 0.95, seed 42): critic minus realised                  +0.0432 [+0.0400, +0.0464]
+   contrast chain58 - chain55 (lambda 0.97 - 0.95, seed 42): touchdown difference                   -0.0130 [-0.0156, -0.0104]
+   contrast chain58 - chain55 (lambda 0.97 - 0.95, seed 42): activations per own team turn          -0.062 [-0.750, +0.625]

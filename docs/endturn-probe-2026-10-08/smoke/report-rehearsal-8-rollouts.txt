@@ -1,0 +1,1 @@
+superseded: see report-rehearsal-16-rollouts.txt (the smoke plan now uses 16 rollouts)

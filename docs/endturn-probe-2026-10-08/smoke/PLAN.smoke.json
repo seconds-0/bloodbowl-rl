@@ -1,0 +1,94 @@
+{
+ "schema": "endturn-probe-plan-v1",
+ "name": "endturn-smoke",
+ "purpose": "smoke, not evidence",
+ "harness_commit": "06f0a5f7e67cc9089e8edaf5fa9b97dcfe440d99",
+ "harness_branch": "feat/search-probe-20261007",
+ "reward_manifest": "r0_poss_half",
+ "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
+ "reward_manifest_file_sha256": "16900416cfe8d32ee49bead8c2fcddb989c13e232b7a279d24df86f00d64c0ea",
+ "tool_sha256": {
+  "endturn_probe.py": "2ab98f2a99eeb33d7f76497910f7447baab513f32689648b0c2d2d18b460115f",
+  "endturn_shim.c": "9eccfb66c18d41c07028f9bd33f3ac61481fb8ac1d4dd2f46d8433c8f8a17183",
+  "build_shim.sh": "d84bfe1894f5241c510fd91f6642be7f802dfee31f27bc572d56c313a322254c"
+ },
+ "local_sha256": {
+  "endturn_droplet.py": "05e4ce55c21b9a30fd8e054932dfe9e8df9abb30b2c819dcd39a4ec5eaba1844",
+  "endturn_accept.py": "1ed1ee5f82457e94d419ed33a1219f0cd88cef53d66326cf02e9410e06f4698b",
+  "endturn_analyze.py": "3fcc6685c3d1f533956f00380d749822f5c042f2ad8dcba86d409fd23078ae3e"
+ },
+ "lifecycle_sha256": {
+  "tools/droplet_tournament.py": "bb0ece1c9592fa46000924b0fc5ec1e15720c2ad10165f3829499a4bf6b921f2"
+ },
+ "integrity_checks": [
+  "real game: the engine's return code on every step",
+  "real game: hard counters after every step and at the end (illegal, projection_collision, error_episodes, rejected_submissions, precheck_collisions)",
+  "real game: both seats' logits and values finite on every step",
+  "real game: the opponent-view state and value finite on every step",
+  "real game: both seats' emitted rewards finite and within the env's clip threshold on every step",
+  "real game: the game ends in a natural match end (STATUS_MATCH_OVER), not on the decision cap",
+  "rollouts: the engine's return code and status on every step",
+  "rollouts: the same hard counters of every clone at its rollout's end",
+  "rollouts: both seats' emitted rewards finite and within the env's clip threshold on every step",
+  "rollouts: logits and values finite on every forward",
+  "rollouts: the accumulated return finite",
+  "rollouts: an action selectable at every decision",
+  "rollouts: no rollout fails and none stops on the step limit; a turn-arm or forced-arm rollout stops on a turn end, the match end or the decision cap, a match-arm rollout on the match end or the decision cap",
+  "components: on every step before a rollout's last, the 28 components sum to the step's reward within 1e-5; over a rollout, components and the final step's reward sum to the rollout core's reward total within 1e-4",
+  "hooks: on the first root of each class in each game whose recorded turn arm has no capped rollout, the turn arm computed with the hooks removed, installed and idle, and (end_turn) through the tool's own entry agree exactly, every value finite; the two extra computations pass the rollout checks themselves",
+  "forced arm: the turn is ended by the rule at most once in a rollout"
+ ],
+ "checkpoints": {
+  "chain55": {
+   "sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+   "blob": "chain55/0000002999975936.bin",
+   "what": "from chain 49, lambda 0.95, training seed 42"
+  },
+  "chain58": {
+   "sha256": "a03ed6084b7500cd0c09c89244a79d2ec93059c8cfd1bf98611ef03f22d6ec19",
+   "blob": "chain58/0000002999975936.bin",
+   "what": "from chain 49, lambda 0.97, training seed 42"
+  }
+ },
+ "settings": {
+  "seed0": 29940000,
+  "games": 2,
+  "rollouts": 16,
+  "cap_end_turn": 24,
+  "cap_decline_block": 12,
+  "cap_activate": 4,
+  "match_roots": 2,
+  "match_rollouts": 16,
+  "alternatives": 3
+ },
+ "play": {
+  "masks": [],
+  "temperature": 1.0,
+  "starts": "kick-off",
+  "seat_a": "game index parity (even: HOME)",
+  "opponent": "the same checkpoint, sampling seed offset by one stride"
+ },
+ "shards": [
+  {
+   "name": "chain55",
+   "checkpoints": [
+    "chain55"
+   ]
+  },
+  {
+   "name": "chain58",
+   "checkpoints": [
+    "chain58"
+   ]
+  }
+ ],
+ "bootstrap": {
+  "cluster": "engine seed",
+  "replicates": 2000,
+  "generator_seed": 0
+ },
+ "estimate": {
+  "droplet_seconds_per_game": 32.0,
+  "setup_seconds": 420
+ }
+}

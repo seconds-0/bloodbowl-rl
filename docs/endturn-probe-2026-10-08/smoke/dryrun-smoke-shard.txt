@@ -1,0 +1,19 @@
+DRY RUN: nothing is created, no network call is made
+xxxxxx below stands for the run id, six random hex digits drawn at launch
+plan endturn-smoke (af772890dfd2080a41b57712f6ab1a8797c0fa3038d36e471bf529dae3418f3e)
+harness commit 06f0a5f7e67cc9089e8edaf5fa9b97dcfe440d99 from /Users/alexanderhuth/Code/bb-play-harness; lifecycle code from <EXPORT>/tools/droplet_tournament.py
+size s-8vcpu-16gb-amd in sfo3, tag bb-harness-tournament, image ubuntu-24-04-x64
+sync: play_harness, engine, puffer, training/convert_checkpoint.py; probe files: endturn_probe.py, endturn_shim.c, build_shim.sh
+settings: {"seed0": 29940000, "games": 2, "rollouts": 16, "cap_end_turn": 24, "cap_decline_block": 12, "cap_activate": 4, "match_roots": 2, "match_rollouts": 16, "alternatives": 3}
+run id xxxxxx: the suffix of every name this run creates
+shard chain55: droplet bb-harness-etsmoke-chain55-xxxxxx, checkpoints chain55, 2 games, results in /Users/alexanderhuth/Code/bb-opt-build/runs/endturn-probe-2026-10-08/etsmoke/chain55
+  estimate: 0.13 h, about $0.02 (the plan's 32.0 s a game, not measured on a droplet)
+  /srv/bb/venv/bin/python /srv/bb/probe/endturn_probe.py run --harness /srv/bb/src --lib /srv/bb/probe/lib/libbbprobe.so --plan /srv/bb/run/plan.json --expect-sha256 af772890dfd2080a41b57712f6ab1a8797c0fa3038d36e471bf529dae3418f3e --checkpoint-name chain55 --checkpoint /srv/bb/checkpoints/chain55/0000002999975936.bin --out-dir /srv/bb/run/main/chain55 --processes 8 >> /srv/bb/run/tournament.log 2>&1 || finish $?
+spend guard: 1 shard(s) x 0.5 h x $0.16667/h = $0.08 of $0.2 allowed; estimated spend $0.02
+nominal budget, when every call returns: $0.08 a shard plus the teardown (normally under five minutes, about $0.01). This is not a ceiling: one teardown call can retry for about 70 minutes when the API is slow (about $0.19 a droplet for each such call), and a dead runner, a lost create or a failed delete leaves a droplet billing until an operator destroys it.
+If the runner is gone, or its teardown failed, a droplet of this run may still be billing. It bills until one of these succeeds (they need only the export and the token file):
+  python <EXPORT>/tools/droplet_tournament.py --env-file /Users/alexanderhuth/code/killteam-3d/.env status
+then, for each droplet of this run that is still listed:
+  python <EXPORT>/tools/droplet_tournament.py --env-file /Users/alexanderhuth/code/killteam-3d/.env destroy --name etsmoke-chain55-xxxxxx      # droplet bb-harness-etsmoke-chain55-xxxxxx; reads /Users/alexanderhuth/.cache/bb-droplet-tournament/etsmoke-chain55-xxxxxx
+  python <EXPORT>/tools/droplet_tournament.py --env-file /Users/alexanderhuth/code/killteam-3d/.env destroy --id <DROPLET_ID>      # needs no local state; ids are in the status listing
+A droplet is this run's only if its name ends in this run id: xxxxxx

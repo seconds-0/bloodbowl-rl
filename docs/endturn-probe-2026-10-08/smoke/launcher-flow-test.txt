@@ -1,0 +1,24 @@
+PASS  accepted shard: result written, run id and unique names recorded
+PASS  accepted shard: teardown ran after the fetch
+PASS  accepted shard: account was read for a name clash before the key was made  [[('GET', '/droplets?per_page=200'), ('GET', '/account/keys?per_page=200'), ('GET', '/account/keys?per_page=200')]]
+PASS  every phase's timeout is within --max-hours less the reserve  [largest 1500 s]
+PASS  records landed and droplet_run.json exists
+PASS  refused, nothing created: a droplet of the run's name exists
+PASS  refused, nothing created: an ssh key of the run's name exists
+PASS  refused, nothing created: local state of the run's name exists
+PASS  failure: raised, then only log fetches, then teardown  [['get:EXIT', 'get:STAGE', 'get:job.log', 'get:probe-build.log', 'get:build.log', 'get:setup.log', 'run:tail', 'teardown']]
+PASS  failure: no record file was fetched
+PASS  failure: each log fetch is capped at 10 s
+PASS  time limit: a phase is refused once the limit less the reserve is reached, teardown runs  [['teardown']]
+PASS  orphan key: this run's key is deleted and the other key is left alone  [['/account/keys/777']]
+PASS  guard: NaN, inf, zero and negative limits are refused
+PASS  guard: the total over all shards is what is compared
+PASS  guard: --max-hours below the reserve is refused
+PASS  arguments: nan, inf, 0 and -1 are refused by the parser
+PASS  cancel (a signal during the second start): the third shard is never started  [['chain55', 'chain58']]
+PASS  cancel (a signal during the second start): both started children are signalled and waited for  [[('chain55', [<Signals.SIGINT: 2>], True), ('chain58', [<Signals.SIGINT: 2>], True)]]
+PASS  cancel (a signal during the second start): the run does not count as a success  [{'chain55': 130, 'chain58': 130, 'chain59': None}]
+PASS  cancel (no signal): all three start, none is signalled, all exit 0
+PASS  cleanup, another --state-root: the token file is named and destroy --id is given  [  python /private/tmp/claude-501/-Users-alexanderhuth/3154e4ea-fc69-4ad8-9862-ba7ced2d5c60/scratchpad/endturn-p
+PASS  cleanup, the default state directory: destroy --name with the run's unique name
+23 of 23 checks passed

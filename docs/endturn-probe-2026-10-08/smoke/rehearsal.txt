@@ -1,0 +1,4 @@
+shard chain55: job EXIT 0, bash returned 0
+shard chain55: ACCEPTED (chain55) in <SCRATCH>/final3-rehearse/chain55/run/main
+shard chain58: job EXIT 0, bash returned 0
+shard chain58: ACCEPTED (chain58) in <SCRATCH>/final3-rehearse/chain58/run/main
