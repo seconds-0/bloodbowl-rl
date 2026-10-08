@@ -1,0 +1,56 @@
+[13:58:18] size s-8vcpu-16gb-amd: 8 vCPU, 16384 MB, $0.16667/h; 1600 games on 8 workers, game indexes from 200; commit 06f0a5f7e67c
+[00:18:34] stage done, 1600/1600 games, log age 44 s | {"played": 1600, "wall_seconds": 36902.2, "games_per_second_wall": 0.043, "complete": true}
+[00:18:45] verified 6 files by sha256, the manifest, 1600 games and zero integrity counters
+[00:18:46] delete droplet 607073140: HTTP 204
+[00:18:58] verify droplet 607073140: HTTP 404 (404 = gone)
+[00:18:58] lifetime 620.6 min at $0.16667/h: cost about $1.724
+[00:18:58] verify ssh key 59916676: HTTP 404 (404 = gone)
+[13:58:18] size s-8vcpu-16gb-amd: 8 vCPU, 16384 MB, $0.16667/h; 1620 games on 8 workers; commit 06f0a5f7e67c
+[00:17:40] stage done, 1620/1620 games, log age 30 s | {"played": 1620, "wall_seconds": 36855.1, "games_per_second_wall": 0.044, "complete": true}
+[00:17:51] verified 6 files by sha256, the manifest, 1620 games and zero integrity counters
+[00:17:53] delete droplet 607073138: HTTP 204
+[00:18:04] verify droplet 607073138: HTTP 404 (404 = gone)
+[00:18:04] lifetime 619.7 min at $0.16667/h: cost about $1.722
+[00:18:05] verify ssh key 59916673: HTTP 404 (404 = gone)
+[13:58:18] size s-8vcpu-16gb-amd: 8 vCPU, 16384 MB, $0.16667/h; 1600 games on 8 workers, game indexes from 600; commit 06f0a5f7e67c
+[00:18:52] stage done, 1600/1600 games, log age 27 s | {"played": 1600, "wall_seconds": 36981.4, "games_per_second_wall": 0.043, "complete": true}
+[00:19:05] verified 6 files by sha256, the manifest, 1600 games and zero integrity counters
+[00:19:06] delete droplet 607073136: HTTP 204
+[00:19:18] verify droplet 607073136: HTTP 404 (404 = gone)
+[00:19:18] lifetime 621.0 min at $0.16667/h: cost about $1.725
+[00:19:19] verify ssh key 59916674: HTTP 404 (404 = gone)
+[13:58:18] size s-8vcpu-16gb-amd: 8 vCPU, 16384 MB, $0.16667/h; 1600 games on 8 workers, game indexes from 400; commit 06f0a5f7e67c
+[02:18:07] stage done, 1600/1600 games, log age 49 s | {"played": 1600, "wall_seconds": 44073.3, "games_per_second_wall": 0.036, "complete": true}
+[02:18:19] verified 6 files by sha256, the manifest, 1600 games and zero integrity counters
+[02:18:21] delete droplet 607073139: HTTP 204
+[02:18:33] verify droplet 607073139: HTTP 404 (404 = gone)
+[02:18:33] lifetime 740.2 min at $0.16667/h: cost about $2.056
+[02:18:39] verify ssh key 59916675: HTTP 404 (404 = gone)
+[13:58:18] size s-8vcpu-16gb-amd: 8 vCPU, 16384 MB, $0.16667/h; 1600 games on 8 workers, game indexes from 1000; commit 06f0a5f7e67c
+[00:48:56] stage done, 1600/1600 games, log age 44 s | {"played": 1600, "wall_seconds": 38724.9, "games_per_second_wall": 0.041, "complete": true}
+[00:49:08] verified 6 files by sha256, the manifest, 1600 games and zero integrity counters
+[00:49:09] delete droplet 607073142: HTTP 204
+[00:49:21] verify droplet 607073142: HTTP 404 (404 = gone)
+[00:49:21] lifetime 651.0 min at $0.16667/h: cost about $1.808
+[00:49:22] verify ssh key 59916678: HTTP 404 (404 = gone)
+[13:58:17] size s-8vcpu-16gb-amd: 8 vCPU, 16384 MB, $0.16667/h; 1600 games on 8 workers, game indexes from 1400; commit 06f0a5f7e67c
+[23:48:39] stage done, 1600/1600 games, log age 28 s | {"played": 1600, "wall_seconds": 35139.9, "games_per_second_wall": 0.046, "complete": true}
+[23:48:50] verified 6 files by sha256, the manifest, 1600 games and zero integrity counters
+[23:48:53] delete droplet 607073147: HTTP 204
+[23:49:04] verify droplet 607073147: HTTP 404 (404 = gone)
+[23:49:04] lifetime 590.7 min at $0.16667/h: cost about $1.641
+[23:49:05] verify ssh key 59916671: HTTP 404 (404 = gone)
+[13:58:17] size s-8vcpu-16gb-amd: 8 vCPU, 16384 MB, $0.16667/h; 1600 games on 8 workers, game indexes from 800; commit 06f0a5f7e67c
+[00:41:11] stage done, 1600/1600 games, log age 22 s | {"played": 1600, "wall_seconds": 38312.5, "games_per_second_wall": 0.042, "complete": true}
+[00:41:23] verified 6 files by sha256, the manifest, 1600 games and zero integrity counters
+[00:41:26] delete droplet 607073137: HTTP 204
+[00:41:37] verify droplet 607073137: HTTP 404 (404 = gone)
+[00:41:37] lifetime 643.3 min at $0.16667/h: cost about $1.787
+[00:41:48] verify ssh key 59916672: HTTP 404 (404 = gone)
+[13:58:18] size s-8vcpu-16gb-amd: 8 vCPU, 16384 MB, $0.16667/h; 1600 games on 8 workers, game indexes from 1200; commit 06f0a5f7e67c
+[23:00:23] stage done, 1600/1600 games, log age 39 s | {"played": 1600, "wall_seconds": 32304.5, "games_per_second_wall": 0.05, "complete": true}
+[23:00:36] verified 6 files by sha256, the manifest, 1600 games and zero integrity counters
+[23:00:38] delete droplet 607073141: HTTP 204
+[23:00:49] verify droplet 607073141: HTTP 404 (404 = gone)
+[23:00:49] lifetime 542.5 min at $0.16667/h: cost about $1.507
+[23:00:50] verify ssh key 59916677: HTTP 404 (404 = gone)

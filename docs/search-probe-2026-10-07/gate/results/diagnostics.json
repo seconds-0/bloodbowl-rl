@@ -1,0 +1,458 @@
+{
+ "what": "Per-side behaviour diagnostics of a gate run, for the pairs the plan names.",
+ "reps": 2000,
+ "generator_seed": 0,
+ "pairs": [
+  {
+   "a": "c55m1s",
+   "b": "chain37",
+   "games": 3200,
+   "seed_clusters": 1600,
+   "W": 1742,
+   "D": 1009,
+   "L": 449,
+   "engine_steps_per_game": 1002.6390625,
+   "metrics": {
+    "empty_activations_per_team_turn": {
+     "a": 2.317225068979109,
+     "b": 0.8258897762003352,
+     "a_minus_b": 1.491335292778774,
+     "a_minus_b_ci95": [
+      1.4636950407679736,
+      1.520353421889349
+     ]
+    },
+    "activations_per_team_turn": {
+     "a": 6.36188411509657,
+     "b": 3.4059548457063986,
+     "a_minus_b": 2.9559292693901718,
+     "a_minus_b_ci95": [
+      2.912249951418939,
+      3.0026316136113214
+     ]
+    },
+    "non_empty_activations_per_team_turn": {
+     "a": 4.044659046117461,
+     "b": 2.5800650695060634,
+     "a_minus_b": 1.4645939766113978,
+     "a_minus_b_ci95": [
+      1.4360313894319612,
+      1.495372456170926
+     ]
+    },
+    "blocks_per_team_turn": {
+     "a": 0.7070358691367757,
+     "b": 0.4213940648723257,
+     "a_minus_b": 0.28564180426445,
+     "a_minus_b_ci95": [
+      0.276608685957534,
+      0.2946048252208356
+     ]
+    },
+    "turnovers_per_team_turn": {
+     "a": 0.4395151754040205,
+     "b": 0.33069111702652076,
+     "a_minus_b": 0.10882405837749975,
+     "a_minus_b_ci95": [
+      0.10280219194010697,
+      0.11496971556657376
+     ]
+    },
+    "decisions_per_game": {
+     "a": 613.1025,
+     "b": 389.5365625,
+     "a_minus_b": 223.56593749999996,
+     "a_minus_b_ci95": [
+      219.84403124999997,
+      227.36707031250003
+     ]
+    },
+    "touchdowns_per_game": {
+     "a": 1.3421875,
+     "b": 0.6353125,
+     "a_minus_b": 0.7068750000000001,
+     "a_minus_b_ci95": [
+      0.667796875,
+      0.7437578125000001
+     ]
+    },
+    "mean_logprob_per_decision": {
+     "a": -0.42660242664358755,
+     "b": -0.15343572386096618,
+     "a_minus_b": -0.27316670278262134,
+     "a_minus_b_ci95": [
+      -0.2842100656802441,
+      -0.2616349139781967
+     ]
+    }
+   }
+  },
+  {
+   "a": "c55m1",
+   "b": "chain37",
+   "games": 3200,
+   "seed_clusters": 1600,
+   "W": 1606,
+   "D": 1056,
+   "L": 538,
+   "engine_steps_per_game": 1010.6109375,
+   "metrics": {
+    "empty_activations_per_team_turn": {
+     "a": 2.4411028556788397,
+     "b": 0.8486820054809645,
+     "a_minus_b": 1.5924208501978752,
+     "a_minus_b_ci95": [
+      1.5626134937269773,
+      1.6204914107571198
+     ]
+    },
+    "activations_per_team_turn": {
+     "a": 6.5691452671409705,
+     "b": 3.3661402574870367,
+     "a_minus_b": 3.2030050096539338,
+     "a_minus_b_ci95": [
+      3.1573896286913015,
+      3.249339199154816
+     ]
+    },
+    "non_empty_activations_per_team_turn": {
+     "a": 4.128042411462131,
+     "b": 2.5174582520060724,
+     "a_minus_b": 1.6105841594560584,
+     "a_minus_b_ci95": [
+      1.5795030484587915,
+      1.6427397692615575
+     ]
+    },
+    "blocks_per_team_turn": {
+     "a": 0.6750950907550107,
+     "b": 0.4199246860274837,
+     "a_minus_b": 0.25517040472752706,
+     "a_minus_b_ci95": [
+      0.24655364278226688,
+      0.2643059292557582
+     ]
+    },
+    "turnovers_per_team_turn": {
+     "a": 0.42214382846219034,
+     "b": 0.3263539756708267,
+     "a_minus_b": 0.09578985279136365,
+     "a_minus_b_ci95": [
+      0.08961936445972385,
+      0.10225339991582515
+     ]
+    },
+    "decisions_per_game": {
+     "a": 627.7209375,
+     "b": 382.89,
+     "a_minus_b": 244.8309375,
+     "a_minus_b_ci95": [
+      240.76764062499998,
+      248.8307265625
+     ]
+    },
+    "touchdowns_per_game": {
+     "a": 1.235,
+     "b": 0.6665625,
+     "a_minus_b": 0.5684375000000002,
+     "a_minus_b_ci95": [
+      0.5324921874999998,
+      0.6053203125
+     ]
+    },
+    "mean_logprob_per_decision": {
+     "a": -0.09622765913595158,
+     "b": -0.1529867478257462,
+     "a_minus_b": 0.05675908868979462,
+     "a_minus_b_ci95": [
+      0.05533023934038405,
+      0.058279333231681815
+     ]
+    }
+   }
+  },
+  {
+   "a": "c55m1s",
+   "b": "chain46",
+   "games": 3200,
+   "seed_clusters": 1600,
+   "W": 1690,
+   "D": 1091,
+   "L": 419,
+   "engine_steps_per_game": 1018.148125,
+   "metrics": {
+    "empty_activations_per_team_turn": {
+     "a": 2.3150163649986197,
+     "b": 0.8778231453537685,
+     "a_minus_b": 1.4371932196448514,
+     "a_minus_b_ci95": [
+      1.4103848592730226,
+      1.4655861832870936
+     ]
+    },
+    "activations_per_team_turn": {
+     "a": 6.3543712291494145,
+     "b": 3.5815925991676036,
+     "a_minus_b": 2.772778629981811,
+     "a_minus_b_ci95": [
+      2.7272359081927973,
+      2.819902128724304
+     ]
+    },
+    "non_empty_activations_per_team_turn": {
+     "a": 4.039354864150795,
+     "b": 2.7037694538138353,
+     "a_minus_b": 1.3355854103369595,
+     "a_minus_b_ci95": [
+      1.3042567247451775,
+      1.3687639222942602
+     ]
+    },
+    "blocks_per_team_turn": {
+     "a": 0.7016246697424977,
+     "b": 0.38625559697812495,
+     "a_minus_b": 0.31536907276437276,
+     "a_minus_b_ci95": [
+      0.3061884963140137,
+      0.3243734168859485
+     ]
+    },
+    "turnovers_per_team_turn": {
+     "a": 0.4438857999132458,
+     "b": 0.316724855514133,
+     "a_minus_b": 0.1271609443991128,
+     "a_minus_b_ci95": [
+      0.12082280613964144,
+      0.13333167490763367
+     ]
+    },
+    "decisions_per_game": {
+     "a": 611.001875,
+     "b": 407.14625,
+     "a_minus_b": 203.85562500000003,
+     "a_minus_b_ci95": [
+      199.81,
+      207.90328125
+     ]
+    },
+    "touchdowns_per_game": {
+     "a": 1.2925,
+     "b": 0.6259375,
+     "a_minus_b": 0.6665625,
+     "a_minus_b_ci95": [
+      0.6293671874999999,
+      0.7028203125
+     ]
+    },
+    "mean_logprob_per_decision": {
+     "a": -0.4193464209397882,
+     "b": -0.15140625650488015,
+     "a_minus_b": -0.26794016443490803,
+     "a_minus_b_ci95": [
+      -0.2796813196761367,
+      -0.2567831836406368
+     ]
+    }
+   }
+  },
+  {
+   "a": "c55m1",
+   "b": "chain46",
+   "games": 3200,
+   "seed_clusters": 1600,
+   "W": 1554,
+   "D": 1146,
+   "L": 500,
+   "engine_steps_per_game": 1030.13,
+   "metrics": {
+    "empty_activations_per_team_turn": {
+     "a": 2.474534480037873,
+     "b": 0.8955636248815914,
+     "a_minus_b": 1.5789708551562813,
+     "a_minus_b_ci95": [
+      1.5484578144074417,
+      1.61023883906027
+     ]
+    },
+    "activations_per_team_turn": {
+     "a": 6.615729051601704,
+     "b": 3.5496131986106727,
+     "a_minus_b": 3.0661158529910315,
+     "a_minus_b_ci95": [
+      3.018325174149652,
+      3.112965176024519
+     ]
+    },
+    "non_empty_activations_per_team_turn": {
+     "a": 4.141194571563831,
+     "b": 2.6540495737290812,
+     "a_minus_b": 1.4871449978347502,
+     "a_minus_b_ci95": [
+      1.4539353228872418,
+      1.520717443456068
+     ]
+    },
+    "blocks_per_team_turn": {
+     "a": 0.6724001893640524,
+     "b": 0.39181401957688666,
+     "a_minus_b": 0.2805861697871658,
+     "a_minus_b_ci95": [
+      0.27142798246589145,
+      0.2900106006895437
+     ]
+    },
+    "turnovers_per_team_turn": {
+     "a": 0.4191652201357109,
+     "b": 0.31473002841806125,
+     "a_minus_b": 0.10443519171764964,
+     "a_minus_b_ci95": [
+      0.09817471347793102,
+      0.11103051483535414
+     ]
+    },
+    "decisions_per_game": {
+     "a": 630.1040625,
+     "b": 400.0259375,
+     "a_minus_b": 230.07812500000006,
+     "a_minus_b_ci95": [
+      225.81330468749996,
+      234.30075781249994
+     ]
+    },
+    "touchdowns_per_game": {
+     "a": 1.20375,
+     "b": 0.6640625,
+     "a_minus_b": 0.5396875000000001,
+     "a_minus_b_ci95": [
+      0.5025,
+      0.5756249999999999
+     ]
+    },
+    "mean_logprob_per_decision": {
+     "a": -0.09541577646152688,
+     "b": -0.15025270814470648,
+     "a_minus_b": 0.0548369316831796,
+     "a_minus_b_ci95": [
+      0.052603626272141775,
+      0.0571921140370522
+     ]
+    }
+   }
+  }
+ ],
+ "search": [
+  {
+   "search": [
+    "c55m1s",
+    "chain37"
+   ],
+   "control": [
+    "c55m1",
+    "chain37"
+   ],
+   "games": 3200,
+   "searched": {
+    "turn": 298422,
+    "after_declare": 320767
+   },
+   "deviations": {
+    "turn": 4779,
+    "after_declare": 3523
+   },
+   "deviation_types": {
+    "turn: ACTIVATE -> ACTIVATE": 4779,
+    "after_declare: STEP -> STEP": 1764,
+    "after_declare: BLOCK_TARGET -> END_ACTIVATION": 58,
+    "after_declare: END_ACTIVATION -> STEP": 511,
+    "after_declare: BLOCK_TARGET -> BLOCK_TARGET": 173,
+    "after_declare: STEP -> END_ACTIVATION": 193,
+    "after_declare: HANDOFF_TARGET -> STEP": 5,
+    "after_declare: END_ACTIVATION -> JUMP": 45,
+    "after_declare: END_ACTIVATION -> BLOCK_TARGET": 392,
+    "after_declare: END_ACTIVATION -> STAND_UP": 267,
+    "after_declare: STEP -> JUMP": 27,
+    "after_declare: DECLINE_REROLL -> USE_REROLL": 2,
+    "after_declare: STAND_UP -> END_ACTIVATION": 50,
+    "after_declare: BLOCK_TARGET -> STAND_UP": 1,
+    "after_declare: USE_REROLL -> DECLINE_REROLL": 13,
+    "after_declare: HANDOFF_TARGET -> HANDOFF_TARGET": 5,
+    "after_declare: STAND_UP -> BLOCK_TARGET": 8,
+    "after_declare: STEP -> HANDOFF_TARGET": 5,
+    "after_declare: STEP -> BLOCK_TARGET": 1,
+    "after_declare: END_ACTIVATION -> HANDOFF_TARGET": 1,
+    "after_declare: APOTHECARY -> APOTHECARY": 1,
+    "after_declare: BLOCK_TARGET -> STEP": 1
+   },
+   "rollouts": 36559920,
+   "cutoff_rollouts": 2641,
+   "cap_rejected_decisions": 0,
+   "cap_rejected_rollouts": 0,
+   "search_seconds": 1129202.4699999986,
+   "searched_per_game": 193.4965625,
+   "deviations_per_game": 2.594375,
+   "deviation_share_of_searched": 0.01340786092776196,
+   "games_without_deviation": 310,
+   "mean_predicted_gain": 0.1546505988918333,
+   "median_predicted_gain": 0.1335035,
+   "seconds_per_game": 363.78077218749996,
+   "control_seconds_per_game": 7.470788125,
+   "search_seconds_per_game": 352.87577187499954,
+   "slowdown": 48.693761100004416
+  },
+  {
+   "search": [
+    "c55m1s",
+    "chain46"
+   ],
+   "control": [
+    "c55m1",
+    "chain46"
+   ],
+   "games": 3200,
+   "searched": {
+    "turn": 297980,
+    "after_declare": 320227
+   },
+   "deviations": {
+    "turn": 4708,
+    "after_declare": 3475
+   },
+   "deviation_types": {
+    "after_declare: STEP -> STEP": 1702,
+    "turn: ACTIVATE -> ACTIVATE": 4708,
+    "after_declare: STEP -> END_ACTIVATION": 179,
+    "after_declare: STAND_UP -> END_ACTIVATION": 55,
+    "after_declare: BLOCK_TARGET -> BLOCK_TARGET": 164,
+    "after_declare: END_ACTIVATION -> BLOCK_TARGET": 450,
+    "after_declare: END_ACTIVATION -> STEP": 476,
+    "after_declare: END_ACTIVATION -> STAND_UP": 267,
+    "after_declare: BLOCK_TARGET -> END_ACTIVATION": 63,
+    "after_declare: END_ACTIVATION -> JUMP": 58,
+    "after_declare: DECLINE_REROLL -> USE_REROLL": 4,
+    "after_declare: HANDOFF_TARGET -> HANDOFF_TARGET": 8,
+    "after_declare: USE_REROLL -> DECLINE_REROLL": 11,
+    "after_declare: STAND_UP -> BLOCK_TARGET": 7,
+    "after_declare: HANDOFF_TARGET -> STEP": 6,
+    "after_declare: STEP -> HANDOFF_TARGET": 2,
+    "after_declare: STEP -> JUMP": 21,
+    "after_declare: BLOCK_TARGET -> JUMP": 1,
+    "after_declare: HANDOFF_TARGET -> JUMP": 1
+   },
+   "rollouts": 36528432,
+   "cutoff_rollouts": 2849,
+   "cap_rejected_decisions": 0,
+   "cap_rejected_rollouts": 0,
+   "search_seconds": 1129200.0829999982,
+   "searched_per_game": 193.1896875,
+   "deviations_per_game": 2.5571875,
+   "deviation_share_of_searched": 0.013236666682842478,
+   "games_without_deviation": 277,
+   "mean_predicted_gain": 0.15245877673224978,
+   "median_predicted_gain": 0.132297,
+   "seconds_per_game": 363.94525062499997,
+   "control_seconds_per_game": 7.592795,
+   "search_seconds_per_game": 352.87502593749946,
+   "slowdown": 47.93297469838182
+  }
+ ]
+}

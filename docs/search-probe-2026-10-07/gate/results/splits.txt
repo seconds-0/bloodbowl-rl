@@ -1,0 +1,43 @@
+made after the report was read; raw counts, descriptive only
+
+== against chain37: 3200 games an arm
+by droplet (200 seeds each): S decisive share, C decisive share, S-C decisive-Elo
+  s1: 400 games  S 211/62 0.773  C 186/78 0.705  diff +61.8
+  s2: 400 games  S 229/52 0.815  C 215/60 0.782  diff +35.8
+  s3: 400 games  S 224/51 0.815  C 199/68 0.745  diff +70.5
+  s4: 400 games  S 217/48 0.819  C 203/64 0.760  diff +61.6
+  s5: 400 games  S 216/63 0.774  C 202/71 0.740  diff +32.4
+  s6: 400 games  S 221/52 0.810  C 197/66 0.749  diff +61.4
+  s7: 400 games  S 208/65 0.762  C 198/73 0.731  diff +28.7
+  s8: 400 games  S 216/56 0.794  C 206/58 0.780  diff +14.3
+  leg A_home: S 0.794  C 0.751  diff +42.8
+  leg B_home: S 0.796  C 0.747  diff +48.3
+  games whose action trail equals the control's: 310
+  where the trails differ, control result -> search result: {('D', 'D'): 436, ('D', 'L'): 121, ('D', 'W'): 400, ('L', 'D'): 159, ('L', 'L'): 195, ('L', 'W'): 125, ('W', 'D'): 315, ('W', 'L'): 74, ('W', 'W'): 1065}
+  TD difference per game, S minus C: +0.138 [+0.103, +0.174]
+  own TD per game, S minus C: +0.107 [+0.077, +0.140]
+  opponent TD per game, S minus C: -0.031 [-0.056, -0.004]
+  win score, S minus C: +0.035 [+0.023, +0.048]
+  searched game seconds: mean 363.8, median 357.5, max 757.6
+  longest side decision count 1069; longest game 1560 engine decisions
+
+== against chain46: 3200 games an arm
+by droplet (200 seeds each): S decisive share, C decisive share, S-C decisive-Elo
+  s1: 400 games  S 203/55 0.787  C 190/62 0.754  diff +32.3
+  s2: 400 games  S 214/58 0.787  C 187/63 0.748  diff +37.8
+  s3: 400 games  S 224/45 0.833  C 202/67 0.751  diff +87.1
+  s4: 400 games  S 219/53 0.805  C 204/65 0.758  diff +47.8
+  s5: 400 games  S 212/55 0.794  C 188/71 0.726  diff +65.2
+  s6: 400 games  S 208/48 0.812  C 202/59 0.774  diff +40.9
+  s7: 400 games  S 195/57 0.774  C 191/61 0.758  diff +15.4
+  s8: 400 games  S 215/48 0.817  C 190/52 0.785  diff +35.4
+  leg A_home: S 0.806  C 0.771  diff +36.3
+  leg B_home: S 0.797  C 0.742  diff +54.2
+  games whose action trail equals the control's: 277
+  where the trails differ, control result -> search result: {('D', 'D'): 539, ('D', 'L'): 137, ('D', 'W'): 371, ('L', 'D'): 186, ('L', 'L'): 183, ('L', 'W'): 92, ('W', 'D'): 267, ('W', 'L'): 60, ('W', 'W'): 1088}
+  TD difference per game, S minus C: +0.127 [+0.092, +0.165]
+  own TD per game, S minus C: +0.089 [+0.058, +0.121]
+  opponent TD per game, S minus C: -0.038 [-0.066, -0.012]
+  win score, S minus C: +0.034 [+0.022, +0.046]
+  searched game seconds: mean 363.9, median 357.5, max 969.0
+  longest side decision count 946; longest game 1542 engine decisions

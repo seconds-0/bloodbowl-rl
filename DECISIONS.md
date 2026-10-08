@@ -2896,3 +2896,102 @@ Gate `c59-gate-20261007` as registered in D422 and D431: mask harness `7d0d547` 
 
 **Disclosed.** This rung was chosen after reading chain 59's gate (D432) and chain 58's (D428). Chain 59, a gate opponent here, was a candidate in the selection this rung follows.
 - Reviewed by Codex before this entry was written (same file as D432's review): no blocking finding; the wrapper matches the entry and its hash, the pool rotation is as described with chain 49 an active in-pool opponent, the labels already test retention against chain 58, chain 59 is a valid training-held-out descriptive opponent, and seed block 23000000 is unused in the ledger and in the local tournament directories. Corrections applied above: the case for not waiting is stated for the present plan and not as an absolute, later launches are tied to the control's acceptance and to the selection rules, chain 59's status as an opponent is qualified, and the variables the wrapper does not clear are named.
+
+**D434 - THE SEARCH SEAT'S GATE (D430) READS POSITIVE: AGAINST HELD-OUT OPPONENTS, CHAIN 55 + m1 WITH THE SEARCH SEAT IS +45.5 [+28.3, +63.4] DECISIVE-ELO OVER THE SAME CHECKPOINT WITHOUT IT AGAINST CHAIN 37 AND +45.3 [+27.2, +64.5] AGAINST CHAIN 46; THE SETTING BECOMES A PLAY-TIME OPTION ON CHAIN 55 + m1 AT A MEASURED SLOWDOWN OF 48; A LOWER-TEMPERATURE CONTROL IS READ BEFORE ANYTHING ELSE BUILDS ON SEARCH (2026-10-08 02:24 PDT by the machine's clock at commit; chain 60 is training)**
+
+**What was run, against D430.** Plan `PLAN.json` sha256 `7fb1591c8489518e5b4d11c841a5d5970aecf67d5157e99475c1fea6dd67dad1`, harness `06f0a5f`, seed block 25100000, 3,200 games in each of the four pairs and 20 identity games, 12,820 games, on eight droplets launched at 13:58 PDT on October 7 (the droplets' creation time; earlier notes say 14:02). No shard failed and none was relaunched. The eight runners finished between 23:00 and 02:18; each log has "stage done" with its full game count, "verified 6 files by sha256, the manifest, [its game count] games and zero integrity counters", and HTTP 404 on its droplet and its key.
+- **One look, by the operator's statement.** Before scoring the operator read the runner logs only (at 22:13 and from 02:07): game counts, rates, completion, cost and teardown lines. Those lines carry no outcome. No shard's game records or report was opened and nothing was tallied. By the operator's account `score_from_plan.py --expect-sha256 7fb1591c...` was run once, at 02:19:16, after the last shard was in. Its log (`score.log`) shows the order: merge, the three acceptance checks, and only then the report, the contrasts and the diagnostics; the original files in the gate directory are stamped 02:19:25 to 02:19:26 (the copies under `docs/search-probe-2026-10-07/gate/results/` are stamped 02:20:51). The artifacts are consistent with one look and cannot prove it, and they do not show that scoring ran only once.
+- **Spend.** $13.970 by the runners' cost lines (eight lifetimes of 542.5 to 740.2 minutes), against an expected $15.5 and a ceiling of $30. The tool's status listing after the last teardown shows no tagged droplet, no key and no live local state (`droplet_status_after.txt`).
+- **Harness worktree** `~/Code/bb-harness-search`: the operator checked it clean at `06f0a5f` before scoring (02:07) and after the last teardown (02:19); it is clean at that commit as this is written.
+
+**Acceptance: passed, all three.** From `GATE_ACCEPTANCE.txt`:
+- `GATE-ACCEPTED 12820 games, 5 pairs, seed0 25100000, games_per_worker 1, commit 06f0a5f`.
+- `MASKS-ACCEPTED 12820 masked sides in 12820 games as registered, no sampling offsets, 0 truncated, 0 mask fallbacks`.
+- `SEARCH-ACCEPTED 6420 searched games of 12820 as registered; after_declare 642950 searched / 6998 deviations, turn 598231 searched / 9487 deviations; 0 cap-rejected decisions (0.000%), 5490 cutoff rollouts of 73310960, 0 error rollouts; 20 identity game(s) equal to the plain game; 5 pair(s) held to the plan's schedule`.
+- Integrity totals all zero, no unnatural ending. `games.jsonl` sha256 `b634d44b67110e1f96bb9a294f18f9038905b5cded124fe69cd277c832e8c536`. The longest game is 1,560 engine decisions, far from the 4,096 cap.
+- What acceptance does not show is as D430 lists it: the env's reward telemetry counters are not exported, and the decision arithmetic inside the seat rests on the pinned code and its tests.
+
+**The four pairs** (S = chain 55 + m1 + search seat, C = chain 55 + m1; 3,200 games each; 95% seed-cluster intervals from the report).
+
+| Pair | W / D / L | Decisive share | Decisive-Elo | TD for / against per game | TD difference per game |
+|---|---|---|---|---|---|
+| S v chain 37 | 1742 / 1009 / 449 | 0.795 [0.779, 0.811] | +235.5 [+219.0, +253.0] | 1.342 / 0.635 | +0.707 [+0.668, +0.744] |
+| C v chain 37 | 1606 / 1056 / 538 | 0.749 [0.732, 0.766] | +190.0 [+174.3, +205.8] | 1.235 / 0.667 | +0.568 [+0.533, +0.605] |
+| S v chain 46 | 1690 / 1091 / 419 | 0.801 [0.785, 0.816] | +242.3 [+225.0, +259.2] | 1.292 / 0.626 | +0.667 [+0.629, +0.703] |
+| C v chain 46 | 1554 / 1146 / 500 | 0.757 [0.739, 0.773] | +197.0 [+180.4, +213.1] | 1.204 / 0.664 | +0.540 [+0.503, +0.576] |
+
+The identity pair (search with delta infinity against chain 37, 20 games, 9 / 5 / 6) reproduced C's games on the same seeds, as acceptance requires; it carries no result of its own.
+
+**The registered statistic** (`paired_contrasts.py`, 1,600 seed clusters, 2,000 replicates, generator seed 0).
+
+| Contrast | Decisive-Elo [95% seed-cluster] |
+|---|---|
+| S minus C against chain 37 | +45.5 [+28.3, +63.4] |
+| S minus C against chain 46 | +45.3 [+27.2, +64.5] |
+| Mean of the two (descriptive, no label, no interval) | +45.4 |
+
+The same file prints the draw-inclusive contrasts, which are not the label statistic: +28.3 [+18.4, +38.8] and +27.2 [+17.8, +37.0].
+
+**Reading, labels applied in the registered order: Positive.**
+- Not Negative: neither interval is entirely below zero.
+- Positive: both point estimates are above +20 (+45.5, +45.3) and both intervals are entirely above zero. As registered, this establishes gains above zero for the search seat against these two opponents, not gains above +20. (Both lower bounds happen to be above +20; the label does not rest on that.)
+- The expectation written in D430 was both contrasts between 0 and +50, below the self-play contrast (+57), with intervals near plus or minus 20. Both are inside it. The gap to the self-play contrast (about 11.5) is between runs on different seeds and opponents and is not tested; no difference is established.
+
+**Consequences, as registered in D430.**
+- This search setting on chain 55 + m1 becomes a play-time option, as m1 is, with its measured slowdown beside it: 48.7 against chain 37 and 47.9 against chain 46 (363.8 and 363.9 seconds a searched game against 7.5 and 7.6 for C on the same droplets, with eight workers busy). It is an option for play where time is cheap, on this checkpoint only.
+- It is not a claim that search finds more than sharpening the policy would. A lower-temperature control at plain speed is to be registered in its own entry and read before any further entry builds on search (a C rollout kernel, search as a teacher, a larger rollout budget).
+- Using the seat on another checkpoint needs that checkpoint's own gate. That includes chain 58, the current warm start.
+- No training recipe, warm start or evaluation default changes.
+
+**Registered diagnostics, not gates.**
+
+*Style* (the D422 table; each cell is the chain 55 side of its pair, against chain 37 / against chain 46; the diagnostics give no interval for S minus C, so the S and C columns are compared by eye only).
+
+| Per team turn unless noted | S | C |
+|---|---|---|
+| Activations | 6.36 / 6.35 | 6.57 / 6.62 |
+| Empty activations | 2.32 / 2.32 | 2.44 / 2.47 |
+| Non-empty activations | 4.04 / 4.04 | 4.13 / 4.14 |
+| Blocks | 0.707 / 0.702 | 0.675 / 0.672 |
+| Turnovers | 0.440 / 0.444 | 0.422 / 0.419 |
+| Own decisions per game | 613.1 / 611.0 | 627.7 / 630.1 |
+| Touchdowns per game | 1.342 / 1.292 | 1.235 / 1.204 |
+| Mean log-probability per decision | -0.427 / -0.419 | -0.096 / -0.095 |
+
+Against both opponents the search seat's side has slightly fewer activations (mostly fewer empty ones), slightly more blocks and turnovers, and more touchdowns. The log-probability row is an average over all of the side's policy decisions; its lower value for S is consistent with about 2.6 deviations a game to actions the policy gives a very low probability, and the diagnostics do not isolate their share of it.
+
+*What the search did.*
+
+| | against chain 37 | against chain 46 |
+|---|---|---|
+| Searched decisions a game | 193.5 (turn 93.3, after declaration 100.2) | 193.2 (93.1, 100.1) |
+| Deviations a game | 2.59 (turn 1.49, after declaration 1.10) | 2.56 (1.47, 1.09) |
+| Share of searched decisions | 1.34% | 1.32% |
+| Games without a deviation | 310 of 3,200 | 277 of 3,200 |
+| Predicted gain at a deviation, mean / median | 0.155 / 0.134 | 0.152 / 0.132 |
+| Cap-rejected decisions | 0 | 0 |
+| Rollouts ended on the 200-step cutoff | 2,641 of 36,559,920 | 2,849 of 36,528,432 |
+| Seconds a game, S / C | 363.8 / 7.5 | 363.9 / 7.6 |
+| Slowdown | 48.7 | 47.9 |
+
+Deviation types (chain 37 / chain 46): another player activated 4,779 / 4,708; after the declaration, a different step 1,764 / 1,702, a step in place of ending the activation 511 / 476, a block in place of ending the activation 392 / 450, standing up in place of ending the activation 267 / 267, ending the activation in place of a step 193 / 179, another block target 173 / 164, ending in place of a block 58 / 63, ending in place of standing up 50 / 55, a jump in place of ending 45 / 58, a jump in place of a step 27 / 21, declining a reroll in place of using it 13 / 11.
+
+For comparison, the self-play run (D426) had 2.42 deviations a game (1.17% of searched decisions) and a mean predicted gain of 0.159.
+
+**Descriptive, not part of the reading** (`docs/search-probe-2026-10-07/gate/results/splits.txt`, made by the operator after the report was read; intervals resample the 1,600 seeds, 2,000 replicates).
+- Paired on seed, S minus C: touchdown difference per game +0.138 [+0.103, +0.174] against chain 37 and +0.127 [+0.092, +0.165] against chain 46. It is mostly S scoring more (+0.107 [+0.077, +0.140] and +0.089 [+0.058, +0.121]); the opponent scores a little less (-0.031 [-0.056, -0.004] and -0.038 [-0.066, -0.012]). Win score +0.035 [+0.023, +0.048] and +0.034 [+0.022, +0.046].
+- By droplet (200 seeds each, raw counts, no intervals), the S minus C decisive-Elo difference is above zero in all eight slices against each opponent: +61.8, +35.8, +70.5, +61.6, +32.4, +61.4, +28.7, +14.3 against chain 37 and +32.3, +37.8, +87.1, +47.8, +65.2, +40.9, +15.4, +35.4 against chain 46.
+- By leg: +42.8 with chain 55 at home and +48.3 away against chain 37; +36.3 and +54.2 against chain 46.
+- A game of S with no deviation is the same game as C's on that seed and leg (310 and 277 games, equal action trails). Where the trails differ, the results move both ways: against chain 37, 684 games improve (draw or loss to a better result) and 510 get worse; against chain 46, 649 and 464.
+
+**What this does not show** (D430's limits stand).
+- Chain 37 and chain 46 are older relatives of chain 55 and about 190 to 200 decisive-Elo weaker than C under m1 in this run. Neither is a strong or a foreign opponent. The result says the gain carries to opponents the rollouts mis-model; it says nothing about a stronger opponent or a person.
+- There is no lower-temperature control yet, so sharpening alone is not ruled out as the source. Chain 55 is already very sharp at the searched decisions, which is a reason to expect little from a lower temperature, not a measurement.
+- One checkpoint, one mask setting, one delta, one scope, 16 rollouts, chosen from exploratory runs and one registered self-play comparison.
+- The evaluator is the shaped training reward plus the value head. The gate shows that acting on it wins more games here; it does not show the evaluator is right at any single decision.
+- The rollouts stop at the end of the seat's own team turn, so the opponent model matters only for the opponent's choices inside that turn; the value head at the stop was trained against the training pool, not against these opponents.
+- The standard-error floor in the rule is the error of one candidate's mean, not of a difference of two means. It is the rule D425 registered, and it is unchanged.
+- In this implementation the seat costs about 48 times plain play. Use inside training was not tested, and whether its deviations can teach the policy (distillation) is untested.
+
+**Next.** The lower-temperature control is to be registered in its own entry and played. Its design (the operator proposes plain speed on one droplet against the same two opponents) is not fixed by D430 and is fixed only by that entry. Until it is read, no entry builds further on search.
+- Reviewed by Codex before this entry was written (`.codex-reviews/d434-review.md`): no blocker to the Positive label or to the registered consequence. Its recount from the merged records reproduced the four W / D / L rows, the identity pair and both contrasts with their intervals; the labels follow the registered order; nothing beyond D430's consequence is adopted; the eight logs show completion, verification and HTTP 404 on every droplet and key; the cost lines sum to $13.970; the progress lines expose no outcome; `splits.py` pairs and resamples correctly. Corrections applied above: the log-probability row is not attributed to the deviations alone, the training-use sentence says what was measured, the scoring time and the single run are attributed to the operator, the worktree checks are attributed, own decisions per game is in the style table, the control's design is marked as a proposal, and three of D430's limits are restated.

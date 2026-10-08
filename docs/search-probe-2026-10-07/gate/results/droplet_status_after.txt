@@ -1,0 +1,3 @@
+droplets tagged bb-harness-tournament: 0
+ssh keys named bb-harness-*: 0
+local state with a live droplet id: 0

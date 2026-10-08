@@ -1,0 +1,503 @@
+{
+ "schema": "bbplay-tournament-v1",
+ "seed0": 25100000,
+ "mode": "sample",
+ "kernel": "native",
+ "max_decisions": 4096,
+ "omp_num_threads": 1,
+ "rosters": "procgen (home_team=away_team=-1), skillup 4/2/0.0",
+ "legs": [
+  "A_home",
+  "B_home"
+ ],
+ "sampling_seed": "keyed by (engine seed, side)",
+ "harness_git_head": "06f0a5f7e67cc9089e8edaf5fa9b97dcfe440d99",
+ "torch": "2.14.0+cpu",
+ "python": "3.12.3",
+ "checkpoints": {
+  "c55m1s": {
+   "path": "/srv/bb/checkpoints/c55m1s/0000002999975936.bin",
+   "sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+   "producer": {
+    "run_manifest_sha256": "9ad6a183947476989c8e897893f45426a3f9948dbc2312f3a00c0349b5f5e084",
+    "screen_manifest_sha256": "362312667d58e8fde84b1c920a4713f339800220345e257ed200b3eb9e582d14",
+    "seed": 42
+   },
+   "compatibility": {
+    "action_abi": "exact-joint-v1",
+    "observation_abi": "obs-v6",
+    "observation_version": 6,
+    "policy_expansion_factor": 1,
+    "policy_hidden_size": 512,
+    "policy_num_layers": 3
+   }
+  },
+  "chain37": {
+   "path": "/srv/bb/checkpoints/chain37/0000002999975936.bin",
+   "sha256": "268f1db08ca0c2bad88293ea56b3048a2a1c3a0ea9acdf0365fc023186c0f73f",
+   "producer": {
+    "run_manifest_sha256": "a9095929b434868279da1a76ed2d57702594c1342121065ae585feb53eb29c44",
+    "screen_manifest_sha256": "e84dd3a09569c25bb71c1ba16fb97cb23994eb94eb555ac3e04549678b1eafc3",
+    "seed": 42
+   },
+   "compatibility": {
+    "action_abi": "exact-joint-v1",
+    "observation_abi": "obs-v6",
+    "observation_version": 6,
+    "policy_expansion_factor": 1,
+    "policy_hidden_size": 512,
+    "policy_num_layers": 3
+   }
+  },
+  "c55m1": {
+   "path": "/srv/bb/checkpoints/c55m1/0000002999975936.bin",
+   "sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+   "producer": {
+    "run_manifest_sha256": "9ad6a183947476989c8e897893f45426a3f9948dbc2312f3a00c0349b5f5e084",
+    "screen_manifest_sha256": "362312667d58e8fde84b1c920a4713f339800220345e257ed200b3eb9e582d14",
+    "seed": 42
+   },
+   "compatibility": {
+    "action_abi": "exact-joint-v1",
+    "observation_abi": "obs-v6",
+    "observation_version": 6,
+    "policy_expansion_factor": 1,
+    "policy_hidden_size": 512,
+    "policy_num_layers": 3
+   }
+  },
+  "chain46": {
+   "path": "/srv/bb/checkpoints/chain46/0000002999975936.bin",
+   "sha256": "8eee9ac10f58eca57092013ac05db6f28fb5f7f2c6dc9ce850960c7bb2c7c467",
+   "producer": {
+    "run_manifest_sha256": "339abbaeac6b63fa67697ca3a915b356aecfd18404a79fa9d4678c964689de36",
+    "screen_manifest_sha256": "9f9ef023c5d3a4a70d58cbfec7093e95413dcf274b82db11d456859211dc9bed",
+    "seed": 42
+   },
+   "compatibility": {
+    "action_abi": "exact-joint-v1",
+    "observation_abi": "obs-v6",
+    "observation_version": 6,
+    "policy_expansion_factor": 1,
+    "policy_hidden_size": 512,
+    "policy_num_layers": 3
+   }
+  },
+  "c55m1inf": {
+   "path": "/srv/bb/checkpoints/c55m1inf/0000002999975936.bin",
+   "sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+   "producer": {
+    "run_manifest_sha256": "9ad6a183947476989c8e897893f45426a3f9948dbc2312f3a00c0349b5f5e084",
+    "screen_manifest_sha256": "362312667d58e8fde84b1c920a4713f339800220345e257ed200b3eb9e582d14",
+    "seed": 42
+   },
+   "compatibility": {
+    "action_abi": "exact-joint-v1",
+    "observation_abi": "obs-v6",
+    "observation_version": 6,
+    "policy_expansion_factor": 1,
+    "policy_hidden_size": 512,
+    "policy_num_layers": 3
+   }
+  }
+ },
+ "bots": {},
+ "players": {
+  "c55m1s": {
+   "mode": "sample",
+   "temperature": 1.0,
+   "masks": [
+    "m1"
+   ],
+   "search": {
+    "scope": [
+     "turn",
+     "after_declare"
+    ],
+    "k": 4,
+    "n": 16,
+    "delta": 0.1,
+    "max_rollout_steps": 200,
+    "horizon": "turn",
+    "gamma": 0.999,
+    "reward_manifest": "r0_poss_half",
+    "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
+    "opponent_model": "the seat's own network on the opponent's row, under the seat's own masks",
+    "candidates": "a0, then the others by policy probability, ties in packed-tuple order",
+    "se_floor": "sqrt(mean over candidates of per-rollout return variance / n)"
+   }
+  },
+  "chain37": {
+   "mode": "sample",
+   "temperature": 1.0
+  },
+  "c55m1": {
+   "mode": "sample",
+   "temperature": 1.0,
+   "masks": [
+    "m1"
+   ]
+  },
+  "chain46": {
+   "mode": "sample",
+   "temperature": 1.0
+  },
+  "c55m1inf": {
+   "mode": "sample",
+   "temperature": 1.0,
+   "masks": [
+    "m1"
+   ],
+   "search": {
+    "scope": [
+     "turn",
+     "after_declare"
+    ],
+    "k": 4,
+    "n": 16,
+    "delta": "inf",
+    "max_rollout_steps": 200,
+    "horizon": "turn",
+    "gamma": 0.999,
+    "reward_manifest": "r0_poss_half",
+    "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
+    "opponent_model": "the seat's own network on the opponent's row, under the seat's own masks",
+    "candidates": "a0, then the others by policy probability, ties in packed-tuple order",
+    "se_floor": "sqrt(mean over candidates of per-rollout return variance / n)"
+   }
+  }
+ },
+ "pairs": [
+  [
+   "c55m1s",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1s",
+   "chain46",
+   3200
+  ],
+  [
+   "c55m1",
+   "chain46",
+   3200
+  ],
+  [
+   "c55m1inf",
+   "chain37",
+   20
+  ]
+ ],
+ "bot_library_sha256": null,
+ "library_sha256": "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0",
+ "games_per_pair": null,
+ "tasks": 12820,
+ "host": "merged",
+ "games_per_worker": 1,
+ "workers": [
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8,
+  8
+ ],
+ "merged_from": [
+  {
+   "name": "srch-gate-20261007-s1",
+   "host": "bb-harness-srch-gate-20261007-s1",
+   "tasks": 1620,
+   "pairs": [
+    [
+     "c55m1s",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1s",
+     "chain46",
+     400
+    ],
+    [
+     "c55m1",
+     "chain46",
+     400
+    ],
+    [
+     "c55m1inf",
+     "chain37",
+     20
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "ad48660f9490e207a4bdd58c974afd616143982c9c77786306dd5180594942d7",
+   "wall_seconds": 36855.1,
+   "games_per_second_wall": 0.044
+  },
+  {
+   "name": "srch-gate-20261007-s2",
+   "host": "bb-harness-srch-gate-20261007-s2",
+   "tasks": 1600,
+   "pairs": [
+    [
+     "c55m1s",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1s",
+     "chain46",
+     400
+    ],
+    [
+     "c55m1",
+     "chain46",
+     400
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "dd40bc24ad544f7bc5974a940dcb41a990a8852457e3d0a71e1c2dbc04e80ec3",
+   "wall_seconds": 36902.2,
+   "games_per_second_wall": 0.043,
+   "index0": 200
+  },
+  {
+   "name": "srch-gate-20261007-s3",
+   "host": "bb-harness-srch-gate-20261007-s3",
+   "tasks": 1600,
+   "pairs": [
+    [
+     "c55m1s",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1s",
+     "chain46",
+     400
+    ],
+    [
+     "c55m1",
+     "chain46",
+     400
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "fa1426a402d64a5656fb0e4b50aa1037555acd4719ca6538161708299db91ea0",
+   "wall_seconds": 44073.3,
+   "games_per_second_wall": 0.036,
+   "index0": 400
+  },
+  {
+   "name": "srch-gate-20261007-s4",
+   "host": "bb-harness-srch-gate-20261007-s4",
+   "tasks": 1600,
+   "pairs": [
+    [
+     "c55m1s",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1s",
+     "chain46",
+     400
+    ],
+    [
+     "c55m1",
+     "chain46",
+     400
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "2578ae56cb19327c10cb4cd2293ff6f8eafe2d937d3afcafa983508f7bd330d0",
+   "wall_seconds": 36981.4,
+   "games_per_second_wall": 0.043,
+   "index0": 600
+  },
+  {
+   "name": "srch-gate-20261007-s5",
+   "host": "bb-harness-srch-gate-20261007-s5",
+   "tasks": 1600,
+   "pairs": [
+    [
+     "c55m1s",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1s",
+     "chain46",
+     400
+    ],
+    [
+     "c55m1",
+     "chain46",
+     400
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "a676ed970ea8342ad7294743bc36d56c3230fdb31f0ee5ff9acf2f842dcdcdc0",
+   "wall_seconds": 38312.5,
+   "games_per_second_wall": 0.042,
+   "index0": 800
+  },
+  {
+   "name": "srch-gate-20261007-s6",
+   "host": "bb-harness-srch-gate-20261007-s6",
+   "tasks": 1600,
+   "pairs": [
+    [
+     "c55m1s",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1s",
+     "chain46",
+     400
+    ],
+    [
+     "c55m1",
+     "chain46",
+     400
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "1976743e7872606850d3c9f45a095b8d8cacce119f0ed499c896d489bf229c88",
+   "wall_seconds": 38724.9,
+   "games_per_second_wall": 0.041,
+   "index0": 1000
+  },
+  {
+   "name": "srch-gate-20261007-s7",
+   "host": "bb-harness-srch-gate-20261007-s7",
+   "tasks": 1600,
+   "pairs": [
+    [
+     "c55m1s",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1s",
+     "chain46",
+     400
+    ],
+    [
+     "c55m1",
+     "chain46",
+     400
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "ae8179c07a85a85d92c3ab271c390631b7ca33dddab2000780a7e64e7762aa20",
+   "wall_seconds": 32304.5,
+   "games_per_second_wall": 0.05,
+   "index0": 1200
+  },
+  {
+   "name": "srch-gate-20261007-s8",
+   "host": "bb-harness-srch-gate-20261007-s8",
+   "tasks": 1600,
+   "pairs": [
+    [
+     "c55m1s",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1",
+     "chain37",
+     400
+    ],
+    [
+     "c55m1s",
+     "chain46",
+     400
+    ],
+    [
+     "c55m1",
+     "chain46",
+     400
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "890f709b472aa4ef4c7f78a295f964800a2dea0f8eb2fdda35ae896a1886e39c",
+   "wall_seconds": 35139.9,
+   "games_per_second_wall": 0.046,
+   "index0": 1400
+  }
+ ],
+ "search": {
+  "reward_manifest": {
+   "name": "r0_poss_half",
+   "sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
+   "file_sha256": "16900416cfe8d32ee49bead8c2fcddb989c13e232b7a279d24df86f00d64c0ea",
+   "path": "puffer/config/rewards/r0_poss_half.json"
+  },
+  "integrity_checks": [
+   "real game: the engine's return code on every step",
+   "real game: hard counters after every step and at the end (illegal, projection_collision, error_episodes, rejected_submissions, precheck_collisions)",
+   "real game: both seats' logits and values finite on every step",
+   "real game: the opponent-view state and value finite on every step (search arms)",
+   "real game: both seats' emitted rewards finite and within the clip threshold on every step",
+   "real game: no mask fallback",
+   "rollouts: the engine's return code and status on every step",
+   "rollouts: the same hard counters of every clone at its rollout's end",
+   "rollouts: both seats' emitted rewards finite and within the clip threshold on every step",
+   "rollouts: logits and values finite on every forward",
+   "rollouts: the accumulated return finite",
+   "rollouts: no mask fallback, and an action selectable at every decision",
+   "search: every return the deviation rule reads is finite"
+  ],
+  "path": "unbatched (games_per_worker 1)",
+  "players": [
+   "c55m1inf",
+   "c55m1s"
+  ]
+ }
+}
