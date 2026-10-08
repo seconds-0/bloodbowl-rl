@@ -1,0 +1,162 @@
+[
+ {
+  "test": "classify: exit 0 is ok",
+  "passed": true,
+  "detail": ""
+ },
+ {
+  "test": "classify: a registered check's refusal",
+  "passed": true,
+  "detail": ""
+ },
+ {
+  "test": "classify: any other failure is not a refusal",
+  "passed": true,
+  "detail": ""
+ },
+ {
+  "test": "classify: the marks count only at the start of a line (a mention inside another line, or a provenance message, is a failure); two shards holding one game is a refusal",
+  "passed": true,
+  "detail": ""
+ },
+ {
+  "test": "success: published only after the teardown, with every file and the build record",
+  "passed": true,
+  "detail": "['BUILD_B1.json', 'DATASET.json', 'build_b1.log', 'droplet_build.json', 'locked/test.pt', 'train.pt', 'validation.pt']"
+ },
+ {
+  "test": "a failed teardown after a complete, checked fetch: nothing is published (exit 1, kept as a failed attempt)",
+  "passed": true,
+  "detail": "['dataset.failed1', 'state-0']"
+ },
+ {
+  "test": "a fetch that fails after train and validation arrived: nothing is published (exit 1), so no downstream tool finds a dataset",
+  "passed": true,
+  "detail": "['dataset.failed1', 'state-0']"
+ },
+ {
+  "test": "a split file whose bytes do not hash to DATASET.json's value: a failed transfer (exit 1), nothing published",
+  "passed": true,
+  "detail": "['dataset.failed1', 'state-0']"
+ },
+ {
+  "test": "the build exits non-zero without a registered check's message: failed (exit 1), no split fetched",
+  "passed": true,
+  "detail": "['dataset.failed1', 'state-0']"
+ },
+ {
+  "test": "a registered check refuses on the droplet: REFUSED (exit 3), kept as OUT.refused with its reason, no split fetched, and the script will not run again for it",
+  "passed": true,
+  "detail": "/Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/tests/dsd-h/refused/dataset.refused exists: a build for this directory was refused by a registered check. That stands; a new ledger entry decides what follows."
+ },
+ {
+  "test": "a refusal followed by a failed teardown is still a refusal (exit 3)",
+  "passed": true,
+  "detail": "['dataset.refused', 'state-0']"
+ },
+ {
+  "test": "DATASET.json names another plan: REFUSED (exit 3), nothing published",
+  "passed": true,
+  "detail": "['dataset.refused', 'state-0']"
+ },
+ {
+  "test": "the droplet's engine library is not the dataset's: REFUSED (exit 3), nothing published",
+  "passed": true,
+  "detail": "['dataset.refused', 'state-0']"
+ },
+ {
+  "test": "a teardown that returns without verifying the cleanup: nothing is published (exit 1)",
+  "passed": true,
+  "detail": "['dataset.failed1', 'state-0']"
+ },
+ {
+  "test": "an ssh key of this run still listed after the reconcile: nothing is published (exit 1)",
+  "passed": true,
+  "detail": "['dataset.failed1', 'state-0']"
+ },
+ {
+  "test": "the rename to --out-dir fails after a clean teardown: exit 1, kept as a failed attempt, no dataset directory at --out-dir",
+  "passed": true,
+  "detail": "['dataset', 'dataset.failed1', 'state-0']"
+ },
+ {
+  "test": "an interruption: exit 1, a failed attempt, nothing published",
+  "passed": true,
+  "detail": "['dataset.failed1', 'state-0']"
+ },
+ {
+  "test": "a runner killed after it recorded a refusal: the next start keeps it as OUT.refused and will not run",
+  "passed": true,
+  "detail": "/Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/tests/dsd-h/killed-after-refusal/dataset.refused exists: a build for this directory was refused by a registered check. That stands; a new ledger entry decides what follows."
+ },
+ {
+  "test": "a runner killed without a refusal: the next start counts its partial as a failed attempt and starts a new one",
+  "passed": true,
+  "detail": "['dataset.partial', 'dataset.failed1']"
+ },
+ {
+  "test": "the result cannot be written after a clean teardown: exit 1, a failed attempt, nothing published",
+  "passed": true,
+  "detail": "['dataset.failed1', 'state-0']"
+ },
+ {
+  "test": "a report stream that cannot be written after publication: still exit 0, published",
+  "passed": true,
+  "detail": "['dataset', 'state-0']"
+ },
+ {
+  "test": "a failed attempt that cannot be moved aside: exit 1, OUT.partial stays, nothing published, and the next start counts it as the failed attempt",
+  "passed": true,
+  "detail": "['dataset.partial', 'dataset.failed1', 'state-0']"
+ },
+ {
+  "test": "local shard acceptance: problems returned and a file that cannot be parsed are both refusals; clean shards pass",
+  "passed": true,
+  "detail": "['refused', 'refused']"
+ },
+ {
+  "test": "main: an interruption just after OUT.partial is made exits 1, not 2, and the next start counts it as a failed attempt",
+  "passed": true,
+  "detail": "1"
+ },
+ {
+  "test": "main: a refusal before anything is created exits 3; every other stop before OUT.partial exists (a check, the droplet limit, an interruption, a bad argument) exits 2 and leaves nothing",
+  "passed": true,
+  "detail": "{'refused': 3, 'exit': 2, 'runner': 2, 'interrupt': 2, 'hours': 2}"
+ },
+ {
+  "test": "a refusal whose marker cannot be written is still a refusal, from the process's own record (exit 3, kept as OUT.refused with no marker file and no log in it)",
+  "passed": true,
+  "detail": "['dataset.refused', 'state-0']"
+ },
+ {
+  "test": "a runner killed after the build's log was fetched and before the marker: the next start reads the log and keeps the refusal",
+  "passed": true,
+  "detail": "/Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/tests/dsd-h/killed-before-marker/dataset.refused exists: a build for this directory was refused by a registered check. That stands; a new ledger entry decides what follows."
+ },
+ {
+  "test": "claim_out makes OUT.partial in one step or makes nothing",
+  "passed": true,
+  "detail": "FileNotFoundError(2, 'No such file or directory')"
+ },
+ {
+  "test": "three failed attempts for one --out-dir, then the script refuses a fourth",
+  "passed": true,
+  "detail": "3 attempts have failed for /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/tests/dsd-h/attempts/dataset (two replacements are used). A new ledger entry decides what follows."
+ },
+ {
+  "test": "a failed attempt and then a whole replacement from the same command: published",
+  "passed": true,
+  "detail": "['dataset', 'state-2', 'dataset.failed1', 'state-0']"
+ },
+ {
+  "test": "an --out-dir that holds only empty directories (a refused registered build leaves them) is accepted",
+  "passed": true,
+  "detail": ""
+ },
+ {
+  "test": "an --out-dir that already holds files is refused before anything is created",
+  "passed": true,
+  "detail": "/Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/tests/dsd-h/leftover/dataset already holds files (/Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/tests/dsd-h/leftover/dataset/train.pt)"
+ }
+]

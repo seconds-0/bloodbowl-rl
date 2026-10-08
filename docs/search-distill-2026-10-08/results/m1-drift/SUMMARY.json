@@ -1,0 +1,450 @@
+{
+ "what": "a0 log-probability: the Mac's recomputation (distill_dataset.py's arithmetic, 32 games in lockstep) against the label droplets' record, every screened root of the 900 non-reserve games of m1-s1 and m1-s2; made by diag_logp.py, which writes no dataset. It parses the shards' records whole (shard acceptance does) and keeps, of a root, the step, a0, the recorded log-probability, candidates, support, class and flags; it keeps and prints nothing of a label, a gain or a judgment",
+ "roots": 27000,
+ "quantiles": {
+  "0.5": 2.9031221870881076e-12,
+  "0.9": 7.818922717048343e-07,
+  "0.99": 4.2148796792055286e-05,
+  "0.999": 0.00013221820704341486,
+  "0.9999": 0.0003416442373909721,
+  "1.0": 0.0011378710230394162
+ },
+ "roots_over": {
+  "1e-05": 1018,
+  "0.0001": 56,
+  "0.0003": 4,
+  "0.001": 1,
+  "0.002": 0,
+  "0.005": 0,
+  "0.01": 0,
+  "0.05": 0
+ },
+ "by_split": {
+  "train": {
+   "roots": 21000,
+   "largest": 0.0011378710230394162,
+   "over_1e-3": 1,
+   "over_1e-4": 45
+  },
+  "validation": {
+   "roots": 3000,
+   "largest": 0.0003112063871457682,
+   "over_1e-3": 0,
+   "over_1e-4": 6
+  },
+  "test": {
+   "roots": 3000,
+   "largest": 0.00023813551742468686,
+   "over_1e-3": 0,
+   "over_1e-4": 5
+  }
+ },
+ "candidate_lists_that_differ": 0,
+ "largest": [
+  {
+   "game": 162,
+   "step": 929,
+   "steps_in_game": 1531,
+   "split": "train",
+   "difference": 0.0011378710230394162,
+   "recomputed": -2.2872131879769606,
+   "recorded": -2.288351059,
+   "class": "after_declare",
+   "support": 4
+  },
+  {
+   "game": 826,
+   "step": 866,
+   "steps_in_game": 1077,
+   "split": "train",
+   "difference": 0.0006241100708086478,
+   "recomputed": -3.6441221939291912,
+   "recorded": -3.644746304,
+   "class": "after_declare",
+   "support": 2
+  },
+  {
+   "game": 165,
+   "step": 1506,
+   "steps_in_game": 1574,
+   "split": "train",
+   "difference": 0.00041263207939890023,
+   "recomputed": -2.307487557920601,
+   "recorded": -2.30790019,
+   "class": "after_declare",
+   "support": 8
+  },
+  {
+   "game": 494,
+   "step": 393,
+   "steps_in_game": 1273,
+   "split": "validation",
+   "difference": 0.0003112063871457682,
+   "recomputed": -1.4532082783871458,
+   "recorded": -1.452897072,
+   "class": "turn",
+   "support": 9
+  },
+  {
+   "game": 123,
+   "step": 761,
+   "steps_in_game": 1108,
+   "split": "train",
+   "difference": 0.00029903837456790594,
+   "recomputed": -0.8160371166254321,
+   "recorded": -0.816336155,
+   "class": "after_declare",
+   "support": 7
+  },
+  {
+   "game": 543,
+   "step": 927,
+   "steps_in_game": 1665,
+   "split": "train",
+   "difference": 0.0002962804908427652,
+   "recomputed": -0.20006039650915725,
+   "recorded": -0.200356677,
+   "class": "after_declare",
+   "support": 6
+  },
+  {
+   "game": 37,
+   "step": 1012,
+   "steps_in_game": 1232,
+   "split": "test",
+   "difference": 0.00023813551742468686,
+   "recomputed": -0.9475587454825753,
+   "recorded": -0.947796881,
+   "class": "turn",
+   "support": 7
+  },
+  {
+   "game": 789,
+   "step": 916,
+   "steps_in_game": 1329,
+   "split": "train",
+   "difference": 0.0002253030658769667,
+   "recomputed": -0.041960658934123034,
+   "recorded": -0.042185962,
+   "class": "after_declare",
+   "support": 8
+  },
+  {
+   "game": 460,
+   "step": 892,
+   "steps_in_game": 1341,
+   "split": "train",
+   "difference": 0.0002137228504137667,
+   "recomputed": -1.7289099891495863,
+   "recorded": -1.729123712,
+   "class": "after_declare",
+   "support": 2
+  },
+  {
+   "game": 777,
+   "step": 463,
+   "steps_in_game": 1409,
+   "split": "test",
+   "difference": 0.00020152747456236852,
+   "recomputed": -3.8502992945254375,
+   "recorded": -3.850500822,
+   "class": "turn",
+   "support": 10
+  }
+ ],
+ "game_162_differences_by_step": [
+  [
+   149,
+   0.0
+  ],
+  [
+   166,
+   3.0353497493247175e-13
+  ],
+  [
+   192,
+   0.0
+  ],
+  [
+   197,
+   0.0
+  ],
+  [
+   199,
+   5.466125069729756e-08
+  ],
+  [
+   201,
+   0.0
+  ],
+  [
+   247,
+   0.0
+  ],
+  [
+   256,
+   0.0
+  ],
+  [
+   258,
+   0.0
+  ],
+  [
+   431,
+   3.977980179703522e-07
+  ],
+  [
+   449,
+   2.8805604077031255e-07
+  ],
+  [
+   471,
+   0.0
+  ],
+  [
+   564,
+   0.0
+  ],
+  [
+   570,
+   5.68459716462108e-08
+  ],
+  [
+   662,
+   0.0
+  ],
+  [
+   750,
+   1.6573409311590602e-12
+  ],
+  [
+   754,
+   6.661338147750937e-16
+  ],
+  [
+   755,
+   4.256861529848156e-11
+  ],
+  [
+   929,
+   0.0011378710230394162
+  ],
+  [
+   1118,
+   0.0
+  ],
+  [
+   1122,
+   0.0
+  ],
+  [
+   1323,
+   2.3109876981441763e-08
+  ],
+  [
+   1326,
+   5.2846725777842775e-08
+  ],
+  [
+   1338,
+   3.6841139557618366e-08
+  ],
+  [
+   1386,
+   3.1393830299472625e-06
+  ],
+  [
+   1429,
+   4.714083665373521e-08
+  ],
+  [
+   1439,
+   0.0
+  ],
+  [
+   1440,
+   0.0
+  ],
+  [
+   1450,
+   3.848932217243531e-09
+  ],
+  [
+   1460,
+   3.115907531943435e-11
+  ]
+ ],
+ "same_machine_subset": {
+  "what": "18 games (the ten with the largest differences and games 0 to 7), 540 roots, on the Mac: one game per forward against 32 games per forward, and each against the droplet record",
+  "games": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   37,
+   123,
+   162,
+   165,
+   460,
+   494,
+   543,
+   777,
+   789,
+   826
+  ],
+  "roots": 540,
+  "mac_batch1_vs_mac_batch32": {
+   "median": 2.442490653871614e-15,
+   "p90": 2.6588597415999645e-06,
+   "p99": 0.00023693614244852513,
+   "largest": 0.00040121832512030053
+  },
+  "mac_batch1_vs_droplet": {
+   "median": 1.3693007179985758e-10,
+   "p90": 1.1492278386524025e-06,
+   "p99": 9.59696274565917e-05,
+   "largest": 0.0009459391153905372
+  },
+  "mac_batch32_vs_droplet": {
+   "median": 1.4524825785510174e-10,
+   "p90": 3.0835849530695693e-06,
+   "p99": 0.00027360395120971546,
+   "largest": 0.0011378710230394162
+  },
+  "game_162_step_929_mac_one_game": -2.2874051198846095
+ },
+ "tail_estimates_hill": {
+  "20": {
+   "alpha": 2.2651014203279756,
+   "threshold": 0.00015490406036100524,
+   "expected_largest_at_270000_roots": 0.0016066622775311094,
+   "expected_roots_over_0.05_at_270000": 0.00041505029555538207,
+   "expected_roots_over_1e-3_at_270000": 2.927117103632387
+  },
+  "50": {
+   "alpha": 2.276414051637489,
+   "threshold": 0.00010488736994807013,
+   "expected_largest_at_270000_roots": 0.0016082245947994598,
+   "expected_roots_over_0.05_at_270000": 0.00040010256464045955,
+   "expected_roots_over_1e-3_at_270000": 2.9493786108166056
+  },
+  "100": {
+   "alpha": 2.251007622065151,
+   "threshold": 7.648466518822561e-05,
+   "expected_largest_at_270000_roots": 0.0016455491599358478,
+   "expected_roots_over_0.05_at_270000": 0.00045975130193845346,
+   "expected_roots_over_1e-3_at_270000": 3.068438315859836
+  },
+  "200": {
+   "alpha": 1.8201971293359371,
+   "threshold": 4.910501419574942e-05,
+   "expected_largest_at_270000_roots": 0.003196554801872611,
+   "expected_roots_over_0.05_at_270000": 0.006701325048379659,
+   "expected_roots_over_1e-3_at_270000": 8.291269059905046
+  },
+  "formula": "Hill estimator on the k largest of the 27,000 Mac differences: alpha = 1 / mean(log(x_i / x_k)); expected largest at 10 times the roots = x_k * (10 k)^(1/alpha); expected roots over t at 10 times the roots = 10 k (t / x_k)^(-alpha). It assumes a power-law tail and gives no confidence bound. Computed by the operator beside diag_logp.py, not by it."
+ },
+ "x86_replay": {
+  "what": "the same comparison on one fresh droplet of the label stage's size and image (s-8vcpu-16gb-amd, sfo3; not one of the two label droplets), made by diag_logp.py through x86_replay_droplet.py: every screened root of the 900 non-reserve games, one game per forward (as the label tool runs the seat; 8 parallel slices) and 32 games per forward (as distill_dataset.py runs by default; one process)",
+  "machine": {
+   "droplet_id": 607387621,
+   "name": "x86diag-1e117a",
+   "machine": {
+    "host": "bb-harness-x86diag-1e117a",
+    "cpu_model": "DO-Premium-AMD",
+    "nproc": 8,
+    "kernel": "6.8.0-142-generic",
+    "python": "3.12.3",
+    "torch": "2.14.0+cpu",
+    "numpy": "2.5.3",
+    "cc": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "library_sha256": "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0",
+    "abi": 5,
+    "obs_size": 2782,
+    "source_commit": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6"
+   },
+   "size": "s-8vcpu-16gb-amd",
+   "region": "sfo3",
+   "price_hourly": 0.16667
+  },
+  "x86_one_game_per_forward_vs_record": {
+   "roots": 27000,
+   "median": 2.855382597029363e-12,
+   "p99": 8.616170235948611e-08,
+   "p99.9": 1.3656530206331806e-07,
+   "largest": 2.1827373064553512e-07,
+   "roots_over": {
+    "1e-08": 8774,
+    "1e-06": 0,
+    "1e-05": 0,
+    "0.0001": 0,
+    "0.0003": 0,
+    "0.001": 0
+   }
+  },
+  "x86_32_games_per_forward_vs_record": {
+   "roots": 27000,
+   "median": 2.9031221870881076e-12,
+   "p99": 2.6661526346901337e-05,
+   "p99.9": 9.577685105698624e-05,
+   "largest": 0.0005817629042390582,
+   "roots_over": {
+    "1e-08": 9493,
+    "1e-06": 2212,
+    "1e-05": 743,
+    "0.0001": 26,
+    "0.0003": 2,
+    "0.001": 0
+   }
+  },
+  "mac_32_games_per_forward_vs_record": {
+   "roots": 27000,
+   "median": 2.9031221870881076e-12,
+   "p99": 4.2148796792055286e-05,
+   "p99.9": 0.00013221820704341486,
+   "largest": 0.0011378710230394162,
+   "roots_over": {
+    "1e-08": 9553,
+    "1e-06": 2531,
+    "1e-05": 1018,
+    "0.0001": 56,
+    "0.0003": 4,
+    "0.001": 1
+   }
+  },
+  "x86_32_vs_x86_one": {
+   "roots": 27000,
+   "median": 0.0,
+   "p99": 2.6684136977404724e-05,
+   "p99.9": 9.572447030306753e-05,
+   "largest": 0.0005818342847217772,
+   "roots_over": {
+    "1e-08": 5027,
+    "1e-06": 2213,
+    "1e-05": 742,
+    "0.0001": 26,
+    "0.0003": 2,
+    "0.001": 0
+   }
+  },
+  "by_shard_x86_one_game_largest": {
+   "m1-s1": 2.1827373064553512e-07,
+   "m1-s2": 2.1099631819510023e-07
+  },
+  "candidate_lists_that_differ": {
+   "x86_one": 0,
+   "x86_32": 0
+  },
+  "game_162_step_929": {
+   "record": -2.288351059,
+   "x86_one_game": -2.2883511308055393,
+   "x86_32_games": -2.2880769143393103,
+   "mac_32_games": -2.2872131879769606
+  },
+  "cost_usd": 0.048
+ }
+}

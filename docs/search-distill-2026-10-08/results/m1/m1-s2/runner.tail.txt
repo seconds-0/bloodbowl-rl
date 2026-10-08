@@ -1,0 +1,6 @@
+[12:15:20] stage done, 500/500 games, log age 21 s | m1-s2: done, 500 games, 15000 roots, 269 deviation roots, 0 cap rejections, 123 kick-off turn roots, 5117 s wall on 8 process(es)
+[12:15:30] SHARD-ACCEPTED m1-s2: 500 games, 15000 roots, 269 deviation roots (0 false, 264 confirmed, 0 unjudged), 0 cap rejections, 123 kick-off turn roots, 32000 other decisions; library 32632f034a30
+[12:15:33] delete droplet 607350324: HTTP 204
+[12:15:45] verify droplet 607350324: HTTP 404 (404 = gone)
+[12:15:45] lifetime 88.8 min at $0.16667/h: cost about $0.247
+[12:15:46] verify ssh key 59939169: HTTP 404 (404 = gone)

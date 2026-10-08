@@ -1,0 +1,21 @@
+{
+ "droplet_id": 607387621,
+ "name": "x86diag-1e117a",
+ "machine": {
+  "host": "bb-harness-x86diag-1e117a",
+  "cpu_model": "DO-Premium-AMD",
+  "nproc": 8,
+  "kernel": "6.8.0-142-generic",
+  "python": "3.12.3",
+  "torch": "2.14.0+cpu",
+  "numpy": "2.5.3",
+  "cc": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "library_sha256": "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0",
+  "abi": 5,
+  "obs_size": 2782,
+  "source_commit": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6"
+ },
+ "size": "s-8vcpu-16gb-amd",
+ "region": "sfo3",
+ "price_hourly": 0.16667
+}

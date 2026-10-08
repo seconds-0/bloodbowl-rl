@@ -1,0 +1,38 @@
+[12:54:19] diagnostic droplet x86diag-1e117a: 8 vCPU at $0.16667/h, --max-hours 1.0; state /Users/alexanderhuth/.cache/bb-droplet-tournament/x86diag-1e117a
+[12:54:19] registered disposable ssh key 59942190
+[12:54:21] created droplet 607387621 (bb-harness-x86diag-1e117a, s-8vcpu-16gb-amd, sfo3, tag bb-harness-tournament)
+[12:54:55] droplet 607387621 up at 164.92.87.106; installing
+[12:57:52] shim built: {'host': 'bb-harness-x86diag-1e117a', 'cpu_model': 'DO-Premium-AMD', 'nproc': 8, 'kernel': '6.8.0-142-generic', 'python': '3.12.3', 'torch': '2.14.0+cpu', 'numpy': '2.5.3', 'cc': 'cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0', 'library_sha256': '32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0', 'abi': 5, 'obs_size': 2782, 'source_commit': '5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6'}
+[12:57:54] 1 s: 
+[12:58:25] 31 s: 2/113 games, 12 s|
+[12:58:56] 62 s: 7/113 games, 39 s|32/900 games, 26 s|
+[12:59:27] 93 s: 13/113 games, 73 s|64/900 games, 54 s|
+[12:59:58] 124 s: 19/113 games, 104 s|128/900 games, 104 s|
+[13:00:28] 155 s: 24/113 games, 134 s|128/900 games, 104 s|
+[13:00:59] 186 s: 29/113 games, 161 s|160/900 games, 138 s|
+[13:01:30] 216 s: 34/113 games, 193 s|224/900 games, 197 s|
+[13:02:00] 247 s: 40/113 games, 229 s|256/900 games, 225 s|
+[13:02:31] 278 s: 45/113 games, 257 s|288/900 games, 254 s|
+[13:03:02] 309 s: 50/113 games, 288 s|320/900 games, 281 s|
+[13:03:33] 339 s: 55/113 games, 317 s|352/900 games, 309 s|
+[13:04:04] 370 s: 61/113 games, 352 s|384/900 games, 339 s|
+[13:04:35] 401 s: 66/113 games, 381 s|416/900 games, 366 s|
+[13:05:06] 432 s: 71/113 games, 413 s|448/900 games, 396 s|
+[13:05:36] 463 s: 76/113 games, 442 s|480/900 games, 425 s|
+[13:06:07] 494 s: 81/113 games, 471 s|512/900 games, 456 s|
+[13:06:38] 525 s: 87/113 games, 505 s|544/900 games, 484 s|
+[13:07:09] 555 s: 92/113 games, 536 s|576/900 games, 514 s|
+[13:07:39] 586 s: 97/113 games, 565 s|608/900 games, 542 s|
+[13:08:10] 617 s: 102/113 games, 594 s|640/900 games, 571 s|
+[13:08:41] 648 s: 107/113 games, 625 s|672/900 games, 601 s|
+[13:09:12] 679 s: 113/113 games, 657 s|736/900 games, 654 s|
+[13:09:43] 709 s: 113/113 games, 657 s|768/900 games, 678 s|
+[13:10:14] 741 s: 113/113 games, 657 s|800/900 games, 700 s|
+[13:10:45] 771 s: 113/113 games, 657 s|864/900 games, 749 s|
+[13:11:16] 802 s: FINISHED
+113/113 games, 657 s|900/900 games, 781 s|
+[13:11:30] delete droplet 607387621: HTTP 204
+[13:11:41] verify droplet 607387621: HTTP 404 (404 = gone)
+[13:11:41] lifetime 17.3 min at $0.16667/h: cost about $0.048
+[13:11:42] verify ssh key 59942190: HTTP 404 (404 = gone)
+[13:11:43] cost about $0.048

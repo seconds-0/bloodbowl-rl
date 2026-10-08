@@ -1,0 +1,14 @@
+32/900 games replayed, 3 s
+64/900 games replayed, 7 s
+96/900 games replayed, 11 s
+128/900 games replayed, 15 s
+Traceback (most recent call last):
+  File "/Users/alexanderhuth/Code/bb-opt-build/docs/search-distill-2026-10-08/distill_dataset.py", line 355, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/alexanderhuth/Code/bb-opt-build/docs/search-distill-2026-10-08/distill_dataset.py", line 351, in main
+    return build(ap.parse_args(argv))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/alexanderhuth/Code/bb-opt-build/docs/search-distill-2026-10-08/distill_dataset.py", line 257, in build
+    raise C.IntegrityError(f"{where}: a0's log-probability differs by {dlogp}")
+distill_common.IntegrityError: game 162 step 929: a0's log-probability differs by 0.0011378710230394162
