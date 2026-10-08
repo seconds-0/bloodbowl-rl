@@ -436,3 +436,4 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Kept.** 1,000 labelled games (566 judged deviations), the dataset and the tools. The test games are unopened.
 - **Spend.** About $0.70 of $18.50. Every droplet is gone.
 - **Next.** A further distillation test is a new entry. Options are set down in D449 without choosing.
+- **Exploratory, after D449 (not registered, decides nothing):** running the same fine-tune for 24,000 steps instead of 2,400 left the training fit where it was (about 0.60 at lambda 16, 0.42 at lambda 4), so the step budget does not look like the limit. On the validation games the label's probability drifted down with more steps. Notes: `docs/search-distill-2026-10-08/NOTES.md`, section 0000.
