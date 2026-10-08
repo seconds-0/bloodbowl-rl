@@ -1,0 +1,27 @@
+[13:57:20] SHARD-ACCEPTED m1-s1: 500 games, 15000 roots, 297 deviation roots (3 false, 292 confirmed, 0 unjudged), 0 cap rejections, 65 kick-off turn roots, 32000 other decisions; library 32632f034a30
+[13:57:20] SHARD-ACCEPTED m1-s2: 500 games, 15000 roots, 269 deviation roots (0 false, 264 confirmed, 0 unjudged), 0 cap rejections, 123 kick-off turn roots, 32000 other decisions; library 32632f034a30
+[13:57:20] dataset droplet dsb1-880ddc: 2 shards, 7 forward processes at $0.16667/h, --max-hours 1.5 (a time limit: about $0.25 of droplet time); state /Users/alexanderhuth/.cache/bb-droplet-tournament/dsb1-880ddc
+[13:57:21] registered disposable ssh key 59943526
+[13:57:23] created droplet 607405447 (bb-harness-dsb1-880ddc, s-8vcpu-16gb-amd, sfo3, tag bb-harness-tournament)
+[13:57:57] droplet 607405447 up at 64.23.225.99; installing
+[14:00:43] shim built: DO-Premium-AMD, 8 cores, library 32632f034a30
+[14:00:45] 1 s: running
+[14:01:46] 62 s: running | 32/900 games replayed, 29 s
+[14:02:48] 123 s: running | 96/900 games replayed, 83 s
+[14:03:49] 184 s: running | 192/900 games replayed, 163 s
+[14:04:50] 245 s: running | 256/900 games replayed, 217 s
+[14:05:51] 306 s: running | 320/900 games replayed, 269 s
+[14:06:52] 367 s: running | 416/900 games replayed, 351 s
+[14:07:53] 428 s: running | 480/900 games replayed, 407 s
+[14:08:54] 489 s: running | 544/900 games replayed, 459 s
+[14:09:55] 550 s: running | 608/900 games replayed, 513 s
+[14:10:56] 611 s: running | 672/900 games replayed, 568 s
+[14:11:57] 673 s: running | 768/900 games replayed, 649 s
+[14:12:58] 734 s: running | 832/900 games replayed, 704 s
+[14:14:00] 795 s: 0 | DATASET train: 700 games, 65800 loss decisions, 370 labels; validation: 100 games, 9400 loss decisions, 77 labels; test: 100 games, 9400 loss decisions, 62 labels; reserve: 100 games, not written;
+[14:14:20] delete droplet 607405447: HTTP 204
+[14:14:32] verify droplet 607405447: HTTP 404 (404 = gone)
+[14:14:32] lifetime 17.2 min at $0.16667/h: cost about $0.048
+[14:14:32] verify ssh key 59943526: HTTP 404 (404 = gone)
+DATASET-FETCHED /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/sd1/dataset-m1: train: 65800 loss decisions, 370 labels; validation: 9400 loss decisions, 77 labels; test: 9400 loss decisions, 62 labels; largest a0 log-probability difference 2.18e-07 (tolerance 0.001); cost about $0.048
+DATASET-FETCHED /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/sd1/dataset-m1: train: 65800 loss decisions, 370 labels; validation: 9400 loss decisions, 77 labels; test: 9400 loss decisions, 62 labels; largest a0 log-probability difference 2.18e-07 (tolerance 0.001); cost about $0.048

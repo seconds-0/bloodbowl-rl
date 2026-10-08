@@ -1,0 +1,8 @@
+plan search-distill-registered (PLAN.md beside this file), sha256 7833952041c0d3b9e98bf42471408d0552e4fe9a04d90c13c700ad16cf8dae00
+dataset: shards m1-s1, m1-s2 (2 of the plan's 8)
+READING 1, fit: NOT FIT. Arm c55d1l16: weighted mean probability of the label on training deviation roots 0.6051458886303249 from float32 logits (0.6051458940053956 in the float64 training arithmetic), threshold 0.8
+arm        lambda  blob      train: label p  p>=.5   change elsewhere (TV, top) | validation: M      U        g       q        J (diagnostic)
+c55d1l1    1.0     accepted        0.2816   0.279   0.02953 0.01774            | 0.0784 0.05625 0.1486 0.00824 -8.039e-04
+c55d1l4    4.0     accepted        0.4239   0.421   0.05464 0.03639            | 0.1140 0.08438 0.1486 0.00824 -1.210e-03
+c55d1l16   16.0    accepted        0.6051   0.638   0.08206 0.06575            | 0.1688 0.11257 0.1486 0.00824 -1.594e-03
+This is the fit reading only. No selection file is written and the test split stays closed.

@@ -1,0 +1,58 @@
+{
+ "schema": "distill-dataset-droplet-v1",
+ "name": "dsb1-880ddc",
+ "run_id": "880ddc",
+ "droplet_id": 607405447,
+ "droplet_name": "bb-harness-dsb1-880ddc",
+ "size": "s-8vcpu-16gb-amd",
+ "region": "sfo3",
+ "price_hourly": 0.16667,
+ "machine": {
+  "host": "bb-harness-dsb1-880ddc",
+  "cpu_model": "DO-Premium-AMD",
+  "nproc": 8,
+  "kernel": "6.8.0-142-generic",
+  "python": "3.12.3",
+  "torch": "2.14.0+cpu",
+  "numpy": "2.5.3",
+  "cc": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "library_sha256": "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0",
+  "abi": 5,
+  "obs_size": 2782,
+  "source_commit": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6"
+ },
+ "processes": 7,
+ "plan_sha256": "7833952041c0d3b9e98bf42471408d0552e4fe9a04d90c13c700ad16cf8dae00",
+ "commit": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6",
+ "shards": [
+  "m1-s1",
+  "m1-s2"
+ ],
+ "tool_sha256": "4be1369b4140390427dc97b0bf2efb7bebb1e3a135790e9f5a313b0dbe927ef5",
+ "launcher_sha256": "a89bc24cdbd5d09b4d9d8a99a8cf50e999fb351e682ba8536ff96c07b55ed7ec",
+ "files": {
+  "train": {
+   "path": "train.pt",
+   "sha256": "e5f7047bdc7ceaa7a2a8a0a865d6ccb389fadc59d0f95e2b5c1f1b27bd84f17e",
+   "examples": 65800,
+   "labels": 370
+  },
+  "validation": {
+   "path": "validation.pt",
+   "sha256": "a2348e0287d97589b6e642336c6c2a2b320a945ebf52b1dbd0702f64852a9191",
+   "examples": 9400,
+   "labels": 77
+  },
+  "test": {
+   "path": "locked/test.pt",
+   "sha256": "a364eba2d5b1a9ce98bee4638f5464f26f7d0128539deab70b9787a37eb7f2ba",
+   "examples": 9400,
+   "labels": 62
+  }
+ },
+ "max_a0_logprob_difference": 2.1827373064553512e-07,
+ "logprob_tolerance": 0.001,
+ "build_seconds": 813.0,
+ "cost": 0.0477,
+ "lifetime_seconds": 1033.0
+}

@@ -1,0 +1,92 @@
+{
+ "schema": "search-distill-dataset-v1",
+ "plan_sha256": "7833952041c0d3b9e98bf42471408d0552e4fe9a04d90c13c700ad16cf8dae00",
+ "checkpoint_sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+ "harness_commit": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6",
+ "library_sha256": "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0",
+ "label_library_sha256": [
+  "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0"
+ ],
+ "shards": {
+  "m1-s1": {
+   "games": 500,
+   "roots": 15000
+  },
+  "m1-s2": {
+   "games": 500,
+   "roots": 15000
+  }
+ },
+ "plan_shards": [
+  "m1-s1",
+  "m1-s2",
+  "m2-s1",
+  "m2-s2",
+  "m2-s3",
+  "m2-s4",
+  "m2-s5",
+  "m2-s6"
+ ],
+ "complete": false,
+ "counts": {
+  "train": {
+   "games": 700,
+   "roots": 21000,
+   "deviation_roots": 370,
+   "other": 44800,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 111
+  },
+  "validation": {
+   "games": 100,
+   "roots": 3000,
+   "deviation_roots": 77,
+   "other": 6400,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 29
+  },
+  "test": {
+   "games": 100,
+   "roots": 3000,
+   "deviation_roots": 62,
+   "other": 6400,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 18
+  },
+  "reserve": {
+   "games": 100,
+   "roots": 3000,
+   "other": 6400
+  }
+ },
+ "files": {
+  "train": {
+   "path": "train.pt",
+   "sha256": "e5f7047bdc7ceaa7a2a8a0a865d6ccb389fadc59d0f95e2b5c1f1b27bd84f17e",
+   "examples": 65800,
+   "labels": 370
+  },
+  "validation": {
+   "path": "validation.pt",
+   "sha256": "a2348e0287d97589b6e642336c6c2a2b320a945ebf52b1dbd0702f64852a9191",
+   "examples": 9400,
+   "labels": 77
+  },
+  "test": {
+   "path": "locked/test.pt",
+   "sha256": "a364eba2d5b1a9ce98bee4638f5464f26f7d0128539deab70b9787a37eb7f2ba",
+   "examples": 9400,
+   "labels": 62
+  }
+ },
+ "reserve": "its games and records are counted above; it is never written and its labels are not counted",
+ "roots_with_support_rebuilt_and_equal": 27000,
+ "max_a0_logprob_difference": 2.1827373064553512e-07,
+ "logprob_tolerance": 0.001,
+ "roots_with_candidates_reordered_within_tolerance": 0,
+ "batch_games": 32,
+ "seconds": 765.8,
+ "torch": "2.14.0+cpu",
+ "numpy": "2.5.3",
+ "python": "3.12.3"
+}

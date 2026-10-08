@@ -1,0 +1,16 @@
+{
+ "schema": "search-distill-build-b1-v1",
+ "forward": "one game per forward (the registered Features.run on a batch of one), in worker processes",
+ "processes": 7,
+ "games_replayed_between_forward_rounds": 32,
+ "tool_sha256": "4be1369b4140390427dc97b0bf2efb7bebb1e3a135790e9f5a313b0dbe927ef5",
+ "registered_build": "distill_dataset.build, unchanged; tolerance 0.001",
+ "plan_sha256": "7833952041c0d3b9e98bf42471408d0552e4fe9a04d90c13c700ad16cf8dae00",
+ "machine": {
+  "machine": "x86_64",
+  "system": "Linux",
+  "release": "6.8.0-142-generic",
+  "node": "bb-harness-dsb1-880ddc",
+  "processor": "x86_64"
+ }
+}

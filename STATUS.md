@@ -428,3 +428,11 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Why.** A third droplet running one game per forward, as the label tool does, reproduced all 27,000 records to 0.0000002. Running 32 games per forward (the build's default) differs by up to 0.0006 on the droplet and 0.0011 on the Mac. The labels are sound; the build's arithmetic was not the label tool's.
 - **Fix (D445).** No acceptance rule changes. The registered build runs on a droplet, one game per forward, and the dataset appears on the Mac only after every check and a verified teardown. Allocation raised from $14 to $18.50 for the extra builds.
 - **Next.** The milestone 1 dataset, the fine-tune, the fit check; if it reads fit, the other 9,000 label games.
+
+**Update 2026-10-08 14:30 PDT (D449): search distillation Test 1 stops at its first fit check.**
+- **Reading 1: NOT FIT.** The dataset rebuilt on a droplet was accepted. After the registered 2,400 steps the strongest arm (lambda 16) puts 0.605 probability on its 370 training labels; the registered bar is 0.80. By the plan's rule it stops: the other 9,000 label games are not played, and there is no selection, no held-out look and no gate.
+- **What it does not say.** Nothing about strength or transfer, and R1 is not closed: the weights were still moving when the fine-tune stopped.
+- **Printed beside it, read by no rule.** On 100 validation games the label's probability is 0.08, 0.11 and 0.17 at lambda 1, 4 and 16, and 4.8%, 7.0% and 9.8% of other decisions change their top action.
+- **Kept.** 1,000 labelled games (566 judged deviations), the dataset and the tools. The test games are unopened.
+- **Spend.** About $0.70 of $18.50. Every droplet is gone.
+- **Next.** A further distillation test is a new entry. Options are set down in D449 without choosing.

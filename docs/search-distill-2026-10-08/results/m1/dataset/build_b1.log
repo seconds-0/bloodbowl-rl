@@ -1,0 +1,32 @@
+32/900 games replayed, 29 s
+64/900 games replayed, 55 s
+96/900 games replayed, 83 s
+128/900 games replayed, 108 s
+160/900 games replayed, 136 s
+192/900 games replayed, 163 s
+224/900 games replayed, 190 s
+256/900 games replayed, 217 s
+288/900 games replayed, 242 s
+320/900 games replayed, 269 s
+352/900 games replayed, 296 s
+384/900 games replayed, 324 s
+416/900 games replayed, 351 s
+448/900 games replayed, 378 s
+480/900 games replayed, 407 s
+512/900 games replayed, 433 s
+544/900 games replayed, 459 s
+576/900 games replayed, 487 s
+608/900 games replayed, 513 s
+640/900 games replayed, 539 s
+672/900 games replayed, 568 s
+704/900 games replayed, 595 s
+736/900 games replayed, 622 s
+768/900 games replayed, 649 s
+800/900 games replayed, 676 s
+832/900 games replayed, 704 s
+864/900 games replayed, 732 s
+896/900 games replayed, 758 s
+900/900 games replayed, 764 s
+SHARD-ACCEPTED m1-s1: 500 games, 15000 roots, 297 deviation roots (3 false, 292 confirmed, 0 unjudged), 0 cap rejections, 65 kick-off turn roots, 32000 other decisions; library 32632f034a30
+SHARD-ACCEPTED m1-s2: 500 games, 15000 roots, 269 deviation roots (0 false, 264 confirmed, 0 unjudged), 0 cap rejections, 123 kick-off turn roots, 32000 other decisions; library 32632f034a30
+DATASET train: 700 games, 65800 loss decisions, 370 labels; validation: 100 games, 9400 loss decisions, 77 labels; test: 100 games, 9400 loss decisions, 62 labels; reserve: 100 games, not written; largest a0 log-probability difference 2.18e-07, 0 roots with candidates reordered within the tolerance; 27000 root supports rebuilt on replay and equal to the record's; holds 2 of the plan's 8 shards

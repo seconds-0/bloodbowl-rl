@@ -1,0 +1,45 @@
+c55d1l1: lambda 1.0, 2400 steps at 0.001
+  c55d1l1 {"step": 0, "chunk_loss": 0.473622133948229, "delta_norm": 0.0, "seconds": 0.6}
+  c55d1l1 {"step": 200, "chunk_loss": 0.3164635548169749, "delta_norm": 3.6730619400329254, "seconds": 26.8}
+  c55d1l1 {"step": 400, "chunk_loss": 0.26143556750341307, "delta_norm": 6.251703060849758, "seconds": 47.0}
+  c55d1l1 {"step": 600, "chunk_loss": 0.26357363071202994, "delta_norm": 8.466331630298365, "seconds": 64.1}
+  c55d1l1 {"step": 800, "chunk_loss": 0.15274253735191173, "delta_norm": 10.404328686416598, "seconds": 84.1}
+  c55d1l1 {"step": 1000, "chunk_loss": 0.16002273968566694, "delta_norm": 12.139429415311866, "seconds": 100.3}
+  c55d1l1 {"step": 1200, "chunk_loss": 0.1190583449529131, "delta_norm": 13.79760840858438, "seconds": 116.1}
+  c55d1l1 {"step": 1400, "chunk_loss": 0.005929508641826986, "delta_norm": 15.328018568740529, "seconds": 131.3}
+  c55d1l1 {"step": 1600, "chunk_loss": 0.11510388768728043, "delta_norm": 16.763176344055378, "seconds": 147.4}
+  c55d1l1 {"step": 1800, "chunk_loss": 0.0046973729704836, "delta_norm": 18.126918244218206, "seconds": 164.1}
+  c55d1l1 {"step": 2000, "chunk_loss": 0.09884129077967992, "delta_norm": 19.438781940062263, "seconds": 180.5}
+  c55d1l1 {"step": 2200, "chunk_loss": 0.06404415691613398, "delta_norm": 20.679898727389546, "seconds": 197.4}
+  c55d1l1 {"step": 2400, "chunk_loss": 0.06487548704301208, "delta_norm": 21.87855803162573, "seconds": 214.2}
+c55d1l1: blob 7d7947c94203 sidecar d672cda0c40c; training label probability 0.282, training change elsewhere 0.0295; 215.9 s
+c55d1l4: lambda 4.0, 2400 steps at 0.001
+  c55d1l4 {"step": 0, "chunk_loss": 1.894488535792916, "delta_norm": 0.0, "seconds": 0.3}
+  c55d1l4 {"step": 200, "chunk_loss": 1.1483282407984599, "delta_norm": 4.348028700204486, "seconds": 20.5}
+  c55d1l4 {"step": 400, "chunk_loss": 0.9036076975884739, "delta_norm": 7.508270247795593, "seconds": 36.7}
+  c55d1l4 {"step": 600, "chunk_loss": 0.8066316174597926, "delta_norm": 10.085444538183214, "seconds": 51.1}
+  c55d1l4 {"step": 800, "chunk_loss": 0.4420247912618379, "delta_norm": 12.289958205396092, "seconds": 66.3}
+  c55d1l4 {"step": 1000, "chunk_loss": 0.44519431804734116, "delta_norm": 14.266035693247304, "seconds": 82.0}
+  c55d1l4 {"step": 1200, "chunk_loss": 0.29813295490951564, "delta_norm": 16.051169776127132, "seconds": 97.5}
+  c55d1l4 {"step": 1400, "chunk_loss": 0.016143624510823157, "delta_norm": 17.71147953688435, "seconds": 112.9}
+  c55d1l4 {"step": 1600, "chunk_loss": 0.28206923680838836, "delta_norm": 19.308627542479478, "seconds": 131.9}
+  c55d1l4 {"step": 1800, "chunk_loss": 0.010542336955458862, "delta_norm": 20.85362795940103, "seconds": 147.6}
+  c55d1l4 {"step": 2000, "chunk_loss": 0.1979980603370975, "delta_norm": 22.342029843357345, "seconds": 163.4}
+  c55d1l4 {"step": 2200, "chunk_loss": 0.14435450461035462, "delta_norm": 23.7824256303186, "seconds": 177.1}
+  c55d1l4 {"step": 2400, "chunk_loss": 0.1390200803012955, "delta_norm": 25.16017591720819, "seconds": 191.5}
+c55d1l4: blob 4ecfece2aa52 sidecar 59ed5fd15aeb; training label probability 0.424, training change elsewhere 0.0546; 191.7 s
+c55d1l16: lambda 16.0, 2400 steps at 0.001
+  c55d1l16 {"step": 0, "chunk_loss": 7.577954143171664, "delta_norm": 0.0, "seconds": 0.2}
+  c55d1l16 {"step": 200, "chunk_loss": 4.142798595624127, "delta_norm": 5.0105618104576015, "seconds": 17.4}
+  c55d1l16 {"step": 400, "chunk_loss": 3.0888177921512594, "delta_norm": 8.574244658828064, "seconds": 32.6}
+  c55d1l16 {"step": 600, "chunk_loss": 2.3458530431891393, "delta_norm": 11.384112321289136, "seconds": 47.9}
+  c55d1l16 {"step": 800, "chunk_loss": 1.2358439776466683, "delta_norm": 13.757592633930651, "seconds": 62.8}
+  c55d1l16 {"step": 1000, "chunk_loss": 1.1714517437076046, "delta_norm": 15.787776900044099, "seconds": 78.4}
+  c55d1l16 {"step": 1200, "chunk_loss": 0.8935154774590882, "delta_norm": 17.53887280948488, "seconds": 98.3}
+  c55d1l16 {"step": 1400, "chunk_loss": 0.06206228392224232, "delta_norm": 19.144516528739295, "seconds": 116.5}
+  c55d1l16 {"step": 1600, "chunk_loss": 0.7264282683793852, "delta_norm": 20.6480426155047, "seconds": 132.2}
+  c55d1l16 {"step": 1800, "chunk_loss": 0.04003249396610563, "delta_norm": 22.068977615724766, "seconds": 147.7}
+  c55d1l16 {"step": 2000, "chunk_loss": 0.5077058012124935, "delta_norm": 23.455671287951553, "seconds": 162.7}
+  c55d1l16 {"step": 2200, "chunk_loss": 0.3452994282961183, "delta_norm": 24.843162256689844, "seconds": 180.1}
+  c55d1l16 {"step": 2400, "chunk_loss": 0.31314352916492766, "delta_norm": 26.205194192731977, "seconds": 195.5}
+c55d1l16: blob c2cc95232fc5 sidecar 3a5a933df41d; training label probability 0.605, training change elsewhere 0.0821; 195.6 s

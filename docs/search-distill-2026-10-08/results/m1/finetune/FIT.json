@@ -1,0 +1,151 @@
+{
+ "schema": "search-distill-fit-v1",
+ "plan_sha256": "7833952041c0d3b9e98bf42471408d0552e4fe9a04d90c13c700ad16cf8dae00",
+ "plan_name": "search-distill-registered",
+ "dataset_files": {
+  "train": {
+   "path": "train.pt",
+   "sha256": "e5f7047bdc7ceaa7a2a8a0a865d6ccb389fadc59d0f95e2b5c1f1b27bd84f17e",
+   "examples": 65800,
+   "labels": 370
+  },
+  "validation": {
+   "path": "validation.pt",
+   "sha256": "a2348e0287d97589b6e642336c6c2a2b320a945ebf52b1dbd0702f64852a9191",
+   "examples": 9400,
+   "labels": 77
+  },
+  "test": {
+   "path": "locked/test.pt",
+   "sha256": "a364eba2d5b1a9ce98bee4638f5464f26f7d0128539deab70b9787a37eb7f2ba",
+   "examples": 9400,
+   "labels": 62
+  }
+ },
+ "dataset_shards": [
+  "m1-s1",
+  "m1-s2"
+ ],
+ "fit": {
+  "arm": "c55d1l16",
+  "threshold": 0.8,
+  "value": 0.6051458886303249,
+  "value_float64": 0.6051458940053956,
+  "reading": "NOT FIT"
+ },
+ "arms": {
+  "c55d1l1": {
+   "lambda": 1.0,
+   "trained": true,
+   "blob": "checkpoints/c55d1l1/0000002999975936.bin",
+   "blob_sha256": "7d7947c942035082e5aa6b3849a1b2805c9a42f3ad1363d05a33ce3e657c5139",
+   "sidecar_sha256": "d672cda0c40cfa0a9c53e7b0802e78ec2d131ede5f1aa31b7baa0351fab417a3",
+   "blob_accepted": true,
+   "blob_problems": [],
+   "train": {
+    "label_probability": 0.2816344521439606,
+    "label_probability_ge_half": 0.2789459140352199,
+    "tv_other": 0.029532973512548712,
+    "top_changed_other": 0.017742322422088036,
+    "deviation_roots": 370,
+    "other_decisions": 65430
+   },
+   "validation": {
+    "label_probability": 0.07844289520221571,
+    "label_probability_ge_half": 0.07555274794693619,
+    "tv_other": 0.056247615323633135,
+    "top_changed_other": 0.04830480728349247,
+    "deviation_roots": 77,
+    "other_decisions": 9323
+   },
+   "diagnostic_J": {
+    "J": -0.000803896007605141,
+    "q": 0.008240671331001165,
+    "M": 0.07844289520221571,
+    "g": 0.14861161918102647,
+    "U": 0.056247615323633135,
+    "deviation_roots": 77,
+    "judged_labels": 77
+   }
+  },
+  "c55d1l4": {
+   "lambda": 4.0,
+   "trained": true,
+   "blob": "checkpoints/c55d1l4/0000002999975936.bin",
+   "blob_sha256": "4ecfece2aa528d3c468345cc2e76a65aca9e6d513c93785c52a39e555aeb0ad6",
+   "sidecar_sha256": "59ed5fd15aeb7231b2f091792f899ad3358032b779cb76ffa6af92464184dd82",
+   "blob_accepted": true,
+   "blob_problems": [],
+   "train": {
+    "label_probability": 0.4238678661823011,
+    "label_probability_ge_half": 0.4212324465546261,
+    "tv_other": 0.054636096546422895,
+    "top_changed_other": 0.036385431312017054,
+    "deviation_roots": 370,
+    "other_decisions": 65430
+   },
+   "validation": {
+    "label_probability": 0.11402853703315076,
+    "label_probability_ge_half": 0.10120025268477574,
+    "tv_other": 0.0843797676347944,
+    "top_changed_other": 0.06979251415913874,
+    "deviation_roots": 77,
+    "other_decisions": 9323
+   },
+   "diagnostic_J": {
+    "J": -0.0012104301499088683,
+    "q": 0.008240671331001165,
+    "M": 0.11402853703315076,
+    "g": 0.14861161918102647,
+    "U": 0.0843797676347944,
+    "deviation_roots": 77,
+    "judged_labels": 77
+   }
+  },
+  "c55d1l16": {
+   "lambda": 16.0,
+   "trained": true,
+   "blob": "checkpoints/c55d1l16/0000002999975936.bin",
+   "blob_sha256": "c2cc95232fc5318fce4820b0bc4c15930d96679592b1473f5bb0241b9eda3fd5",
+   "sidecar_sha256": "3a5a933df41d625502b2e2fc3326cdc6029141575e50fab3e67d5d269fc439ec",
+   "blob_accepted": true,
+   "blob_problems": [],
+   "train": {
+    "label_probability": 0.6051458886303249,
+    "label_probability_ge_half": 0.6384053055995177,
+    "tv_other": 0.08206378584060409,
+    "top_changed_other": 0.06575376357206934,
+    "deviation_roots": 370,
+    "other_decisions": 65430
+   },
+   "validation": {
+    "label_probability": 0.16882455896790632,
+    "label_probability_ge_half": 0.1602021478205938,
+    "tv_other": 0.11256525519598098,
+    "top_changed_other": 0.0976167636854178,
+    "deviation_roots": 77,
+    "other_decisions": 9323
+   },
+   "diagnostic_J": {
+    "J": -0.0015942914815350816,
+    "q": 0.008240671331001165,
+    "M": 0.16882455896790632,
+    "g": 0.14861161918102647,
+    "U": 0.11256525519598098,
+    "deviation_roots": 77,
+    "judged_labels": 77
+   },
+   "train_float64": {
+    "label_probability": 0.6051458940053956,
+    "label_probability_ge_half": 0.6384053055995177,
+    "tv_other": 0.08206378529138866,
+    "top_changed_other": 0.06575376357206934,
+    "deviation_roots": 370,
+    "other_decisions": 65430
+   }
+  }
+ },
+ "torch": "2.14.0",
+ "numpy": "2.5.3",
+ "python": "3.12.3"
+}
