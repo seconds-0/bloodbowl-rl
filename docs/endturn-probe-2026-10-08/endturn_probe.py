@@ -10,6 +10,11 @@ root (a search clone, both recurrent states, the logits, the action played):
   decline_block  plain play chose END_ACTIVATION while a BLOCK_TARGET was legal
   activate       plain play chose an ACTIVATE while END_TURN was legal
 
+A decision made inside the engine's kick-off procedure (the kicking team's free
+turn from a Blitz kick-off result) is not a root of any class: ending that turn
+does not advance the completed-turn counter the rollout core stops on. Each
+game's record counts the decisions left out for this reason, per class.
+
 After the game every kept root is evaluated by rollouts of the harness's own
 rollout core (play_harness.search.Rollouts) with common random numbers:
 
@@ -290,6 +295,17 @@ class Probe:
 
 
 # ---- one real game ------------------------------------------------------------------------
+def in_kickoff_turn(E, match):
+    """True while the engine is inside its kick-off procedure. A decision there that
+    offers END_TURN and an ACTIVATE is the kicking team's free turn from a Blitz
+    kick-off result. Ending that turn does not advance the engine's completed-turn
+    counter, which is how the rollout core finds the end of the searcher's team turn,
+    so a rollout from such a decision runs on to the end of the team's next real turn.
+    No horizon this probe names applies there: such a decision is not a root."""
+    kickoff = E.PROCS.index("KICKOFF")
+    return any(match.stack[i].proc == kickoff for i in range(int(match.stack_top)))
+
+
 def classify(E, a0, types):
     if a0[0] == E.A["END_TURN"] and E.A["ACTIVATE"] in types:
         return "end_turn"
@@ -317,6 +333,7 @@ def play_game(p, engine_seed, a, caps):
     kept = {c: [] for c in CLASSES}
     seen = {c: 0 for c in CLASSES}
     counts = {"activate": 0, "end_turn": 0, "turn_level": 0, "own_decisions": 0}
+    kickoff_turn = {c: 0 for c in CLASSES}       # decisions of a class left out: a Blitz turn
     step = 0
 
     def bad(what):
@@ -350,6 +367,9 @@ def play_game(p, engine_seed, a, caps):
             if a0[0] == E.A["END_TURN"]:
                 counts["end_turn"] += 1
             cls = classify(E, a0, types) if len(support) >= 2 else None
+            if cls and in_kickoff_turn(E, eng.match()):
+                kickoff_turn[cls] += 1
+                cls = None
             if cls:
                 seen[cls] += 1
                 cap = caps[cls]
@@ -398,7 +418,8 @@ def play_game(p, engine_seed, a, caps):
     eng.close()
     for cls in CLASSES:
         kept[cls].sort(key=lambda r: r["step"])
-    return {"kept": kept, "seen": seen, "counts": counts, "steps": step, "seed": seeds[a],
+    return {"kept": kept, "seen": seen, "counts": counts, "kickoff_turn": kickoff_turn,
+            "steps": step, "seed": seeds[a],
             "own_turns": own_turns, "final_score": final_score, "integrity": integrity}
 
 
@@ -668,7 +689,7 @@ def run_game(p, game, args, rollouts_turn, rollouts_match, sink_roots):
             "engine_seed": engine_seed, "seat": a, "engine_steps": g["steps"],
             "natural": True, "invalid": [], "integrity": g["integrity"],
             "own_turns": g["own_turns"], "final_score": list(g["final_score"]),
-            "counts": g["counts"], "seen": g["seen"],
+            "counts": g["counts"], "seen": g["seen"], "kickoff_turn_decisions": g["kickoff_turn"],
             "kept": {c: len(g["kept"][c]) for c in CLASSES}, "match_roots": len(chosen),
             "root_lines": root_lines, "capped_rollouts": capped, "checks": checks,
             "seconds": {"play": round(t_play, 2), **{k: round(v, 2) for k, v in secs.items()},
