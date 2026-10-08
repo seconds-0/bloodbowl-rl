@@ -1,0 +1,8 @@
+32/180 games replayed, 3 s
+64/180 games replayed, 7 s
+96/180 games replayed, 10 s
+128/180 games replayed, 13 s
+160/180 games replayed, 16 s
+180/180 games replayed, 20 s
+SHARD-ACCEPTED m0: 200 games, 6000 roots, 87 deviation roots (0 false, 86 confirmed, 0 unjudged), 0 cap rejections, 27 kick-off turn roots, 12800 other decisions; library 3359eff5b536
+DATASET train: 140 games, 13160 loss decisions, 64 labels; validation: 20 games, 1880 loss decisions, 6 labels; test: 20 games, 1880 loss decisions, 4 labels; reserve: 20 games, not written; largest a0 log-probability difference 1.16e-04, 0 roots with candidates reordered within the tolerance

@@ -1,0 +1,406 @@
+{
+ "schema": "search-distill-heldout-v1",
+ "plan_sha256": "f000c8057f2cb80c322767181d08e082302fa948ff19777f208ed493ecc6db57",
+ "plan_name": "search-distill-m0",
+ "purpose": "milestone 0: the seen block of 2026-10-07, never evidence",
+ "selection_sha256": "7eb5870adb1c5e594eeed6d9ce9e9de2cadf966cf567cec65a1aa60777ec3cf8",
+ "registered_arm": "c55d1l1",
+ "bootstrap": {
+  "cluster": "engine seed",
+  "replicates": 2000,
+  "generator_seed": 0
+ },
+ "arms": {
+  "c55d1l1": {
+   "label probability, all labels": {
+    "n": 4,
+    "value": 0.006892750558827759,
+    "interval": [
+     8.744456686042768e-21,
+     0.023750959285765323
+    ]
+   },
+   "label probability, new labels (original below 0.01)": {
+    "n": 3,
+    "value": 8.081657976910918e-08,
+    "interval": [
+     3.720836052000961e-32,
+     2.2281206571855665e-07
+    ]
+   },
+   "label probability, confirmed labels": {
+    "n": 4,
+    "value": 0.006892750558827759,
+    "interval": [
+     8.744456686042768e-21,
+     0.023750959285765323
+    ]
+   },
+   "label probability, class turn": {
+    "n": 2,
+    "value": 0.015131281754047732,
+    "interval": [
+     1.7676966204005434e-20,
+     0.033647192321500874
+    ]
+   },
+   "label probability, class after_declare": {
+    "n": 2,
+    "value": 1.1802421302913645e-07,
+    "interval": [
+     3.720836052000961e-32,
+     2.2281206571855665e-07
+    ]
+   },
+   "label probability, without kick-off turn roots": {
+    "n": 4,
+    "value": 0.006892750558827759,
+    "interval": [
+     8.744456686042768e-21,
+     0.023750959285765323
+    ]
+   },
+   "share of labels at 0.5 or more": {
+    "n": 4,
+    "value": 0.0,
+    "interval": [
+     0.0,
+     0.0
+    ]
+   },
+   "total variation, screened roots": {
+    "n": 596,
+    "value": 0.08789822292240285,
+    "interval": [
+     0.07017363032985581,
+     0.10849177327842752
+    ]
+   },
+   "top action changed, screened roots": {
+    "n": 596,
+    "value": 0.08397163568597105,
+    "interval": [
+     0.06599057763077246,
+     0.10377634878717391
+    ]
+   },
+   "total variation, out-of-scope decisions": {
+    "n": 1280,
+    "value": 0.03949710209101481,
+    "interval": [
+     0.030846272836091954,
+     0.04808922963384901
+    ]
+   },
+   "top action changed, out-of-scope decisions": {
+    "n": 1280,
+    "value": 0.038759011558627265,
+    "interval": [
+     0.02898001579448002,
+     0.049472369385619136
+    ]
+   },
+   "total variation, screened roots the original was sure of": {
+    "n": 404,
+    "value": 0.031295003051661066,
+    "interval": [
+     0.018485938461932375,
+     0.04536599930752689
+    ]
+   },
+   "top action changed, screened roots the original was sure of": {
+    "n": 404,
+    "value": 0.030424358108894527,
+    "interval": [
+     0.016553427572169387,
+     0.04555437642909798
+    ]
+   },
+   "total variation, out-of-scope decisions the original was sure of": {
+    "n": 882,
+    "value": 0.004514229509494246,
+    "interval": [
+     0.0008542818322008292,
+     0.00910423501586615
+    ]
+   },
+   "top action changed, out-of-scope decisions the original was sure of": {
+    "n": 882,
+    "value": 0.004067723556429563,
+    "interval": [
+     0.0,
+     0.009226550422560723
+    ]
+   },
+   "counts": {
+    "labels": 4,
+    "false_labels": 0,
+    "confirmed_labels": 4,
+    "unjudged_labels": 0,
+    "kickoff_turn_labels": 0,
+    "games": 20
+   }
+  },
+  "c55d1l4": {
+   "label probability, all labels": {
+    "n": 4,
+    "value": 0.0017073782879172526,
+    "interval": [
+     2.1688563564152596e-08,
+     0.005878626238366565
+    ]
+   },
+   "label probability, new labels (original below 0.01)": {
+    "n": 3,
+    "value": 1.7127225531092904e-06,
+    "interval": [
+     2.062824445431791e-27,
+     5.385721111046041e-06
+    ]
+   },
+   "label probability, confirmed labels": {
+    "n": 4,
+    "value": 0.0017073782879172526,
+    "interval": [
+     2.1688563564152596e-08,
+     0.005878626238366565
+    ]
+   },
+   "label probability, class turn": {
+    "n": 2,
+    "value": 0.00374812404572462,
+    "interval": [
+     5.385721111046041e-06,
+     0.008328053837685966
+    ]
+   },
+   "label probability, class after_declare": {
+    "n": 2,
+    "value": 2.1688563564152596e-08,
+    "interval": [
+     2.062824445431791e-27,
+     4.0944764859428267e-08
+    ]
+   },
+   "label probability, without kick-off turn roots": {
+    "n": 4,
+    "value": 0.0017073782879172526,
+    "interval": [
+     2.1688563564152596e-08,
+     0.005878626238366565
+    ]
+   },
+   "share of labels at 0.5 or more": {
+    "n": 4,
+    "value": 0.0,
+    "interval": [
+     0.0,
+     0.0
+    ]
+   },
+   "total variation, screened roots": {
+    "n": 596,
+    "value": 0.12105086135304656,
+    "interval": [
+     0.09777337782571102,
+     0.14755884613172465
+    ]
+   },
+   "top action changed, screened roots": {
+    "n": 596,
+    "value": 0.1231541875266508,
+    "interval": [
+     0.09590401333602057,
+     0.15606207780115164
+    ]
+   },
+   "total variation, out-of-scope decisions": {
+    "n": 1280,
+    "value": 0.046323683764436734,
+    "interval": [
+     0.037674601230033355,
+     0.05499512805874605
+    ]
+   },
+   "top action changed, out-of-scope decisions": {
+    "n": 1280,
+    "value": 0.045474857006673024,
+    "interval": [
+     0.03720510177580113,
+     0.0537669968071271
+    ]
+   },
+   "total variation, screened roots the original was sure of": {
+    "n": 404,
+    "value": 0.054566310227293566,
+    "interval": [
+     0.03587328352410274,
+     0.07454302926136179
+    ]
+   },
+   "top action changed, screened roots the original was sure of": {
+    "n": 404,
+    "value": 0.05125817640075421,
+    "interval": [
+     0.031741472960268205,
+     0.07117484278031477
+    ]
+   },
+   "total variation, out-of-scope decisions the original was sure of": {
+    "n": 882,
+    "value": 0.006620443691916509,
+    "interval": [
+     0.002738321548439584,
+     0.01132640746037669
+    ]
+   },
+   "top action changed, out-of-scope decisions the original was sure of": {
+    "n": 882,
+    "value": 0.005374244036474819,
+    "interval": [
+     0.0017185250845252612,
+     0.00983049818567544
+    ]
+   },
+   "counts": {
+    "labels": 4,
+    "false_labels": 0,
+    "confirmed_labels": 4,
+    "unjudged_labels": 0,
+    "kickoff_turn_labels": 0,
+    "games": 20
+   }
+  },
+  "c55d1l16": {
+   "label probability, all labels": {
+    "n": 4,
+    "value": 0.0018208491126323423,
+    "interval": [
+     1.3686610726507198e-09,
+     0.0062743097820229425
+    ]
+   },
+   "label probability, new labels (original below 0.01)": {
+    "n": 3,
+    "value": 3.3929563688749876e-09,
+    "interval": [
+     2.3393819166878486e-30,
+     5.562945004967441e-09
+    ]
+   },
+   "label probability, confirmed labels": {
+    "n": 4,
+    "value": 0.0018208491126323423,
+    "interval": [
+     1.3686610726507198e-09,
+     0.0062743097820229425
+    ]
+   },
+   "label probability, class turn": {
+    "n": 2,
+    "value": 0.003997245782357134,
+    "interval": [
+     5.562945004967441e-09,
+     0.008888605524532502
+    ]
+   },
+   "label probability, class after_declare": {
+    "n": 2,
+    "value": 2.393902194832423e-09,
+    "interval": [
+     2.339381916687849e-30,
+     4.519329377160275e-09
+    ]
+   },
+   "label probability, without kick-off turn roots": {
+    "n": 4,
+    "value": 0.0018208491126323423,
+    "interval": [
+     1.3686610726507198e-09,
+     0.0062743097820229425
+    ]
+   },
+   "share of labels at 0.5 or more": {
+    "n": 4,
+    "value": 0.0,
+    "interval": [
+     0.0,
+     0.0
+    ]
+   },
+   "total variation, screened roots": {
+    "n": 596,
+    "value": 0.12713221320041054,
+    "interval": [
+     0.10453090567162437,
+     0.1502024866011525
+    ]
+   },
+   "top action changed, screened roots": {
+    "n": 596,
+    "value": 0.1238490816342646,
+    "interval": [
+     0.10097135881524272,
+     0.14662907772347558
+    ]
+   },
+   "total variation, out-of-scope decisions": {
+    "n": 1280,
+    "value": 0.05388838312838286,
+    "interval": [
+     0.0433036975105159,
+     0.06507295570000471
+    ]
+   },
+   "top action changed, out-of-scope decisions": {
+    "n": 1280,
+    "value": 0.054808522998093426,
+    "interval": [
+     0.04394302490209791,
+     0.06683673874661215
+    ]
+   },
+   "total variation, screened roots the original was sure of": {
+    "n": 404,
+    "value": 0.052825942537412615,
+    "interval": [
+     0.03739850780134041,
+     0.06949308922967305
+    ]
+   },
+   "top action changed, screened roots the original was sure of": {
+    "n": 404,
+    "value": 0.0533997532531018,
+    "interval": [
+     0.038367042679588716,
+     0.06894033225976265
+    ]
+   },
+   "total variation, out-of-scope decisions the original was sure of": {
+    "n": 882,
+    "value": 0.009950035677489998,
+    "interval": [
+     0.0044194093734209365,
+     0.016143417534821316
+    ]
+   },
+   "top action changed, out-of-scope decisions the original was sure of": {
+    "n": 882,
+    "value": 0.009420416739625284,
+    "interval": [
+     0.0033338163889446264,
+     0.01653593705017789
+    ]
+   },
+   "counts": {
+    "labels": 4,
+    "false_labels": 0,
+    "confirmed_labels": 4,
+    "unjudged_labels": 0,
+    "kickoff_turn_labels": 0,
+    "games": 20
+   }
+  }
+ },
+ "note": "reported numbers; no threshold is applied and no rule reads them"
+}

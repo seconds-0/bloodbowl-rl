@@ -1,0 +1,11 @@
+32/270 games replayed, 3 s
+64/270 games replayed, 6 s
+96/270 games replayed, 9 s
+128/270 games replayed, 13 s
+160/270 games replayed, 17 s
+192/270 games replayed, 20 s
+224/270 games replayed, 24 s
+256/270 games replayed, 28 s
+270/270 games replayed, 32 s
+SHARD-ACCEPTED rehearsal: 300 games, 9000 roots, 154 deviation roots (12 false, 105 confirmed, 0 unjudged), 0 cap rejections, 67 kick-off turn roots, 19200 other decisions; library 3359eff5b536
+DATASET train: 210 games, 19740 loss decisions, 110 labels; validation: 30 games, 2820 loss decisions, 11 labels; test: 30 games, 2820 loss decisions, 14 labels; reserve: 30 games, not written; largest a0 log-probability difference 3.41e-04, 0 roots with candidates reordered within the tolerance

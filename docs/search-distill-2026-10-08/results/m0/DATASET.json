@@ -1,0 +1,80 @@
+{
+ "schema": "search-distill-dataset-v1",
+ "plan_sha256": "f000c8057f2cb80c322767181d08e082302fa948ff19777f208ed493ecc6db57",
+ "checkpoint_sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+ "harness_commit": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6",
+ "library_sha256": "3359eff5b536a07dd62ad96964bc2db7b981964e24bfac60689f744ce4658c1a",
+ "label_library_sha256": [
+  "3359eff5b536a07dd62ad96964bc2db7b981964e24bfac60689f744ce4658c1a"
+ ],
+ "shards": {
+  "m0": {
+   "games": 200,
+   "roots": 6000,
+   "deviation_roots": 87
+  }
+ },
+ "counts": {
+  "train": {
+   "games": 140,
+   "roots": 4200,
+   "deviation_roots": 64,
+   "other": 8960,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 15
+  },
+  "validation": {
+   "games": 20,
+   "roots": 600,
+   "deviation_roots": 6,
+   "other": 1280,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 5
+  },
+  "test": {
+   "games": 20,
+   "roots": 600,
+   "deviation_roots": 4,
+   "other": 1280,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 7
+  },
+  "reserve": {
+   "games": 20,
+   "roots": 600,
+   "deviation_roots": 0,
+   "other": 1280,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 0
+  }
+ },
+ "files": {
+  "train": {
+   "path": "train.pt",
+   "sha256": "061caa06c9b20091f526eee226a689dbe4a4d292cb0e19c599e9255f6b486c42",
+   "examples": 13160,
+   "labels": 64
+  },
+  "validation": {
+   "path": "validation.pt",
+   "sha256": "4f7b62da1973bcc13868f089085c1c0579be165292db32834567e7a03731a9fe",
+   "examples": 1880,
+   "labels": 6
+  },
+  "test": {
+   "path": "locked/test.pt",
+   "sha256": "6ea28e23306bc0d65eed14b2b19ac33e921d77aace07d10c2f7b8fdf332044bd",
+   "examples": 1880,
+   "labels": 4
+  }
+ },
+ "reserve": "counted above, never written",
+ "max_a0_logprob_difference": 0.00011591141217848211,
+ "logprob_tolerance": 0.001,
+ "roots_with_candidates_reordered_within_tolerance": 0,
+ "batch_games": 32,
+ "seconds": 19.8,
+ "torch": "2.14.0",
+ "numpy": "2.5.3",
+ "python": "3.12.3"
+}

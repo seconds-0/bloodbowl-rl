@@ -1,0 +1,178 @@
+{
+ "schema": "search-distill-plan-v2",
+ "name": "search-distill-registered",
+ "purpose": "PLAN.md beside this file",
+ "harness_commit": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6",
+ "harness_branch": "feat/search-probe-20261007",
+ "reward_manifest": "r0_poss_half",
+ "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
+ "reward_manifest_file_sha256": "16900416cfe8d32ee49bead8c2fcddb989c13e232b7a279d24df86f00d64c0ea",
+ "tool_sha256": {
+  "distill_common.py": "31797b5f61cbd6032d74010f72880ea1981d9ff32fc7e9ee27228b3703de92d3",
+  "distill_screen.py": "d436299a4df262b461e6ec7a237d59e895786ae42803688fd3a4f56665b33524",
+  "distill_accept.py": "1c5c9018ca7a13f36bba649baa9a0bf9d1ef042626c18d9198489f300fa30361",
+  "distill_dataset.py": "e8b801e933832a2048eb049db55573e65381ca487415767574a7be3e944e313b",
+  "distill_finetune.py": "f7cd329fc80344885623d8b334a951cfa568df13ea214d3307cf8da02b5d2c84",
+  "distill_eval.py": "c6a87a87ade6795290d38ec2a8ad8904cb611c720603be5ba85df760795165db"
+ },
+ "launcher_sha256": {
+  "distill_droplet.py": "9b50ce6da2a5208054f7a865a2f1ff90fd0bc73531c2eb1bee5651a27ba59554"
+ },
+ "lifecycle_sha256": {
+  "tools/droplet_tournament.py": "bb0ece1c9592fa46000924b0fc5ec1e15720c2ad10165f3829499a4bf6b921f2"
+ },
+ "integrity_checks": [
+  "real game: the engine's return code on every step",
+  "real game: hard counters after every step and at the end (illegal, projection_collision, error_episodes, rejected_submissions, precheck_collisions)",
+  "real game: both seats' logits and values finite on every step",
+  "real game: the opponent-view state and value finite on every step",
+  "real game: both seats' emitted rewards finite and within the clip threshold on every step",
+  "real game: no mask fallback",
+  "real game: the game ends in a natural match end (STATUS_MATCH_OVER), not on the decision cap",
+  "rollouts: the engine's return code and status on every step",
+  "rollouts: the same hard counters of every clone at its rollout's end",
+  "rollouts: both seats' emitted rewards finite and within the clip threshold on every step",
+  "rollouts: logits and values finite on every forward",
+  "rollouts: the accumulated return finite",
+  "rollouts: no mask fallback, and an action selectable at every decision",
+  "rollouts: no rollout fails; a rollout stops on a turn end, the match end, the 200-step cut-off or the inherited decision cap",
+  "search: every return the deviation rule reads is finite"
+ ],
+ "checkpoint": {
+  "name": "chain55",
+  "sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+  "blob": "chain55/0000002999975936.bin",
+  "sidecar_sha256": "15708a868cc601978ecf0550694de039138dacb2dc2341eba244a6239cb406d4"
+ },
+ "play": {
+  "temperature": 1.0,
+  "starts": "kick-off",
+  "seat_a": "game index parity (even: HOME)",
+  "opponent": "the same checkpoint under the same masks, sampling seed offset by one stride"
+ },
+ "label": {
+  "seed0": 26000000,
+  "per_class": 15,
+  "other_per_game": 64,
+  "candidates": 4,
+  "screen_rollouts": 16,
+  "delta": 0.1,
+  "judge_pairs": 128,
+  "judge_first_index": 1000,
+  "judge_min_pairs": 64,
+  "masks": [
+   "m1"
+  ],
+  "scope": [
+   "turn",
+   "after_declare"
+  ],
+  "gamma": 0.999,
+  "max_rollout_steps": 200,
+  "cap_rejection_ceiling": 0.01
+ },
+ "games": 10000,
+ "shards": [
+  {
+   "name": "m1-s1",
+   "first_game": 0,
+   "games": 500
+  },
+  {
+   "name": "m1-s2",
+   "first_game": 500,
+   "games": 500
+  },
+  {
+   "name": "m2-s1",
+   "first_game": 1000,
+   "games": 1500
+  },
+  {
+   "name": "m2-s2",
+   "first_game": 2500,
+   "games": 1500
+  },
+  {
+   "name": "m2-s3",
+   "first_game": 4000,
+   "games": 1500
+  },
+  {
+   "name": "m2-s4",
+   "first_game": 5500,
+   "games": 1500
+  },
+  {
+   "name": "m2-s5",
+   "first_game": 7000,
+   "games": 1500
+  },
+  {
+   "name": "m2-s6",
+   "first_game": 8500,
+   "games": 1500
+  }
+ ],
+ "split": {
+  "rule": "group = ((engine seed - seed0) // 2) % 10",
+  "groups": {
+   "train": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+   ],
+   "validation": [
+    7
+   ],
+   "test": [
+    8
+   ],
+   "reserve": [
+    9
+   ]
+  },
+  "reserve": "never written by the dataset tool under this plan"
+ },
+ "finetune": {
+  "recipe": "R1",
+  "trained": [
+   "decoder.decoder.weight"
+  ],
+  "arms": {
+   "c55d1l1": 1.0,
+   "c55d1l4": 4.0,
+   "c55d1l16": 16.0
+  },
+  "optimizer": "Adam",
+  "learning_rate": 0.001,
+  "steps": 2400,
+  "chunk": 8192,
+  "seed": 0,
+  "precision": "float64 training on float32 features; the blob is float32",
+  "loss": "[lambda * sum over deviation roots of w * (-log p(label)) + sum over the other loss decisions of w * KL(p0 || p)] / (sum of w); KL over the tuples of the joint support",
+  "fit": {
+   "arm": "c55d1l16",
+   "threshold": 0.8,
+   "statistic": "weighted mean probability of the label on training deviation roots"
+  },
+  "selection": {
+   "statistic": "J = q * M * g - price * U on the validation games, no rollouts",
+   "price": 0.016,
+   "rule": "the registered arm is the eligible arm with the highest J; ties go to the smaller lambda; an arm whose J is not finite, or whose blob fails its acceptance, is not eligible; with no eligible arm there is no registered arm, the gate is not played and the plan stops unread"
+  }
+ },
+ "bootstrap": {
+  "cluster": "engine seed",
+  "replicates": 2000,
+  "generator_seed": 0
+ },
+ "estimate": {
+  "droplet_seconds_per_game": 66.3,
+  "setup_seconds": 420
+ }
+}

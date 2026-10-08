@@ -1,0 +1,16 @@
+PASS rule: 961 of 961 random and knife-edge return tables give the harness's (deviate, best, gain, se) exactly; match-over status 2 is the engine's
+  (rule: 0 s)
+PASS blitz: seed 29980730: from the kick-off turn root at step 26, 64 of 64 rollouts that stop on a turn end hold a whole opponent team turn and all end with the completed-turn counter one higher (mean 92 engine steps, stops {'turn': 64, 'terminal': 0, 'cutoff': 0, 'cap': 0, 'error': 0}); from the ordinary turn-level root at step 112, 0 of 64 do (mean 51 engine steps)
+  (blitz: 3 s)
+PASS chain: 20 games through label, acceptance, dataset, fine-tune and selection; SHARD-ACCEPTED dev: 20 games, 600 roots, 16 deviation roots (1 false, 13 confirmed, 0 unjudged), 0 cap rejections, 7 kick-off turn roots, 1280 other decisions; library 3359eff5b536; 132 s
+  (chain: 132 s)
+PASS replay: 20 of 20 stored trails regenerate the final digest, the score and both observation hashes; 0.4 s
+  (replay: 0 s)
+PASS loss: 1316 stored decisions (largest support 2535 tuples): joint log-probabilities within 3.6e-15 of the harness's joint_log_probabilities; within 2.9e-07 of select_joint's float32 log-probability on 329 sampled actions; joint KL by enumeration and by the p0-weighted conditional form within 3.3e-14 (mean KL 1.776)
+  (loss: 0 s)
+PASS blob: zero steps: byte-identical to chain 55 (f6ba3b449bf0), 0 floats changed; 40 steps: 5271 floats changed, all inside the decoder's policy rows 1424384 to 1656831, the value row unchanged; a second run gives the same sha256 (fe45b6e615ac); the harness refuses the blob without a sidecar; the trainer's lineage tool: refused (checkpoint lineage implementation must be an object)
+  (blob: 2 s)
+PASS locks: the training reader refuses the test file as train and as validation (2 of 2); the dataset tool has no path for the reserve split; 0 games sit in a file of another split and no reserve file exists; the evaluation tool refuses the test split without the selection's hash and leaves it unopened: True
+  (locks: 1 s)
+7 of 7 tests passed; 137 s; harness 5ab3ab6, library 3359eff5b536
+exit 0

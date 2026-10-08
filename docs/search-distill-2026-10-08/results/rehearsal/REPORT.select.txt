@@ -1,0 +1,8 @@
+plan search-distill-rehearsal (the wide rehearsal at reduced rollouts and reduced fine-tune steps, never evidence), sha256 7c5aaa3fd27afa47e02571b98a51f002da15d29bd642e0fd9f72e4998db79cb1
+READING 1, fit: FIT. Arm c55d1l16: weighted mean probability of the label on training deviation roots 0.805226203706285, threshold 0.8
+arm        lambda  train: label p  p>=.5   change elsewhere (TV, top) | validation: M      U        g       q        J          eligible
+c55d1l1    1.0           0.5825   0.603   0.01290 0.00941            | 0.0000 0.05384 0.0908 0.00389 -8.614e-04  yes
+c55d1l4    4.0           0.6676   0.694   0.02666 0.02451            | 0.0000 0.06614 0.0908 0.00389 -1.058e-03  yes
+c55d1l16   16.0          0.8052   0.863   0.04444 0.04343            | 0.0000 0.08866 0.0908 0.00389 -1.419e-03  yes
+REGISTERED ARM: c55d1l1 (selected); rule: the eligible arm with the highest J, ties to the smaller lambda
+SELECTION.json sha256 db7a734958a8e9bb31e653b4cdbd6dc24c6b7ce8507adf8bb04d1413ae798e1d

@@ -1,0 +1,2 @@
+SHARD-ACCEPTED m0: 200 games, 6000 roots, 87 deviation roots (0 false, 86 confirmed, 0 unjudged), 0 cap rejections, 27 kick-off turn roots, 12800 other decisions; library 3359eff5b536
+plan /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/m0-20261008/PLAN.json sha256 f000c8057f2cb80c322767181d08e082302fa948ff19777f208ed493ecc6db57; this tool sha256 1c5c9018ca7a13f36bba649baa9a0bf9d1ef042626c18d9198489f300fa30361

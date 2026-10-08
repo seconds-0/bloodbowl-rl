@@ -1,0 +1,80 @@
+{
+ "schema": "search-distill-dataset-v1",
+ "plan_sha256": "7c5aaa3fd27afa47e02571b98a51f002da15d29bd642e0fd9f72e4998db79cb1",
+ "checkpoint_sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+ "harness_commit": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6",
+ "library_sha256": "3359eff5b536a07dd62ad96964bc2db7b981964e24bfac60689f744ce4658c1a",
+ "label_library_sha256": [
+  "3359eff5b536a07dd62ad96964bc2db7b981964e24bfac60689f744ce4658c1a"
+ ],
+ "shards": {
+  "rehearsal": {
+   "games": 300,
+   "roots": 9000,
+   "deviation_roots": 154
+  }
+ },
+ "counts": {
+  "train": {
+   "games": 210,
+   "roots": 6300,
+   "deviation_roots": 110,
+   "other": 13440,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 50
+  },
+  "validation": {
+   "games": 30,
+   "roots": 900,
+   "deviation_roots": 11,
+   "other": 1920,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 8
+  },
+  "test": {
+   "games": 30,
+   "roots": 900,
+   "deviation_roots": 14,
+   "other": 1920,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 8
+  },
+  "reserve": {
+   "games": 30,
+   "roots": 900,
+   "deviation_roots": 0,
+   "other": 1920,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 0
+  }
+ },
+ "files": {
+  "train": {
+   "path": "train.pt",
+   "sha256": "24de6a280a3563eb04763a94ffd388dce0f0596c6b53e4264f783f4a952cd82f",
+   "examples": 19740,
+   "labels": 110
+  },
+  "validation": {
+   "path": "validation.pt",
+   "sha256": "cfc9b55fabb5ddb75230decc191f3c9a127ef546bf4a8da428105eb3c314c9ef",
+   "examples": 2820,
+   "labels": 11
+  },
+  "test": {
+   "path": "locked/test.pt",
+   "sha256": "dd2b6cbe51ffed340dd7515b3ff5b3f94e4f49db76dea20ed7cb8bf018049fe7",
+   "examples": 2820,
+   "labels": 14
+  }
+ },
+ "reserve": "counted above, never written",
+ "max_a0_logprob_difference": 0.00034137148780222226,
+ "logprob_tolerance": 0.001,
+ "roots_with_candidates_reordered_within_tolerance": 0,
+ "batch_games": 32,
+ "seconds": 32.7,
+ "torch": "2.14.0",
+ "numpy": "2.5.3",
+ "python": "3.12.3"
+}

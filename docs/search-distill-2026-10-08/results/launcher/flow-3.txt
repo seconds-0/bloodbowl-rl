@@ -1,0 +1,6 @@
+PASS  refused: the shard already has a .failed directory under this name
+PASS  dry run: returns 0, prints the job and the cleanup commands, touches no API, token or socket and creates no directory  [0]
+PASS  dry run: a wrong plan hash returns 1  [1]
+PASS  dry run: the spend guard returns 1 and says nothing was created  [1]
+47 of 47 checks passed
+$PY test_launcher_flow.py --plan $S/PLAN.dev3.json --expect-sha256 $H      de  0.27s user 0.18s system 92% cpu 0.497 total

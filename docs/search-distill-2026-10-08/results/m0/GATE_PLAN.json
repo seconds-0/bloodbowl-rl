@@ -1,0 +1,307 @@
+{
+ "gate": "distill-mac-m0-20261008",
+ "registered_in": "a Mac rehearsal of the gate's scripts (m0), never evidence",
+ "local_rehearsal": true,
+ "written_before_launch_at": "2026-10-08T07:42:09-0700",
+ "harness_commit": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6",
+ "harness_worktree": "~/Code/bb-harness-search",
+ "harness_branch": "feat/search-probe-20261007",
+ "main_checkout": "~/Code/bb-play-harness",
+ "main_checkout_commit": "b0099fbef60ac7223f5c1184a6d83df5506be6d9",
+ "out_root": "~/Code/bb-play-harness/.play-artifacts/tournaments",
+ "log_dir": "~/Code/bb-play-harness/.play-artifacts/logs",
+ "run_dir": "~/Code/bb-play-harness/.play-artifacts/tournaments/distill-mac-m0-20261008/main",
+ "seed0": 29980800,
+ "games_per_pair": 64,
+ "total_games": 512,
+ "games_per_worker": 32,
+ "batching": "every arm is played in the batched path, 32 games per worker. A batch changes float rounding in the matrix products, so a rare game differs from its unbatched twin: D434's contrasts (one game per worker) stay a descriptive comparison",
+ "mode": "sample",
+ "kernel": "native",
+ "temperature": "1.0 for every player",
+ "starts": "kickoff",
+ "legs": [
+  "A_home",
+  "B_home"
+ ],
+ "mask_definition": {
+  "m1": "END_TURN is removed from the masked seat's exact joint support while an ACTIVATE is also legal; the policy is renormalized over what is left (play_harness/policy.py restrict_support, MaskedPolicySeat)"
+ },
+ "players": {
+  "c55d1l1": {
+   "checkpoint": "c55d1l1",
+   "masks": [
+    "m1"
+   ]
+  },
+  "c55d1l4": {
+   "checkpoint": "c55d1l4",
+   "masks": [
+    "m1"
+   ]
+  },
+  "c55d1l16": {
+   "checkpoint": "c55d1l16",
+   "masks": [
+    "m1"
+   ]
+  },
+  "c55m1": {
+   "checkpoint": "chain55",
+   "masks": [
+    "m1"
+   ]
+  },
+  "chain37": {
+   "checkpoint": "chain37",
+   "masks": []
+  },
+  "chain46": {
+   "checkpoint": "chain46",
+   "masks": []
+  }
+ },
+ "sampling_offsets": "none: no pair has the same checkpoint on both sides",
+ "pairs": [
+  [
+   "c55d1l1",
+   "chain37",
+   64
+  ],
+  [
+   "c55d1l4",
+   "chain37",
+   64
+  ],
+  [
+   "c55d1l16",
+   "chain37",
+   64
+  ],
+  [
+   "c55m1",
+   "chain37",
+   64
+  ],
+  [
+   "c55d1l1",
+   "chain46",
+   64
+  ],
+  [
+   "c55d1l4",
+   "chain46",
+   64
+  ],
+  [
+   "c55d1l16",
+   "chain46",
+   64
+  ],
+  [
+   "c55m1",
+   "chain46",
+   64
+  ]
+ ],
+ "pair_notes": {
+  "1": "c55d1l1 v chain37: chain 55 fine-tuned by recipe R1 at lambda 1.0, under m1 (the registered arm)",
+  "2": "c55d1l4 v chain37: chain 55 fine-tuned by recipe R1 at lambda 4.0, under m1",
+  "3": "c55d1l16 v chain37: chain 55 fine-tuned by recipe R1 at lambda 16.0, under m1",
+  "4": "c55m1 v chain37: the control, chain 55 under m1",
+  "5": "c55d1l1 v chain46: chain 55 fine-tuned by recipe R1 at lambda 1.0, under m1 (the registered arm)",
+  "6": "c55d1l4 v chain46: chain 55 fine-tuned by recipe R1 at lambda 4.0, under m1",
+  "7": "c55d1l16 v chain46: chain 55 fine-tuned by recipe R1 at lambda 16.0, under m1",
+  "8": "c55m1 v chain46: the control, chain 55 under m1"
+ },
+ "selection": {
+  "file": "/Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/m0-20261008/finetune/SELECTION.json",
+  "sha256": "7eb5870adb1c5e594eeed6d9ce9e9de2cadf966cf567cec65a1aa60777ec3cf8",
+  "plan_sha256": "f000c8057f2cb80c322767181d08e082302fa948ff19777f208ed493ecc6db57",
+  "registered_arm": "c55d1l1",
+  "arms": {
+   "c55d1l1": 1.0,
+   "c55d1l4": 4.0,
+   "c55d1l16": 16.0
+  },
+  "rule": "the registered arm is the eligible arm with the highest J; ties go to the smaller lambda; an arm whose J is not finite, or whose blob fails its acceptance, is not eligible; with no eligible arm there is no registered arm, the gate is not played and the plan stops unread"
+ },
+ "checkpoints_sha256": {
+  "chain55": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+  "chain37": "268f1db08ca0c2bad88293ea56b3048a2a1c3a0ea9acdf0365fc023186c0f73f",
+  "chain46": "8eee9ac10f58eca57092013ac05db6f28fb5f7f2c6dc9ce850960c7bb2c7c467",
+  "c55d1l1": "38ad32f4b3beff18a5eb63d8d84eb18245f5c5f5af5b0bac988fc21567bf1d88",
+  "c55d1l4": "7ba99adbd142b6fb8675dd2685857b70ad53b994c192d866b814f2b73a5fd74d",
+  "c55d1l16": "94fd8fe9ec6933eac10293b803bea455e0e815a32ea5b4aac6f5e623f17d902b"
+ },
+ "sidecars_sha256": {
+  "chain55": "15708a868cc601978ecf0550694de039138dacb2dc2341eba244a6239cb406d4",
+  "chain37": "42ea35c622084ed2e9cac4716a0155d65c26c94ae975d73a1c5901b4282207bb",
+  "chain46": "4bf80df48f58ca7a451d0a6e4489ae69b0a879b9b16aeaf94fd98a188a11e5b3",
+  "c55d1l1": "cd7757354b71ac053374812c59d6c1e1013898dd6f9c8c2722e5b7dc7a47adea",
+  "c55d1l4": "80db34268c64def0108cbdf658a620f42c2f7e58771df6b476b8536be97bcb02",
+  "c55d1l16": "478a124d86226cd9c73572740a417e69c1c8162efda1dc24e29318f3c98285a8"
+ },
+ "checkpoint_paths": {
+  "chain55": "/Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/checkpoints/chain55/0000002999975936.bin",
+  "chain37": "/Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/checkpoints/chain37/0000002999975936.bin",
+  "chain46": "/Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/checkpoints/chain46/0000002999975936.bin",
+  "c55d1l1": "/Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/m0-20261008/finetune/checkpoints/c55d1l1/0000002999975936.bin",
+  "c55d1l4": "/Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/m0-20261008/finetune/checkpoints/c55d1l4/0000002999975936.bin",
+  "c55d1l16": "/Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/m0-20261008/finetune/checkpoints/c55d1l16/0000002999975936.bin"
+ },
+ "bots": {},
+ "machine": "this Mac, one process (play_local_from_plan.py)",
+ "droplet_size": "s-8vcpu-16gb-amd",
+ "max_hours": 1.0,
+ "shards": {
+  "distill-mac-m0-20261008-s1": {
+   "index0": 0,
+   "pairs": [
+    "c55d1l1,chain37,64",
+    "c55d1l4,chain37,64",
+    "c55d1l16,chain37,64",
+    "c55m1,chain37,64",
+    "c55d1l1,chain46,64",
+    "c55d1l4,chain46,64",
+    "c55d1l16,chain46,64",
+    "c55m1,chain46,64"
+   ]
+  }
+ },
+ "launch": {
+  "script": "launch_from_plan.py",
+  "local_script": "play_local_from_plan.py",
+  "local_script_sha256": "eee46c63145f5a8a4c7241b13952f223582594425d7912f00d0337829ca61616",
+  "runner": "tools/droplet_tournament.py",
+  "runner_sha256": "bb0ece1c9592fa46000924b0fc5ec1e15720c2ad10165f3829499a4bf6b921f2",
+  "rule": "refuses unless this file hashes to the committed sha256, both checkouts are clean at their commits, every checkpoint blob and sidecar has its registered sha256, the runner is the registered one, and the shards' index slices cover every pair exactly once from index 0",
+  "script_sha256": "95a5d1966f3f67b9e5bd1ef03d143c2cf6a8adda79d0269c51babfc028acd921"
+ },
+ "merge": "tools/droplet_tournament.py merge --out <run_dir> --shard <each shard>/main (shards must share commit, seed block, settings, torch and compiled shim; a pair's index slices must be disjoint and cover it from index 0 without a gap)",
+ "acceptance": {
+  "script": "accept_from_plan.py",
+  "tool": "tools/gate_acceptance.py at the harness commit",
+  "tool_sha256": "71cb6d6b9d0944e06ab8af6cfeaee76caba0da43f3b4e2367c9ce9a2bde015ad",
+  "search_tool": "tools/search_acceptance.py at the harness commit",
+  "search_tool_sha256": "2b429a42c199581c3a2504d9e2d18da49b15fc01251b1d42e4f247ac8cf6f2d9",
+  "against": "this file, whose sha256 is committed to the ledger before launch",
+  "script_sha256": "ee2325401a32d735d884394aabb33b9a81d820da97a0d1b0b5a4962010329c33"
+ },
+ "scoring": {
+  "script": "score_from_plan.py",
+  "rule": "merge, then accept_from_plan.py (four checks), then the report, the contrasts, the reading and the diagnostics only if accepted",
+  "script_sha256": "4f403d719f5f6f302917431bffd5ff5d435848528cd3f446cb11f443729b125b"
+ },
+ "statistic": "decisive-Elo with 95% seed-cluster intervals from play_harness.tournament_stats (report.json, report.txt), 2,000 replicates",
+ "contrasts": {
+  "script": "paired_contrasts.py",
+  "replicates": 2000,
+  "generator_seed": 0,
+  "sets": [
+   {
+    "name": "label: the registered arm c55d1l1 minus c55m1",
+    "arm": "c55d1l1",
+    "control": "c55m1",
+    "opponents": [
+     "chain37",
+     "chain46"
+    ],
+    "label": true,
+    "run_dir": "<run_dir>/label_c55d1l1",
+    "outputs": [
+     "label_c55d1l1/chain37_contrast.json",
+     "label_c55d1l1/chain46_contrast.json"
+    ]
+   },
+   {
+    "name": "descriptive dose-response, no label: c55d1l4 minus c55m1",
+    "arm": "c55d1l4",
+    "control": "c55m1",
+    "opponents": [
+     "chain37",
+     "chain46"
+    ],
+    "label": false,
+    "run_dir": "<run_dir>/dose_c55d1l4",
+    "outputs": [
+     "dose_c55d1l4/chain37_contrast.json",
+     "dose_c55d1l4/chain46_contrast.json"
+    ]
+   },
+   {
+    "name": "descriptive dose-response, no label: c55d1l16 minus c55m1",
+    "arm": "c55d1l16",
+    "control": "c55m1",
+    "opponents": [
+     "chain37",
+     "chain46"
+    ],
+    "label": false,
+    "run_dir": "<run_dir>/dose_c55d1l16",
+    "outputs": [
+     "dose_c55d1l16/chain37_contrast.json",
+     "dose_c55d1l16/chain46_contrast.json"
+    ]
+   }
+  ],
+  "script_sha256": "722ece95b24eed07f017062c4a837d44d4a49c4e97a7082fbb6fa2c37cef6002"
+ },
+ "reading": {
+  "statistic": "the registered arm minus C against chain 37 and against chain 46, decisive-Elo, 95% seed-cluster intervals",
+  "order": [
+   "Unread",
+   "Negative",
+   "Positive",
+   "Flat",
+   "Inconclusive"
+  ],
+  "Unread": "a contrast or an end of its interval is missing or not finite",
+  "Negative": "either interval entirely below zero (upper end below 0)",
+  "Positive": "both point estimates at +15 or more and both intervals entirely above zero (lower end above 0)",
+  "Flat": "both intervals inside -15 to +15, ends included",
+  "Inconclusive": "anything else",
+  "positive_point": 15.0,
+  "flat_bound": 15.0
+ },
+ "diagnostics": {
+  "script": "gate_diagnostics.py",
+  "registered": "the style table per side for the eight pairs, and the share of seed-legs where an arm's game is C's game",
+  "pairs": [
+   [
+    "c55d1l1",
+    "chain37"
+   ],
+   [
+    "c55d1l4",
+    "chain37"
+   ],
+   [
+    "c55d1l16",
+    "chain37"
+   ],
+   [
+    "c55m1",
+    "chain37"
+   ],
+   [
+    "c55d1l1",
+    "chain46"
+   ],
+   [
+    "c55d1l4",
+    "chain46"
+   ],
+   [
+    "c55d1l16",
+    "chain46"
+   ],
+   [
+    "c55m1",
+    "chain46"
+   ]
+  ],
+  "search_pairs": [],
+  "script_sha256": "1defdd33893dbb846fe5b309dcb26d14fce6064fc3442f60466989c9a7d88b99"
+ }
+}

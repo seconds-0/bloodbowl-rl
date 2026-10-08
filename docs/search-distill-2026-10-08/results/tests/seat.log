@@ -1,0 +1,7 @@
+  seat game seed 29980730 side 0: 178 searched decisions, 1 deviations, first at step 511, 150 s
+  seat game seed 29980707 side 1: 187 searched decisions, 3 deviations, first at step 224, 146 s
+  seat game seed 29980702 side 0: 156 searched decisions, 1 deviations, first at step 218, 80 s
+PASS seat: 3 searched games at k 4, n 16, delta 0.1: 521 searched decisions screened by the tool on a clone of the seat's root, 359 of them after the game's first deviation, 5 deviations, 8 inside a kick-off turn; 162 decisions of the tool's own plain game equal to the seat's up to the first deviation; 0 mismatches; 377 s
+  (seat: 377 s)
+1 of 1 tests passed; 377 s; harness 5ab3ab6, library 3359eff5b536
+exit 0

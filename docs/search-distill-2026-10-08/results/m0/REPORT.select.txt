@@ -1,0 +1,8 @@
+plan search-distill-m0 (milestone 0: the seen block of 2026-10-07, never evidence), sha256 f000c8057f2cb80c322767181d08e082302fa948ff19777f208ed493ecc6db57
+READING 1, fit: FIT. Arm c55d1l16: weighted mean probability of the label on training deviation roots 0.930372883453458, threshold 0.8
+arm        lambda  train: label p  p>=.5   change elsewhere (TV, top) | validation: M      U        g       q        J          eligible
+c55d1l1    1.0           0.6973   0.706   0.01264 0.00620            | 0.0000 0.07163 0.0787 0.00357 -1.146e-03  yes
+c55d1l4    4.0           0.8119   0.836   0.02216 0.01469            | 0.0000 0.09053 0.0787 0.00357 -1.448e-03  yes
+c55d1l16   16.0          0.9304   0.985   0.02561 0.02070            | 0.0000 0.09557 0.0787 0.00357 -1.529e-03  yes
+REGISTERED ARM: c55d1l1 (selected); rule: the eligible arm with the highest J, ties to the smaller lambda
+SELECTION.json sha256 7eb5870adb1c5e594eeed6d9ce9e9de2cadf966cf567cec65a1aa60777ec3cf8

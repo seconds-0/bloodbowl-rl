@@ -1,0 +1,8 @@
+GATE-ACCEPTED 512 games, 8 pairs, seed0 29980800, games_per_worker 32, commit 5ab3ab6
+MASKS-ACCEPTED 512 masked sides in 512 games as registered, no sampling offsets, 0 truncated, 0 mask fallbacks
+SEARCH-ACCEPTED 0 searched games of 512 as registered; no searched decision; 0 cap-rejected decisions (0.000%), 0 cutoff rollouts of 0, 0 error rollouts; 0 identity game(s) equal to the plain game; 8 pair(s) held to the plan's schedule
+SIDECARS-ACCEPTED 6 players' blobs and lineage sidecars as registered, and the manifest's producer blocks are the sidecars'
+integrity totals {"error_episodes": 0, "illegal": 0, "precheck_collisions": 0, "projection_collision": 0, "rejected_submissions": 0}; unnatural endings 0
+plan /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-mac-m0-20261008/PLAN.json sha256 27da7c4bfce70c17e2b23325e36195c87e49a7059f1667c23874810928ceec94
+acceptance tool sha256 71cb6d6b9d0944e06ab8af6cfeaee76caba0da43f3b4e2367c9ce9a2bde015ad; search acceptance tool sha256 2b429a42c199581c3a2504d9e2d18da49b15fc01251b1d42e4f247ac8cf6f2d9; this script sha256 ee2325401a32d735d884394aabb33b9a81d820da97a0d1b0b5a4962010329c33
+games.jsonl sha256 c380a241e8c871e479954df9b5c55a83cae5a766fa1d771fe0974e24cd84c218

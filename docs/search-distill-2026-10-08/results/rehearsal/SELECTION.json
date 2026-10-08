@@ -1,0 +1,146 @@
+{
+ "schema": "search-distill-selection-v1",
+ "plan_sha256": "7c5aaa3fd27afa47e02571b98a51f002da15d29bd642e0fd9f72e4998db79cb1",
+ "plan_name": "search-distill-rehearsal",
+ "purpose": "the wide rehearsal at reduced rollouts and reduced fine-tune steps, never evidence",
+ "base_checkpoint_sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+ "dataset_files": {
+  "train": {
+   "path": "train.pt",
+   "sha256": "24de6a280a3563eb04763a94ffd388dce0f0596c6b53e4264f783f4a952cd82f",
+   "examples": 19740,
+   "labels": 110
+  },
+  "validation": {
+   "path": "validation.pt",
+   "sha256": "cfc9b55fabb5ddb75230decc191f3c9a127ef546bf4a8da428105eb3c314c9ef",
+   "examples": 2820,
+   "labels": 11
+  },
+  "test": {
+   "path": "locked/test.pt",
+   "sha256": "dd2b6cbe51ffed340dd7515b3ff5b3f94e4f49db76dea20ed7cb8bf018049fe7",
+   "examples": 2820,
+   "labels": 14
+  }
+ },
+ "fit": {
+  "arm": "c55d1l16",
+  "threshold": 0.8,
+  "value": 0.805226203706285,
+  "reading": "FIT"
+ },
+ "rule": "the registered arm is the eligible arm with the highest J; ties go to the smaller lambda; an arm whose J is not finite, or whose blob fails its acceptance, is not eligible; with no eligible arm there is no registered arm, the gate is not played and the plan stops unread",
+ "price": 0.016,
+ "arms": {
+  "c55d1l1": {
+   "lambda": 1.0,
+   "blob": "checkpoints/c55d1l1/0000002999975936.bin",
+   "blob_sha256": "d9cf63dc76ed5d278d3e8e97dcd16cefe8b28fcd170907f5dc7c9fe388e2a1f5",
+   "sidecar_sha256": "94558cbe4d9603cecc5461f9031b34e5d863dfe53411343cfd175fed4fc96218",
+   "problems": [],
+   "train": {
+    "label_probability": 0.5825323089538107,
+    "label_probability_ge_half": 0.6028831302557063,
+    "tv_other": 0.012902624134589808,
+    "top_changed_other": 0.009405910320773503,
+    "deviation_roots": 110,
+    "other_decisions": 19630
+   },
+   "validation": {
+    "label_probability": 4.5972550684065615e-06,
+    "label_probability_ge_half": 0.0,
+    "tv_other": 0.05383740306383156,
+    "top_changed_other": 0.05374360135385562,
+    "deviation_roots": 11,
+    "other_decisions": 2809
+   },
+   "selection": {
+    "J": -0.0008613968250339067,
+    "q": 0.0038904271807463915,
+    "M": 4.5972550684065615e-06,
+    "g": 0.09080019136472015,
+    "U": 0.05383740306383156,
+    "deviation_roots": 11,
+    "judged_labels": 11
+   },
+   "eligible": true
+  },
+  "c55d1l4": {
+   "lambda": 4.0,
+   "blob": "checkpoints/c55d1l4/0000002999975936.bin",
+   "blob_sha256": "60a02d55bebaa1d2d0d0faf88baddf3ac8e10a2bef5899e974177fdb3058dd4c",
+   "sidecar_sha256": "9aaf63fccfd35c750cb731c6a53ca2f2f460cd6250ef96737e16e564f725180b",
+   "problems": [],
+   "train": {
+    "label_probability": 0.6676390573086386,
+    "label_probability_ge_half": 0.694010640123563,
+    "tv_other": 0.026663497431107082,
+    "top_changed_other": 0.024514650249452378,
+    "deviation_roots": 110,
+    "other_decisions": 19630
+   },
+   "validation": {
+    "label_probability": 2.9120730730132002e-06,
+    "label_probability_ge_half": 0.0,
+    "tv_other": 0.06614454115510263,
+    "top_changed_other": 0.06777194464646606,
+    "deviation_roots": 11,
+    "other_decisions": 2809
+   },
+   "selection": {
+    "J": -0.0010583116297873663,
+    "q": 0.0038904271807463915,
+    "M": 2.9120730730132002e-06,
+    "g": 0.09080019136472015,
+    "U": 0.06614454115510263,
+    "deviation_roots": 11,
+    "judged_labels": 11
+   },
+   "eligible": true
+  },
+  "c55d1l16": {
+   "lambda": 16.0,
+   "blob": "checkpoints/c55d1l16/0000002999975936.bin",
+   "blob_sha256": "5ac24e798be0043c178072617cfa67ac3720ace2f8720e7def6ebc05061bb7fa",
+   "sidecar_sha256": "9b61826af9a733665fb354abe8a8d2b1e38cfdb2f6fced5f5f78bfbfe254c046",
+   "problems": [],
+   "train": {
+    "label_probability": 0.805226203706285,
+    "label_probability_ge_half": 0.8633087351982153,
+    "tv_other": 0.04443982684823087,
+    "top_changed_other": 0.04343417290655036,
+    "deviation_roots": 110,
+    "other_decisions": 19630
+   },
+   "validation": {
+    "label_probability": 1.2886779745755995e-06,
+    "label_probability_ge_half": 0.0,
+    "tv_other": 0.08866252392282352,
+    "top_changed_other": 0.09033946478646704,
+    "deviation_roots": 11,
+    "other_decisions": 2809
+   },
+   "selection": {
+    "J": -0.001418599927537707,
+    "q": 0.0038904271807463915,
+    "M": 1.2886779745755995e-06,
+    "g": 0.09080019136472015,
+    "U": 0.08866252392282352,
+    "deviation_roots": 11,
+    "judged_labels": 11
+   },
+   "eligible": true
+  }
+ },
+ "eligible_arms": [
+  "c55d1l1",
+  "c55d1l4",
+  "c55d1l16"
+ ],
+ "registered_arm": "c55d1l1",
+ "status": "selected",
+ "torch": "2.14.0",
+ "numpy": "2.5.3",
+ "python": "3.12.3"
+}

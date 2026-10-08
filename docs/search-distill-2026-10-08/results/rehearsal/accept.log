@@ -1,0 +1,2 @@
+SHARD-ACCEPTED rehearsal: 300 games, 9000 roots, 154 deviation roots (12 false, 105 confirmed, 0 unjudged), 0 cap rejections, 67 kick-off turn roots, 19200 other decisions; library 3359eff5b536
+plan /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/rehearsal-20261008/PLAN.json sha256 7c5aaa3fd27afa47e02571b98a51f002da15d29bd642e0fd9f72e4998db79cb1; this tool sha256 1c5c9018ca7a13f36bba649baa9a0bf9d1ef042626c18d9198489f300fa30361

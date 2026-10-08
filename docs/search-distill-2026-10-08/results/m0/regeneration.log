@@ -1,0 +1,4 @@
+6000 roots in both (6000 in the shard, 6000 seen); equal class and seed 6000, candidates 6000, all 16-rollout returns 6000 (largest difference 0.0e+00), rule result (deviate, best, gain, se) 6000
+labels: 87 in the shard, 87 seen tail roots, 87 with the same action; 0 false and 86 confirmed by the shard's own judgment
+judgments: 87 seen tail roots; 22272 of 22272 per-rollout returns within 1e-05 of the seen depth1 returns, 15273 exactly equal, largest difference 3.8e-06 (0 judgment rollouts stopped on the 200-step cut-off); largest difference of a root's fresh gain: 2.9e-08
+REGENERATION-MATCHED the label tool reproduces the seen screens root for root
