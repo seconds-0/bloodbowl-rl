@@ -406,3 +406,12 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Rules.** None of the three pointers holds: the realised margin is not below zero (no reward pointer), removing the discount flips only 4% to 6% of decisions (no gamma pointer), and chain 58's margin does not differ from the lambda 0.95 checkpoints beyond the seed gap (no lambda pointer). The outcome is "reported without a recommendation".
 - **Also.** The critic's part of the margin is smaller in magnitude in both lambda 0.97 checkpoints than in their controls (+0.0032 [+0.0021, +0.0044] on average; no rule reads it). A choice among up to three activations has a positive judged gain at END_TURN decisions for chains 55, 58 and 60. The kick-off Blitz rule left out about 1% of decisions; chain 58 ends its Blitz turn early far more often than the others.
 - **Use.** The rung after chain 62 is chosen without a pointer from the probe.
+
+**Update 2026-10-08 13:40 PDT (D446, D447): chain 61 reads Flat; chain 58 stays the warm start; chain 62 is training.**
+- **Chain 61 (D433, D446, D447)**, the plain continuation from chain 58 at lambda 0.95, seed 42: +20.5 [+6.9, +34.6] over chain 58 directly, so Flat by the registered rule (the direct gap is inside plus or minus 40). Against the held-out opponents it is not above chain 58: -31.7 [-52.9, -11.4] against chain 37 (entirely below zero; one rung, one seed, a nominal interval among three contrasts) and -8.8 [-29.9, +12.4] against chain 46. Against chain 59 (descriptive) +6.6 [-10.7, +25.3].
+- **Consequences.** Chain 58 stays the warm start. Chain 61 is the accepted control for arms from chain 58 and is not a warm-start candidate.
+- **Pair 7, the first meeting of chain 58 and chain 59:** chain 58 +46.8 [+33.4, +60.2].
+- **Style, pair 1.** Chain 61 activates fewer players a team turn than chain 58 (2.86 against 3.24), mostly fewer empty activations, blocks slightly less, and scores slightly more (+0.04 touchdowns a game).
+- **Gate.** 28,800 games, nine pairs, seed block 23000000, accepted, integrity counters zero, four droplets destroyed, about $0.22.
+- **Chain 62 (D441)** launched at 12:06 PDT and should end at about 20:40, earlier than first written. Its manifest differs from chain 61's in lambda and the run's own paths; the pool identity and lineage are equal.
+- **Still to register:** what runs after chain 62, by about 20:15 PDT, with the selection among warm-start candidates that D441 requires before anything is launched from chain 60, chain 61 or chain 62.

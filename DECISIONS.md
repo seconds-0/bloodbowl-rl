@@ -3469,3 +3469,43 @@ Chain 61 (`1df4b0b8...`, warm chain 58, `LADDER_GAE_LAMBDA=0.95`, training seed 
 **Chain 62** (`r0chain62-lam097-from58-s42-20261008`, D441) launched on its own at 12:06:23 PDT. Its stage manifest against chain 61's, leaf by leaf (277 leaves each): `gae_lambda` 0.97 against 0.95 (the field and one command argument), the run's own paths and tag (the pool's directory among them), the pool manifest file's hash and the screen-manifest hash. The pool identity (`59a6703f...`) and the pool's lineage bundle (`b9dea0be...`) are equal, as are the warm start's lineage, seed 42, source (`4c8a04b1...`), module (`4156c9c3...`), patch bundle (`e3134e04...`), config, reward and launcher. It should end at about 20:45 PDT, earlier than the 22:00 written in D441, if it runs at chain 61's pace.
 
 **Still to register:** what the rig runs after chain 62. That entry follows this gate's reading.
+
+
+**D447 - CHAIN 61 (THE PLAIN CONTINUATION FROM CHAIN 58, GAE LAMBDA 0.95, TRAINING SEED 42) READS FLAT: +20.5 [+6.9, +34.6] OVER CHAIN 58 DIRECTLY, AND BELOW CHAIN 58 AGAINST CHAIN 37 (-31.7 [-52.9, -11.4]); CHAIN 58 STAYS THE WARM START AND CHAIN 61 IS THE ACCEPTED CONTROL FOR ARMS FROM CHAIN 58 (2026-10-08 13:37 PDT by the machine's clock at commit)**
+
+**Evidence.** Gate `c61-gate-20261008`, plan sha256 `6ae79f05...` (fixed in D446 before launch), four droplet shards launched 13:01 (three) and 13:15 PDT (the fourth), merged and accepted: `GATE-ACCEPTED 28800 games, 9 pairs, seed0 23000000, games_per_worker 32, commit 7d0d547` and `MASKS-ACCEPTED 0 masked sides in 28800 games as registered, no sampling offsets, 0 truncated, 0 mask fallbacks`; integrity totals all zero; no unnatural ending; `games.jsonl` sha256 `7e2f95b1...`. One look: the operator ran the scorer once (`score.log` holds one sequence). The plan's hash was committed at 13:01:37 and pushed before the first shard was launched at 13:01:50 (the push is the operator's record: the local head equalled the remote's at 13:01:39). All four droplets destroyed and verified gone (HTTP 404), their keys gone; the tagged-droplet listing afterwards shows none (`droplet_status_after.txt`). Spend $0.073 + $0.050 + $0.048 + $0.046 = about $0.22.
+
+**Decisive-Elo, 95% seed-cluster intervals, 3,200 games a pair.**
+
+| pair | A | B | A W / D / L | decisive-Elo of A | 95% |
+|---|---|---|---|---|---|
+| 1 | chain 61 | chain 58 | 1053 / 1211 / 936 | +20.5 | [+6.9, +34.6] |
+| 2 | chain 61 | chain 37 | 1659 / 961 / 580 | +182.6 | [+168.5, +197.2] |
+| 3 | chain 58 | chain 37 | 1734 / 961 / 505 | +214.3 | [+198.5, +231.5] |
+| 4 | chain 61 | chain 46 | 1673 / 1001 / 526 | +201.0 | [+185.8, +217.2] |
+| 5 | chain 58 | chain 46 | 1696 / 997 / 507 | +209.8 | [+194.9, +226.7] |
+| 6 | chain 61 | chain 59 | 1193 / 1130 / 877 | +53.5 | [+40.5, +66.3] |
+| 7 | chain 58 | chain 59 | 1168 / 1140 / 892 | +46.8 | [+33.4, +60.2] |
+| 8 | chain 61 | chain 49 | 1568 / 973 / 659 | +150.6 | [+136.4, +165.3] |
+| 9 | chain 61 | offense bot | 941 / 1778 / 481 | +116.6 | [+97.8, +135.2] |
+
+**Paired contrasts, chain 61 minus chain 58** (`paired_contrasts.py` `722ece95...`, 2,000 replicates, generator seed 0, 1,600 seed clusters): against chain 37 **-31.7 [-52.9, -11.4]**; against chain 46 -8.8 [-29.9, +12.4]; against chain 59 (registered as descriptive) +6.6 [-10.7, +25.3].
+
+**The label, in the registered order (D433).**
+1. Negative: pair 1's interval entirely below zero, or the guard tripped. No: the interval is [+6.9, +34.6] and the guard did not fire (D446).
+2. Positive: pair 1 above +40 with its interval entirely above zero, and both held-out contrasts entirely above zero. No: pair 1 is +20.5, and neither held-out contrast is above zero.
+3. Flat: pair 1 within plus or minus 40 inclusive. Yes: +20.5. **Chain 61 reads Flat.**
+
+**What the registered rule does not say and the numbers do.** Chain 61 beats its parent directly by a small margin whose interval excludes zero, and it is worse than its parent against chain 37, an opponent held out of both pools, by 31.7 Elo with an interval entirely below zero; against chain 46 the difference is not separated from zero, and against chain 59 neither. The Flat label has no clause for a held-out contrast below zero. It is recorded here because it bears on what this rung bought: about 3B more steps gave a direct edge over the parent, a negative contrast against chain 37 and no difference established against chain 46 (its interval reaches +12.4). The chain 37 result is on this evaluation block, from one rung at one training seed, with a nominal 95% interval and no adjustment for the three contrasts looked at; it is a flag, not a finding about plain continuations. The rung is not a one-factor step from chain 58's own training either: D433 declares that chain 58 was trained at lambda 0.97 and this rung at 0.95, and that the pool rotated. For comparison, the two continuations from chain 49 (chain 55 and chain 59) both read Inconclusive with direct gaps of +101 and +76, and nothing here says why this parent's continuation moved less. The tournament's Bradley-Terry fit is rejected (deviance 14.2 on 3 df, p = 0.003), so one rating per checkpoint does not describe these nine pairs: on this graph the direct result and the results against third parties disagree. That is a statement about these matches, not about intransitivity in general.
+
+**Consequences, as registered.** Any accepted reading other than Positive: chain 58 stays the warm start, subject to any registered selection then open, and chain 61 is the accepted control for arms from chain 58. Chain 61 is not a warm-start candidate. Chain 62 (chain 58 at lambda 0.97, training now) is read against chain 61 as D441 registers; nothing in this reading changes its gate.
+
+**Pair 7, the first meeting of chain 58 and chain 59:** chain 58 is +46.8 [+33.4, +60.2] over chain 59. The two share chain 49 as parent and differ in GAE lambda (0.97 against 0.95) and training seed (42 against 2042), so this is not a lambda pair. D432 had inferred that chain 58's gap over chain 55 exceeded the replicate gap between chain 55 and chain 59; the direct result, +46.8, sits beside that +44.5 and the replicate gap of -2.0 descriptively. It is on another seed block and says nothing more about lambda.
+
+**The registered style table, pair 1 (chain 61 against chain 58), per team turn unless said, with 95% seed-cluster intervals of the difference.** Activations 2.857 against 3.239 (-0.383 [-0.418, -0.348]); empty activations 0.488 against 0.749 (-0.260 [-0.277, -0.243]); non-empty activations 2.368 against 2.490 (-0.122 [-0.148, -0.096]); blocks 0.445 against 0.467 (-0.022 [-0.029, -0.014]); turnovers 0.303 against 0.307 (-0.004 [-0.010, +0.002]); own decisions a game 357.6 against 376.1 (-18.5 [-21.8, -15.5]); touchdowns a game 0.742 against 0.702 (+0.040 [+0.005, +0.077]). Chain 61 activates fewer players a turn than its parent, most of it fewer empty activations, and blocks slightly less. Descriptive only.
+
+**Against what was written down beforehand (D433).** I expected Flat or Inconclusive and guessed pair 1 between +30 and +90. The label is as expected; the gap, +20.5, is below the guess. I did not expect a held-out contrast below zero.
+
+**Not decided here.** What the rig runs after chain 62 (it should end at about 20:40 PDT). That entry follows, with the selection among the warm-start candidates that D441 requires before anything is launched from chain 60, chain 61 or chain 62.
+
+**Review.** Outside review (Codex, `gpt-6.1-sol`, read-only) before this entry was committed: `.codex-reviews/d447-review.md`. It found no numerical mismatch in the table, the contrasts, the style rows, the acceptance lines or the spend; Flat correct, with the threshold applied to the point estimate as in D413, D414, D432 and D440; the consequences as registered; the plan consistent with D433 and D446. One blocking wording correction, applied above: the chain 46 contrast does not establish "no gain", and the chain 37 result needed its multiplicity qualification. Also applied: the Bradley-Terry statement limited to this graph, pair 7 described and not read as validation, and the push stated as the operator's record.
