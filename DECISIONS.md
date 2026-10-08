@@ -3132,3 +3132,129 @@ Chain 60 (`da9a538f...`, chain 59's rung with `LADDER_GAE_LAMBDA=0.97`, from cha
 
 **Written down before any registered game.** As D436: chain 55's E1 below zero, between -0.006 and -0.018; E1 minus E2 inside plus or minus 0.002; the realised margin spanning zero for every checkpoint.
 - Reviewed by Codex before this entry was written (`.codex-reviews/endturn-probe-v2-review.md`): no blocking finding. It read the engine source and confirmed the diagnosis (the free turn runs under MATCH and KICKOFF, and its end restores the receiving team without incrementing completed turns), that `stack_top` is a frame count and the test matches the engine's own `bb_in_kickoff`, that no other situation offers END_TURN without a completed-turn increment at its end (voluntary endings, exhaustion, turnovers and touchdowns all increment; half-time, Time Out, secret weapons and the end of a drive add no competing boundary), that a rollout from an ordinary root stops before any later kick-off decision, that the exclusion precedes the count and the reservoir so the weights stay consistent, that the new field breaks neither reader, and that only `endturn_probe.py` changed among the hash-bound files against D436's commit. Its corrections are applied: the style-rate exception, the separate tally, the match-end horizon wording, and what the regression test does and does not assert. The review was static; the revised probe has not run on a droplet.
+
+**D440 - CHAIN 60 (GAE LAMBDA 0.97 AT TRAINING SEED 2042) READS POSITIVE, BY 0.07 ELO ON THE DIRECT CLAUSE: +40.07 [+26.7, +54.2] OVER CHAIN 59, AND ABOVE IT ON BOTH HELD-OUT OPPONENTS; LAMBDA 0.97 NOW HAS TWO POSITIVE PAIRS AND IS ADOPTED FOR RUNGS REGISTERED FROM HERE ON, AS D429 REGISTERED; CHAIN 60 IS A WARM-START CANDIDATE AND CHAIN 58 STAYS THE WARM START (2026-10-08 04:40 PDT by the machine's clock at commit; chain 61 is training)**
+
+Gate `c60-gate-20261008` as registered in D429 and D438: mask harness `7d0d547`, seed block 22900000, twelve pairs, plan sha256 `91a2dda5...`, committed in D438 at 04:00:35 PDT (`310a983`) and pushed before the launcher printed its process ids at 04:00:38. Four shards, all complete, each verified by its runner. Acceptance, run before scoring (`score.log`): `GATE-ACCEPTED 38400 games, 12 pairs, seed0 22900000, games_per_worker 32, commit 7d0d547` and `MASKS-ACCEPTED 6400 masked sides in 38400 games as registered, no sampling offsets, 0 truncated, 0 mask fallbacks`; every integrity counter zero, no unnatural ending. Merged `games.jsonl` sha256 `7e1b30e7...`. Four droplets, $0.322 by the runners' cost lines, all deleted (HTTP 404 in each shard log; the status listing saved as `droplet_status_after.txt` shows only D435's four droplets).
+
+| # | Pair | W / D / L | Decisive-Elo [95% seed-cluster] |
+|---|---|---|---|
+| 1 | chain 60 vs chain 59 | 1136 / 1162 / 902 | +40.07 [+26.7, +54.2] |
+| 2 | chain 60 vs chain 37 | 1743 / 957 / 500 | +216.9 [+201.4, +234.0] |
+| 3 | chain 59 vs chain 37 | 1670 / 934 / 596 | +179.0 [+164.8, +193.6] |
+| 4 | chain 49 vs chain 37 | 1564 / 1048 / 588 | +169.9 [+155.5, +184.9] |
+| 5 | chain 60 vs chain 46 | 1739 / 982 / 479 | +224.0 [+207.4, +240.6] |
+| 6 | chain 59 vs chain 46 | 1478 / 1084 / 638 | +145.9 [+131.7, +160.5] |
+| 7 | chain 49 vs chain 46 | 1361 / 1132 / 707 | +113.8 [+100.8, +128.4] |
+| 8 | chain 60 vs chain 49 (in pool, descriptive) | 1511 / 1030 / 659 | +144.2 [+129.2, +158.9] |
+| 9 | chain 60 vs offense bot | 900 / 1828 / 472 | +112.1 [+93.0, +131.0] |
+| 10 | chain 59 vs offense bot | 925 / 1739 / 536 | +94.8 [+76.7, +113.4] |
+| 11 | chain 60 + m1 vs chain 59 + m1 (descriptive) | 1122 / 1355 / 723 | +76.3 [+61.7, +90.8] |
+| 12 | chain 60 vs chain 58 (descriptive) | 983 / 1288 / 929 | +9.8 [-4.4, +23.3] |
+
+| Paired contrast | Opponent | Decisive-Elo [95%] |
+|---|---|---|
+| chain 60 minus chain 59 (label) | chain 37 | +37.9 [+17.0, +59.8] |
+| chain 60 minus chain 59 (label) | chain 46 | +78.0 [+56.5, +99.0] |
+| chain 60 minus chain 59 (registered, no label) | offense bot | +17.3 [-4.6, +38.6] |
+| chain 60 minus chain 49 (retention) | chain 37 | +47.0 [+25.5, +69.2] |
+| chain 60 minus chain 49 (retention) | chain 46 | +110.2 [+89.7, +130.1] |
+| chain 59 minus chain 49 (descriptive, added in D438) | chain 37 | +9.0 [-10.3, +28.9] |
+| chain 59 minus chain 49 (descriptive, added in D438) | chain 46 | +32.2 [+13.1, +51.1] |
+
+**Reading, labels applied in the registered order: Positive.**
+- Not Negative: pair 1's interval is entirely above zero, and the stage's chain 30 guard did not fire (D438).
+- Positive: pair 1's point estimate is +40.07, above +40, with its interval entirely above zero, and both held-out contrasts (chain 60 minus chain 59 against chain 37 and against chain 46) have intervals entirely above zero. All three clauses of D429's rule hold.
+- **The direct clause holds by 0.07 Elo.** Pair 1 is 1,136 wins to 902 losses. One decisive game the other way (1,135 to 903) gives +39.7, which is Flat under the same rule, whatever the held-out contrasts say. The label is applied as registered. Nothing about +40 is special: it was the bar D422 chose for a direct gap, and this result sits on it.
+- The other two clauses are not near their edge: the held-out lower bounds are +17.0 and +56.5.
+
+**Consequences, as registered in D429.**
+- **GAE lambda 0.97 is adopted** as the ladder recipe's GAE lambda for rungs registered after this reading. It has two Positive pairs at two training seeds: chain 58 against chain 55 (seed 42, D428) and chain 60 against chain 59 (seed 2042). **Both pairs share the parent (chain 49), the pool (`2ae7448e...`) and the build (b3), and both are 3B-step rungs.** Nothing here shows the gain at another parent, another pool, or over more than one rung. Chain 61, which is training at 0.95, was registered before this reading and is not changed.
+- **Chain 60 is a warm-start candidate:** it reads Positive and both retention contrasts are entirely above zero. Nothing is launched from it. The warm start stays chain 58: chain 61 is its continuation and the next rung (D441) is read against chain 61, and pair 12 establishes no difference between chain 60 and chain 58 (+9.8 [-4.4, +23.3]; descriptive, and the two rungs differ in training seed only). A registered comparison between the two comes before any entry launches from chain 60.
+- No play-time or evaluation default changes.
+
+**The two pairs side by side.**
+
+| | chain 58 minus chain 55 (seed 42, D428) | chain 60 minus chain 59 (seed 2042) |
+|---|---|---|
+| direct (pair 1) | +44.5 [+30.7, +58.2] | +40.07 [+26.7, +54.2] |
+| against chain 37 | +37.9 [+17.7, +56.4] | +37.9 [+17.0, +59.8] |
+| against chain 46 | +27.7 [+5.9, +49.1] | +78.0 [+56.5, +99.0] |
+| against the offense bot | -5.2 [-28.1, +17.4] | +17.3 [-4.6, +38.6] |
+| under m1 (pair 11) | +61.9 [+46.7, +76.1] | +76.3 [+61.7, +90.8] |
+| retention against chain 37 | +28.4 [+7.5, +49.8] | +47.0 [+25.5, +69.2] |
+| retention against chain 46 | +95.5 [+74.8, +116.2] | +110.2 [+89.7, +130.1] |
+
+The two pairs were played on different seed blocks and no pooled figure is computed. The replicate gap between the two controls, chain 59 against chain 55, was -2.0 [-14.5, +10.7] (D432); the gap between the two lambda 0.97 rungs, chain 60 against chain 58, is +9.8 [-4.4, +23.3] here.
+
+**How much this shows, and what it does not.**
+- Two training seeds per recipe, one parent. The intervals cover evaluation seeds, not training seeds. Two pairs that agree are better than one and are still two.
+- The direct clause is on its edge (above), and in D428 it cleared +40 by 4.5. If the bar had been +45, neither pair would read Positive; if it had been +35, both would with room. What the two gates establish without any bar: a direct gap above zero at both seeds, and both held-out contrasts above zero at both seeds.
+- Chain 37 and chain 46 are lineage relatives, not independent kinds of opponent. Against the offense bot no difference is established at either seed.
+- The exam did not see it, again: chain 60 is below chain 59 on every exam cell (D438), as chain 58 was at or below chain 55.
+- The expectation written in D429 was "Inconclusive with a direct gap above zero is my single most likely label" and "I do not expect a second Positive with any confidence". It reads Positive, on the edge.
+
+**Registered style diagnostics (D429), not gates.** Per team turn unless noted, chain 60 then chain 59, with the difference and its 95% seed-cluster interval (`main/diagnostics.txt`).
+
+| Pair 1, plain | chain 60 | chain 59 | difference | chain 58 minus chain 55 (D428) |
+|---|---|---|---|---|
+| activations | 2.989 | 3.153 | -0.164 [-0.206, -0.124] | +0.332 |
+| empty activations | 0.585 | 0.646 | -0.060 [-0.078, -0.043] | +0.209 |
+| non-empty activations | 2.404 | 2.508 | -0.104 [-0.134, -0.075] | +0.123 |
+| blocks | 0.476 | 0.428 | +0.048 [+0.040, +0.056] | +0.034 |
+| turnovers | 0.300 | 0.294 | +0.007 [+0.001, +0.013] | +0.006 |
+| own decisions per game | 360.5 | 376.9 | -16.4 [-20.0, -12.8] | +18.8 |
+| touchdowns per game | 0.890 | 0.776 | +0.114 [+0.077, +0.151] | +0.115 |
+
+| Pair 11, both under m1 | chain 60 | chain 59 | difference | chain 58 minus chain 55 (D428) |
+|---|---|---|---|---|
+| activations | 6.941 | 6.992 | -0.051 [-0.098, -0.003] | +0.010 |
+| empty activations | 2.770 | 2.805 | -0.035 [-0.074, +0.007] | +0.363 |
+| non-empty activations | 4.172 | 4.187 | -0.016 [-0.043, +0.013] | -0.353 |
+| blocks | 0.629 | 0.596 | +0.033 [+0.023, +0.042] | +0.011 |
+| turnovers | 0.393 | 0.408 | -0.014 [-0.020, -0.008] | -0.010 |
+| own decisions per game | 636.2 | 643.6 | -7.4 [-11.1, -3.8] | -24.4 |
+| touchdowns per game | 0.868 | 0.663 | +0.205 [+0.173, +0.239] | +0.151 |
+
+- **The activation difference of D428 does not repeat.** In pair 1 chain 60 activates fewer players a team turn than chain 59 (-0.16), where chain 58 activated more than chain 55 (+0.33). D432 had already shown that a seed change alone moves activations by +0.41. Together: no consistent direction across the two seed pairs is established (both direct-pair intervals exclude zero, in opposite directions), and the expectation written in D429 ("the style difference to repeat in direction") was wrong for the direct pair.
+- Against the held-out opponents chain 60 has somewhat more activations than chain 59 (2.83 against 2.69 a team turn against chain 37, 2.82 against 2.73 against chain 46; non-empty 2.34 against 2.21 and 2.33 against 2.21). These are across pairs and carry no interval for the difference.
+- **What does repeat at both seeds:** more blocks a team turn (+0.048 here, +0.034 in D428; against the held-out opponents 0.487 against 0.465 and 0.490 against 0.474, point estimates across pairs with no interval for the difference) and more touchdowns a game (+0.114 and +0.115 in pair 1, each with its interval above zero). Under m1 blocks and touchdowns are also higher at both seeds. Two pairs; a pattern to watch, not a finding about lambda.
+- **In-run, from the two training logs** (`docs/chain60-inrun-diagnostics-2026-10-08.txt`; read after the gate was scored, unlike D428's): value loss 0.0140 against 0.0101 and explained variance 0.910 against 0.931, similar panel means to chain 58 against chain 55 (0.0141 against 0.0101, 0.910 against 0.933; descriptive summaries, no intervals); KL 0.00099 against 0.00100, deciding-row KL 0.00200 against 0.00206, clip fraction 0.0030 against 0.0028; entropy on deciding rows 0.197 against 0.168 (chain 58 against chain 55: 0.178 against 0.170).
+
+**Descriptive, not part of the reading.**
+- Chain 60 against chain 49 in pool: +144.2 [+129.2, +158.9] (chain 58 against chain 49 in D428: +142.3).
+- Chain 59 minus chain 49 on this block: +9.0 [-10.3, +28.9] against chain 37 and +32.2 [+13.1, +51.1] against chain 46 (block 22800000, D432: +11.9 [-10.1, +32.7] and +27.4 [+8.2, +46.6]). The same shape on a second block.
+- Raw roster-conditioned decisive share of chain 60 in pair 1: bash 0.462 [0.432, 0.492], agile 0.735, hybrid 0.547, stunty 0.617. With a bash roster chain 60 is below one half against chain 59, as chain 58 was against chain 55 (0.464) and chain 57 before it (0.466). Against the held-out opponents chain 60's bash share is above chain 59's: 0.697 against 0.641 (chain 37) and 0.692 against 0.604 (chain 46), point estimates across pairs with no interval for the difference. These splits were not registered and a raw share mixes the roster's strength with the policy's play.
+- No Bradley-Terry fit: the pair graph is not connected (pair 11's masked players meet nobody else).
+- Reviewed by Codex before this entry was written (`.codex-reviews/d440-review.md`, one file for D440 and D441): no blocking finding. It recounted all twelve W / D / L rows from the merged records (38,400 natural games, every integrity counter zero), reproduced pair 1's +40.0687 and the +39.72 one game away, and found the knife edge described fairly: D429's order gives Positive, the inclusive Flat band ends at +40, and no earlier entry registers a rounding rule. Every table, contrast, style row, in-run mean, hash and the $0.322 match. The consequences are D429's for Positive and the two-seed, one-parent limits are stated. Corrections applied above: the activation sentence, "similar panel means", and the across-pair comparisons marked as point estimates without difference intervals. It notes that the commit time is corroborated locally and that the push and the launcher's start time rest on the operator's shell output.
+
+**D441 - CHAIN 62 PRE-REGISTERED TO FOLLOW CHAIN 61: THE CONTINUATION FROM CHAIN 58 ON THE ADOPTED RECIPE (GAE LAMBDA 0.97, TRAINING SEED 42), WITH CHAIN 61 AS ITS MATCHED CONTROL AT 0.95; A THIRD PAIR FOR LAMBDA 0.97, AT A SECOND PARENT (2026-10-08 04:40 PDT by the machine's clock at commit; chain 61 is training, chain 62 has not started)**
+
+**Why this rung.** Chain 61 is the last stage in the plan and ends at about 12:40 PDT. D440 adopted lambda 0.97 for rungs registered from here on. The warm start is chain 58 (D432), so the recipe's next rung is chain 58 continued at 0.97. Chain 61 is the same continuation at 0.95, on the same parent, pool, seed and build: a matched control already training. So this rung is both the ladder's next step and a third lambda pair, at another parent and with another pool, which is what D440 says the two existing pairs do not show. D433 named this rung as the plan if lambda 0.97 was adopted.
+
+**What was considered and not chosen.**
+- **An objective-side arm other than lambda** (a reward arm on the block or rush charges, gamma 0.9995). The END_TURN probe that is meant to point at one of these is playing (D439) and unread; choosing among them without it would be a guess, and each would be read against a control at the adopted lambda that does not exist yet. Chain 62 becomes that control's counterpart: after it, a one-factor arm from chain 58 at lambda 0.97 has chain 62 as its control.
+- **Launching from chain 60.** It is a candidate (D440), no difference from chain 58 is established, and chain 61 is built on chain 58. A switch would need a registered comparison first and would leave chain 61 without a use.
+- **An exploration rung.** Unchanged from D433: the design study does not support one yet.
+
+**Chain 62, pre-registered.**
+- `r0chain62-lam097-from58-s42-20261008`: warm chain 58 (`a03ed608...`), training seed 42, pool `59a6703f...` (the anchor, chain 41, chain 49, and chain 58 last, in the bot's seat), `r0_poss_half`, gamma 0.999, replay ratio 1.0, 4 banks x 0.12 with the contact bot on tag 4, restart scale 1.0, 3B steps, on the b3 build (source `4c8a04b1...`, module `4156c9c3...`), rule flag off, `LADDER_GAE_LAMBDA=0.97`. **Control: chain 61** (`r0chain61-cont58-s42-20261008`, checkpoint hash recorded when its stage ends).
+- **Declared differences from chain 61, all of them.** GAE lambda. The wrapper sets one more variable. The rung runs about 9 hours later on the same checkout, build and hardware. The stage manifest must show the same seed, warm start, pool identity, source, module and Puffer patch bundle (`e3134e04...`) as chain 61's; a difference is an undeclared factor and the rung is unread until a new entry. Same stage rule (D405's chain 30 drift guard, same floors). No exam veto (D417).
+- **If chain 61's stage does not pass** (its guard trips, or it fails and exhausts the supervisor's automatic attempts, which run as usual), chain 62 has no control and the operator does not reset the halt for it; a new entry decides what runs. If chain 61 passes its stage, chain 62 runs whatever chain 61's gate reads.
+- **Gate.** Mask harness `7d0d547`, seed block 23100000 (unused), decisive-Elo with 95% seed-cluster intervals, 3,200 naturally completed games per pair, 32 per worker, T=1, kick-off starts, both legs, no sampling offsets, plan sha256 committed and pushed before any shard is launched, accepted by `tools/gate_acceptance.py` and `accept_from_plan.py` before scoring. Twelve pairs, played without masks unless marked: (1) chain 62 against chain 61; (2) chain 62, (3) chain 61 and (4) chain 58, each against chain 37; (5) chain 62, (6) chain 61 and (7) chain 58, each against chain 46; (8) chain 62 against chain 58 (descriptive: chain 58 is the parent and sits in the bot's seat of the pool); (9) chain 62 and (10) chain 61, each against the offense bot; (11) chain 62 + m1 against chain 61 + m1 (descriptive); (12) chain 62 against chain 60 (descriptive: a lambda 0.97 rung one generation earlier, in neither rung's pool). Contrasts by `paired_contrasts.py` (sha256 `722ece95...`, 2,000 replicates, generator seed 0): chain 62 minus chain 61 against chain 37, chain 46 and the offense bot; retention, chain 62 minus chain 58, against chain 37 and chain 46.
+- **Labels, applied in this order to accepted evidence only, the rule of D422 and D429 with chain 61 as the control.** **Negative:** pair 1's interval entirely below zero, or the stage's chain 30 guard tripped. **Positive:** pair 1's point estimate above +40 with its interval entirely above zero, and both held-out contrasts (chain 62 minus chain 61, against chain 37 and against chain 46) with intervals entirely above zero. **Flat:** pair 1 within plus or minus 40 inclusive. **Inconclusive:** anything else. Missing, unaccepted or integrity-invalid evidence is unread; a trainer or integrity failure, or a marker refused for any reason but the guard, is unread; a gate shard that aborts on the 4,096-decision cap makes the gate unread with no rerun before a new entry.
+- **Consequences.**
+  - **Positive:** a third Positive pair, at a second parent. The adoption stands with that added. Chain 62 is a warm-start candidate if both retention contrasts are entirely above zero.
+  - **Flat or Inconclusive:** the adoption stands on its two pairs; the third is set beside them with no pooled label, and the reading says plainly that the registered Positive criterion was not met at the second parent and which clauses failed.
+  - **Negative:** the adoption is suspended. No further rung is registered at 0.97 before an entry weighs the three pairs. That entry may reverse the adoption or keep it with reasons; this entry does not decide which.
+  - **Unread:** nothing is concluded from this rung.
+  - Whatever it reads, nothing is launched from chain 62, chain 61 or chain 60 before a registered selection among the candidates then standing (chain 60 now; chain 61 and chain 62 if their gates make them candidates). Until then chain 58 is the warm start.
+- **Registered style diagnostics, not gates.** The table of D429 for pair 1 and pair 11, set beside the two earlier pairs. The registered question is whether the two things that repeated (more blocks a team turn, more touchdowns a game) repeat a third time; activations are reported and D440 gives no reason to expect a direction. In-run value loss, explained variance, deciding-row KL, clip fraction and deciding-row entropy against chain 61's, read before the gate is scored.
+- **Written down so it cannot be adjusted later.** I expect a direct gap above zero and usually smaller than the first two (+44.5, +40.07): my guess is +10 to +45, so Flat or Inconclusive is more likely than Positive (about one chance in three). Chain 58 was itself trained at 0.97, so both arms start from a lambda 0.97 policy and a 0.97 critic, and one rung at 0.95 may not undo much. I expect more blocks a team turn for chain 62 than for chain 61.
+
+**What this entry does not decide.** What runs after chain 62 (it should end at about 22:00 PDT). That is registered after chain 61's gate (D433) and the END_TURN probe (D439) are read.
+
+**Operation.** The wrapper `b3_chain62.sh` is chain 61's wrapper with `LADDER_GAE_LAMBDA=0.97` and the new stamp, committed on branch `feat/no-early-end-turn-20261005` (`7ba3ddb`) and installed on the rig beside the others (sha256 `7672d0ee...`). Its plan-only preflight passed at 04:38:42 to 04:38:44 PDT, with chain 61 training and not on a supervisor tick: seed 42, `gae_lambda=0.97`, gamma 0.999, chain 58's checkpoint as the warm start, pool identity `59a6703f...` matching the pinned value with banks `3541a65a...` (anchor), `b1830e23...` (chain 41), `a2d1d10d...` (chain 49), `a03ed608...` (chain 58), screen plan verified, nothing trained (`~/longrun/preflight_b3_chain62.log` on the rig). The stage is appended while chain 61 trains, after this entry is pushed; the supervisor launches it on the first tick after chain 61's pass marker. The supervisor's timer now fires at :x0:53 and :x5:53, not at :13 as earlier notes say. The wrapper's limits are as D433 states them. The commit, the wrapper's hash and the local file are checkable; the installation and the preflight are the operator's report of the rig's output.
+
+**Disclosed.** This rung was chosen after reading chain 60's gate (D440). Its control, chain 61, was registered before that (D433) and has not been read. Chain 60, an opponent in pair 12, is a warm-start candidate.
+- Reviewed by Codex before this entry was written (same file as D440's review): no blocking finding. The wrapper changes lambda only, apart from comments, the stamp and a message; seed block 23100000 is unused in the ledger and the tournament artifacts; running this rung now follows D433's stated branch, and the unread probe could not yet choose another arm. Corrections applied above: what Flat or Inconclusive would and would not say about the second parent, Negative as a suspension that does not decide the outcome of the entry that follows it, and the wording of the expectation.

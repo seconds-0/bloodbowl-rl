@@ -1,0 +1,20 @@
+In-run loss diagnostics, chain 60 (GAE lambda 0.97) against chain 59 (0.95), both at training seed 2042 from chain 49, from the two training logs on the rig.
+Training panels only (PUFFER_LOSS_JSON lines with phase_eval 0, epoch >= 0, no final reprint). Mean, 5th and 95th percentile over panels, and the mean of each third of the run.
+Read 2026-10-08 04:35 PDT, after chain 60's gate was scored and its label was known (unlike chain 58's, which were read before scoring). Script: the one below docs/chain58-inrun-diagnostics-2026-10-07.txt with the two run names changed, piped to python3 on the rig.
+
+keys ['clipfrac', 'clipfrac_deciding', 'deciding_frac', 'entropy', 'entropy_deciding', 'explained_variance', 'grad_norm', 'kl', 'kl_deciding', 'old_kl', 'policy', 'total', 'value']
+c60 panels 22888 last steps 2999975936.0
+c59 panels 22888 last steps 2999975936.0
+clipfrac                     | c60 mean 0.002961 [p5 0.0003128, p95 0.005722] thirds 0.005117 0.003018 0.0007478 | c59 mean 0.002837 [p5 0.0003052, p95 0.005592] thirds 0.004932 0.002863 0.0007166
+clipfrac_deciding            | c60 mean 0.005998 [p5 0.000665, p95 0.01146] thirds 0.01025 0.006177 0.00157 | c59 mean 0.005881 [p5 0.0006632, p95 0.01146] thirds 0.01012 0.005995 0.00153
+deciding_frac                | c60 mean 0.4872 [p5 0.465, p95 0.5106] thirds 0.4994 0.4871 0.475 | c59 mean 0.4773 [p5 0.4578, p95 0.4977] thirds 0.4873 0.4772 0.4672
+entropy                      | c60 mean 0.09612 [p5 0.07857, p95 0.1161] thirds 0.09916 0.0953 0.09392 | c59 mean 0.08006 [p5 0.0662, p95 0.09468] thirds 0.07748 0.07991 0.08278
+entropy_deciding             | c60 mean 0.1973 [p5 0.1616, p95 0.2373] thirds 0.1986 0.1957 0.1978 | c59 mean 0.1679 [p5 0.1367, p95 0.1999] thirds 0.159 0.1675 0.1772
+explained_variance           | c60 mean 0.9095 [p5 0.8934, p95 0.9224] thirds 0.9025 0.912 0.9139 | c59 mean 0.9309 [p5 0.9211, p95 0.9395] thirds 0.9288 0.9316 0.9324
+grad_norm                    | c60 mean 2.057 [p5 1.711, p95 2.517] thirds 2.192 2.021 1.958 | c59 mean 1.91 [p5 1.541, p95 2.396] thirds 2.15 1.818 1.763
+kl                           | c60 mean 0.0009881 [p5 4.559e-05, p95 0.002552] thirds 0.001909 0.0008811 0.0001748 | c59 mean 0.0009962 [p5 4.408e-05, p95 0.002605] thirds 0.001925 0.0009017 0.0001622
+kl_deciding                  | c60 mean 0.001997 [p5 9.631e-05, p95 0.005114] thirds 0.003824 0.001802 0.0003667 | c59 mean 0.002061 [p5 9.435e-05, p95 0.005349] thirds 0.00395 0.001888 0.0003461
+old_kl                       | c60 mean 0.0009005 [p5 2.931e-05, p95 0.002406] thirds 0.001713 0.0008198 0.0001686 | c59 mean 0.0009376 [p5 3.381e-05, p95 0.002495] thirds 0.00179 0.0008577 0.0001656
+policy                       | c60 mean 0.009221 [p5 -0.005463, p95 0.02538] thirds 0.007508 0.009462 0.01069 | c59 mean 0.01021 [p5 -0.0007673, p95 0.024] thirds 0.00702 0.01033 0.01328
+total                        | c60 mean 0.02232 [p5 0.007529, p95 0.03862] thirds 0.02068 0.02245 0.02382 | c59 mean 0.01958 [p5 0.008618, p95 0.03338] thirds 0.01644 0.0197 0.02261
+value                        | c60 mean 0.01396 [p5 0.01255, p95 0.01551] thirds 0.01406 0.01385 0.01397 | c59 mean 0.01009 [p5 0.009188, p95 0.01108] thirds 0.01012 0.01009 0.01008
