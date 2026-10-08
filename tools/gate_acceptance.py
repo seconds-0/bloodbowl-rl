@@ -93,7 +93,8 @@ def check_manifest(manifest, plan):
 
 
 def side_temperature_problems(game, pair, plan):
-    """With registered temperatures, each side's value is its own player's (None for a scripted side)."""
+    """With registered temperatures, each side's value is its own player's: a registered checkpoint
+    samples at its temperature, anyone else is a scripted bot with none."""
     where = f"{pair} seed {game.get('engine_seed')} {game.get('leg')}"
     seats = (game.get("home"), game.get("away"))
     if game.get("leg") not in LEGS or set(seats) != set(pair) or \
@@ -105,7 +106,11 @@ def side_temperature_problems(game, pair, plan):
         return [f"{where}: modes {modes!r} and temperatures {temperatures!r} are not one value a side"]
     problems = []
     for name, mode, temperature in zip(seats, modes, temperatures):
-        want = None if mode == "scripted" else registered_temperature(plan, name)
+        checkpoint = name in plan["checkpoints"]
+        if (mode == "scripted") == checkpoint:
+            problems.append(f"{where}: {name} played in mode {mode!r}, "
+                            + ("a registered checkpoint samples" if checkpoint else "a bot is scripted"))
+        want = registered_temperature(plan, name) if checkpoint else None
         if isinstance(temperature, bool) or temperature != want:
             problems.append(f"{where}: {name} played at temperature {temperature!r}, registered {want!r}")
     return problems

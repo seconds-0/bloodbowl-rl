@@ -221,6 +221,22 @@ def test_a_scripted_side_with_a_temperature_is_rejected(tmp_path):
     assert any("offense played at temperature 1.0, registered None" in p for p in problems)
 
 
+def test_a_checkpoint_side_recorded_as_scripted_is_rejected(tmp_path):
+    m, g = tempered_run()
+    g[0]["modes"], g[0]["temperatures"] = ["scripted", "sample"], [None, 1.0]     # chainA is home
+    problems = ga.accept(write_run(tmp_path, m, g), tempered_plan())
+    assert any("chainA played in mode 'scripted', a registered checkpoint samples" in p for p in problems)
+    assert any("chainA played at temperature None, registered 0.5" in p for p in problems)
+
+
+def test_a_bot_side_recorded_as_sampling_is_rejected(tmp_path):
+    m, g = tempered_run()
+    row = next(row for row in g if row["pair"] == ["chainA", "offense"] and row["leg"] == "A_home")
+    row["modes"] = ["sample", "sample"]
+    problems = ga.accept(write_run(tmp_path, m, g), tempered_plan())
+    assert any("offense played in mode 'sample', a bot is scripted" in p for p in problems)
+
+
 def test_a_temperature_registered_for_a_bot_or_an_unknown_player_is_rejected(tmp_path):
     m, g = tempered_run()
     bad = {**tempered_plan(), "temperatures": {"chainA": 0.5, "offense": 0.5, "chainZ": 0.5}}
