@@ -1,0 +1,25 @@
+[04:33:10] created droplet 607252146 (bb-harness-et2-chain55-ca379e, s-8vcpu-16gb-amd, sfo3, tag bb-harness-tournament)
+[06:02:02] shard chain55 ACCEPTED: file hashes, provenance, integrity and game coverage hold for chain55
+[06:02:16] verify droplet 607252146: HTTP 404 (404 = gone)
+[06:02:16] lifetime 89.1 min at $0.16667/h: cost about $0.248
+[06:02:22] verify ssh key 59931565: HTTP 404 (404 = gone)
+[04:33:10] created droplet 607252149 (bb-harness-et2-chain59-ca379e, s-8vcpu-16gb-amd, sfo3, tag bb-harness-tournament)
+[06:22:27] shard chain59 ACCEPTED: file hashes, provenance, integrity and game coverage hold for chain59
+[06:22:40] verify droplet 607252149: HTTP 404 (404 = gone)
+[06:22:40] lifetime 109.5 min at $0.16667/h: cost about $0.304
+[06:22:41] verify ssh key 59931563: HTTP 404 (404 = gone)
+[04:33:10] created droplet 607252151 (bb-harness-et2-chain49-ca379e, s-8vcpu-16gb-amd, sfo3, tag bb-harness-tournament)
+[06:21:00] shard chain49 ACCEPTED: file hashes, provenance, integrity and game coverage hold for chain49
+[06:21:13] verify droplet 607252151: HTTP 404 (404 = gone)
+[06:21:13] lifetime 108.1 min at $0.16667/h: cost about $0.300
+[06:21:13] verify ssh key 59931566: HTTP 404 (404 = gone)
+[04:33:11] created droplet 607252148 (bb-harness-et2-chain58-ca379e, s-8vcpu-16gb-amd, sfo3, tag bb-harness-tournament)
+[06:03:06] shard chain58 ACCEPTED: file hashes, provenance, integrity and game coverage hold for chain58
+[06:03:19] verify droplet 607252148: HTTP 404 (404 = gone)
+[06:03:19] lifetime 90.1 min at $0.16667/h: cost about $0.250
+[06:03:19] verify ssh key 59931564: HTTP 404 (404 = gone)
+[04:33:11] created droplet 607252147 (bb-harness-et2-chain60-ca379e, s-8vcpu-16gb-amd, sfo3, tag bb-harness-tournament)
+[06:06:07] shard chain60 ACCEPTED: file hashes, provenance, integrity and game coverage hold for chain60
+[06:06:20] verify droplet 607252147: HTTP 404 (404 = gone)
+[06:06:20] lifetime 93.2 min at $0.16667/h: cost about $0.259
+[06:06:20] verify ssh key 59931562: HTTP 404 (404 = gone)

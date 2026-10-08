@@ -399,3 +399,10 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **What it allows.** The bar D430 set is cleared for these arms: entries that build on search may be registered, each with its own gate. Nothing is adopted.
 - **Caveat.** The margins reuse a gate that has been read, and one of them is close. A claim that search beats temperature 0.5 in particular needs a fresh-seed replay of the search seat.
 - **Next on search.** A registered plan for distilling the search seat's deviations into the policy (not started).
+
+**Update 2026-10-08 07:03 PDT (D443): the END_TURN probe is read and points at no arm.**
+- **Run.** Five checkpoints (chains 55, 58, 59, 49, 60), 200 self-play games each, all five shards accepted, one look, $1.36 (probe total $1.48 with the unread first launch).
+- **What it found.** Where a checkpoint ends its turn, its own critic prices the most probable further activation below ending by about 0.008 to 0.011, and that is the price of one activation (the forced arm agrees to 0.001). Played to the end of the match, the shaped return does not establish a negative margin (all five intervals span zero), and for chains 55, 58, 59 and 60 the critic's margin sits about 0.01 below the realised one.
+- **Rules.** None of the three pointers holds: the realised margin is not below zero (no reward pointer), removing the discount flips only 4% to 6% of decisions (no gamma pointer), and chain 58's margin does not differ from the lambda 0.95 checkpoints beyond the seed gap (no lambda pointer). The outcome is "reported without a recommendation".
+- **Also.** The critic's part of the margin is smaller in magnitude in both lambda 0.97 checkpoints than in their controls (+0.0032 [+0.0021, +0.0044] on average; no rule reads it). A choice among up to three activations has a positive judged gain at END_TURN decisions for chains 55, 58 and 60. The kick-off Blitz rule left out about 1% of decisions; chain 58 ends its Blitz turn early far more often than the others.
+- **Use.** The rung after chain 62 is chosen without a pointer from the probe.
