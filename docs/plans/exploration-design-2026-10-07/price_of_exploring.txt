@@ -1,0 +1,9 @@
+roots 2010 alternative candidates 5447
+mean gain of an alternative (top three by policy probability) over a0: -0.0101; median -0.0003; 10th pct -0.0388; share below -0.02: 0.18; share above +0.02: 0.07
+mean gain of the most probable alternative: -0.0088
+  alternatives with prob >=1e-2      : n=  240 mean gain -0.0006; raw 16-rollout gain above +0.10: 0.008; below -0.10: 0.008
+  alternatives with prob 1e-6..1e-2  : n=  584 mean gain -0.0041; raw 16-rollout gain above +0.10: 0.003; below -0.10: 0.015
+  alternatives with prob e^-50..1e-6 : n= 2027 mean gain -0.0052; raw 16-rollout gain above +0.10: 0.005; below -0.10: 0.016
+  alternatives with prob <e^-50      : n= 2596 mean gain -0.0161; raw 16-rollout gain above +0.10: 0.008; below -0.10: 0.053
+tail roots 29: single-rollout advantage of the chosen alternative: mean 0.159, sd within root (mean) 0.097, share of single rollouts with positive advantage 0.93; paired sd 0.135
+sd of a0's own return across rollouts, mean over roots: 0.031

@@ -1,0 +1,15 @@
+== chain55: 2449 decisions with a choice; top > 0.999999: 69%; top > 0.99: 85%
+   largest |logit| over all 454 outputs, median 263; log-prob gap between most and least probable LEGAL joint action, median 165, p90 448
+   head 0 (type): has a choice at 71% of decisions; of those top > 0.999999: 89%, top > 0.99: 96%; second value log-prob median -77; legal logit range median 88, p90 278
+   head 1 (arg | type): has a choice at 41% of decisions; of those top > 0.999999: 66%, top > 0.99: 82%; second value log-prob median -26; legal logit range median 108, p90 233
+   head 2 (square | type,arg): has a choice at 51% of decisions; of those top > 0.999999: 65%, top > 0.99: 82%; second value log-prob median -27; legal logit range median 146, p90 376
+   by class:
+     turn           n= 383 top>0.999999 59%  top>0.99 85%
+     declare        n= 318 top>0.999999 76%  top>0.99 92%
+     after_declare  n= 322 top>0.999999 76%  top>0.99 91%
+     None           n=1426 top>0.999999 69%  top>0.99 82%
+   turn-level decisions with END_TURN and an ACTIVATE both legal: 383; END_TURN played at 16%
+     P(END_TURN) >= 0.999999: 7%; 0.99 to 0.999999: 5%; 0.01 to 0.99: 9%; 1e-6 to 0.01: 10%; below 1e-6: 69%
+     where END_TURN was played (61): P(END_TURN) >= 0.999999 at 46%, >= 0.99 at 75%
+   decisions with END_ACTIVATION and a BLOCK_TARGET both legal: 67; P(END_ACTIVATION) >= 0.999999: 30%; P(block) >= 0.999999: 67%; both below 0.99: 1%; P(block) below 1e-6: 30%
+   saturated decisions by (class, top type): [((None, 'STEP'), 507), (('declare', 'DECLARE'), 242), (('turn', 'ACTIVATE'), 197), ((None, 'END_ACTIVATION'), 180), (('after_declare', 'STEP'), 145), ((None, 'SETUP_PLACE'), 69), (('after_declare', 'END_ACTIVATION'), 49), ((None, 'CHOOSE_DIE'), 41)]
