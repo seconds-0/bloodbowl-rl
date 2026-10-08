@@ -210,4 +210,4 @@ python $D/endturn_analyze.py --plan $D/PLAN.json --expect-sha256 $H \
 - Question 3 compares two numbers. It does not separate the reward from the critic's fitting as the cause of a gap, and both can contribute.
 - The checks of section 9 have the scope stated there.
 
-sha256 of `PLAN.json`: `c1b98f4eaeb3ddb9e4072b760f626ef9a213121392d09a27028554162cf37902`
+sha256 of `PLAN.json`: `d6b829470bbd4eee3b78365b05c35f830de04a12edcba7ad8724d53fa1f0cbaa`

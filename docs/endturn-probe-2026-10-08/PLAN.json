@@ -58,6 +58,11 @@
    "sha256": "a2d1d10dcea3967298e1359efdf831ebe96db19b349f3eca31c81587c7e8bce0",
    "blob": "chain49/0000002999975936.bin",
    "what": "the parent of the three"
+  },
+  "chain60": {
+   "sha256": "da9a538fb8b944efc2a37e10b7b50ea7b4df022bbfcabc7f4a183ac3f04134d2",
+   "blob": "chain60/0000002999975936.bin",
+   "what": "from chain 49, lambda 0.97, training seed 2042"
   }
  },
  "settings": {
@@ -101,6 +106,12 @@
    "name": "chain49",
    "checkpoints": [
     "chain49"
+   ]
+  },
+  {
+   "name": "chain60",
+   "checkpoints": [
+    "chain60"
    ]
   }
  ],
