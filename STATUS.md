@@ -415,3 +415,9 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Gate.** 28,800 games, nine pairs, seed block 23000000, accepted, integrity counters zero, four droplets destroyed, about $0.22.
 - **Chain 62 (D441)** launched at 12:06 PDT and should end at about 20:40, earlier than first written. Its manifest differs from chain 61's in lambda and the run's own paths; the pool identity and lineage are equal.
 - **Still to register:** what runs after chain 62, by about 20:15 PDT, with the selection among warm-start candidates that D441 requires before anything is launched from chain 60, chain 61 or chain 62.
+
+**Update 2026-10-08 13:55 PDT (D448): chain 63 is registered to follow chain 62.**
+- **Chain 63:** chain 58 continued at GAE lambda 0.99, training seed 42, same pool and build. Control: chain 62 (0.97). With chain 61 (0.95) that makes three doses of the one factor that has read Positive, on one parent. It is an experimental arm beside the adopted recipe, registered before chain 62 is read, and it runs whatever chain 62 reads.
+- **Gate:** fourteen pairs, seed block 23200000, the label rule of D441 with chain 62 as the control, a dose table on one seed block. It adopts nothing under any reading.
+- **Expectation written down:** Positive about one chance in five.
+- **Timing:** chain 62 should end about 20:40 PDT, chain 63 about 05:15 on 2026-10-09. The generation after that is chosen by a registered selection once chain 62's gate is read.
