@@ -40,7 +40,7 @@ CHECKPOINTS = {
     "chain49": ("a2d1d10dcea3967298e1359efdf831ebe96db19b349f3eca31c81587c7e8bce0",
                 "the parent of the three"),
 }
-SETTINGS = {"seed0": 29960000, "games": 200, "rollouts": 64, "cap_end_turn": 24,
+SETTINGS = {"seed0": 29970000, "games": 200, "rollouts": 64, "cap_end_turn": 24,
             "cap_decline_block": 12, "cap_activate": 4, "match_roots": 3,
             "match_rollouts": 64, "alternatives": 3}
 SMOKE = {"seed0": 29940000, "games": 2, "rollouts": 16, "cap_end_turn": 24,

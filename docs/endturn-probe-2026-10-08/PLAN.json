@@ -8,7 +8,7 @@
  "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
  "reward_manifest_file_sha256": "16900416cfe8d32ee49bead8c2fcddb989c13e232b7a279d24df86f00d64c0ea",
  "tool_sha256": {
-  "endturn_probe.py": "2ab98f2a99eeb33d7f76497910f7447baab513f32689648b0c2d2d18b460115f",
+  "endturn_probe.py": "9862ca17b7430078d0970a1aead6b6ce38bfec43f22bd92b23dbc7cae18b1541",
   "endturn_shim.c": "9eccfb66c18d41c07028f9bd33f3ac61481fb8ac1d4dd2f46d8433c8f8a17183",
   "build_shim.sh": "d84bfe1894f5241c510fd91f6642be7f802dfee31f27bc572d56c313a322254c"
  },
@@ -66,7 +66,7 @@
   }
  },
  "settings": {
-  "seed0": 29960000,
+  "seed0": 29970000,
   "games": 200,
   "rollouts": 64,
   "cap_end_turn": 24,
