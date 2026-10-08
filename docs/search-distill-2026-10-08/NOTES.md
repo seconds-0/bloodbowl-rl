@@ -522,3 +522,12 @@ The plan reserves 29980000 to 29980899 for this, the smoke plan uses 29980400 to
 - **Written elsewhere:** the three `distill-mac-...` tournament directories of section 6, and version 1's scratch in `/Users/alexanderhuth/Archives/bb-search-distill-20261008/` (unchanged).
 - Round 3's additions are listed in section 0.6.
 - Nothing was deleted, committed, staged or pushed. No git worktree was made. No process of mine is running.
+
+## 000. Milestone 1 and D445, by the operator (2026-10-08)
+
+- Milestone 1's two label shards ran 10:46 to 12:19 PDT and were accepted (`results/m1/`). The rate stop passed (4.42 hours against 6.0).
+- The registered dataset build refused on the Mac: game 162 step 929, a0's log-probability 1.138e-3 from the droplet's record against 1e-3 (`results/m1-drift/dataset-m1.registered.log`). Reading 1 at milestone 1 was Unread.
+- Measured (`results/m1-drift/SUMMARY.json`): on the Mac at 32 games per forward 1 root of 27,000 is over 1e-3; on a third droplet at one game per forward all 27,000 agree to 2.2e-7; on that droplet at 32 games per forward up to 5.8e-4. The registered default of 32 games per forward was not the label tool's arithmetic.
+- A first fix that loosened the rule on the Mac was written, reviewed, blocked and discarded. The fix that stands keeps the rule and moves the build: `distill_dataset_b1.py` (the registered build, one game per forward, in worker processes; its files equal `distill_dataset.py --batch-games 1` byte for byte on dev shards) and `distill_dataset_droplet.py` (one droplet, fetch into `OUT.partial`, publish by one rename after every check and a verified cleanup).
+- Seven outside review rounds (`.codex-reviews/d445-review.md` to `d445-review7.md`). Each of the first six blocked on something real: the cause not established; publication before the checks; undefined failure cases; a refusal that a kill or a failed write could turn into a retry; states that overlapped as written.
+- What I would do differently: size an integrity tolerance on the arithmetic that made the records and at the registered scale, not from a 480-root smoke; and run the reproduction first when a check fails, before proposing any change to the check.

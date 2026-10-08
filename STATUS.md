@@ -421,3 +421,10 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Gate:** fourteen pairs, seed block 23200000, the label rule of D441 with chain 62 as the control, a dose table on one seed block. It adopts nothing under any reading.
 - **Expectation written down:** Positive about one chance in five.
 - **Timing:** chain 62 should end about 20:40 PDT, chain 63 about 05:15 on 2026-10-09. The generation after that is chosen by a registered selection once chain 62's gate is read.
+
+**Update 2026-10-08 14:00 PDT (D445): the distillation's first label stage is in; its dataset is rebuilt on a droplet with no rule changed.**
+- **Labels.** Milestone 1's 1,000 games were accepted: 30,000 sampled decisions, 566 where the search deviates, $0.50. The stop on label speed passes.
+- **What stopped.** The registered dataset build, run on the Mac, refused one decision of 27,000: the recomputed log-probability of the played action was 0.00114 from the droplet's record, against a registered 0.001. By D444 that made the fit check Unread.
+- **Why.** A third droplet running one game per forward, as the label tool does, reproduced all 27,000 records to 0.0000002. Running 32 games per forward (the build's default) differs by up to 0.0006 on the droplet and 0.0011 on the Mac. The labels are sound; the build's arithmetic was not the label tool's.
+- **Fix (D445).** No acceptance rule changes. The registered build runs on a droplet, one game per forward, and the dataset appears on the Mac only after every check and a verified teardown. Allocation raised from $14 to $18.50 for the extra builds.
+- **Next.** The milestone 1 dataset, the fine-tune, the fit check; if it reads fit, the other 9,000 label games.
