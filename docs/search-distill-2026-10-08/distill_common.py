@@ -310,13 +310,48 @@ class Joint:
 
 
 # ---- a dataset file, and what a weight matrix does on it --------------------------------
-def open_split(path, expect):
-    """A dataset file, only when it is the split the caller is allowed to read."""
+LOCKED_DIR = "locked"
+
+
+def dataset_meta(dataset_dir):
+    with open(os.path.join(dataset_dir, "DATASET.json")) as f:
+        return json.load(f)
+
+
+def open_split(dataset_dir, split, meta=None, unlock_test=False):
+    """One split of a dataset directory, by the path DATASET.json records for it.
+
+    Everything is decided before a byte of the file is deserialised: the split
+    must be one the dataset tool writes; a recorded path under locked/ is
+    opened only for "test"; "test" is opened only with unlock_test, which the
+    evaluation tool sets after it has checked the selection; and the file must
+    hash to the value DATASET.json recorded. After loading, the split the file
+    names inside itself must be the one asked for.
+    """
     import torch
+    if split not in ("train", "validation", "test"):
+        raise SystemExit(f"the {split} split is never written and never read")
+    meta = meta or dataset_meta(dataset_dir)
+    record = (meta.get("files") or {}).get(split)
+    if not record:
+        raise SystemExit(f"DATASET.json in {dataset_dir} records no {split} file")
+    relative = os.path.normpath(record["path"])
+    locked = relative.split(os.sep)[0] == LOCKED_DIR
+    if os.path.isabs(relative) or relative.startswith(".."):
+        raise SystemExit(f"DATASET.json records a {split} path outside the dataset directory")
+    if locked != (split == "test"):
+        raise SystemExit(f"DATASET.json records {relative!r} for the {split} split: a file "
+                         f"under {LOCKED_DIR}/ is the test split's and no other's; nothing "
+                         "was read")
+    if split == "test" and not unlock_test:
+        raise SystemExit("the test split stays closed: it is opened by the evaluation tool's "
+                         "heldout step, after the selection is checked; nothing was read")
+    path = os.path.join(dataset_dir, relative)
+    if sha256_file(path) != record["sha256"]:
+        raise SystemExit(f"{path} is not the file DATASET.json recorded; nothing was read")
     data = torch.load(path, weights_only=False)
-    if data.get("split") != expect:
-        raise SystemExit(f"{path} holds the {data.get('split')!r} split; this step reads "
-                         f"only {expect!r}")
+    if data.get("split") != split:
+        raise SystemExit(f"{path} holds the {data.get('split')!r} split, not {split!r}")
     return data
 
 
@@ -326,11 +361,16 @@ def supports_of(data, index=None):
     return [flat[ptr[i]:ptr[i + 1]] for i in index]
 
 
-def score(data, w0, w, chunk=8192):
+def score(data, w0, w, chunk=8192, precision="float32"):
     """What the policy rows `w` do at every loss decision of a dataset file,
-    against the original rows `w0`. Both are (454, 512) tensors; the arithmetic
-    is float64 on the stored float32 features. Returns numpy arrays, one entry
-    per decision:
+    against the original rows `w0`. Both are (454, 512) tensors.
+
+    precision "float32" (every reported number): the logits are computed as the
+    harness computes them at play, the blob's float32 weights on the float32
+    features with a zero bias, and the joint distribution is then formed in
+    float64. precision "float64": the logits are float64 products, which is the
+    training arithmetic; it is printed once beside the fit value and decides
+    nothing. Returns numpy arrays, one entry per decision:
       p_label     probability of the label (nan where the decision has none)
       p0_label    the original's probability of the label (nan likewise)
       tv          total variation between the two joint distributions
@@ -341,13 +381,23 @@ def score(data, w0, w, chunk=8192):
     n = len(data["a0"])
     out = {"p_label": np.full(n, np.nan), "p0_label": np.full(n, np.nan), "tv": np.zeros(n),
            "changed": np.zeros(n, dtype=bool), "p0_top": np.zeros(n)}
-    w0, w = w0.double(), w.double()
+    if precision not in ("float32", "float64"):
+        raise ValueError(f"unknown precision {precision!r}")
+    if precision == "float32":
+        # The harness's decoder is a Linear whose bias the conversion zero-fills:
+        # the same call, with that zero bias.
+        w0, w = w0.float(), w.float()
+        bias = torch.zeros(w.shape[0])
+        logits = lambda h, m: torch.nn.functional.linear(h.float(), m, bias).double()  # noqa: E731
+    else:
+        w0, w = w0.double(), w.double()
+        logits = lambda h, m: h.double() @ m.T  # noqa: E731
     with torch.no_grad():
         for a in range(0, n, chunk):
             index = np.arange(a, min(a + chunk, n))
             joint = Joint(supports_of(data, index))
-            h = data["h"][index].double()
-            lp0, lp = joint.logp(h @ w0.T), joint.logp(h @ w.T)
+            h = data["h"][index]
+            lp0, lp = joint.logp(logits(h, w0)), joint.logp(logits(h, w))
             p0, p = torch.exp(lp0), torch.exp(lp)
             out["tv"][index] = 0.5 * joint.per_decision_sum((p - p0).abs()).numpy()
             top0, lp0_top = joint.top(lp0)
@@ -369,7 +419,9 @@ def weighted_mean(values, weights):
 
 def selection_score(data, scored, price):
     """J = q * M * g - price * U on a dataset file (PLAN.md section 3), with its
-    parts. No rollouts: g is the mean fresh gain the label tool stored."""
+    parts. No rollouts: g is the mean fresh gain the label tool stored. J is a
+    reported diagnostic: the registered arm is named in the plan and nothing
+    reads J."""
     w = data["weight"]
     dev = data["label"] >= 0
     judged = dev & data["judged"]

@@ -1,0 +1,1 @@
+ERROR: the registered plan is launched one stage at a time: name the shards with --shard (milestone 1: m1-s1 and m1-s2; milestone 2: m2-s1 to m2-s6). The plan has ['m1-s1', 'm1-s2', 'm2-s1', 'm2-s2', 'm2-s3', 'm2-s4', 'm2-s5', 'm2-s6']. Nothing was created.

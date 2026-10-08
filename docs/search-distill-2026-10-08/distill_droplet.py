@@ -13,12 +13,24 @@ rules:
   names      every run draws a random run id; the droplet, its ssh key and its
              local state are named NAME-SHARD-RUNID. Before anything is
              created the launcher refuses if local state of that name exists
-             or the account already lists a droplet or key of that name. That
-             makes it very unlikely, not impossible, that the lifecycle's
-             recovery (by tag, exact name and creation time) finds anything
-             but this run's droplet: the listings read the first 200 entries
-             only, and another process could create the same name between the
-             check and the create.
+             or the account already lists a droplet or key of that name (the
+             listings are read page by page, all of them).
+  ownership  what this launcher itself deletes, it deletes on evidence. An ssh
+             key left behind under the run's name is deleted only when its
+             public key (or fingerprint) is the one this run generated
+             locally; a key of that name with another public key is reported
+             and left alone. The droplet side is the inherited lifecycle's and
+             is weaker: it destroys the droplet id it recorded when the create
+             was answered, and after a create whose answer was lost it adopts
+             a droplet by the shared tag, the exact name (which carries this
+             run's random id) and a creation time after the attempt. That is
+             very unlikely, not impossible, to be another process's droplet:
+             another process could create the same name between the check and
+             the create.
+  stages     for the registered plan the shards must be named with --shard;
+             there is no default to all eight, so a stage is launched on
+             purpose. --keep, which leaves a droplet billing, is refused
+             except for the smoke and dev plans.
   time       --max-hours is the budget for the droplet's life. Before each
              phase the launcher checks the time left before that limit less a
              reserve for the teardown, does not start a phase past it, and
@@ -47,7 +59,7 @@ beside it (the harness's loader requires the sidecar).
 
   distill_droplet.py run --name sd1 --plan PLAN.json --expect-sha256 H \\
       --harness-export EXPORT --max-hours 5 --max-total-usd 7 \\
-      [--shard m1-s1 ...] [--dry-run [--assume-hourly 0.16667]]
+      --shard m1-s1 --shard m1-s2 [--dry-run [--assume-hourly 0.16667]]
 
   distill_droplet.py rehearse --plan PLAN.dev.json --expect-sha256 H \\
       --harness-export EXPORT --shard dev --dir SCRATCH --python VENV_PYTHON
@@ -69,10 +81,14 @@ create:
 
   python EXPORT/tools/droplet_tournament.py --env-file ENV status
   python EXPORT/tools/droplet_tournament.py --env-file ENV destroy --name NAME-SHARD-RUNID
-  python EXPORT/tools/droplet_tournament.py --env-file ENV destroy --id DROPLET_ID
+  python EXPORT/tools/droplet_tournament.py --env-file ENV destroy --id $(cat STATE/NAME-SHARD-RUNID/droplet-id)
 
-`destroy --name` reads the default state directory only; a run started with
-another --state-root is cleaned up with `destroy --id`.
+Both destroy forms act on the droplet id this run recorded in its own state
+directory. `destroy --name` reads the default state directory only; a run
+started with another --state-root is cleaned up with the second form. The text
+never tells anyone to destroy a droplet by an id taken from a listing: when a
+shard's state holds no droplet id, the run recorded none, and a listed droplet
+of the run's exact name is to be looked at by a person first.
 
 `rehearse` runs the same droplet-side job script and the same acceptance on
 this machine in a scratch directory, with no network call. Its source tree is
@@ -83,6 +99,8 @@ the script and the file lists; it is not a way to produce registered records.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import math
 import os
@@ -112,6 +130,9 @@ TEARDOWN_RESERVE = 300        # seconds of --max-hours kept back for the failure
 FAILURE_FETCH_SECONDS = 45    # all the failure logs together
 MIN_HOURS = 0.25
 DEFAULT_PROCESSES = 8         # what a dry run assumes; a real run uses the size's vCPUs
+REGISTERED_PLAN = "search-distill-registered"
+KEEP_PLANS = ("search-distill-smoke", "search-distill-dev")      # the only plans --keep is for
+PAGE = 200
 DT = None                     # the harness's droplet_tournament, set by load_dt
 
 
@@ -228,6 +249,14 @@ def prepare(args, need_repo=True):
         raise DT.RunnerError(f"this {LAUNCHER} is not the file the plan names (launcher_sha256); "
                              "rerun make_plan.py before the plan is committed")
     known = {s["name"]: s for s in plan["shards"]}
+    if getattr(args, "keep", False) and plan["name"] not in KEEP_PLANS:
+        raise DT.RunnerError(f"--keep leaves a droplet billing after the run and is refused for "
+                             f"the plan {plan['name']}; it is for the smoke and dev plans only. "
+                             "Nothing was created.")
+    if not args.shard and plan["name"] == REGISTERED_PLAN:
+        raise DT.RunnerError("the registered plan is launched one stage at a time: name the shards "
+                             "with --shard (milestone 1: m1-s1 and m1-s2; milestone 2: m2-s1 to "
+                             f"m2-s6). The plan has {sorted(known)}. Nothing was created.")
     shards = args.shard or list(known)
     name = DT.validate_name(args.name)
     for shard in shards:
@@ -310,14 +339,18 @@ def cleanup_text(args, ready, run_id):
             lines.append(f"  {tool} destroy --id $(cat {shlex.quote(state_root)}/{unique}/droplet-id)"
                          f"      # droplet {DT.droplet_name(unique)}")
     if default_root:
-        lines.append(f"  {tool} destroy --id <DROPLET_ID>      # needs no local state; ids are in "
-                     "the status listing")
+        lines.append(f"  (`destroy --name` destroys the droplet id this run recorded in "
+                     f"{state_root}/<name>/droplet-id, and no other.)")
     else:
         lines.append(f"  (`destroy --name` reads {os.path.expanduser(DT.STATE_ROOT)} only and cannot "
-                     f"be used: this run's state is in {state_root}. If a droplet-id file is "
-                     "missing, take the id from the status listing. An ssh key of the run's name "
-                     "that stays listed costs nothing; remove it in the console.)")
-    lines.append("A droplet is this run's only if its name ends in this run id: " + run_id)
+                     f"be used: this run's state is in {state_root}.)")
+    lines.append("These commands act only on droplet ids this run recorded. If a shard's state "
+                 "directory holds no droplet-id file, this run recorded no droplet for it: its "
+                 "create was never answered. Do not destroy a listed droplet by id on a guess. "
+                 "A droplet could be this run's only if its name is exactly one of the names "
+                 f"above (they end in this run id: {run_id}); look at its creation time in the "
+                 "status listing and decide by hand. An ssh key of the run's name that stays "
+                 "listed costs nothing.")
     return "\n".join(lines)
 
 
@@ -381,34 +414,71 @@ def describe(args, ready, run_id, price=None, vcpus=None):
     return "\n".join(lines)
 
 
+def list_all(api, path, key):
+    """Every entry of a listing, page by page (read-only calls)."""
+    items, page = [], 1
+    while True:
+        got = api.get(f"{path}{'&' if '?' in path else '?'}per_page={PAGE}&page={page}")[key]
+        items += got
+        if len(got) < PAGE:
+            return items
+        page += 1
+        if page > 250:
+            raise DT.RunnerError(f"the listing {path} did not end after {page - 1} pages")
+
+
+def key_identity(public_key):
+    """(key body, MD5 fingerprint) of an OpenSSH public key line, or None."""
+    try:
+        body = str(public_key).split()[1]
+        digest = hashlib.md5(base64.b64decode(body)).hexdigest()
+        return body, ":".join(digest[i:i + 2] for i in range(0, 32, 2))
+    except (IndexError, ValueError, TypeError):
+        return None
+
+
 def account_refusal(api, unique):
     """Why nothing may be created under this name, or None. Read-only calls."""
     wanted = DT.droplet_name(unique)
-    droplets = api.get("/droplets?per_page=200")["droplets"]
-    if any(d.get("name") == wanted for d in droplets):
+    if any(d.get("name") == wanted for d in list_all(api, "/droplets", "droplets")):
         return f"the account already has a droplet named {wanted}"
-    keys = api.get("/account/keys?per_page=200")["ssh_keys"]
-    if any(k.get("name") == wanted for k in keys):
+    if any(k.get("name") == wanted for k in list_all(api, "/account/keys", "ssh_keys")):
         return f"the account already has an ssh key named {wanted}"
     return None
 
 
-def reconcile(api, unique):
-    """After teardown: nothing named for this run may be left. An ssh key of this
-    run's unique name whose id never reached local state (a registration whose
-    answer was lost) is deleted here; it can only be this run's, because the
-    name carries the run id and no such key existed before the run. A droplet
-    of this name that is still listed is reported, never guessed at."""
+def reconcile(api, unique, public_key):
+    """After teardown: nothing of this run may be left. An ssh key listed under
+    this run's unique name is deleted here only when it is the key this run
+    generated: its public key, or its fingerprint, equals the local one
+    (`public_key` is the line of the run's own key.pub, or None when the run
+    never generated a key). That covers a registration whose answer was lost.
+    A key of the run's name with any other public key is not this run's: it is
+    reported and left alone. A droplet of this name that is still listed is
+    reported, never guessed at. Returns the ids of the keys left alone."""
     wanted = DT.droplet_name(unique)
-    for key in api.get("/account/keys?per_page=200")["ssh_keys"]:
-        if key.get("name") == wanted:
+    ours = key_identity(public_key) if public_key else None
+    foreign = []
+    for key in list_all(api, "/account/keys", "ssh_keys"):
+        if key.get("name") != wanted:
+            continue
+        theirs = key_identity(key.get("public_key"))
+        same = ours is not None and ((theirs is not None and theirs[0] == ours[0])
+                                     or key.get("fingerprint") == ours[1])
+        if same:
             status, _ = api.call("DELETE", f"/account/keys/{key['id']}")
             DT.log(f"removed this run's leftover ssh key {key['id']} ({wanted}): HTTP {status}")
-    left = [d for d in api.get(f"/droplets?tag_name={DT.TAG}&per_page=200")["droplets"]
+        else:
+            foreign.append(key["id"])
+            DT.log(f"an ssh key named {wanted} (id {key['id']}) does not hold the public key "
+                   "this run generated: it is not this run's, and it is LEFT ALONE")
+    left = [d for d in list_all(api, f"/droplets?tag_name={DT.TAG}", "droplets")
             if d.get("name") == wanted]
     if left:
         raise DT.RunnerError(f"droplet(s) named {wanted} STILL EXIST: {[d['id'] for d in left]}; "
-                             f"destroy with `{LIFECYCLE} destroy --id ID`")
+                             "this run's recorded droplet id is in its state directory "
+                             "(CLEANUP.txt); look before destroying any other")
+    return foreign
 
 
 def fetch_failure_logs(remote, directory):
@@ -472,7 +542,7 @@ def run_shard(args, ready, shard, api, size, run_id):
         signal.signal(sig, on_signal)
 
     clock = Clock(args.max_hours)
-    result, remote, failed = None, None, True
+    result, remote, failed, public_key = None, None, True, None
     try:
         clock.cap(60, "the ssh key")
         fingerprint = DT.create_key(api, state, unique)
@@ -544,6 +614,8 @@ def run_shard(args, ready, shard, api, size, run_id):
     finally:
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, signal.SIG_IGN)               # teardown must finish
+        # The key this run generated, read before the teardown touches the state.
+        public_key = state.read("key.pub")
         if failed and remote is not None and not args.keep:
             if fetch_failure_logs(remote, out_dir + ".failed"):
                 DT.log(f"the failure's logs (what could be fetched in {FAILURE_FETCH_SECONDS} s) "
@@ -554,15 +626,24 @@ def run_shard(args, ready, shard, api, size, run_id):
         else:
             try:
                 DT.teardown(api, state, unique)
-                reconcile(api, unique)
+                reconcile(api, unique, public_key)
             except BaseException:
                 try:
-                    print(f"TEARDOWN FAILED: droplet {state.read('droplet-id')} may STILL BE "
-                          f"BILLING. Run: python {ready['export']}/{LIFECYCLE} --env-file "
-                          f"{shlex.quote(os.path.abspath(os.path.expanduser(args.env_file)))} "
-                          f"destroy --id {state.read('droplet-id')}"
-                          f"  (see CLEANUP.txt in {ready['out_root']})",
-                          file=sys.stderr, flush=True)
+                    recorded = state.read("droplet-id")
+                    env = shlex.quote(os.path.abspath(os.path.expanduser(args.env_file)))
+                    if recorded:
+                        print(f"TEARDOWN FAILED: droplet {recorded}, the id this run recorded, "
+                              f"may STILL BE BILLING. Run: python {ready['export']}/{LIFECYCLE} "
+                              f"--env-file {env} destroy --id {recorded}"
+                              f"  (see CLEANUP.txt in {ready['out_root']})",
+                              file=sys.stderr, flush=True)
+                    else:
+                        print(f"TEARDOWN FAILED and this run recorded no droplet id for "
+                              f"{unique}. A droplet named {DT.droplet_name(unique)} may exist "
+                              f"and be billing: look at `python {ready['export']}/{LIFECYCLE} "
+                              f"--env-file {env} status` and decide by hand "
+                              f"(see CLEANUP.txt in {ready['out_root']})",
+                              file=sys.stderr, flush=True)
                 except Exception:
                     pass
                 raise
@@ -674,10 +755,13 @@ def cmd_run(args):
     DT.log("tagged droplets before:")
     DT.print_status(api)
     limit = int(api.get("/account")["account"]["droplet_limit"])
-    existing = len(api.get("/droplets?per_page=200")["droplets"])
+    existing = len(list_all(api, "/droplets", "droplets"))
     refusal = DT.limit_refusal(existing + len(ready["shards"]) - 1, limit)
     if refusal:
-        raise DT.RunnerError(f"{refusal} (this run needs {len(ready['shards'])} more)")
+        # The launch exits here. Nothing is deleted to make room; it is retried later.
+        raise DT.RunnerError(f"{refusal} (this run needs {len(ready['shards'])} more). Nothing "
+                             "was created and nothing is deleted to make room: run it again "
+                             "when slots are free.")
     try:
         if len(ready["shards"]) == 1:
             ok = run_shard(args, ready, ready["shards"][0], api, size, run_id) is not None
@@ -772,7 +856,8 @@ def build_parser(defaults):
         sp.add_argument("--checkpoint-store", default=os.path.expanduser(
             "~/Code/bb-play-harness/.play-artifacts/checkpoints"))
         sp.add_argument("--shard", action="append", default=None,
-                        help="repeatable; default: every shard of the plan")
+                        help="repeatable; required for the registered plan (a stage is "
+                             "launched on purpose); otherwise default: every shard")
         sp.add_argument("--processes", type=int, default=None,
                         help="default: the size's vCPUs for run, 1 for rehearse")
         if name == "run":
@@ -797,7 +882,8 @@ def build_parser(defaults):
             sp.add_argument("--torch", default=defaults["torch"])
             sp.add_argument("--numpy", default=defaults["numpy"])
             sp.add_argument("--keep", action="store_true",
-                            help="debugging: leave the droplet running (it keeps billing)")
+                            help="debugging: leave the droplet running (it keeps billing); "
+                                 "refused except for the smoke and dev plans")
             sp.add_argument("--dry-run", action="store_true",
                             help="print what would be done; create nothing, call nothing")
             sp.add_argument("--assume-hourly", type=positive, default=None,

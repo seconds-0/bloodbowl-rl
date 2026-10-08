@@ -1,0 +1,64 @@
+PASS  accepted shard: result written, run id and unique names recorded
+PASS  accepted shard: the order of calls (key, create, boot, install, source, the six tool files, blob, sidecar, plan, build, job, poll, fetch, teardown)  [['create_key', 'create_droplet', 'wait_active', 'wait_ssh', 'script:setup.log', 'put:src.tar.gz', 'run:tar', 'run:mkdir', 'put:distill_common.py', 'put:distill_screen.py', 'put:distill_accept.py', 'put:distill_dataset.py', 'put:distill_finetune.py', 'put:distill_eval.py', 'run:mkdir', 'put:0000002999975936.bin', 'put:0000002999975936.bin.lineage.json', 'put:plan.json', 'script:build.log', 'run:cat', 'run:nohup', 'poll', 'get:main/SHA256SUMS', 'get:main/plan.json', 'get:main/COMPLETE.json', 'get:main/roots.jsonl', 'get:main/games.jsonl', 'get:main/other.jsonl', 'teardown']]
+PASS  accepted shard: the fetch is the six result files and nothing else
+PASS  accepted shard: teardown ran after the fetch
+PASS  accepted shard: account was read for a name clash before the key was made  [[('GET', '/droplets?per_page=200&page=1'), ('GET', '/account/keys?per_page=200&page=1'), ('GET', '/account/keys?per_page=200&page=1')]]
+PASS  every phase's timeout is within --max-hours less the reserve  [largest 1500 s]
+PASS  records landed and droplet_run.json exists
+PASS  the job sent: the label tool on this shard, the plan's hash, the uploaded blob, 8 processes, the lifecycle's output directory, and no library argument
+PASS  refused, nothing created: a droplet of the run's name exists
+PASS  refused, nothing created: an ssh key of the run's name exists
+PASS  refused, nothing created: local state of the run's name exists
+PASS  failure (the build fails): raised, then only log fetches, then teardown  [['get:EXIT', 'get:STAGE', 'get:job.log', 'get:build.log', 'get:setup.log', 'run:tail', 'teardown']]
+PASS  failure (the build fails): no record file was fetched
+PASS  failure (the build fails): each log fetch is capped at 10 s
+PASS  failure (the job exits 3): raised, then only log fetches, then teardown  [['get:EXIT', 'get:STAGE', 'get:job.log', 'get:build.log', 'get:setup.log', 'run:tail', 'teardown']]
+PASS  failure (the job exits 3): no record file was fetched
+PASS  failure (the job exits 3): each log fetch is capped at 10 s
+PASS  not accepted (the records' engine library is not the one the droplet built): refused, torn down, no accepted directory  [the shard is NOT ACCEPTED:
+  dev: the records name engine library d57404ee03a662]
+PASS  not accepted (a record file changed after its checksum was written): refused, torn down, no accepted directory  [the shard is NOT ACCEPTED:
+  dev: games.jsonl does not hash to its SHA256SUMS value
+  dev:]
+PASS  time limit: a phase is refused once the limit less the reserve is reached, teardown runs  [['teardown']]
+PASS  time limit in the middle: the phase after the one that used up the budget is not started; log fetches, then teardown  [--max-hours is reached before the source upload; giving up so the drop ['get:EXIT', 'get:STAGE', 'get:job.log', 'get:build.log', 'get:setup.log', 'run:tail', 'teardown']]
+PASS  orphan key: this run's key (the public key it generated) is deleted and the other key is left alone  [['/account/keys/777']]
+PASS  ownership: a key of the run's name with another public key is reported and left alone; only keys holding this run's public key or fingerprint are deleted  [['/account/keys/32', '/account/keys/33'] [31, 34]]
+PASS  ownership: a run that generated no key deletes no key, whatever its name
+PASS  pagination: the key listing is read to its last page  [['/account/keys?per_page=2&page=1', '/account/keys?per_page=2&page=2', '/account/keys?per_page=2&page=3']]
+PASS  guard: NaN, inf, zero and negative limits are refused
+PASS  guard: the total over all shards is what is compared
+PASS  guard: --max-hours below the reserve is refused
+PASS  arguments: nan, inf, 0 and -1 are refused by the parser
+PASS  estimate: games x seconds a game / processes + setup, never more processes than games  [12851.2 s, $0.595]
+PASS  cancel (a signal during the second start): the third shard is never started  [['m1-s1', 'm1-s2']]
+PASS  cancel (a signal during the second start): both started children are signalled and waited for  [[('m1-s1', [<Signals.SIGINT: 2>], True), ('m1-s2', [<Signals.SIGINT: 2>], True)]]
+PASS  cancel (a signal during the second start): the run does not count as a success  [{'m1-s1': 130, 'm1-s2': 130, 'm2-s1': None}]
+PASS  cancel (no signal): all three start, none is signalled, all exit 0
+PASS  cleanup, another --state-root: the token file is named and destroy --id is given for the recorded id file only (no id from a listing)  [  python /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/harness-5ab3ab6/tools/droplet_tournament.]
+PASS  cleanup, the default state directory: destroy --name with the run's unique name, and no destroy by an id from a listing
+PASS  an unaltered copy of the plan is not refused (the control for the next six)
+PASS  a wrong plan hash is refused  [000000000000000000000000000000000000000000000000000000000000]
+PASS  refused before anything is created: a launcher whose hash is not the plan's  [this distill_droplet.py is not the file the plan names (launcher_sha256); rerun make_plan.py before ]
+PASS  refused before anything is created: a plan written before the launcher existed (a null hash)  [the plan names no distill_droplet.py (launcher_sha256 is empty: it was written before the launcher e]
+PASS  refused before anything is created: a tool file whose hash is not the plan's  [these tool files are not the ones the plan names: ['distill_eval.py']]
+PASS  refused before anything is created: a checkpoint blob whose hash is not the plan's  [/Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/checkpoints/chain55/0000002999975936.bin i]
+PASS  refused before anything is created: a lineage sidecar whose hash is not the plan's  [/Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/checkpoints/chain55/0000002999975936.bin.l]
+PASS  refused before anything is created: an export whose lifecycle file is not the plan's  [the export's tools/droplet_tournament.py is not the file the plan names]
+PASS  refused: --keep under the registered plan  [--keep leaves a droplet billing after the run and is refused for the plan search-distill-r]
+PASS  refused: the registered plan with no --shard named  [the registered plan is launched one stage at a time: name the shards with --shard (milesto]
+PASS  the registered plan with its shard named and no --keep is not refused
+PASS  refused: --keep under the plan search-distill-m0
+PASS  refused: --keep under the plan search-distill-rehearsal
+PASS  --keep under the dev plan is allowed (dev and smoke only)
+PASS  refused: OUT_ROOT/NAME exists and is not a run directory of this launcher  [rectory of this launcher (no CLEANUP.txt); pick a new --name]
+PASS  a run directory of this launcher (it has CLEANUP.txt) takes another shard
+PASS  refused: the shard already has a .failed directory under this name
+PASS  dry run: returns 0, prints the job and the cleanup commands, touches no API, token or socket and creates no directory  [0]
+PASS  dry run: a wrong plan hash returns 1  [1]
+PASS  dry run: the spend guard returns 1 and says nothing was created  [1]
+56 of 56 checks passed
+
+real	0m0.529s
+user	0m0.290s
+sys	0m0.192s

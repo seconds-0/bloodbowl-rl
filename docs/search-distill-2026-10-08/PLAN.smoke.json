@@ -8,15 +8,15 @@
  "reward_manifest_sha256": "433c792018acdc01f8c7168e824c9389bf99df2307d3260283b7877df3f69d5c",
  "reward_manifest_file_sha256": "16900416cfe8d32ee49bead8c2fcddb989c13e232b7a279d24df86f00d64c0ea",
  "tool_sha256": {
-  "distill_common.py": "31797b5f61cbd6032d74010f72880ea1981d9ff32fc7e9ee27228b3703de92d3",
+  "distill_common.py": "fcd663a076e08404475cf016aa1cc582dd4bc74f777807ecd3bfe5aa908dd048",
   "distill_screen.py": "d436299a4df262b461e6ec7a237d59e895786ae42803688fd3a4f56665b33524",
-  "distill_accept.py": "1c5c9018ca7a13f36bba649baa9a0bf9d1ef042626c18d9198489f300fa30361",
-  "distill_dataset.py": "e8b801e933832a2048eb049db55573e65381ca487415767574a7be3e944e313b",
-  "distill_finetune.py": "f7cd329fc80344885623d8b334a951cfa568df13ea214d3307cf8da02b5d2c84",
-  "distill_eval.py": "c6a87a87ade6795290d38ec2a8ad8904cb611c720603be5ba85df760795165db"
+  "distill_accept.py": "2861a6e4b3a2a73e5b737b56a4bc016776be5b87608afe0266fa5897a46f3d28",
+  "distill_dataset.py": "d9d0140f324c24a6d4f6a1c9cbd3e1a5d405857275a0d8d561fb33fa5801b2fb",
+  "distill_finetune.py": "7b93677563763ddcfa0dc369551f306fd20c85a7fcab1498e95e06085f496866",
+  "distill_eval.py": "16f29a62ed242de2a23fa2ac7aa79b20899f43bcec060a63f27410628048cbe5"
  },
  "launcher_sha256": {
-  "distill_droplet.py": "9b50ce6da2a5208054f7a865a2f1ff90fd0bc73531c2eb1bee5651a27ba59554"
+  "distill_droplet.py": "4217fb6148f4ffe3a32711d1640baddd1f93544d64aaa27ab1c1bd5d5f27cfff"
  },
  "lifecycle_sha256": {
   "tools/droplet_tournament.py": "bb0ece1c9592fa46000924b0fc5ec1e15720c2ad10165f3829499a4bf6b921f2"
@@ -119,16 +119,20 @@
   "chunk": 8192,
   "seed": 0,
   "precision": "float64 training on float32 features; the blob is float32",
-  "loss": "[lambda * sum over deviation roots of w * (-log p(label)) + sum over the other loss decisions of w * KL(p0 || p)] / (sum of w); KL over the tuples of the joint support",
+  "loss": "[lambda * sum over deviation roots of w * (-log p(label)) + sum over the other loss decisions of w * KL(p0 || p)] / (sum of w); KL over the tuples of the joint support; a step uses one chunk's numerator over (the training set's weight / the number of chunks)",
   "fit": {
    "arm": "c55d1l16",
    "threshold": 0.8,
-   "statistic": "weighted mean probability of the label on training deviation roots"
+   "statistic": "weighted mean probability of the label on training deviation roots, from float32 logits as the harness computes them"
   },
+  "registered_arm": "c55d1l4",
   "selection": {
+   "rule": "SELECTION.json is written only when all three arms' blobs pass acceptance and Reading 1 is FIT; the registered arm is the named one; if any arm's blob fails acceptance the plan stops unread at the selection and no gate is played"
+  },
+  "diagnostic": {
    "statistic": "J = q * M * g - price * U on the validation games, no rollouts",
    "price": 0.016,
-   "rule": "the registered arm is the eligible arm with the highest J; ties go to the smaller lambda; an arm whose J is not finite, or whose blob fails its acceptance, is not eligible; with no eligible arm there is no registered arm, the gate is not played and the plan stops unread"
+   "note": "reported for every arm; it decides nothing"
   }
  },
  "bootstrap": {
@@ -137,7 +141,7 @@
   "generator_seed": 0
  },
  "estimate": {
-  "droplet_seconds_per_game": 66.3,
-  "setup_seconds": 420
+  "droplet_seconds_per_game": 86.8,
+  "setup_seconds": 240
  }
 }

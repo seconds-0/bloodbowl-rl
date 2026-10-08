@@ -1,0 +1,81 @@
+{
+ "schema": "search-distill-dataset-v1",
+ "plan_sha256": "ced680a180fbd0338c8b4fddcdb6824644e42f6236c88a44a4da06f991876c1b",
+ "checkpoint_sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+ "harness_commit": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6",
+ "library_sha256": "3359eff5b536a07dd62ad96964bc2db7b981964e24bfac60689f744ce4658c1a",
+ "label_library_sha256": [
+  "3359eff5b536a07dd62ad96964bc2db7b981964e24bfac60689f744ce4658c1a"
+ ],
+ "shards": {
+  "rehearsal": {
+   "games": 300,
+   "roots": 9000
+  }
+ },
+ "plan_shards": [
+  "rehearsal"
+ ],
+ "complete": true,
+ "counts": {
+  "train": {
+   "games": 210,
+   "roots": 6300,
+   "deviation_roots": 110,
+   "other": 13440,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 50
+  },
+  "validation": {
+   "games": 30,
+   "roots": 900,
+   "deviation_roots": 11,
+   "other": 1920,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 8
+  },
+  "test": {
+   "games": 30,
+   "roots": 900,
+   "deviation_roots": 14,
+   "other": 1920,
+   "cap_rejected_roots": 0,
+   "kickoff_turn_roots": 8
+  },
+  "reserve": {
+   "games": 30,
+   "roots": 900,
+   "other": 1920
+  }
+ },
+ "files": {
+  "train": {
+   "path": "train.pt",
+   "sha256": "9cd55a81541897bd2cf6a7ff5597f651a65e9239dfe85e981274e423ab1bb639",
+   "examples": 19740,
+   "labels": 110
+  },
+  "validation": {
+   "path": "validation.pt",
+   "sha256": "305417e2f0dc5ee5546ba714e6829d6145b3a07dfb6871346194ac0d8d6e9592",
+   "examples": 2820,
+   "labels": 11
+  },
+  "test": {
+   "path": "locked/test.pt",
+   "sha256": "3ae91348cf2fd490c0734ea4be44ab96efc61029d7a509a3b1443a8bf147463c",
+   "examples": 2820,
+   "labels": 14
+  }
+ },
+ "reserve": "its games and records are counted above; it is never written and its labels are not counted",
+ "roots_with_support_rebuilt_and_equal": 8100,
+ "max_a0_logprob_difference": 0.00034137148780222226,
+ "logprob_tolerance": 0.001,
+ "roots_with_candidates_reordered_within_tolerance": 0,
+ "batch_games": 32,
+ "seconds": 50.9,
+ "torch": "2.14.0",
+ "numpy": "2.5.3",
+ "python": "3.12.3"
+}

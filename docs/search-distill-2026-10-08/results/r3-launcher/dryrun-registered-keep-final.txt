@@ -1,0 +1,1 @@
+ERROR: --keep leaves a droplet billing after the run and is refused for the plan search-distill-registered; it is for the smoke and dev plans only. Nothing was created.

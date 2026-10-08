@@ -1,0 +1,32 @@
+MANIFESTS-CHECKED 2 manifest(s): every player's blob hash, producer and compatibility blocks are the registered ones
++ /Users/alexanderhuth/Code/bb-play-harness/.venv/bin/python /Users/alexanderhuth/Code/bb-harness-search/tools/droplet_tournament.py merge --out /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008/main --shard /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008-s1/main --shard /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008-s2/main
+[10:39:49] merged 2 shards, 4096 games, 8 pairs into /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008/main
+next: OMP_NUM_THREADS=1 .venv/bin/python -m play_harness.tournament_stats --run-dir /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008/main --json /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008/main/report.json
++ /Users/alexanderhuth/Code/bb-play-harness/.venv/bin/python /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/gate-smoke-20261008/accept_from_plan.py /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/gate-smoke-20261008/PLAN.json /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008/main --expect-sha256 6cd29a231b96ca6999eef7c5f3c4ab676410f747b884328c6375f41a5ebb995c
+GATE-ACCEPTED 4096 games, 8 pairs, seed0 29980900, games_per_worker 32, commit 5ab3ab6
+MASKS-ACCEPTED 4096 masked sides in 4096 games as registered, no sampling offsets, 0 truncated, 0 mask fallbacks
+SEARCH-ACCEPTED 0 searched games of 4096 as registered; no searched decision; 0 cap-rejected decisions (0.000%), 0 cutoff rollouts of 0, 0 error rollouts; 0 identity game(s) equal to the plain game; 8 pair(s) held to the plan's schedule
+SIDECARS-ACCEPTED 6 players' blobs and lineage sidecars as registered, and the manifest's producer blocks are the sidecars'
+integrity totals {"error_episodes": 0, "illegal": 0, "precheck_collisions": 0, "projection_collision": 0, "rejected_submissions": 0}; unnatural endings 0
+plan /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/gate-smoke-20261008/PLAN.json sha256 6cd29a231b96ca6999eef7c5f3c4ab676410f747b884328c6375f41a5ebb995c
+acceptance tool sha256 71cb6d6b9d0944e06ab8af6cfeaee76caba0da43f3b4e2367c9ce9a2bde015ad; search acceptance tool sha256 2b429a42c199581c3a2504d9e2d18da49b15fc01251b1d42e4f247ac8cf6f2d9; this script sha256 ee2325401a32d735d884394aabb33b9a81d820da97a0d1b0b5a4962010329c33
+games.jsonl sha256 642a127c94ed9c54ffd0103c272762d339b4436279804fcdd5a8f38215f2dbb6
++ /Users/alexanderhuth/Code/bb-play-harness/.venv/bin/python -m play_harness.tournament_stats --run-dir /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008/main --json /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008/main/report.json
++ /Users/alexanderhuth/Code/bb-play-harness/.venv/bin/python /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/gate-smoke-20261008/paired_contrasts.py /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008/main/dose_c55d1l1 c55d1l1 c55m1 chain37 chain46
+c55d1l1 minus c55m1 against chain37: decisive-Elo -28.3 [-83.9, +26.0] (arm +198.4, control +226.8; 256 seed clusters)
+c55d1l1 minus c55m1 against chain46: decisive-Elo -19.5 [-73.5, +30.9] (arm +217.3, control +236.8; 256 seed clusters)
++ /Users/alexanderhuth/Code/bb-play-harness/.venv/bin/python /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/gate-smoke-20261008/paired_contrasts.py /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008/main/label_c55d1l4 c55d1l4 c55m1 chain37 chain46
+c55d1l4 minus c55m1 against chain37: decisive-Elo -42.4 [-92.1, +10.7] (arm +184.4, control +226.8; 256 seed clusters)
+c55d1l4 minus c55m1 against chain46: decisive-Elo -43.8 [-99.7, +9.9] (arm +193.0, control +236.8; 256 seed clusters)
++ /Users/alexanderhuth/Code/bb-play-harness/.venv/bin/python /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/gate-smoke-20261008/paired_contrasts.py /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008/main/dose_c55d1l16 c55d1l16 c55m1 chain37 chain46
+c55d1l16 minus c55m1 against chain37: decisive-Elo -62.2 [-112.0, -11.6] (arm +164.6, control +226.8; 256 seed clusters)
+c55d1l16 minus c55m1 against chain46: decisive-Elo -51.2 [-104.2, -1.3] (arm +185.6, control +236.8; 256 seed clusters)
++ /Users/alexanderhuth/Code/bb-play-harness/.venv/bin/python /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/gate-smoke-20261008/gate_diagnostics.py /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/gate-smoke-20261008/PLAN.json /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008/main
+c55d1l1 v chain37: 0 of 512 seed-legs have the control's action trail
+c55d1l1 v chain46: 0 of 512 seed-legs have the control's action trail
+c55d1l4 v chain37: 0 of 512 seed-legs have the control's action trail
+c55d1l4 v chain46: 0 of 512 seed-legs have the control's action trail
+c55d1l16 v chain37: 0 of 512 seed-legs have the control's action trail
+c55d1l16 v chain46: 0 of 512 seed-legs have the control's action trail
+READING (c55d1l4 minus c55m1; first match of Unread, Negative, Positive, Flat, Inconclusive): Inconclusive
+SCORED

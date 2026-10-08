@@ -10,17 +10,23 @@ For every game of the accepted shards that is not in the reserve group:
      first step of the match, which is how the seat came by its recurrent
      state; at every screened root and every sampled out-of-scope decision the
      decoder's input h (512 numbers) and the logits are taken;
-  3. at every root the recomputed a0 and candidate list must be the recorded
-     ones and a0's log-probability must agree to 1e-3; at every out-of-scope
-     decision the masked support is rebuilt from the replay.
+  3. at every root the masked support and the decision class are rebuilt from
+     the replayed engine and must equal the record's (a recorded support is
+     never trusted); then the recomputed a0 and candidate list must be the
+     recorded ones and a0's log-probability must agree to 1e-3; at every
+     out-of-scope decision the masked support is rebuilt from the replay too.
 A loss decision is a screened root that is not a cap rejection, or a sampled
 out-of-scope decision. Unscreened in-scope decisions are never in the dataset.
 
 The split is by game: group = ((engine seed - seed0) // 2) % 10; 0 to 6 train,
 7 validation, 8 test, 9 reserve. train.pt and validation.pt are written beside
 DATASET.json; the test split goes to locked/test.pt, which only the evaluation
-tool opens, once, with the selection's hash. The reserve group is counted and
-never written: this tool has no option that writes it.
+tool opens, once, with the selection's hash. The reserve group's games pass
+shard acceptance like any other (they are generated and integrity-checked);
+here they are counted and nothing more: no label of theirs is counted, no
+feature is computed, and this tool has no option that writes them.
+DATASET.json records which shards the dataset holds, so that a later step can
+refuse a dataset that is not the whole plan.
 
   distill_dataset.py --harness EXPORT --plan PLAN.json --expect-sha256 H \\
       --checkpoint BLOB --shard-dir NAME=DIR [...] --out-dir DIR
@@ -130,8 +136,10 @@ def build(args):
         "engine_seed", "step", "fresh_gain", "fresh_se", "judged", "false", "confirmed",
         "gain", "p0_a0", "p0_label", "p0_top")} for s in WRITTEN}
     counts = {s: {"games": 0, "roots": 0, "deviation_roots": 0, "other": 0,
-                  "cap_rejected_roots": 0, "kickoff_turn_roots": 0} for s in C.SPLITS}
-    max_dlogp, reordered, started = 0.0, 0, time.time()
+                  "cap_rejected_roots": 0, "kickoff_turn_roots": 0} for s in WRITTEN}
+    # The reserve group: how many games and records it holds, and nothing about its labels.
+    counts["reserve"] = {"games": 0, "roots": 0, "other": 0}
+    max_dlogp, reordered, rebuilt_roots, started = 0.0, 0, 0, time.time()
     todo = [g for g in games if C.split_of(g["engine_seed"], seed0) != "reserve"]
     for g in games:
         s = C.split_of(g["engine_seed"], seed0)
@@ -147,6 +155,7 @@ def build(args):
             want = sorted({r["step"] for r in roots.get(g["game"], [])}
                           | {o["step"] for o in other.get(g["game"], [])})
             other_steps = {o["step"] for o in other.get(g["game"], [])}
+            root_at = {r["step"]: r for r in roots.get(g["game"], [])}
             obs_rows, keep, declared = [], {}, False
             gen = C.replay(hx, g, want_rows=(a,))
             while True:
@@ -156,6 +165,18 @@ def build(args):
                     end = stop.value
                     break
                 obs_rows.append(obs[a])
+                if step in root_at:
+                    # The record's support is not trusted: rebuild it and the class.
+                    r = root_at[step]
+                    support, _ = restrict_support(supports[a], masks, declared)
+                    cls = S.decision_class({int(t) & 1023 for t in support}, declared)
+                    if team != a or cls != r["class"] or bool(r["flags"][0]) != declared or \
+                            sorted(int(t) for t in support) != sorted(int(t) for t in r["support"]):
+                        raise C.IntegrityError(
+                            f"game {g['game']} step {step}: the root's recorded class or masked "
+                            "support is not the one the replayed engine gives")
+                    keep[step] = (np.asarray(support, dtype=np.int64), cls)
+                    rebuilt_roots += 1
                 if step in other_steps:
                     support, _ = restrict_support(supports[a], masks, declared)
                     cls = S.decision_class({int(t) & 1023 for t in support}, declared)
@@ -211,7 +232,8 @@ def build(args):
                     cnt["cap_rejected_roots"] += 1
                     continue
                 _, logits = at_steps[r["step"]]
-                tuples, logps = S.joint_log_probabilities(logits, r["support"], 1.0)
+                support, _ = keep[r["step"]]                 # rebuilt on replay, checked above
+                tuples, logps = S.joint_log_probabilities(logits, support, 1.0)
                 a0 = E.pack_tuple(*r["a0"])
                 order = S.candidate_order(tuples, a0, k)
                 cands = [list(E.unpack_tuple(tuples[i])) for i in order]
@@ -239,7 +261,7 @@ def build(args):
                     cnt["deviation_roots"] += 1
                     at_label = np.flatnonzero(np.asarray(tuples) == E.pack_tuple(*r["label"]))
                     p_label = float(np.exp(logps[at_label[0]]))
-                add(r["step"], KIND_ROOT, r["class"], r["support"], r["a0"],
+                add(r["step"], KIND_ROOT, r["class"], support, r["a0"],
                     r["label"] if r["deviate"] else None, r["searchable"] / r["kept"], r,
                     (float(np.exp(logps[order[0]])), p_label, float(np.exp(logps[0]))))
             for o in other.get(g["game"], []):
@@ -288,11 +310,15 @@ def build(args):
             "checkpoint_sha256": plan["checkpoint"]["sha256"],
             "harness_commit": hx.commit, "library_sha256": hx.library_sha256,
             "label_library_sha256": sorted({s["library_sha256"] for s in summaries}),
-            "shards": {s["shard"]: {"games": s["games"], "roots": s["root_lines"],
-                                    "deviation_roots": s["deviation_roots"]}
+            "shards": {s["shard"]: {"games": s["games"], "roots": s["root_lines"]}
                        for s in summaries},
+            "plan_shards": [s["name"] for s in plan["shards"]],
+            "complete": sorted(s["shard"] for s in summaries)
+            == sorted(s["name"] for s in plan["shards"]),
             "counts": counts, "files": files,
-            "reserve": "counted above, never written",
+            "reserve": "its games and records are counted above; it is never written and "
+                       "its labels are not counted",
+            "roots_with_support_rebuilt_and_equal": rebuilt_roots,
             "max_a0_logprob_difference": max_dlogp, "logprob_tolerance": LOGPROB_TOLERANCE,
             "roots_with_candidates_reordered_within_tolerance": reordered,
             "batch_games": args.batch_games, "seconds": round(time.time() - started, 1),
@@ -306,7 +332,9 @@ def build(args):
         f"{files[s]['labels']} labels" for s in WRITTEN)
         + f"; reserve: {counts['reserve']['games']} games, not written; largest a0 "
           f"log-probability difference {max_dlogp:.2e}, {reordered} roots with candidates "
-          "reordered within the tolerance")
+          f"reordered within the tolerance; {rebuilt_roots} root supports rebuilt on replay and "
+          f"equal to the record's; holds {len(summaries)} of the plan's {len(plan['shards'])} "
+          "shards")
     return 0
 
 

@@ -15,17 +15,28 @@ A shard directory is accepted when:
   - the roots belong to those games in the counts the games recorded
     (min(per_class, searchable) per class), and the other-decision sample
     likewise;
+  - no engine step of a game holds two records (a root and a sampled other
+    decision, or the same one twice), and every sampled other decision carries
+    its game's engine seed, seat, searchable count and kept count;
   - every root has min(candidates, support size) x screen_rollouts finite
-    returns, or is a cap rejection with none; a0 is its first candidate; the
-    seat's rule recomputed here from the stored returns gives the stored
-    decision, best alternative, gain and standard error; a label is the best
-    alternative of a deviation root and of no other;
-  - every deviation root has 2 x judge_pairs judgment returns; a missing return
-    occurs only with a counted cap stop; the kept pairs, the fresh gain and the
-    judged, false and confirmed flags recomputed here are the stored ones;
+    returns, or is a cap rejection with none; its candidates are distinct
+    tuples of its recorded support and a0 is the first; its stop counts are
+    complete, non-negative and sum to the rollouts run; the seat's rule
+    recomputed here from the stored returns gives the stored decision, best
+    alternative, gain and standard error; a label is the best alternative of a
+    deviation root and of no other;
+  - every deviation root has 2 x judge_pairs judgment returns, each cell a
+    finite number or an explicit null (NaN and infinity are refused); its stop
+    counts are complete, non-negative and sum to the rollouts run; a null cell
+    occurs only where a cap stop is counted, one for one; the kept pairs, the
+    fresh gain and the judged, false and confirmed flags recomputed here are
+    the stored ones;
   - at most cap_rejection_ceiling of the shard's roots are cap rejections;
-  - the counts in COMPLETE.json are the recount's.
+  - the counts in COMPLETE.json are the recount's;
+  - the shard names the sha256 of the engine library it ran on.
 With several shards, all must have run on one compiled engine library.
+That a root's recorded support is the engine's masked support at that step is
+not checked here (it needs the engine): the dataset tool rebuilds it on replay.
 
 It reads records only. It imports nothing from the harness: the rule is
 restated in deviation() below, and the tests hold it equal to the harness's.
@@ -51,6 +62,7 @@ import distill_common as C  # noqa: E402
 STATUS_MATCH_OVER = 2       # play_harness/engine.py; the tests check it against the export
 HARD = ("illegal", "projection_collision", "error_episodes", "rejected_submissions",
         "precheck_collisions")
+STOPS = ("turn", "terminal", "cutoff", "cap", "error")     # play_harness.search.STOPS
 SETTING_KEYS = ("seed0", "per_class", "other_per_game", "candidates", "screen_rollouts",
                 "delta", "judge_pairs", "judge_first_index", "judge_min_pairs", "masks")
 MAX_PROBLEMS = 40
@@ -90,6 +102,24 @@ def read_jsonl(path):
         return [json.loads(line) for line in f if line.strip()]
 
 
+def pack_tuple(action):
+    """play_harness.engine.pack_tuple: type | argument << 10 | square << 20."""
+    t, arg, sq = (int(v) for v in action)
+    return t | (arg << 10) | (sq << 20)
+
+
+def stops_problem(stops, total):
+    """Why a stop-count object is not acceptable, or None: every kind of stop
+    present, each a non-negative integer, summing to the rollouts run."""
+    if not isinstance(stops, dict) or sorted(stops) != sorted(STOPS):
+        return f"stop counts {stops!r} do not name exactly {list(STOPS)}"
+    if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in stops.values()):
+        return f"a stop count in {stops!r} is not a non-negative integer"
+    if sum(stops.values()) != total:
+        return f"stop counts sum to {sum(stops.values())}, {total} rollouts were run"
+    return None
+
+
 def root_problems(r, label, where):
     """One root's record against the label settings."""
     out = []
@@ -97,17 +127,34 @@ def root_problems(r, label, where):
     k = min(int(label["candidates"]), len(support))
     n = int(label["screen_rollouts"])
     tuples = r.get("tuples") or []
+    # The engine's support can list a packed tuple more than once; the size is of distinct tuples.
     if len(support) < 2 or r.get("support_size") != len(support):
-        out.append(f"{where}: support size {r.get('support_size')} with {len(support)} tuples")
+        out.append(f"{where}: support size {r.get('support_size')} with {len(support)} "
+                   "distinct tuples")
     if len(tuples) != k:
         out.append(f"{where}: {len(tuples)} candidates, min(candidates, support) is {k}")
     if not tuples or list(tuples[0]) != list(r.get("a0") or []):
         out.append(f"{where}: a0 is not the first candidate")
+    try:
+        packed = [pack_tuple(t) for t in tuples]
+    except (TypeError, ValueError):
+        packed = None
+    if packed is None or len(set(packed)) != len(packed) or any(t not in support for t in packed):
+        out.append(f"{where}: the candidates are not distinct tuples of the recorded support")
+        return out
     if r.get("rollouts") != n:
         out.append(f"{where}: {r.get('rollouts')} screening rollouts, {n} registered")
     stops = r.get("stops") or {}
+    bad = stops_problem(stops, k * n)
+    if bad:
+        out.append(f"{where}: screening {bad}")
+        return out
     if stops.get("error"):
         out.append(f"{where}: {stops['error']} failed rollout(s)")
+    if bool(r.get("cap_rejected")) != bool(stops["cap"]):
+        out.append(f"{where}: cap_rejected is {r.get('cap_rejected')!r} with {stops['cap']} "
+                   "cap stops")
+        return out
     if r.get("cap_rejected"):
         if not stops.get("cap") or r.get("returns") is not None or r.get("deviate") or \
                 r.get("label") is not None or r.get("judgment") is not None:
@@ -117,7 +164,7 @@ def root_problems(r, label, where):
     ok = isinstance(returns, list) and len(returns) == k and all(
         isinstance(row, list) and len(row) == n and all(
             isinstance(v, float) and math.isfinite(v) for v in row) for row in returns)
-    if not ok or stops.get("cap"):
+    if not ok:
         out.append(f"{where}: not {k} x {n} finite screening returns")
         return out
     deviate, best, gain, se = deviation(returns, float(label["delta"]))
@@ -134,20 +181,35 @@ def root_problems(r, label, where):
         out.append(f"{where}: the label is not the best alternative")
     pairs = int(label["judge_pairs"])
     rows = (j or {}).get("returns")
-    if not (isinstance(rows, list) and len(rows) == 2 and all(len(row) == pairs for row in rows)):
+    if not (isinstance(rows, list) and len(rows) == 2 and all(
+            isinstance(row, list) and len(row) == pairs for row in rows)):
         out.append(f"{where}: not 2 x {pairs} judgment returns")
+        return out
+    # A cell is a finite number or an explicit null. NaN and infinity are never
+    # accepted: a return that is not finite without a cap stop is an integrity
+    # failure of the label tool, not a missing value.
+    if not all(v is None or (isinstance(v, float) and math.isfinite(v))
+               for row in rows for v in row):
+        out.append(f"{where}: a judgment return is neither a finite number nor null")
         return out
     if j.get("first_index") != label["judge_first_index"] or j.get("pairs") != pairs:
         out.append(f"{where}: judgment indices are not the registered ones")
-    if (j.get("stops") or {}).get("error"):
+    bad = stops_problem(j.get("stops"), 2 * pairs)
+    if bad:
+        out.append(f"{where}: judgment {bad}")
+        return out
+    if j["stops"]["error"]:
         out.append(f"{where}: a failed judgment rollout")
     a0, alt = (np.array([np.nan if v is None else v for v in row], dtype=np.float64)
                for row in rows)
     valid = np.isfinite(a0) & np.isfinite(alt)
-    missing = int(np.isnan(a0).sum() + np.isnan(alt).sum())
-    capped = int(j.get("capped_rollouts") or 0)
-    if missing != capped or capped != int((j.get("stops") or {}).get("cap") or 0):
-        out.append(f"{where}: {missing} missing judgment returns against {capped} cap stops")
+    missing = sum(v is None for row in rows for v in row)
+    capped = j.get("capped_rollouts")
+    if isinstance(capped, bool) or not isinstance(capped, int) or missing != capped or \
+            capped != j["stops"]["cap"]:
+        out.append(f"{where}: {missing} null judgment returns against {capped!r} recorded and "
+                   f"{j['stops']['cap']} counted cap stops")
+        return out
     kept = int(valid.sum())
     d = alt[valid] - a0[valid]
     fresh = float(d.mean()) if kept else None
@@ -276,12 +338,26 @@ def shard_problems(directory, shard, plan, plan_sha):
     other_count = {}
     for o in other:
         g = by_game.get(o.get("game"))
-        if g is None or not 0 <= o.get("step", -1) < g["steps"] or \
-                g["trail"][o["step"]][0] != g["seat"] or (o["game"], o["step"]) in seen:
-            problems.append(f"{shard} game {o.get('game')} step {o.get('step')}: not an "
-                            "out-of-scope decision of seat A in its game")
+        where = f"{shard} game {o.get('game')} step {o.get('step')}"
+        step = o.get("step")
+        if g is None or isinstance(step, bool) or not isinstance(step, int) or \
+                not 0 <= step < g["steps"] or g["trail"][step][0] != g["seat"]:
+            problems.append(f"{where}: not a decision of seat A in a game of the shard")
             continue
+        # one record per engine step of a game, over roots and other decisions together
+        if (o["game"], step) in seen:
+            problems.append(f"{where}: the step already holds a record (a root, or this "
+                            "other decision twice)")
+            continue
+        seen.add((o["game"], step))
+        if o.get("engine_seed") != g["engine_seed"] or o.get("seat") != g["seat"] or \
+                o.get("searchable") != g["counts"]["other_searchable"] or \
+                o.get("kept") != g["other_kept"]:
+            problems.append(f"{where}: its engine seed, seat, searchable or kept count is "
+                            "not its game record's")
         other_count[o["game"]] = other_count.get(o["game"], 0) + 1
+        if len(problems) > MAX_PROBLEMS:
+            break
     for g in games:
         if other_count.get(g["game"], 0) != g["other_kept"]:
             problems.append(f"{shard} game {g['game']}: {other_count.get(g['game'], 0)} other "
@@ -299,6 +375,11 @@ def shard_problems(directory, shard, plan, plan_sha):
         if complete.get(key) != value:
             problems.append(f"{shard}: COMPLETE.json {key} is {complete.get(key)!r}, the "
                             f"recount gives {value}")
+    library = complete.get("library_sha256")
+    if not (isinstance(library, str) and len(library) == 64
+            and all(c in "0123456789abcdef" for c in library)):
+        problems.append(f"{shard}: COMPLETE.json names no sha256 of the engine library "
+                        f"({library!r})")
     summary.update(recount, games=len(games), library_sha256=complete.get("library_sha256"),
                    torch=complete.get("torch"), wall_seconds=complete.get("wall_seconds"),
                    games_with_kickoff_turn_decision=complete.get(
@@ -316,6 +397,8 @@ def accept(plan, plan_sha, shard_dirs):
     libraries = {s.get("library_sha256") for s in summaries if "library_sha256" in s}
     if len(libraries) > 1:
         problems.append(f"the shards ran on {len(libraries)} different engine libraries")
+    if not problems and len(libraries) != 1:
+        problems.append("the shards do not name one engine library")
     return problems, summaries
 
 

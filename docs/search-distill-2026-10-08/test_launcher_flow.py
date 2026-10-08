@@ -12,6 +12,7 @@ DIR is the --dir of a `distill_droplet.py rehearse` run of the same plan.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import hashlib
 import io
@@ -36,13 +37,16 @@ class FakeApi:
     def __init__(self, droplets=(), keys=()):
         self.droplets, self.keys, self.calls = list(droplets), list(keys), []
         self.retries = 0
+        self.page_size = L.PAGE          # what one page of a listing holds
 
     def get(self, path):
         self.calls.append(("GET", path))
+        page = int(path.split("page=")[-1]) if "&page=" in path or "?page=" in path else 1
+        size = self.page_size
         if path.startswith("/droplets"):
-            return {"droplets": list(self.droplets)}
+            return {"droplets": list(self.droplets)[(page - 1) * size:page * size]}
         if path.startswith("/account/keys"):
-            return {"ssh_keys": list(self.keys)}
+            return {"ssh_keys": list(self.keys)[(page - 1) * size:page * size]}
         if path.startswith("/account"):
             return {"account": {"droplet_limit": 15}}
         if path.startswith("/sizes"):
@@ -55,6 +59,16 @@ class FakeApi:
         if method == "DELETE" and path.startswith("/account/keys/"):
             self.keys = [k for k in self.keys if str(k["id"]) != path.rsplit("/", 1)[1]]
         return 204, {}
+
+
+# Two different ed25519 public key lines, as ssh-keygen writes them (type, body, comment).
+def _key_line(fill, comment):
+    blob = b"\x00\x00\x00\x0bssh-ed25519\x00\x00\x00\x20" + fill * 32
+    return "ssh-ed25519 " + base64.b64encode(blob).decode() + " " + comment
+
+
+OUR_PUBLIC_KEY = _key_line(b"A", "ours")
+OTHER_PUBLIC_KEY = _key_line(b"B", "theirs")
 
 
 def install_fakes(DT, events, rehearsal_shard, library, fail_at=None, orphan_key=False,
@@ -100,11 +114,13 @@ def install_fakes(DT, events, rehearsal_shard, library, fail_at=None, orphan_key
 
     def create_key(api, state, name):
         events.append(("create_key", name))
+        state.write("key.pub", OUR_PUBLIC_KEY)      # the lifecycle writes the key pair first
         if orphan_key:                      # the registration happened, its answer was lost
-            api.keys.append({"id": 777, "name": DT.droplet_name(name)})
+            api.keys.append({"id": 777, "name": DT.droplet_name(name),
+                             "public_key": OUR_PUBLIC_KEY})
             raise DT.RunnerError("POST /account/keys: network error after 1 attempt(s)")
         state.write("key-id", 555)
-        api.keys.append({"id": 555, "name": DT.droplet_name(name)})
+        api.keys.append({"id": 555, "name": DT.droplet_name(name), "public_key": OUR_PUBLIC_KEY})
         return "fp"
 
     def create_droplet(api, state, name, region, size, fingerprint):
@@ -354,8 +370,52 @@ def main(argv=None):
     except DT.RunnerError:
         pass
     deleted = [c[1] for c in api.calls if c[0] == "DELETE"]
-    check("orphan key: this run's key is deleted and the other key is left alone",
+    check("orphan key: this run's key (the public key it generated) is deleted and the other "
+          "key is left alone",
           deleted == ["/account/keys/777"] and [k["id"] for k in api.keys] == [9], str(deleted))
+
+    # 5b. Ownership by public key, not by name. After a normal run a key is listed under
+    #     the run's exact name with ANOTHER public key (another process made it): it is
+    #     reported and left alone. One with this run's public key is deleted. And one with
+    #     this run's fingerprint and no public key field is deleted too.
+    unique = f"t-{a.shard}-own001"
+    wanted = DT.droplet_name(unique)
+    ours = L.key_identity(OUR_PUBLIC_KEY)
+    api = FakeApi(keys=[{"id": 31, "name": wanted, "public_key": OTHER_PUBLIC_KEY},
+                        {"id": 32, "name": wanted, "public_key": OUR_PUBLIC_KEY},
+                        {"id": 33, "name": wanted, "fingerprint": ours[1]},
+                        {"id": 34, "name": wanted},
+                        {"id": 35, "name": "bb-harness-unrelated", "public_key": OUR_PUBLIC_KEY}])
+    logged = []
+    DT.log = logged.append
+    foreign = L.reconcile(api, unique, OUR_PUBLIC_KEY)
+    deleted = [c[1] for c in api.calls if c[0] == "DELETE"]
+    check("ownership: a key of the run's name with another public key is reported and left "
+          "alone; only keys holding this run's public key or fingerprint are deleted",
+          deleted == ["/account/keys/32", "/account/keys/33"] and foreign == [31, 34]
+          and [k["id"] for k in api.keys] == [31, 34, 35]
+          and sum("LEFT ALONE" in m for m in logged) == 2, f"{deleted} {foreign}")
+    api = FakeApi(keys=[{"id": 41, "name": wanted, "public_key": OUR_PUBLIC_KEY}])
+    foreign = L.reconcile(api, unique, None)
+    check("ownership: a run that generated no key deletes no key, whatever its name",
+          foreign == [41] and not [c for c in api.calls if c[0] == "DELETE"])
+    DT.log = lambda msg: None
+
+    # 5c. Listings are read page by page: a key of the run's name on the third page is
+    #     found by the name check and by the cleanup.
+    api = FakeApi(keys=[{"id": i, "name": f"bb-harness-filler-{i}"} for i in range(4)]
+                  + [{"id": 99, "name": wanted, "public_key": OUR_PUBLIC_KEY}])
+    api.page_size = 2
+    real_page, L.PAGE = L.PAGE, 2
+    try:
+        refusal = L.account_refusal(api, unique)
+        pages = [c[1] for c in api.calls if c[1].startswith("/account/keys")]
+        L.reconcile(api, unique, OUR_PUBLIC_KEY)
+    finally:
+        L.PAGE = real_page
+    check("pagination: the key listing is read to its last page",
+          "already has an ssh key" in (refusal or "") and len(pages) == 3
+          and ("DELETE", "/account/keys/99") in api.calls, str(pages))
 
     # 6. The spend guard, the estimate and the argument checks.
     check("guard: NaN, inf, zero and negative limits are refused",
@@ -441,15 +501,20 @@ def main(argv=None):
     args = args_for("cleanup", env_file="/some/other.env")
     ready = L.prepare(args)
     text = L.cleanup_text(args, ready, "abc123")
-    check("cleanup, another --state-root: the token file is named and destroy --id is given",
+    check("cleanup, another --state-root: the token file is named and destroy --id is given "
+          "for the recorded id file only (no id from a listing)",
           "--env-file /some/other.env" in text and "destroy --id $(cat" in text
-          and "destroy --name t-" not in text, text.splitlines()[3][:120])
+          and "destroy --name t-" not in text and "<DROPLET_ID>" not in text
+          and "ids are in the status listing" not in text
+          and "Do not destroy a listed droplet by id on a guess" in text,
+          text.splitlines()[3][:120])
     args = args_for("cleanup2", state_root=DT.STATE_ROOT)
     ready = L.prepare(args)
     text = L.cleanup_text(args, ready, "abc123")
-    check("cleanup, the default state directory: destroy --name with the run's unique name",
+    check("cleanup, the default state directory: destroy --name with the run's unique name, "
+          "and no destroy by an id from a listing",
           f"destroy --name t-{a.shard}-abc123" in text
-          and f"--env-file {os.path.abspath('unused')}" in text)
+          and f"--env-file {os.path.abspath('unused')}" in text and "destroy --id" not in text)
 
     # 9. The hash bindings: the plan, the launcher, a tool file, the blob and its sidecar.
     def refusal_of(args):
@@ -496,6 +561,26 @@ def main(argv=None):
              f"the export's {L.LIFECYCLE} is not the file the plan names")):
         message = refusal_of(args_for("alt-" + tag, **altered_plan(tag, change)))
         check(f"refused before anything is created: {label}", phrase in message, message[:100])
+
+    # 9b. --keep and the default to every shard, by plan. A copy of the plan under the
+    #     registered plan's name: --keep is refused, and so is a launch that names no
+    #     shard. Under the dev plan's own name both are allowed.
+    registered = altered_plan("registered-name",
+                              lambda p: p.update({"name": L.REGISTERED_PLAN}))
+    message = refusal_of(args_for("keep-reg", keep=True, **registered))
+    check("refused: --keep under the registered plan", "--keep leaves a droplet billing" in message
+          and "Nothing was created" in message, message[:90])
+    message = refusal_of(args_for("noshard-reg", shard=None, **registered))
+    check("refused: the registered plan with no --shard named",
+          "name the shards with --shard" in message and "m1-s1" in message, message[:90])
+    check("the registered plan with its shard named and no --keep is not refused",
+          refusal_of(args_for("ok-reg", **registered)) == "")
+    for other in ("search-distill-m0", "search-distill-rehearsal"):
+        message = refusal_of(args_for("keep-" + other, keep=True, **altered_plan(
+            "name-" + other, lambda p, other=other: p.update({"name": other}))))
+        check(f"refused: --keep under the plan {other}", "--keep leaves" in message)
+    check("--keep under the dev plan is allowed (dev and smoke only)",
+          refusal_of(args_for("keep-dev", keep=True)) == "")
 
     # 10. The output directory: a directory that is not this launcher's is refused.
     args = args_for("foreign")

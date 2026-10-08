@@ -1,0 +1,10 @@
+plan search-distill-rehearsal (the wide rehearsal at reduced rollouts and reduced fine-tune steps, never evidence), sha256 ced680a180fbd0338c8b4fddcdb6824644e42f6236c88a44a4da06f991876c1b
+dataset: shards rehearsal (1 of the plan's 1)
+READING 1, fit: FIT. Arm c55d1l16: weighted mean probability of the label on training deviation roots 0.8171654289910563 from float32 logits (0.81716541779706 in the float64 training arithmetic), threshold 0.8
+arm        lambda  blob      train: label p  p>=.5   change elsewhere (TV, top) | validation: M      U        g       q        J (diagnostic)
+c55d1l1    1.0     accepted        0.5843   0.625   0.01351 0.00962            | 0.0003 0.05689 0.0908 0.00389 -9.101e-04
+c55d1l4    4.0     accepted        0.6672   0.704   0.02847 0.02590            | 0.0013 0.07063 0.0908 0.00389 -1.130e-03
+c55d1l16   16.0    accepted        0.8172   0.871   0.04547 0.04361            | 0.0000 0.09045 0.0908 0.00389 -1.447e-03
+REGISTERED ARM (named in the plan, chosen by no rule): c55d1l4
+STATUS: selected
+SELECTION.json sha256 e1b1100fa22bc8e4900b371f529fa862feeea5d0105a53919f3cfd1d7a68d1cc

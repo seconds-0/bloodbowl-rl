@@ -14,9 +14,11 @@ player searches. Every arm is played in the batched path, 32 games per worker.
 Every shard plays the same slice of game indexes for all eight pairs, so no
 arm is tied to a machine.
 
-One arm is the registered arm: SELECTION.json names it, chosen on validation
-games before any gate game. Its two contrasts against C carry the label. The
-other two arms are registered as a descriptive dose-response and carry none.
+One arm is the registered arm: the label plan names it (lambda 4, c55d1l4),
+and SELECTION.json, which exists only when all three arms' blobs passed
+acceptance and the fit check read FIT, repeats it. Its two contrasts against C
+carry the label. The other two arms are registered as a descriptive
+dose-response and carry none.
 
 SELECTION.json must hash to --expect-selection-sha256. Every arm's blob and
 sidecar must hash to the values it binds; both hashes go into the plan, and
@@ -37,6 +39,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WORKTREE = "~/Code/bb-harness-search"
+HARNESS_COMMIT = "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6"   # the label plan's pin; no other
 MAIN = "~/Code/bb-play-harness"
 BLOB = "0000002999975936.bin"
 SCRIPTS = ("accept_from_plan.py", "launch_from_plan.py", "play_local_from_plan.py",
@@ -47,6 +50,7 @@ CHAINS = {
     "chain46": "8eee9ac10f58eca57092013ac05db6f28fb5f7f2c6dc9ce850960c7bb2c7c467",
 }
 C = "c55m1"
+REGISTERED_ARM = "c55d1l4"      # named in the label plan; no rule chooses it
 OPPONENTS = ("chain37", "chain46")
 GAMES_PER_WORKER = 32
 LOCAL_PREFIX = "distill-mac-"
@@ -101,6 +105,9 @@ def main():
     if git(root, "status", "--porcelain"):
         raise SystemExit(f"{root} is not clean")
     commit = git(root, "rev-parse", "HEAD")
+    if commit != HARNESS_COMMIT:
+        raise SystemExit(f"{root} is at {commit}; the gate is played on the label plan's "
+                         f"harness commit {HARNESS_COMMIT} and no other")
     finetune = os.path.abspath(os.path.expanduser(args.finetune))
     selection_path = os.path.join(finetune, "SELECTION.json")
     selection_sha = sha256_file(selection_path)
@@ -110,15 +117,17 @@ def main():
     with open(selection_path) as f:
         selection = json.load(f)
     registered = selection.get("registered_arm")
-    if selection["fit"]["reading"] != "FIT" or not registered:
-        raise SystemExit("the selection has no registered arm (fit "
-                         f"{selection['fit']['reading']}): no gate is played")
+    if selection["fit"]["reading"] != "FIT" or registered != REGISTERED_ARM:
+        raise SystemExit(f"the selection's fit reading is {selection['fit']['reading']} and its "
+                         f"registered arm is {registered!r}; the gate needs FIT and "
+                         f"{REGISTERED_ARM}: no gate is played")
     if selection["base_checkpoint_sha256"] != CHAINS["chain55"]:
         raise SystemExit("the selection's arms are not fine-tunes of chain 55")
     arms = sorted(selection["arms"], key=lambda name: selection["arms"][name]["lambda"])
-    ineligible = [a for a in arms if not selection["arms"][a].get("eligible")]
-    if ineligible:
-        raise SystemExit(f"arms that are not eligible cannot be gated: {ineligible}")
+    rejected = [a for a in arms if selection["arms"][a].get("blob_accepted") is not True]
+    if rejected or len(arms) != 3:
+        raise SystemExit(f"the gate needs three arms whose blobs passed acceptance; rejected: "
+                         f"{rejected}")
 
     seeds = args.games_per_pair // 2
     if args.games_per_pair % 2 or seeds % args.shards:

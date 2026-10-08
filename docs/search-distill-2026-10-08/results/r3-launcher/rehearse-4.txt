@@ -1,0 +1,6 @@
+shard dev: ACCEPTED in /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/launcher-dev/rehearse-4/dev/run/main
+SHARD-ACCEPTED dev: 2 games, 60 roots, 3 deviation roots (0 false, 3 confirmed, 0 unjudged), 0 cap rejections, 0 kick-off turn roots, 128 other decisions; library d57404ee03a6
+
+real	0m13.396s
+user	0m10.538s
+sys	0m1.710s

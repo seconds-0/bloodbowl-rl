@@ -69,19 +69,27 @@ FINETUNE = {
     "precision": "float64 training on float32 features; the blob is float32",
     "loss": "[lambda * sum over deviation roots of w * (-log p(label)) + sum over the other "
             "loss decisions of w * KL(p0 || p)] / (sum of w); KL over the tuples of the "
-            "joint support",
+            "joint support; a step uses one chunk's numerator over (the training set's "
+            "weight / the number of chunks)",
     "fit": {"arm": "c55d1l16", "threshold": 0.80,
-            "statistic": "weighted mean probability of the label on training deviation roots"},
+            "statistic": "weighted mean probability of the label on training deviation roots, "
+                         "from float32 logits as the harness computes them"},
+    # The registered arm is named here. No rule chooses it.
+    "registered_arm": "c55d1l4",
     "selection": {
+        "rule": "SELECTION.json is written only when all three arms' blobs pass acceptance "
+                "and Reading 1 is FIT; the registered arm is the named one; if any arm's blob "
+                "fails acceptance the plan stops unread at the selection and no gate is played"},
+    "diagnostic": {
         "statistic": "J = q * M * g - price * U on the validation games, no rollouts",
-        "price": 0.016,
-        "rule": "the registered arm is the eligible arm with the highest J; ties go to the "
-                "smaller lambda; an arm whose J is not finite, or whose blob fails its "
-                "acceptance, is not eligible; with no eligible arm there is no registered "
-                "arm, the gate is not played and the plan stops unread"},
+        "price": 0.016, "note": "reported for every arm; it decides nothing"},
 }
-SECONDS = {"droplet_plain_game": 8.0, "droplet_screened_root": 1.84,
-           "droplet_judgment": 7.4, "setup": 420}
+# Measured on the droplet smoke of 2026-10-08 (16 games, 8 processes on
+# s-8vcpu-16gb-amd): 18.0 s of play and 88.5 s in all per game of one process,
+# at 30 screened roots and 0.625 judgments a game; a judgment is four roots'
+# rollouts. Create to launch took 167 s.
+SECONDS = {"droplet_plain_game": 18.0, "droplet_screened_root": 2.17,
+           "droplet_judgment": 8.7, "setup": 240}
 
 
 def integrity_checks():
@@ -102,6 +110,8 @@ def main(argv=None):
         "~/Code/bb-play-harness/.play-artifacts/checkpoints"))
     ap.add_argument("--out", default=None)
     ap.add_argument("--games", type=int, default=None, help="dev only: the number of games")
+    ap.add_argument("--dev-shards", type=int, default=1,
+                    help="dev only: split the games into this many shards (dev-s1, dev-s2, ...)")
     args = ap.parse_args(argv)
     with open(os.path.join(args.harness, "SOURCE_COMMIT")) as f:
         commit = f.read().strip()
@@ -114,10 +124,14 @@ def main(argv=None):
     if C.sha256_file(blob) != sha:
         raise SystemExit(f"{blob} does not hash to {sha}")
     seed0, shards, overrides, purpose = KINDS[args.kind]
-    if args.kind == "dev" and args.games:
-        shards = [("dev", 0, int(args.games))]
-    elif args.games:
-        raise SystemExit("--games is for --kind dev only")
+    if args.kind == "dev" and (args.games or args.dev_shards > 1):
+        games, k = int(args.games or shards[0][2]), int(args.dev_shards)
+        if k < 1 or games % k:
+            raise SystemExit("--games must split evenly into --dev-shards")
+        shards = [("dev", 0, games)] if k == 1 else \
+            [(f"dev-s{j + 1}", j * (games // k), games // k) for j in range(k)]
+    elif args.games or args.dev_shards != 1:
+        raise SystemExit("--games and --dev-shards are for --kind dev only")
     out = args.out or (os.path.join(HERE, OUT[args.kind]) if args.kind in OUT else None)
     if out is None:
         raise SystemExit("--kind dev needs --out")

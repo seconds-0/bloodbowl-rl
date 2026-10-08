@@ -1,0 +1,67 @@
+{
+ "registered_arm": "c55d1l4",
+ "control": "c55m1",
+ "contrasts": [
+  {
+   "opponent": "chain37",
+   "decisive_elo_diff": -42.398573473357146,
+   "ci95": [
+    -92.11485848170555,
+    10.660614908059651
+   ]
+  },
+  {
+   "opponent": "chain46",
+   "decisive_elo_diff": -43.78810870094125,
+   "ci95": [
+    -99.74094190691748,
+    9.943737804269544
+   ]
+  }
+ ],
+ "rule": {
+  "statistic": "the registered arm minus C against chain 37 and against chain 46, decisive-Elo, 95% seed-cluster intervals",
+  "order": [
+   "Unread",
+   "Negative",
+   "Positive",
+   "Flat",
+   "Inconclusive"
+  ],
+  "Unread": "a contrast or an end of its interval is missing or not finite",
+  "Negative": "either interval entirely below zero (upper end below 0)",
+  "Positive": "both point estimates at +15 or more and both intervals entirely above zero (lower end above 0)",
+  "Flat": "both intervals inside -15 to +15, ends included",
+  "Inconclusive": "anything else",
+  "positive_point": 15.0,
+  "flat_bound": 15.0
+ },
+ "reading": "Inconclusive",
+ "games_with_the_controls_trail": {
+  "c55d1l1 v chain37": {
+   "seed_legs": 512,
+   "same_trail_as_control": 0
+  },
+  "c55d1l1 v chain46": {
+   "seed_legs": 512,
+   "same_trail_as_control": 0
+  },
+  "c55d1l4 v chain37": {
+   "seed_legs": 512,
+   "same_trail_as_control": 0
+  },
+  "c55d1l4 v chain46": {
+   "seed_legs": 512,
+   "same_trail_as_control": 0
+  },
+  "c55d1l16 v chain37": {
+   "seed_legs": 512,
+   "same_trail_as_control": 0
+  },
+  "c55d1l16 v chain46": {
+   "seed_legs": 512,
+   "same_trail_as_control": 0
+  }
+ },
+ "note": "the label is the registered arm's; the other arms' contrasts are a descriptive dose-response and carry none"
+}

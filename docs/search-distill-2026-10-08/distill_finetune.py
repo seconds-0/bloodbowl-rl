@@ -21,13 +21,18 @@ of p0 * (log p0 - log p), never three marginal KLs.
 
 Each arm (one lambda) takes the plan's fixed number of Adam steps over fixed
 chunks of the training set and keeps its last step. There is no stop rule.
+A step's loss is its chunk's numerator divided by (the whole training set's
+weight / the number of chunks). Chunks are visited equally often, so the
+expected step is the gradient of the declared loss over the whole training
+set, whatever the chunks' own weights are.
 An arm is written as checkpoints/<arm>/0000002999975936.bin with a lineage
 sidecar the harness accepts and the trainer's lineage tool refuses, and is
 then checked: it differs from the original blob only in the policy rows of the
 decoder, and the harness loads it and returns the trained weights.
 
-This tool opens train.pt and validation.pt of the dataset directory and
-nothing else. It refuses a file that holds another split.
+This tool opens the training and validation files of the dataset directory,
+by the paths DATASET.json records, and nothing else. A path under locked/ is
+refused before anything is read.
 
   distill_finetune.py --harness EXPORT --plan PLAN.json --expect-sha256 H \\
       --checkpoint BLOB --dataset DIR --out-dir DIR [--arm NAME ...]
@@ -118,33 +123,64 @@ def stats(data, scored):
             "deviation_roots": int(dev.sum()), "other_decisions": int((~dev).sum())}
 
 
-def train(train_data, w0, lam, steps, lr, chunk, seed, log=None):
-    """`steps` Adam steps on the declared loss. Returns (float32 weight, curve)."""
+def build_chunk(train_data, index, w0d):
+    """Everything one step needs of the decisions `index` (sorted): the joint
+    structure of their supports, the features, the original distribution, where
+    each label sits, and the weights."""
     import torch
-    n = len(train_data["a0"])
+    joint = C.Joint(C.supports_of(train_data, index))
+    h = train_data["h"][index].double()
+    with torch.no_grad():
+        lp0 = joint.logp(h @ w0d.T)
+    label_at = joint.index_of(train_data["label"][index])
+    return {"joint": joint, "h": h, "lp0": lp0, "p0": torch.exp(lp0),
+            "label_at": torch.from_numpy(np.maximum(label_at, 0)),
+            "dev": torch.from_numpy(label_at >= 0),
+            "w": torch.from_numpy(train_data["weight"][index])}
+
+
+def chunk_loss(c, w, lam, normaliser):
+    """One chunk's numerator of the declared loss, over `normaliser`: lambda
+    times the weighted cross-entropy at its deviation roots plus the weighted
+    joint KL(p0 || p) at its other decisions. With normaliser = (the training
+    set's weight / the number of chunks), the mean of this over the chunks is
+    the declared loss over the whole training set."""
+    lp = c["joint"].logp(c["h"] @ w.T)
+    ce = -lp[c["label_at"]]
+    kl = c["joint"].per_decision_sum(c["p0"] * (c["lp0"] - lp))
+    return (float(lam) * (c["w"] * ce)[c["dev"]].sum()
+            + (c["w"] * kl)[~c["dev"]].sum()) / normaliser
+
+
+def partition(n, chunk, seed):
+    """The fixed chunks of a training set of n decisions (a seeded partition,
+    each chunk's indexes sorted), and the generator that goes on to order them."""
     rng = np.random.default_rng(int(seed))
     order = rng.permutation(n)
+    return [np.sort(order[a:a + int(chunk)]) for a in range(0, n, int(chunk))], rng
+
+
+def train(train_data, w0, lam, steps, lr, chunk, seed, log=None):
+    """`steps` Adam steps on the declared loss. Returns (float32 weight, curve, chunks)."""
+    import torch
+    n = len(train_data["a0"])
     w0d = w0.double()
-    parts = [np.sort(order[a:a + int(chunk)]) for a in range(0, n, int(chunk))]
+    parts, rng = partition(n, chunk, seed)
     # A built chunk holds every tuple of its supports. They are kept while the
     # whole training set has at most CACHE_TUPLES of them, and rebuilt at each
     # use beyond that, which trades time for memory at the registered size.
     cache = int(train_data["support_ptr"][-1]) <= CACHE_TUPLES
     built = {}
+    # The declared loss divides by the whole training set's weight. A chunk's
+    # numerator is divided by that weight over the number of chunks, so that
+    # the expected step, chunks being visited equally often, is the declared
+    # loss's gradient whatever the chunks' own weights are.
+    normaliser = float(train_data["weight"].sum()) / len(parts)
 
     def chunk_of(i):
         if i in built:
             return built[i]
-        index = parts[i]
-        joint = C.Joint(C.supports_of(train_data, index))
-        h = train_data["h"][index].double()
-        with torch.no_grad():
-            lp0 = joint.logp(h @ w0d.T)
-        label_at = joint.index_of(train_data["label"][index])
-        c = {"joint": joint, "h": h, "lp0": lp0, "p0": torch.exp(lp0),
-             "label_at": torch.from_numpy(np.maximum(label_at, 0)),
-             "dev": torch.from_numpy(label_at >= 0),
-             "w": torch.from_numpy(train_data["weight"][index])}
+        c = build_chunk(train_data, parts[i], w0d)
         if cache:
             built[i] = c
         return c
@@ -157,12 +193,7 @@ def train(train_data, w0, lam, steps, lr, chunk, seed, log=None):
     for step in range(int(steps) + 1):
         if not sequence:
             sequence = list(rng.permutation(len(parts)))
-        c = chunk_of(int(sequence.pop()))
-        lp = c["joint"].logp(c["h"] @ w.T)
-        ce = -lp[c["label_at"]]
-        kl = c["joint"].per_decision_sum(c["p0"] * (c["lp0"] - lp))
-        loss = (float(lam) * (c["w"] * ce)[c["dev"]].sum()
-                + (c["w"] * kl)[~c["dev"]].sum()) / c["w"].sum()
+        loss = chunk_loss(chunk_of(int(sequence.pop())), w, lam, normaliser)
         if not bool(torch.isfinite(loss)):
             raise SystemExit(f"the loss is not finite at step {step}")
         if step % every == 0 or step == int(steps):
@@ -197,29 +228,25 @@ def run(args):
     unknown = [a for a in arms if a not in ft["arms"]]
     if unknown:
         raise SystemExit(f"not arms of this plan: {unknown}")
-    with open(os.path.join(args.dataset, "DATASET.json")) as f:
-        dataset = json.load(f)
+    dataset = C.dataset_meta(args.dataset)
     if dataset["plan_sha256"] != plan_sha:
         raise SystemExit("the dataset was built under another plan")
-    files = {}
-    for split in ("train", "validation"):
-        path = os.path.join(args.dataset, dataset["files"][split]["path"])
-        if C.sha256_file(path) != dataset["files"][split]["sha256"]:
-            raise SystemExit(f"{path} is not the file DATASET.json recorded")
-        files[split] = C.open_split(path, split)
+    files = {split: C.open_split(args.dataset, split, dataset)
+             for split in ("train", "validation")}
     policy, _ = hx.load_policy(args.checkpoint)
     w0 = policy.decoder.decoder.weight.detach().clone()
     os.makedirs(args.out_dir, exist_ok=True)
     summary_path = os.path.join(args.out_dir, "FINETUNE.json")
     summary = {"schema": SCHEMA, "plan_sha256": plan_sha, "recipe": ft["recipe"],
                "base_checkpoint_sha256": base_sha, "dataset": dataset["files"],
+               "dataset_shards": sorted(dataset["shards"]),
                "settings": {k: ft[k] for k in ("learning_rate", "steps", "chunk", "seed")},
                "arms": {}, **hx.versions()}
     if os.path.exists(summary_path):
         with open(summary_path) as f:
             summary = json.load(f)
-        if summary.get("plan_sha256") != plan_sha:
-            raise SystemExit(f"{summary_path} belongs to another plan")
+        if summary.get("plan_sha256") != plan_sha or summary.get("dataset") != dataset["files"]:
+            raise SystemExit(f"{summary_path} belongs to another plan or another dataset")
     for arm in arms:
         if arm in summary["arms"]:
             raise SystemExit(f"arm {arm} is already in {summary_path}; choose a fresh --out-dir")
@@ -250,8 +277,8 @@ def run(args):
             scored = C.score(files[split], w0, weight)
             result[split] = stats(files[split], scored)
             if split == "validation":
-                result["selection"] = C.selection_score(files[split], scored,
-                                                        ft["selection"]["price"])
+                result["diagnostic_J"] = C.selection_score(files[split], scored,
+                                                           ft["diagnostic"]["price"])
         summary["arms"][arm] = result
         with open(summary_path, "w") as f:
             json.dump(summary, f, indent=1)

@@ -1,0 +1,20 @@
+DRY RUN: nothing is created, no network call is made
+xxxxxx below stands for the run id, six random hex digits drawn at launch
+plan search-distill-dev (e5e59d3b24562cbafd2062687243c7a37f7c738e992e4c1b7f7b8b3502411715)
+harness commit 5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6 from /Users/alexanderhuth/Code/bb-play-harness; lifecycle code from /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/harness-5ab3ab6/tools/droplet_tournament.py
+size s-8vcpu-16gb-amd in sfo3, tag bb-harness-tournament, image ubuntu-24-04-x64
+sync: play_harness, engine, puffer, training/convert_checkpoint.py; label tool files: distill_common.py, distill_screen.py, distill_accept.py, distill_dataset.py, distill_finetune.py, distill_eval.py
+checkpoint chain55 (f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b) from /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/checkpoints/chain55/0000002999975936.bin, with its lineage sidecar (15708a868cc601978ecf0550694de039138dacb2dc2341eba244a6239cb406d4)
+label settings: {"seed0": 29980500, "per_class": 15, "other_per_game": 64, "candidates": 4, "screen_rollouts": 4, "delta": 0.1, "judge_pairs": 8, "judge_first_index": 1000, "judge_min_pairs": 4, "masks": ["m1"], "scope": ["turn", "after_declare"], "gamma": 0.999, "max_rollout_steps": 200, "cap_rejection_ceiling": 0.01}
+run id xxxxxx: the suffix of every name this run creates
+shard dev: droplet bb-harness-sddry4-dev-xxxxxx, games 0 to 1 (2 games), results in /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/sddry4/dev
+  estimate: 0.12 h, about $0.02 (the plan's 22.0 s a game on one core, over 2 processes, plus 420 s of setup; not measured on a droplet)
+  /srv/bb/venv/bin/python /srv/bb/distill/distill_screen.py run --harness /srv/bb/src --plan /srv/bb/run/plan.json --expect-sha256 e5e59d3b24562cbafd2062687243c7a37f7c738e992e4c1b7f7b8b3502411715 --shard dev --checkpoint /srv/bb/checkpoints/chain55/0000002999975936.bin --out-dir /srv/bb/run/main --processes 8 >> /srv/bb/run/tournament.log 2>&1 || finish $?
+spend guard: 1 shard(s) x 0.5 h x $0.16667/h = $0.08 of $0.2 allowed; estimated spend $0.02
+nominal budget, when every call returns: $0.08 a shard plus the teardown (normally under five minutes, about $0.01). This is not a ceiling: one teardown call can retry for about 70 minutes when the API is slow (about $0.19 a droplet for each such call), and a dead runner, a lost create or a failed delete leaves a droplet billing until an operator destroys it.
+If the runner is gone, or its teardown failed, a droplet of this run may still be billing. It bills until one of these succeeds (they need only the export and the token file):
+  python /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/harness-5ab3ab6/tools/droplet_tournament.py --env-file /Users/alexanderhuth/code/killteam-3d/.env status
+then, for each droplet of this run that is still listed:
+  python /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/harness-5ab3ab6/tools/droplet_tournament.py --env-file /Users/alexanderhuth/code/killteam-3d/.env destroy --name sddry4-dev-xxxxxx      # droplet bb-harness-sddry4-dev-xxxxxx; reads /Users/alexanderhuth/.cache/bb-droplet-tournament/sddry4-dev-xxxxxx
+  (`destroy --name` destroys the droplet id this run recorded in /Users/alexanderhuth/.cache/bb-droplet-tournament/<name>/droplet-id, and no other.)
+These commands act only on droplet ids this run recorded. If a shard's state directory holds no droplet-id file, this run recorded no droplet for it: its create was never answered. Do not destroy a listed droplet by id on a guess. A droplet could be this run's only if its name is exactly one of the names above (they end in this run id: xxxxxx); look at its creation time in the status listing and decide by hand. An ssh key of the run's name that stays listed costs nothing.

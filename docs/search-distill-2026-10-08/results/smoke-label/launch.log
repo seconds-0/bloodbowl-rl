@@ -1,0 +1,41 @@
+plan search-distill-smoke (3f05848536f1c79e862037a129f224487cdbfaf7c6b4e3274e027002527c2a63)
+harness commit 5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6 from /Users/alexanderhuth/Code/bb-play-harness; lifecycle code from /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/harness-5ab3ab6/tools/droplet_tournament.py
+size s-8vcpu-16gb-amd in sfo3, tag bb-harness-tournament, image ubuntu-24-04-x64
+sync: play_harness, engine, puffer, training/convert_checkpoint.py; label tool files: distill_common.py, distill_screen.py, distill_accept.py, distill_dataset.py, distill_finetune.py, distill_eval.py
+checkpoint chain55 (f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b) from /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/checkpoints/chain55/0000002999975936.bin, with its lineage sidecar (15708a868cc601978ecf0550694de039138dacb2dc2341eba244a6239cb406d4)
+label settings: {"seed0": 29980400, "per_class": 15, "other_per_game": 64, "candidates": 4, "screen_rollouts": 16, "delta": 0.1, "judge_pairs": 128, "judge_first_index": 1000, "judge_min_pairs": 64, "masks": ["m1"], "scope": ["turn", "after_declare"], "gamma": 0.999, "max_rollout_steps": 200, "cap_rejection_ceiling": 0.01}
+run id 748e46: the suffix of every name this run creates
+shard smoke: droplet bb-harness-sdsmoke-smoke-748e46, games 0 to 15 (16 games), results in /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/sdsmoke/smoke
+  estimate: 0.15 h, about $0.03 (the plan's 66.3 s a game on one core, over 8 processes, plus 420 s of setup; not measured on a droplet)
+  /srv/bb/venv/bin/python /srv/bb/distill/distill_screen.py run --harness /srv/bb/src --plan /srv/bb/run/plan.json --expect-sha256 3f05848536f1c79e862037a129f224487cdbfaf7c6b4e3274e027002527c2a63 --shard smoke --checkpoint /srv/bb/checkpoints/chain55/0000002999975936.bin --out-dir /srv/bb/run/main --processes 8 >> /srv/bb/run/tournament.log 2>&1 || finish $?
+spend guard: 1 shard(s) x 1.0 h x $0.16667/h = $0.17 of $0.4 allowed; estimated spend $0.03
+nominal budget, when every call returns: $0.17 a shard plus the teardown (normally under five minutes, about $0.01). This is not a ceiling: one teardown call can retry for about 70 minutes when the API is slow (about $0.19 a droplet for each such call), and a dead runner, a lost create or a failed delete leaves a droplet billing until an operator destroys it.
+If the runner is gone, or its teardown failed, a droplet of this run may still be billing. It bills until one of these succeeds (they need only the export and the token file):
+  python /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/harness-5ab3ab6/tools/droplet_tournament.py --env-file /Users/alexanderhuth/code/killteam-3d/.env status
+then, for each droplet of this run that is still listed:
+  python /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/harness-5ab3ab6/tools/droplet_tournament.py --env-file /Users/alexanderhuth/code/killteam-3d/.env destroy --name sdsmoke-smoke-748e46      # droplet bb-harness-sdsmoke-smoke-748e46; reads /Users/alexanderhuth/.cache/bb-droplet-tournament/sdsmoke-smoke-748e46
+  (`destroy --name` destroys the droplet id this run recorded in /Users/alexanderhuth/.cache/bb-droplet-tournament/<name>/droplet-id, and no other.)
+These commands act only on droplet ids this run recorded. If a shard's state directory holds no droplet-id file, this run recorded no droplet for it: its create was never answered. Do not destroy a listed droplet by id on a guess. A droplet could be this run's only if its name is exactly one of the names above (they end in this run id: 748e46); look at its creation time in the status listing and decide by hand. An ssh key of the run's name that stays listed costs nothing.
+[10:12:43] tagged droplets before:
+droplets tagged bb-harness-tournament: 0
+ssh keys named bb-harness-*: 0
+local state with a live droplet id: 0
+[10:12:46] shard smoke as sdsmoke-smoke-748e46: 16 games on 8 processes, 8 vCPU at $0.16667/h; --max-hours 1.0 caps it at about $0.17
+[10:12:47] registered disposable ssh key 59938574
+[10:12:48] created droplet 607341725 (bb-harness-sdsmoke-smoke-748e46, s-8vcpu-16gb-amd, sfo3, tag bb-harness-tournament)
+[10:13:25] droplet 607341725 up at 164.92.83.187 after 39 s; installing
+[10:15:30] shim built: DO-Premium-AMD, 8 cores
+[10:15:33] shard smoke launched under nohup (167 s after create); the poll's own game count stays 0 until the tool merges its files, the count that moves is the tool's line after the bar
+[10:15:34] stage tournament, 0/16 games, log age 1 s
+[10:17:37] stage tournament, 0/16 games, log age 4 s | smoke: 8/16 games, 121 s
+[10:19:10] stage done, 16/16 games, log age 4 s | smoke: done, 16 games, 480 roots, 10 deviation roots, 0 cap rejections, 0 kick-off turn roots, 213 s wall on 8 process(es)
+[10:19:16] SHARD-ACCEPTED smoke: 16 games, 480 roots, 10 deviation roots (1 false, 9 confirmed, 0 unjudged), 0 cap rejections, 0 kick-off turn roots, 1024 other decisions; library 32632f034a30
+[10:19:17] delete droplet 607341725: HTTP 204
+[10:19:29] verify droplet 607341725: HTTP 404 (404 = gone)
+[10:19:29] lifetime 6.7 min at $0.16667/h: cost about $0.019
+[10:19:30] verify ssh key 59938574: HTTP 404 (404 = gone)
+[10:19:31] shard smoke: results in /Users/alexanderhuth/Code/bb-opt-build/runs/search-distill-2026-10-08/sdsmoke/smoke
+[10:19:31] tagged droplets after:
+droplets tagged bb-harness-tournament: 0
+ssh keys named bb-harness-*: 0
+local state with a live droplet id: 0

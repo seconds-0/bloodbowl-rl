@@ -6,8 +6,9 @@
 #   run_chain.sh m0|rehearsal RUN_NAME GATE_GAMES_PER_PAIR GATE_SEED0
 #
 # Steps, each timed into RUNS/RUN_NAME/CHAIN.log: the plan, the label tool, shard
-# acceptance, the dataset, the three fine-tunes, the selection (Reading 1 and the
-# registered arm), the held-out numbers, then a local gate rehearsal named
+# acceptance, the dataset, the three fine-tunes, the fit reading (as milestone 1
+# uses it), the selection (Reading 1 again, blob acceptance, the selection file),
+# the held-out numbers, then a local gate rehearsal named
 # distill-mac-RUN_NAME through the gate's merge-free path, its four acceptance
 # checks and its scoring. Nothing that exists is overwritten: RUNS/RUN_NAME and
 # the tournament directory must not exist yet.
@@ -33,7 +34,7 @@ step() {   # step NAME COMMAND...: run, tee the output, record the wall-clock; e
   echo "== $name: $*" | tee -a "$LOG"
   set +e; "$@" 2>&1 | tee "$OUT/$name.log"; local code=${PIPESTATUS[0]}; set -e
   echo "== $name: exit $code, $(( $(date +%s) - t0 )) s" | tee -a "$LOG"
-  if [ "$code" -ne 0 ] && ! { [ "$name" = select ] && [ "$code" -eq 3 ]; }; then exit "$code"; fi
+  if [ "$code" -ne 0 ] && ! { { [ "$name" = select ] || [ "$name" = fit ]; } && [ "$code" -eq 3 ]; }; then exit "$code"; fi
 }
 SHARD="$KIND"
 step plan "$PY" "$HERE/make_plan.py" --harness "$EXPORT" --kind "$KIND" --out "$OUT/PLAN.json"
@@ -46,6 +47,8 @@ step dataset "$PY" "$HERE/distill_dataset.py" --harness "$EXPORT" --plan "$OUT/P
   --expect-sha256 "$H" --checkpoint "$CK" --shard-dir "$SHARD=$OUT/shard" --out-dir "$OUT/dataset"
 step finetune "$PY" "$HERE/distill_finetune.py" --harness "$EXPORT" --plan "$OUT/PLAN.json" \
   --expect-sha256 "$H" --checkpoint "$CK" --dataset "$OUT/dataset" --out-dir "$OUT/finetune"
+step fit "$PY" "$HERE/distill_eval.py" fit --harness "$EXPORT" --plan "$OUT/PLAN.json" \
+  --expect-sha256 "$H" --checkpoint "$CK" --dataset "$OUT/dataset" --finetune "$OUT/finetune"
 step select "$PY" "$HERE/distill_eval.py" select --harness "$EXPORT" --plan "$OUT/PLAN.json" \
   --expect-sha256 "$H" --checkpoint "$CK" --dataset "$OUT/dataset" --finetune "$OUT/finetune"
 S="$(shasum -a 256 "$OUT/finetune/SELECTION.json" | awk '{print $1}')"

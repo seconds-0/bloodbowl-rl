@@ -1,0 +1,51 @@
+plan search-distill-rehearsal (the wide rehearsal at reduced rollouts and reduced fine-tune steps, never evidence), sha256 ced680a180fbd0338c8b4fddcdb6824644e42f6236c88a44a4da06f991876c1b
+selection sha256 e1b1100fa22bc8e4900b371f529fa862feeea5d0105a53919f3cfd1d7a68d1cc; registered arm c55d1l4
+HELD-OUT NUMBERS on the test games. Reported only: no threshold, no rule. 95% intervals resample games (2000 replicates, generator seed 0).
+-- c55d1l1, lambda 1.0: 30 test games, 14 labels (1 false, 12 confirmed, 0 unjudged, 1 in a kick-off turn)
+   label probability, all labels                                  0.03448 [0.00000, 0.07376]  n 14
+   label probability, new labels (original below 0.01)            0.02465 [0.00000, 0.07345]  n 13
+   label probability, confirmed labels                            0.04146 [0.00000, 0.08478]  n 12
+   label probability, class turn                                  0.02647 [0.00000, 0.07918]  n 12
+   label probability, class after_declare                         0.07546 [0.00000, 0.12120]  n 2
+   label probability, without kick-off turn roots                 0.03658 [0.00000, 0.07753]  n 13
+   share of labels at 0.5 or more                                 0.00000 [0.00000, 0.00000]  n 14
+   total variation, screened roots                                0.08623 [0.06825, 0.10845]  n 886
+   top action changed, screened roots                             0.08397 [0.06656, 0.10779]  n 886
+   total variation, out-of-scope decisions                        0.03997 [0.03150, 0.04948]  n 1920
+   top action changed, out-of-scope decisions                     0.03591 [0.02738, 0.04573]  n 1920
+   total variation, screened roots the original was sure of       0.03402 [0.01735, 0.05528]  n 615
+   top action changed, screened roots the original was sure of    0.03153 [0.01458, 0.05357]  n 615
+   total variation, out-of-scope decisions the original was sure of 0.00828 [0.00363, 0.01432]  n 1308
+   top action changed, out-of-scope decisions the original was sure of 0.00797 [0.00341, 0.01380]  n 1308
+-- c55d1l4, lambda 4.0 (the registered arm): 30 test games, 14 labels (1 false, 12 confirmed, 0 unjudged, 1 in a kick-off turn)
+   label probability, all labels                                  0.00658 [0.00000, 0.01186]  n 14
+   label probability, new labels (original below 0.01)            0.00199 [0.00000, 0.00592]  n 13
+   label probability, confirmed labels                            0.00791 [0.00000, 0.01527]  n 12
+   label probability, class turn                                  0.00213 [0.00000, 0.00638]  n 12
+   label probability, class after_declare                         0.02932 [0.00000, 0.04709]  n 2
+   label probability, without kick-off turn roots                 0.00698 [0.00000, 0.01220]  n 13
+   share of labels at 0.5 or more                                 0.00000 [0.00000, 0.00000]  n 14
+   total variation, screened roots                                0.10746 [0.08610, 0.13086]  n 886
+   top action changed, screened roots                             0.10107 [0.07768, 0.12629]  n 886
+   total variation, out-of-scope decisions                        0.05347 [0.04448, 0.06246]  n 1920
+   top action changed, out-of-scope decisions                     0.05230 [0.04174, 0.06377]  n 1920
+   total variation, screened roots the original was sure of       0.04659 [0.03015, 0.06794]  n 615
+   top action changed, screened roots the original was sure of    0.04526 [0.02769, 0.06708]  n 615
+   total variation, out-of-scope decisions the original was sure of 0.01570 [0.00938, 0.02269]  n 1308
+   top action changed, out-of-scope decisions the original was sure of 0.01463 [0.00807, 0.02231]  n 1308
+-- c55d1l16, lambda 16.0: 30 test games, 14 labels (1 false, 12 confirmed, 0 unjudged, 1 in a kick-off turn)
+   label probability, all labels                                  0.00122 [0.00000, 0.00276]  n 14
+   label probability, new labels (original below 0.01)            0.00000 [0.00000, 0.00000]  n 13
+   label probability, confirmed labels                            0.00147 [0.00000, 0.00356]  n 12
+   label probability, class turn                                  0.00000 [0.00000, 0.00000]  n 12
+   label probability, class after_declare                         0.00746 [0.00000, 0.01198]  n 2
+   label probability, without kick-off turn roots                 0.00129 [0.00000, 0.00279]  n 13
+   share of labels at 0.5 or more                                 0.00000 [0.00000, 0.00000]  n 14
+   total variation, screened roots                                0.12652 [0.10443, 0.14998]  n 886
+   top action changed, screened roots                             0.11952 [0.09551, 0.14348]  n 886
+   total variation, out-of-scope decisions                        0.06707 [0.05638, 0.07810]  n 1920
+   top action changed, out-of-scope decisions                     0.06844 [0.05579, 0.08266]  n 1920
+   total variation, screened roots the original was sure of       0.06265 [0.04359, 0.08627]  n 615
+   top action changed, screened roots the original was sure of    0.05754 [0.03776, 0.08142]  n 615
+   total variation, out-of-scope decisions the original was sure of 0.02320 [0.01510, 0.03118]  n 1308
+   top action changed, out-of-scope decisions the original was sure of 0.02166 [0.01319, 0.03032]  n 1308

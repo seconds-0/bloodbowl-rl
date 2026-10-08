@@ -1,0 +1,3 @@
+PASS blitz: seed 29980730: from the kick-off turn root at step 26, 64 of 64 rollouts that stop on a turn end hold a whole opponent team turn and all end with the completed-turn counter one higher (mean 92 engine steps, stops {'turn': 64, 'terminal': 0, 'cutoff': 0, 'cap': 0, 'error': 0}); from the ordinary turn-level root at step 112, 0 of 64 do (mean 51 engine steps)
+  (blitz: 6 s)
+1 of 1 tests passed; 6 s; harness 5ab3ab6, library 3359eff5b536

@@ -1,0 +1,10 @@
+[10:25:44] created droplet 607345194 (bb-harness-distill-smoke-20261008-s1, s-8vcpu-16gb-amd, sfo3, tag bb-harness-tournament)
+[10:31:17] stage tournament, 293/2048 games, log age 45 s | 200/2048 games, 2.57 games/s wall, eta 12.0 min
+[10:33:21] stage tournament, 787/2048 games, log age 31 s | 700/2048 games, 3.24 games/s wall, eta 6.9 min
+[10:35:24] stage tournament, 1275/2048 games, log age 25 s | 1200/2048 games, 3.48 games/s wall, eta 4.1 min
+[10:37:27] stage tournament, 1762/2048 games, log age 18 s | 1700/2048 games, 3.58 games/s wall, eta 1.6 min
+[10:39:14] delete droplet 607345194: HTTP 204
+[10:39:25] verify droplet 607345194: HTTP 404 (404 = gone)
+[10:39:25] lifetime 13.7 min at $0.16667/h: cost about $0.038
+[10:39:26] verify ssh key 59938823: HTTP 404 (404 = gone)
+[10:39:27] results in /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/distill-smoke-20261008-s1/main: 3.688 games/s wall on 8 workers, steal 0.00033848988677401205
