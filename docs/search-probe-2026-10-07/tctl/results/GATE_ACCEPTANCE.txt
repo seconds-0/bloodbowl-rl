@@ -1,0 +1,8 @@
+GATE-ACCEPTED 25600 games, 8 pairs, seed0 25100000, games_per_worker 1, commit 5ab3ab6
+MASKS-ACCEPTED 25600 masked sides in 25600 games as registered, no sampling offsets, 0 truncated, 0 mask fallbacks
+SEARCH-ACCEPTED 0 searched games of 25600 as registered; no searched decision; 0 cap-rejected decisions (0.000%), 0 cutoff rollouts of 0, 0 error rollouts; 0 identity game(s) equal to the plain game; 8 pair(s) held to the plan's schedule
+REPLAY-ACCEPTED 6400 games equal to the reference run's on action_trail_sha256, final_digest, score, c_steps, decisions, engine_decisions, team_ids, sampling_seeds, turns, half, final_status; library 32632f03 as the reference's
+integrity totals {"error_episodes": 0, "illegal": 0, "precheck_collisions": 0, "projection_collision": 0, "rejected_submissions": 0}; unnatural endings 0
+plan /Users/alexanderhuth/Code/bb-play-harness/.play-artifacts/tournaments/tctl-gate-20261008/PLAN.json sha256 80dcbb558a1849c7ce1f33032df7b629a5602daab3a0e3f119f57958f6fed5ae
+acceptance tool sha256 71cb6d6b9d0944e06ab8af6cfeaee76caba0da43f3b4e2367c9ce9a2bde015ad; search acceptance tool sha256 2b429a42c199581c3a2504d9e2d18da49b15fc01251b1d42e4f247ac8cf6f2d9; this script sha256 fa3152e543fe0d738e3c5334c2a7d30684880aaf553f3784ef9cd68c3adcc6f6
+games.jsonl sha256 99198f6e44f51085e820f7ed833d9deea633d97310442c8d568a527afe0a1b90

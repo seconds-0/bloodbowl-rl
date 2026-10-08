@@ -1,0 +1,21 @@
+{
+ "what": "paired contrast against chain37: (c55m1t075 vs chain37) minus (c55m1 vs chain37), engine-seed clusters resampled jointly (tournament_stats building blocks, reps 2000, seed 0); 95% percentile interval",
+ "arm": "c55m1t075",
+ "control": "c55m1",
+ "opponent": "chain37",
+ "seed_clusters": 1600,
+ "reps": 2000,
+ "generator_seed": 0,
+ "arm_decisive_elo": 195.55421643870693,
+ "control_decisive_elo": 189.98530611050919,
+ "decisive_elo_diff": 5.568910328197745,
+ "decisive_elo_diff_ci95": [
+  -12.039277744456507,
+  23.459460658874253
+ ],
+ "draw_inclusive_elo_diff": 2.3267104241686667,
+ "draw_inclusive_elo_diff_ci95": [
+  -8.220180441011466,
+  13.336429165165201
+ ]
+}

@@ -3258,3 +3258,78 @@ The two pairs were played on different seed blocks and no pooled figure is compu
 
 **Disclosed.** This rung was chosen after reading chain 60's gate (D440). Its control, chain 61, was registered before that (D433) and has not been read. Chain 60, an opponent in pair 12, is a warm-start candidate.
 - Reviewed by Codex before this entry was written (same file as D440's review): no blocking finding. The wrapper changes lambda only, apart from comments, the stamp and a message; seed block 23100000 is unused in the ledger and the tournament artifacts; running this rung now follows D433's stated branch, and the unread probe could not yet choose another arm. Corrections applied above: what Flat or Inconclusive would and would not say about the second parent, Negative as a suspension that does not decide the outcome of the entry that follows it, and the wording of the expectation.
+
+**D442 - THE LOWER-TEMPERATURE CONTROL (D435) READS "SEARCH BEATS THE THREE TEMPERATURES": ALL SIX MARGINS OF THE SEARCH SEAT OVER CHAIN 55 + m1 AT TEMPERATURE 0.75, 0.5 AND 0.25 ARE ENTIRELY ABOVE ZERO (+24 TO +42 ELO); NO TEMPERATURE'S GAIN OVER PLAIN PLAY READS POSITIVE; THE CONDITION D430 SET IS MET FOR THESE ARMS AND ENTRIES MAY BUILD ON SEARCH; NOTHING IS ADOPTED (2026-10-08 05:29 PDT by the machine's clock at commit; chain 61 is training)**
+
+**What was run, against D435.** Plan `PLAN.json` sha256 `80dcbb558a1849c7ce1f33032df7b629a5602daab3a0e3f119f57958f6fed5ae`, harness `5ab3ab6`, seed block 25100000 (the search gate's), eight pairs of 3,200 games, 25,600 plain games on four droplets launched at 02:54 PDT. No shard failed and none was relaunched; the runners finished between 04:43 and 05:03, each with "stage done", "verified 6 files by sha256, the manifest, 6400 games and zero integrity counters" and HTTP 404 on its droplet and key.
+- **One look, by the operator's statement.** Before scoring the operator read the runner logs only (launch, and completion, cost and teardown lines at 05:23), which carry no outcome. `score_from_plan.py --expect-sha256 80dcbb55...` was run once, at 05:23:18; its log shows the merge, then the four acceptance checks, then the report, the twelve contrasts and the diagnostics (files stamped 05:23:33 to 05:23:40). The artifacts are consistent with one look and cannot prove it.
+- **Spend.** $1.331 by the runners' cost lines (lifetimes 109.9 to 129.6 minutes) and $0.066 for the three smoke droplets: $1.397 against an expected $1.40 and a ceiling of $4.50. The status listing after the run (`droplet_status_after.txt`) shows no droplet or key of this gate; the five it lists belong to the END_TURN probe (D439).
+- **Harness worktree** `~/Code/bb-harness-search`: the operator checked it clean at `5ab3ab6` at 05:23, before scoring.
+
+**Acceptance: passed, all four checks** (`GATE_ACCEPTANCE.txt`).
+- `GATE-ACCEPTED 25600 games, 8 pairs, seed0 25100000, games_per_worker 1, commit 5ab3ab6` (this includes each player's registered temperature on its own side of every game).
+- `MASKS-ACCEPTED 25600 masked sides in 25600 games as registered, no sampling offsets, 0 truncated, 0 mask fallbacks`.
+- `SEARCH-ACCEPTED 0 searched games of 25600 as registered ... 8 pair(s) held to the plan's schedule`.
+- `REPLAY-ACCEPTED 6400 games equal to the reference run's on action_trail_sha256, final_digest, score, c_steps, decisions, engine_decisions, team_ids, sampling_seeds, turns, half, final_status; library 32632f03 as the reference's`. The control's replay is D430's control game for game: W / D / L 1606 / 1056 / 538 and 1554 / 1146 / 500, as in D434.
+- Integrity totals all zero, no unnatural ending. `games.jsonl` sha256 `99198f6e44f51085e820f7ed833d9deea633d97310442c8d568a527afe0a1b90`. The longest game is 1,609 engine decisions.
+
+**The eight pairs** (95% seed-cluster intervals from the report; S's two rows are D434's, from the search gate's accepted records, shown for reference).
+
+| Chain 55 + m1 at | against chain 37: W / D / L | Decisive-Elo | against chain 46: W / D / L | Decisive-Elo |
+|---|---|---|---|---|
+| temperature 1 (C, replayed) | 1606 / 1056 / 538 | +190.0 [+174.3, +205.8] | 1554 / 1146 / 500 | +197.0 [+180.4, +213.1] |
+| temperature 0.75 | 1609 / 1069 / 522 | +195.6 [+179.4, +211.4] | 1603 / 1105 / 492 | +205.2 [+189.1, +221.2] |
+| temperature 0.5 | 1620 / 1100 / 480 | +211.3 [+194.8, +228.6] | 1582 / 1118 / 500 | +200.1 [+183.6, +215.8] |
+| temperature 0.25 | 1631 / 1062 / 507 | +203.0 [+187.5, +219.9] | 1621 / 1092 / 487 | +208.9 [+192.8, +225.1] |
+| the search seat (S, D434) | 1742 / 1009 / 449 | +235.5 [+219.0, +253.0] | 1690 / 1091 / 419 | +242.3 [+225.0, +259.2] |
+
+**The registered statistics** (`paired_contrasts.py`, 1,600 seed clusters, 2,000 replicates, generator seed 0; decisive-Elo [95% seed-cluster]).
+
+| Temperature | gain = T minus C, chain 37 | gain, chain 46 | margin = S minus T, chain 37 | margin, chain 46 |
+|---|---|---|---|---|
+| 0.75 | +5.6 [-12.0, +23.5] | +8.2 [-10.2, +27.0] | +40.0 [+20.2, +59.9] | +37.1 [+16.4, +57.9] |
+| 0.5 | +21.3 [+1.5, +40.9] | +3.1 [-15.8, +22.2] | +24.2 [+2.7, +45.3] | +42.2 [+22.3, +63.1] |
+| 0.25 | +13.0 [-6.1, +34.0] | +11.9 [-8.2, +32.0] | +32.5 [+10.0, +53.1] | +33.4 [+12.3, +55.5] |
+
+On this shared seed block gain plus margin is D434's S minus C (+45.5 against chain 37 and +45.3 against chain 46), as D435 said.
+
+**Reading 1, first match in the registered order: search beats the three temperatures.**
+- "A temperature is better" does not apply: no margin's interval is entirely below zero.
+- "Search beats the three temperatures" applies: all six margins' intervals are entirely above zero. The smallest lower end is +2.7 (temperature 0.5 against chain 37); the others are +10.0 or more.
+- So the condition D430 set is met for these arms: entries that build on search (a C rollout kernel, search as a teacher, a larger rollout budget) may be registered. Each still needs its own entry and its own gate. It is not a finding that sharpening in general cannot match search.
+
+**Reading 2, each temperature against C, exploratory: Inconclusive, three times.** For each arm, in the order Negative, Positive, Flat, Inconclusive:
+- 0.75: no gain interval is entirely below zero; the gains are +5.6 and +8.2, not both above +20; the intervals reach +23.5 and +27.0, outside -20 to +20. Inconclusive.
+- 0.5: gains +21.3 and +3.1, not both above +20; the first interval reaches +40.9. Inconclusive. (Against chain 37 alone its interval is above zero, [+1.5, +40.9]; one interval of six, exploratory.)
+- 0.25: gains +13.0 and +11.9; the intervals reach +34.0 and +32.0. Inconclusive.
+- No arm reads Positive, so none is carried to a confirmation by this entry's rule. All six point estimates are above zero (+3 to +21), which the rule does not weigh; whether a lower temperature is worth a few Elo on this checkpoint is open and would need its own entry on fresh seeds.
+
+**Against what was written down in D435.** "All six gains between -20 and +25": they are +3.1 to +21.3. "Search beats the three temperatures (about three chances in four)": it does. "No temperature Positive": none.
+
+**Consequences, as registered.** Nothing is adopted: no training recipe, warm start, play-time option or evaluation default changes, and nothing here is a claim about another checkpoint. The bar D430 put in front of further work on search is cleared for these three arms.
+
+**What this does and does not show.**
+- **It is a follow-up on a gate that has been read, not an independent confirmation** (D435). The margins use S's games from D434. To the extent S was lucky on these seeds the margins are too high, and to the extent C was unlucky the gains are too high; the intervals correct for neither. The smallest margin's lower end is +2.7 (temperature 0.5 against chain 37): a few Elo of such luck would put that interval across zero, so on that margin the reading is close in the sense D435 wrote down, and D435 said what a close reading needs: a fresh-seed replay of S large enough to matter. The reading rule is applied as registered and the permission to register work on search stands. What does not stand without that replay is any claim that rests on search being better than temperature 0.5 in particular; an entry that needs that claim has to bring the replay.
+- Three per-head temperatures, one checkpoint, two opponents that are older relatives about 190 to 200 Elo weaker than C. Not tested: argmax, tempering one head only, a schedule by decision type, the joint tempered as a whole, a stronger opponent, a person.
+- Temperature and search were not combined. Whether the search seat on a tempered policy does better than either is not known.
+
+**Registered diagnostics, not gates** (`diagnostics.txt`; each cell is the chain 55 side, against chain 37 / against chain 46; the differences between columns carry no interval).
+
+| Per team turn unless noted | T 0.75 | T 0.5 | T 0.25 | C |
+|---|---|---|---|---|
+| Activations | 6.56 / 6.57 | 6.56 / 6.58 | 6.54 / 6.56 | 6.57 / 6.62 |
+| Empty activations | 2.46 / 2.47 | 2.46 / 2.49 | 2.45 / 2.47 | 2.44 / 2.47 |
+| Non-empty activations | 4.10 / 4.11 | 4.10 / 4.10 | 4.09 / 4.09 | 4.13 / 4.14 |
+| Blocks | 0.675 / 0.674 | 0.681 / 0.676 | 0.679 / 0.676 | 0.675 / 0.672 |
+| Turnovers | 0.424 / 0.424 | 0.423 / 0.422 | 0.422 / 0.423 | 0.422 / 0.419 |
+| Own decisions per game | 625.1 / 625.1 | 625.0 / 625.4 | 623.6 / 625.5 | 627.7 / 630.1 |
+| Touchdowns per game | 1.227 / 1.210 | 1.242 / 1.203 | 1.256 / 1.217 | 1.235 / 1.204 |
+| Touchdown difference per game | +0.575 / +0.578 | +0.599 / +0.555 | +0.610 / +0.568 | +0.568 / +0.540 |
+| Mean log-probability per decision | -0.075 / -0.074 | -0.053 / -0.052 | -0.029 / -0.029 | -0.096 / -0.095 |
+
+- The style rows barely move with temperature: activations, blocks and turnovers are within about one percent of C's in every column. The realised sharpness moves as expected (mean log-probability per decision from -0.096 at temperature 1 to -0.029 at 0.25, along each arm's own games).
+- For comparison the search seat's side (D434) had 6.36 / 6.35 activations, 0.707 / 0.702 blocks, 1.342 / 1.292 touchdowns and a mean log-probability of -0.427 / -0.419: it scores more and has a much lower mean log-probability, consistent with deviations to actions the policy gives almost no probability, which is the opposite direction from tempering. As D434 said, the diagnostics do not isolate what those deviations contribute.
+- Seconds a game: 8.5 to 8.7 in every pair of this run, with eight workers busy (D434's control ran at 7.5 and 7.6 on droplets that also played searched games).
+
+**Next.** A plan for the first use of search as a teacher (distilling the search seat's deviations into the policy, the design study's Test 1) is to be written, reviewed and registered in its own entry. It is not started here. That plan has to carry D434's limits with it: the search's evaluator is the shaped reward plus the value head, the gates show that acting on it wins more games against these two opponents and not that any single deviation is right, whether deviations can be distilled is untested, and another checkpoint needs its own gate.
+- Reviewed by Codex before this entry was written (`.codex-reviews/d442-review.md`): no blocker to the registered labels or to the permission to register further work on search. It recounted all ten W / D / L rows, recomputed all twelve contrasts and intervals, checked that each margin file is this run's 25,600 records plus exactly the search gate's 6,400 S records on seeds 25100000 to 25101599 (both legs once) and that no S record is in the run's own file or a gain file, and checked all 6,400 replayed control games independently. The first-match order gives the readings above; the six positive gain estimates stay descriptive. Corrections applied above: the close margin is tied to D435's fresh-seed replay requirement, the caveat about an unlucky C is restated, two cells of the style table were off by one in the last digit, the search seat's style is not attributed to its deviations, and D434's limits are restated for the teacher plan.

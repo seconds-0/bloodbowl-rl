@@ -1,0 +1,423 @@
+{
+ "schema": "bbplay-tournament-v1",
+ "seed0": 25100000,
+ "mode": "sample",
+ "kernel": "native",
+ "max_decisions": 4096,
+ "omp_num_threads": 1,
+ "rosters": "procgen (home_team=away_team=-1), skillup 4/2/0.0",
+ "legs": [
+  "A_home",
+  "B_home"
+ ],
+ "sampling_seed": "keyed by (engine seed, side)",
+ "harness_git_head": "5ab3ab6e195afbb717d7e0e7e62361a3b548fdd6",
+ "torch": "2.14.0+cpu",
+ "python": "3.12.3",
+ "checkpoints": {
+  "c55m1t075": {
+   "path": "/srv/bb/checkpoints/c55m1t075/0000002999975936.bin",
+   "sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+   "producer": {
+    "run_manifest_sha256": "9ad6a183947476989c8e897893f45426a3f9948dbc2312f3a00c0349b5f5e084",
+    "screen_manifest_sha256": "362312667d58e8fde84b1c920a4713f339800220345e257ed200b3eb9e582d14",
+    "seed": 42
+   },
+   "compatibility": {
+    "action_abi": "exact-joint-v1",
+    "observation_abi": "obs-v6",
+    "observation_version": 6,
+    "policy_expansion_factor": 1,
+    "policy_hidden_size": 512,
+    "policy_num_layers": 3
+   }
+  },
+  "chain37": {
+   "path": "/srv/bb/checkpoints/chain37/0000002999975936.bin",
+   "sha256": "268f1db08ca0c2bad88293ea56b3048a2a1c3a0ea9acdf0365fc023186c0f73f",
+   "producer": {
+    "run_manifest_sha256": "a9095929b434868279da1a76ed2d57702594c1342121065ae585feb53eb29c44",
+    "screen_manifest_sha256": "e84dd3a09569c25bb71c1ba16fb97cb23994eb94eb555ac3e04549678b1eafc3",
+    "seed": 42
+   },
+   "compatibility": {
+    "action_abi": "exact-joint-v1",
+    "observation_abi": "obs-v6",
+    "observation_version": 6,
+    "policy_expansion_factor": 1,
+    "policy_hidden_size": 512,
+    "policy_num_layers": 3
+   }
+  },
+  "c55m1t05": {
+   "path": "/srv/bb/checkpoints/c55m1t05/0000002999975936.bin",
+   "sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+   "producer": {
+    "run_manifest_sha256": "9ad6a183947476989c8e897893f45426a3f9948dbc2312f3a00c0349b5f5e084",
+    "screen_manifest_sha256": "362312667d58e8fde84b1c920a4713f339800220345e257ed200b3eb9e582d14",
+    "seed": 42
+   },
+   "compatibility": {
+    "action_abi": "exact-joint-v1",
+    "observation_abi": "obs-v6",
+    "observation_version": 6,
+    "policy_expansion_factor": 1,
+    "policy_hidden_size": 512,
+    "policy_num_layers": 3
+   }
+  },
+  "c55m1t025": {
+   "path": "/srv/bb/checkpoints/c55m1t025/0000002999975936.bin",
+   "sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+   "producer": {
+    "run_manifest_sha256": "9ad6a183947476989c8e897893f45426a3f9948dbc2312f3a00c0349b5f5e084",
+    "screen_manifest_sha256": "362312667d58e8fde84b1c920a4713f339800220345e257ed200b3eb9e582d14",
+    "seed": 42
+   },
+   "compatibility": {
+    "action_abi": "exact-joint-v1",
+    "observation_abi": "obs-v6",
+    "observation_version": 6,
+    "policy_expansion_factor": 1,
+    "policy_hidden_size": 512,
+    "policy_num_layers": 3
+   }
+  },
+  "c55m1": {
+   "path": "/srv/bb/checkpoints/c55m1/0000002999975936.bin",
+   "sha256": "f6ba3b449bf0cec15e37ba47b32b097dd513ee7dba3241b16ad90dd2a0675e0b",
+   "producer": {
+    "run_manifest_sha256": "9ad6a183947476989c8e897893f45426a3f9948dbc2312f3a00c0349b5f5e084",
+    "screen_manifest_sha256": "362312667d58e8fde84b1c920a4713f339800220345e257ed200b3eb9e582d14",
+    "seed": 42
+   },
+   "compatibility": {
+    "action_abi": "exact-joint-v1",
+    "observation_abi": "obs-v6",
+    "observation_version": 6,
+    "policy_expansion_factor": 1,
+    "policy_hidden_size": 512,
+    "policy_num_layers": 3
+   }
+  },
+  "chain46": {
+   "path": "/srv/bb/checkpoints/chain46/0000002999975936.bin",
+   "sha256": "8eee9ac10f58eca57092013ac05db6f28fb5f7f2c6dc9ce850960c7bb2c7c467",
+   "producer": {
+    "run_manifest_sha256": "339abbaeac6b63fa67697ca3a915b356aecfd18404a79fa9d4678c964689de36",
+    "screen_manifest_sha256": "9f9ef023c5d3a4a70d58cbfec7093e95413dcf274b82db11d456859211dc9bed",
+    "seed": 42
+   },
+   "compatibility": {
+    "action_abi": "exact-joint-v1",
+    "observation_abi": "obs-v6",
+    "observation_version": 6,
+    "policy_expansion_factor": 1,
+    "policy_hidden_size": 512,
+    "policy_num_layers": 3
+   }
+  }
+ },
+ "bots": {},
+ "players": {
+  "c55m1t075": {
+   "mode": "sample",
+   "temperature": 0.75,
+   "masks": [
+    "m1"
+   ]
+  },
+  "chain37": {
+   "mode": "sample",
+   "temperature": 1.0
+  },
+  "c55m1t05": {
+   "mode": "sample",
+   "temperature": 0.5,
+   "masks": [
+    "m1"
+   ]
+  },
+  "c55m1t025": {
+   "mode": "sample",
+   "temperature": 0.25,
+   "masks": [
+    "m1"
+   ]
+  },
+  "c55m1": {
+   "mode": "sample",
+   "temperature": 1.0,
+   "masks": [
+    "m1"
+   ]
+  },
+  "chain46": {
+   "mode": "sample",
+   "temperature": 1.0
+  }
+ },
+ "pairs": [
+  [
+   "c55m1t075",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1t05",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1t025",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1",
+   "chain37",
+   3200
+  ],
+  [
+   "c55m1t075",
+   "chain46",
+   3200
+  ],
+  [
+   "c55m1t05",
+   "chain46",
+   3200
+  ],
+  [
+   "c55m1t025",
+   "chain46",
+   3200
+  ],
+  [
+   "c55m1",
+   "chain46",
+   3200
+  ]
+ ],
+ "bot_library_sha256": null,
+ "library_sha256": "32632f034a303233446e84f499f13cb50f29a2394eaf0aed2e7c2316a7a9aed0",
+ "games_per_pair": null,
+ "tasks": 25600,
+ "host": "merged",
+ "games_per_worker": 1,
+ "workers": [
+  8,
+  8,
+  8,
+  8
+ ],
+ "merged_from": [
+  {
+   "name": "tctl-gate-20261008-s1",
+   "host": "bb-harness-tctl-gate-20261008-s1",
+   "tasks": 6400,
+   "pairs": [
+    [
+     "c55m1t075",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t05",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t025",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t075",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1t05",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1t025",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1",
+     "chain46",
+     800
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "1efa81420d5dcc153404188037662128352c87f1ef1a7b680a053a9ec445d04d",
+   "wall_seconds": 6298.8,
+   "games_per_second_wall": 1.016
+  },
+  {
+   "name": "tctl-gate-20261008-s2",
+   "host": "bb-harness-tctl-gate-20261008-s2",
+   "tasks": 6400,
+   "pairs": [
+    [
+     "c55m1t075",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t05",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t025",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t075",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1t05",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1t025",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1",
+     "chain46",
+     800
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "20ec23cbf03e3983397473ad7de7c7b065667194c76a9ef5481ff864e4e97991",
+   "wall_seconds": 6599.0,
+   "games_per_second_wall": 0.97,
+   "index0": 400
+  },
+  {
+   "name": "tctl-gate-20261008-s3",
+   "host": "bb-harness-tctl-gate-20261008-s3",
+   "tasks": 6400,
+   "pairs": [
+    [
+     "c55m1t075",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t05",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t025",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t075",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1t05",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1t025",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1",
+     "chain46",
+     800
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "1adf5a4d0922ada46cc3999f2a434aaebd3e09c304ffe4762e9ff214db3ab5d0",
+   "wall_seconds": 7450.4,
+   "games_per_second_wall": 0.859,
+   "index0": 800
+  },
+  {
+   "name": "tctl-gate-20261008-s4",
+   "host": "bb-harness-tctl-gate-20261008-s4",
+   "tasks": 6400,
+   "pairs": [
+    [
+     "c55m1t075",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t05",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t025",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1",
+     "chain37",
+     800
+    ],
+    [
+     "c55m1t075",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1t05",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1t025",
+     "chain46",
+     800
+    ],
+    [
+     "c55m1",
+     "chain46",
+     800
+    ]
+   ],
+   "cpu_model": "DO-Premium-AMD",
+   "games_sha256": "be7b92c2930f7bfd7f6798ae8cae38847473b1903adf647f1189c9cac765e45d",
+   "wall_seconds": 7144.9,
+   "games_per_second_wall": 0.896,
+   "index0": 1200
+  }
+ ]
+}

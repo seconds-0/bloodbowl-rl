@@ -1,0 +1,18 @@
+droplets tagged bb-harness-tournament: 5
+  607252151  bb-harness-et2-chain49-ca379e  s-8vcpu-16gb-amd  sfo3  active  created 2026-10-08T11:33:09Z  age 50 min  accrued about $0.14
+  607252147  bb-harness-et2-chain60-ca379e  s-8vcpu-16gb-amd  sfo3  active  created 2026-10-08T11:33:09Z  age 50 min  accrued about $0.14
+  607252149  bb-harness-et2-chain59-ca379e  s-8vcpu-16gb-amd  sfo3  active  created 2026-10-08T11:33:09Z  age 50 min  accrued about $0.14
+  607252148  bb-harness-et2-chain58-ca379e  s-8vcpu-16gb-amd  sfo3  active  created 2026-10-08T11:33:09Z  age 50 min  accrued about $0.14
+  607252146  bb-harness-et2-chain55-ca379e  s-8vcpu-16gb-amd  sfo3  active  created 2026-10-08T11:33:09Z  age 50 min  accrued about $0.14
+ssh keys named bb-harness-*: 5
+  59931566  bb-harness-et2-chain49-ca379e
+  59931565  bb-harness-et2-chain55-ca379e
+  59931564  bb-harness-et2-chain58-ca379e
+  59931563  bb-harness-et2-chain59-ca379e
+  59931562  bb-harness-et2-chain60-ca379e
+local state with a live droplet id: 5
+  et2-chain49-ca379e: droplet 607252151
+  et2-chain55-ca379e: droplet 607252146
+  et2-chain58-ca379e: droplet 607252148
+  et2-chain59-ca379e: droplet 607252149
+  et2-chain60-ca379e: droplet 607252147
