@@ -503,3 +503,8 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - Chain 63 minus chain 58: chain 30 +47.7 [+22.3, +72.5], chain 38 +47.7 [+23.4, +74.4], chain 40 +61.1 [+37.5, +85.1], chain 60 +85.6 [+65.2, +105.5]. Chain 62 minus chain 58 on D455's block was -44.8, -50.8, -29.4 and +72.2 against the same four. 25,600 games accepted, no cloud spend. It decides nothing.
 - Descriptive: chain 63 scores about what its parent does against these four and concedes 0.12 to 0.20 fewer touchdowns a game; chain 58 against chain 60 is -18.2 [-33.0, -4.6] on this block.
 - **The rig:** the panel took 2 h 30 min 20 s (2.84 games a second); the trainer ran 15.6% slower beside it. A gate or panel has played beside chain 64 for 7 h 40 min 43 s, about 79% of its run, and cost it about 71 minutes; chain 64's reading must carry that.
+
+**2026-10-09 15:39 PDT. Chain 64 passed its stage; its gate plan is fixed and the gate plays on the rig (D462). Chain 65 is training.**
+- **Chain 64** (`ccf606eb...`): exam offense AWAY 0.615 / 0.621, contact AWAY 0.560 / 0.558, contact HOME 0.504 / 0.476, above chain 62 and chain 58 on all six cells; guard not fired. In-run rows close to chain 62's (`docs/chain64-inrun-diagnostics-2026-10-09.txt`). Its training took 9 h 45 min against chain 62's 8 h 32 min, with a gate or panel beside it for 7 h 41 min.
+- **Gate `c64-gate-20261009`:** sixteen pairs, 51,200 games, seed block 23300000, plan sha256 `dc1be811...`, four shards on the rig, five to six hours. Read by D452.
+- **Chain 65** launched 15:32:53 and meets D457's manifest condition (14 of 277 leaves differ, all allowed). Chain 66 follows it.

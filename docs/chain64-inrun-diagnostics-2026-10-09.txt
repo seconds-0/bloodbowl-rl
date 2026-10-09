@@ -1,0 +1,20 @@
+In-run loss diagnostics, chain 64 (chain 58 at GAE lambda 0.97 against the earlier pool: the anchor, chain 40, chain 41) against chain 62 (the same rung against the anchor, chain 41, chain 49), both at training seed 42, from the two training logs on the rig.
+Training panels only (PUFFER_LOSS_JSON lines with phase_eval 0, epoch >= 0, no final reprint). Mean, 5th and 95th percentile over panels, and the mean of each third of the run.
+Read 2026-10-09 15:34 PDT, before chain 64's gate plan was committed and before any gate game was played. Script: the one below docs/chain58-inrun-diagnostics-2026-10-07.txt with the two run names changed, run by python3 on the rig.
+
+keys ['clipfrac', 'clipfrac_deciding', 'deciding_frac', 'entropy', 'entropy_deciding', 'explained_variance', 'grad_norm', 'kl', 'kl_deciding', 'old_kl', 'policy', 'total', 'value']
+c64 panels 22888 last steps 2999975936.0
+c62 panels 22888 last steps 2999975936.0
+clipfrac                     | c64 mean 0.002968 [p5 0.0003128, p95 0.005737] thirds 0.005108 0.003057 0.0007387 | c62 mean 0.002948 [p5 0.0003052, p95 0.005806] thirds 0.005117 0.003008 0.0007181
+clipfrac_deciding            | c64 mean 0.006092 [p5 0.0006668, p95 0.01171] thirds 0.01044 0.006288 0.001547 | c62 mean 0.006042 [p5 0.000651, p95 0.01178] thirds 0.01037 0.006237 0.001517
+deciding_frac                | c64 mean 0.4833 [p5 0.4639, p95 0.5017] thirds 0.4893 0.4855 0.475 | c62 mean 0.4821 [p5 0.4612, p95 0.5048] thirds 0.4935 0.4811 0.4718
+entropy                      | c64 mean 0.09209 [p5 0.07283, p95 0.1118] thirds 0.08456 0.09204 0.09966 | c62 mean 0.08803 [p5 0.07085, p95 0.1072] thirds 0.08855 0.08599 0.08954
+entropy_deciding             | c64 mean 0.1908 [p5 0.1489, p95 0.2351] thirds 0.1728 0.1896 0.2099 | c62 mean 0.1827 [p5 0.1464, p95 0.2232] thirds 0.1795 0.1787 0.1898
+explained_variance           | c64 mean 0.9145 [p5 0.9022, p95 0.9253] thirds 0.9131 0.9144 0.9159 | c62 mean 0.9137 [p5 0.9006, p95 0.9251] thirds 0.9121 0.9122 0.9169
+grad_norm                    | c64 mean 2.063 [p5 1.709, p95 2.513] thirds 2.213 1.991 1.984 | c62 mean 2.084 [p5 1.695, p95 2.476] thirds 2.153 2.043 2.056
+kl                           | c64 mean 0.001079 [p5 4.771e-05, p95 0.002652] thirds 0.002141 0.0009179 0.0001788 | c62 mean 0.001045 [p5 4.545e-05, p95 0.002648] thirds 0.001982 0.0009492 0.0002026
+kl_deciding                  | c64 mean 0.00221 [p5 0.0001016, p95 0.005423] thirds 0.004368 0.001887 0.0003743 | c62 mean 0.002137 [p5 9.703e-05, p95 0.005377] thirds 0.004016 0.001967 0.0004271
+old_kl                       | c64 mean 0.0009284 [p5 3.148e-05, p95 0.002494] thirds 0.00177 0.0008451 0.0001707 | c62 mean 0.0009458 [p5 3.187e-05, p95 0.00251] thirds 0.001798 0.000873 0.0001669
+policy                       | c64 mean 0.008731 [p5 -0.005704, p95 0.02593] thirds 0.005997 0.008977 0.01122 | c62 mean 0.00888 [p5 -0.00562, p95 0.02573] thirds 0.006184 0.009528 0.01093
+total                        | c64 mean 0.02182 [p5 0.00741, p95 0.0392] thirds 0.019 0.02205 0.02439 | c62 mean 0.02181 [p5 0.007358, p95 0.0388] thirds 0.01882 0.02256 0.02404
+value                        | c64 mean 0.01391 [p5 0.01249, p95 0.01547] thirds 0.01377 0.0139 0.01407 | c62 mean 0.01372 [p5 0.01223, p95 0.01531] thirds 0.01343 0.0138 0.01392
