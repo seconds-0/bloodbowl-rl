@@ -454,3 +454,7 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Selection:** not run. Chain 60 is the only candidate and nothing is launched from it; chain 58 stays the warm start.
 - **Expectation written down:** improved against chain 46 about 55 in 100, against chain 37 about 35 in 100, criterion not met about 40 in 100.
 - **Timing:** chain 63 should end about 05:30 PDT, chain 64 about 14:20.
+
+**Update 2026-10-09 01:08 PDT (D453): a descriptive panel is registered and playing beside the rig.**
+- **What.** Chain 58, chain 61 and chain 62 each against eight opponents other than chain 37 and chain 46: the older line (chain 30, chain 36, chain 40), off the line (chain 38, chain 42) and chain 49's other rungs (chain 55, chain 59, chain 60). 76,800 games, seed block 23400000, plan sha256 `aa0400b3...`, about $0.70, no rig time.
+- **Why.** D451's losses against the parent were measured on two opponents. The panel shows whether they also appear against these eight. It decides nothing and changes no rule.
