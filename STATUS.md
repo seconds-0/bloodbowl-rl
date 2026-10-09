@@ -498,3 +498,8 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Chain 66:** chain 63's rung (chain 58, lambda 0.99) at training seed 2042; control chain 65 (lambda 0.97, seed 2042). Wrapper `b3_chain66.sh` (`656bb28`), plan-only pass at 11:48 PDT. Gate: twelve pairs, 38,400 games, seed block 23700000.
 - **It adopts nothing.** If its direct pair, both held-out contrasts and both retention contrasts are entirely above zero ("Confirmed"), lambda 0.99 qualifies for one more prospective pair (adoption needs two prospective successes) and chain 63 and chain 66 become warm-start candidates.
 - **The rig's order:** chain 64 (to about 15:20), chain 65 (to about 01:15 on 2026-10-10), chain 66 (to about 11:00). Gates on the rig: chain 63's panel now, then chain 64's, chain 65's, chain 66's.
+
+**2026-10-09 14:41 PDT. The chain 63 panel is read (D461): chain 63 is above its parent against all four opponents.**
+- Chain 63 minus chain 58: chain 30 +47.7 [+22.3, +72.5], chain 38 +47.7 [+23.4, +74.4], chain 40 +61.1 [+37.5, +85.1], chain 60 +85.6 [+65.2, +105.5]. Chain 62 minus chain 58 on D455's block was -44.8, -50.8, -29.4 and +72.2 against the same four. 25,600 games accepted, no cloud spend. It decides nothing.
+- Descriptive: chain 63 scores about what its parent does against these four and concedes 0.12 to 0.20 fewer touchdowns a game; chain 58 against chain 60 is -18.2 [-33.0, -4.6] on this block.
+- **The rig:** the panel took 2 h 30 min 20 s (2.84 games a second); the trainer ran 15.6% slower beside it. A gate or panel has played beside chain 64 for 7 h 40 min 43 s, about 79% of its run, and cost it about 71 minutes; chain 64's reading must carry that.
