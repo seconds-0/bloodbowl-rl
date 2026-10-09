@@ -1,0 +1,48 @@
+rig_gate: plan hashes to 38d41ea1e41c9447bc391c787269bcfec03d737476426e3108dd75788d5226f6, not 0000000000000000000000000000000000000000000000000000000000000000; nothing done
+ok   plain shard: two checkpoints by local blob path, no bots, no extra args
+ok   masked player and bot: mask passed as a tournament argument, bot not uploaded, hash by checkpoint
+ok   gate root and run directory are under the rig root
+ok   gate name '' refused
+ok   gate name 'a b' refused
+ok   gate name 'x;rm' refused
+ok   gate name '../up' refused
+ok   gate name 'UPPER' refused
+ok   job script plays from the gate's sources with the rig venv and writes into the shard's run directory
+ok   build script uses the gate's directories, never the droplet's
+ok   queue records its pid, then makes itself the first choice of the out-of-memory killer
+ok   queue clears inherited build variables and hides the GPU
+ok   queue opens the rig-wide lock without truncating it and WAITS for it (gates take turns)
+ok   jobs inherit the lock: no job line closes descriptor 9
+ok   queue plays shards in order, stops at the first failure, marks the end
+ok   refused: shard name with a shell metacharacter
+ok   refused: shard name with a path component
+ok   refused: player name that is a parent directory
+ok   refused: player name with a slash
+ok   refused: checkpoint name with a path component
+ok   refused: mask name with a space
+ok   refused: gate name in capitals
+ok   the test plan's own names are accepted
+ok   run_dir refuses a shard name with a path component
+ok   refused: gate name with a trailing newline
+ok   refused: shard name with a trailing newline
+ok   refused: player name with a trailing newline
+ok   refused: checkpoint key with a path component
+ok   refused: checkpoint key that is absolute
+ok   every command sent to the rig, uploads and downloads included, is wrapped at the lowest CPU and I/O priority
+ok   no transfer uses scp or sftp, and the script's tee is inside the wrapper
+ok   admission: enough memory and disk passes
+ok   admission: under 4,000 MB available refuses
+ok   admission: under 20 GB of disk refuses
+ok   admission: unreadable probe refuses
+ok   setup installs CPU-only torch into the isolated venv and asserts no CUDA
+ok   plan loads when its hash matches
+ok   plan refused on a hash mismatch
+ok   start exits 2 and does nothing on a hash mismatch
+ok   the runner has no re-entry path and no scp
+ok   start writes rig_start.json before it prepares or launches anything on the rig
+ok   the venv is made under its own lock
+ok   preflight refuses a plan that does not register this rig_gate.py as its launch script
+ok   the runner makes no cloud call and deletes nothing
+ok   collect checks the worktree and the runner's hash before it imports the verifier
+ok   rig_run.json is written before the shard is renamed into place
+ALL OK

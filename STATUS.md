@@ -458,3 +458,10 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 **Update 2026-10-09 01:08 PDT (D453): a descriptive panel is registered and playing beside the rig.**
 - **What.** Chain 58, chain 61 and chain 62 each against eight opponents other than chain 37 and chain 46: the older line (chain 30, chain 36, chain 40), off the line (chain 38, chain 42) and chain 49's other rungs (chain 55, chain 59, chain 60). 76,800 games, seed block 23400000, plan sha256 `aa0400b3...`, about $0.70, no rig time.
 - **Why.** D451's losses against the parent were measured on two opponents. The panel shows whether they also appear against these eight. It decides nothing and changes no rule.
+
+**Update 2026-10-09 06:20 PDT (D454): no more droplets; gates play on the training rig.**
+- **Instruction (Alex, 01:54 PDT):** move off DigitalOcean, use only the 2070 machine. The panel's last three shards finished on their own by 02:15; nothing of this work is on DigitalOcean.
+- **How gates play now:** `docs/rig-gates-2026-10-09/rig_gate.py` plays a registered plan on the rig beside the trainer: CPU only, 6 workers at the lowest CPU and I/O priority, one gate at a time, verified with the droplet runner's own checks. Merge, acceptance, scoring and every label rule are unchanged.
+- **Evidence:** four smokes replayed 2,496 records (1,280 distinct games) of chain 62's gate and every record matched the droplet's, action trail included.
+- **Cost:** a gate takes about four hours instead of 35 minutes, and in the smokes the trainer ran about 13 percent slower while one played (98.7K to 86K steps a second). No cloud spend.
+- **Declared:** chain 64 now trains with a gate beside it for part of its run and its control did not; D452's reading must name that.
