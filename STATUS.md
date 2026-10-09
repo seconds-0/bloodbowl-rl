@@ -471,3 +471,8 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Chain 61 against chain 58:** below against the same five (two intervals reach zero), mixed against chain 49's rungs.
 - **So** the losses D451 found against chain 37 and chain 46 are not special to those two among these opponents: the rungs from chain 58 gained against their parent's own generation and lost margin against everything older. The margins against the older opponents are still large (+129 to +251 for chain 62).
 - **Limits:** eight chosen relatives, one seed block, sixteen intervals. It decides nothing and changes no rule. 76,800 games, about $0.67, the last droplets this work used.
+
+**Update 2026-10-09 06:25 PDT (D456): chain 63 passed its stage; its gate is playing on the rig; chain 64 is training.**
+- **Chain 63 (chain 58 at lambda 0.99):** guard not fired, but offense AWAY 0.562 / 0.555 is below chain 62's 0.592 / 0.601 and seed 43 sits 0.004 above its floor. In-run, value loss 0.0231 against 0.0137 and explained variance 0.864 against 0.914.
+- **Its gate:** fourteen pairs, 44,800 games, seed block 23200000, plan sha256 `2130467b...`, started on the rig at 06:22 PDT, about four hours.
+- **Chain 64 (D452)** launched at 05:35 PDT and meets its manifest condition. It should end between 14:15 and 14:45. What follows it is registered before then.
