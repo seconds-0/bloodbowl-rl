@@ -446,3 +446,11 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Gate.** 38,400 games, twelve pairs, seed block 23100000, accepted, integrity counters zero, four droplets destroyed, about $0.35.
 - **Chain 63 (lambda 0.99, D448)** launched at 20:53 PDT on 2026-10-08 and should end at about 05:30 on 2026-10-09. Its manifest differs from chain 62's in lambda and the run's own paths.
 - **Still to register:** what runs after chain 63.
+
+**Update 2026-10-09 00:59 PDT (D452): chain 64 is registered to follow chain 63: chain 62's rung against the previous generation's opponents.**
+- **Why.** D451 found both rungs from chain 58 below it against the held-out opponents. Between that generation and the one before, the parent changed and the pool rotated (chain 40 left, chain 49 became an active opponent). Chain 64 is chain 62's rung (chain 58, lambda 0.97, seed 42) trained against the anchor, chain 40 and chain 41 instead of the anchor, chain 41 and chain 49. Control: chain 62.
+- **Question.** Does it do better than chain 62 against chain 37 and chain 46? Readings: improved against both, against one, mixed, criterion not met. "Recovered" needs the rung not to be below chain 58 as well. It adopts nothing and changes no pool rule.
+- **Gate:** sixteen pairs, 51,200 games, seed block 23300000, with pairs against chain 60, chain 59, chain 49 and chain 40 to show the other side.
+- **Selection:** not run. Chain 60 is the only candidate and nothing is launched from it; chain 58 stays the warm start.
+- **Expectation written down:** improved against chain 46 about 55 in 100, against chain 37 about 35 in 100, criterion not met about 40 in 100.
+- **Timing:** chain 63 should end about 05:30 PDT, chain 64 about 14:20.
