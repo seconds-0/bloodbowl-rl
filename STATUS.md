@@ -489,3 +489,7 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Style:** 3.98 activations a team turn against chain 62's 2.95.
 - **Nothing is adopted; chain 63 is not a candidate by D448's rule; chain 58 stays the warm start.** A second lambda 0.99 pair and a selection each need their own entry. Chain 65 (D457) is the control such a pair would use.
 - **The gate on the rig:** 5 h 10 min for 44,800 games (2.41 games a second), trainer 15.7% slower beside it, 2.4 GB.
+
+**2026-10-09 11:44 PDT. A panel for chain 63 is registered and plays on the rig beside chain 64 (D459).**
+- Chain 63 and chain 58, each against chain 30, chain 38, chain 40 and chain 60: eight pairs, 25,600 games, seed block 23600000, plan sha256 `38217390...`, about three hours. Descriptive: per opponent, Above its parent / Below its parent / Not separated. It decides nothing.
+- It slows chain 64 by a forecast 25 minutes; chain 64's reading must give the total gate time beside it.
