@@ -3991,3 +3991,126 @@ D452 set a seed replicate aside with the words "a replicate measures the seed ga
 **Disclosed.** This rung was chosen after reading D447, D451 and D455, and its question comes from them. Chain 62, chain 58, chain 60, chain 61, chain 37 and chain 46 have all been read in earlier gates. Chain 63 and chain 64 are unread and are not in this gate. D452 wrote that the stage after chain 64 would be registered after chain 63's gate is read. This entry replaces that intention: the stage is registered before that reading because the gate ran about an hour longer than forecast and the choice does not turn on it.
 
 **Review.** Outside review (Codex, `gpt-6.1-sol`, read-only) in two passes before this entry was committed: `.codex-reviews/d457-review.md` and `.codex-reviews/d457-review2.md`. Confirmed: chain 65 starts from chain 58, so the selection D441, D448 and D452 require does not stand in its way, and choosing before chain 64's reading fits D454; the wrapper's diff against chain 62's changes `SEED`, `STAMP`, comments and one message and nothing else, and the exam still uses evaluation seeds 42 and 43; commit `34cba79` adds the wrapper and its sha256 is as stated; the quoted numbers, hash prefixes, lineage statements and pool memberships agree with the ledger; the four readings are exhaustive and mutually exclusive with Unread checked first; ten pairs are 32,000 games and support every registered contrast; seed block 23500000 is not in the ledger. The reviewer said it would choose this replicate over the listed alternatives while both gates are unread, as a design judgment. Three blocking corrections from the first pass, applied above: the manifest condition now allows the pool manifest file's hash to differ; a difference between the two rungs rests on the contrast chain 65 minus chain 62 on this block, not on the comparison with D451's figure, and carries the load qualification; chain 65 is a control only if its stage passes and its manifest meets the condition, and an unread gate needs a new entry. One blocking correction from the second pass, applied above without a third pass: the lineage bundle hash is named with its own prefix (`b9dea0be...`), apart from the pool identity. Also applied: this entry is said to replace D452's stated intention; a clean guard trip is Unread for the question and Negative for the ladder's label; "useful under several of the next choices" in place of "needed under each outcome"; the 13% is called a smoke measurement; "Retained" renamed "Above its parent"; the load condition carried into the control's use. Not verified by the review: the installation on the rig, the plan-only pass, the rig's state, the timing forecasts, and that seed block 23500000 is unused outside the ledger (the operator found no gate plan under the tournaments directory that names it).
+
+**D458 - CHAIN 63 (CHAIN 58 CONTINUED AT GAE LAMBDA 0.99, TRAINING SEED 42) READS FLAT BY THE REGISTERED RULE, ONE DECISIVE GAME SHORT OF POSITIVE: +39.98 [+25.9, +54.8] OVER CHAIN 62 DIRECTLY WHERE THE RULE NEEDS ABOVE +40, WITH BOTH HELD-OUT CONTRASTS ENTIRELY ABOVE ZERO (+97.1 AGAINST CHAIN 37, +71.1 AGAINST CHAIN 46) AND BOTH RETENTION CONTRASTS ENTIRELY ABOVE ZERO (+47.5, +50.7): THE FIRST RUNG FROM CHAIN 58 THAT IS ABOVE ITS PARENT AGAINST THE HELD-OUT OPPONENTS; NOTHING IS ADOPTED, D448 MAKES CHAIN 63 NO CANDIDATE, CHAIN 58 STAYS THE WARM START; THE FIRST WHOLE GATE ON THE RIG TOOK 5 H 10 MIN AND THE TRAINER RAN 15.7% SLOWER BESIDE IT (2026-10-09 11:43 PDT by the machine's clock at commit; chain 64 is training)**
+
+**Evidence.** Gate `c63-gate-20261009`, plan sha256 `2130467b...` (fixed in D456, committed at 06:21:35 PDT as `e89bd86` and pushed before the runner was started at 06:21:37; the push is the operator's record), played on the rig by D454's procedure: one queue, four shards one after another, 6 workers at the lowest CPU and I/O priority, started 06:22:08 and done 11:32:31 by the rig's own timestamp files. Collected at 11:32:52 to 11:33:11 (`collect.log`: each shard's six files verified by sha256, its manifest, its game count and zero integrity counters) and scored once at 11:33:18 to 11:33:43 (`score.log`): `GATE-ACCEPTED 44800 games, 14 pairs, seed0 23200000, games_per_worker 32, commit 7d0d547` and `MASKS-ACCEPTED 6400 masked sides in 44800 games as registered, no sampling offsets, 0 truncated, 0 mask fallbacks`; integrity totals all zero; no unnatural ending; `games.jsonl` sha256 `fe4f3c74...`. One scoring sequence is recorded. By the operator's statement, no outcome or strength statistic was inspected before merged acceptance; the status command and the collection reported game counts, integrity counters and rates. No droplet was used and nothing was spent.
+
+**Decisive-Elo, 95% seed-cluster intervals, 3,200 games a pair.**
+
+| pair | A | B | A W / D / L | decisive-Elo of A | 95% |
+|---|---|---|---|---|---|
+| 1 | chain 63 | chain 62 | 1007 / 1393 / 800 | +39.98 | [+25.9, +54.8] |
+| 2 | chain 63 | chain 37 | 1823 / 975 / 402 | +262.6 | [+245.3, +279.9] |
+| 3 | chain 62 | chain 37 | 1582 / 1008 / 610 | +165.6 | [+150.5, +181.5] |
+| 4 | chain 61 | chain 37 | 1695 / 944 / 561 | +192.1 | [+177.5, +207.4] |
+| 5 | chain 58 | chain 37 | 1732 / 966 / 502 | +215.1 | [+199.3, +230.8] |
+| 6 | chain 63 | chain 46 | 1788 / 1005 / 407 | +257.1 | [+240.4, +274.0] |
+| 7 | chain 62 | chain 46 | 1625 / 1018 / 557 | +186.0 | [+171.2, +202.1] |
+| 8 | chain 61 | chain 46 | 1703 / 971 / 526 | +204.1 | [+188.0, +220.0] |
+| 9 | chain 58 | chain 46 | 1732 / 940 / 528 | +206.4 | [+191.0, +222.3] |
+| 10 | chain 63 | chain 58 (descriptive) | 1154 / 1309 / 737 | +77.9 | [+63.8, +92.6] |
+| 11 | chain 63 | offense bot | 953 / 1794 / 453 | +129.2 | [+110.3, +148.6] |
+| 12 | chain 62 | offense bot | 962 / 1737 / 501 | +113.3 | [+95.0, +132.1] |
+| 13 | chain 63 + m1 | chain 62 + m1 (descriptive) | 721 / 1617 / 862 | -31.0 | [-46.2, -16.4] |
+| 14 | chain 63 | chain 61 (descriptive) | 1111 / 1312 / 777 | +62.1 | [+48.2, +75.9] |
+
+**Paired contrasts** (`paired_contrasts.py` `722ece95...`, 2,000 replicates, generator seed 0, 1,600 seed clusters).
+
+| contrast | opponent | decisive-Elo | 95% |
+|---|---|---|---|
+| chain 63 minus chain 62 (label) | chain 37 | +97.1 | [+74.5, +119.3] |
+| chain 63 minus chain 62 (label) | chain 46 | +71.1 | [+49.1, +93.4] |
+| chain 63 minus chain 62 (registered, no label) | offense bot | +15.9 | [-8.4, +38.4] |
+| chain 63 minus chain 58 (retention) | chain 37 | +47.5 | [+26.6, +69.2] |
+| chain 63 minus chain 58 (retention) | chain 46 | +50.7 | [+28.6, +72.6] |
+| chain 62 minus chain 58 (dose table) | chain 37 | -49.6 | [-69.9, -29.4] |
+| chain 62 minus chain 58 (dose table) | chain 46 | -20.4 | [-41.8, +0.7] |
+| chain 61 minus chain 58 (dose table) | chain 37 | -23.1 | [-42.7, -3.8] |
+| chain 61 minus chain 58 (dose table) | chain 46 | -2.3 | [-24.5, +19.1] |
+
+**The label, in the registered order (D448).**
+1. Negative: pair 1's interval entirely below zero, or the guard tripped. No: the interval is [+25.9, +54.8] and the guard did not fire (D456).
+2. Positive: pair 1's point estimate above +40 with its interval entirely above zero, and both held-out contrasts entirely above zero. Both held-out clauses hold (+97.1 [+74.5, +119.3] and +71.1 [+49.1, +93.4]) and the interval clause holds. The point estimate is 400 x log10(1007 / 800) = +39.976, which is not above +40. Not Positive. One more decisive game for chain 63 (1008 to 800) would give +40.15.
+3. Flat: pair 1 within plus or minus 40 inclusive. Yes.
+4. **Chain 63 reads Flat.** The rule is applied as written. D440 read chain 60 Positive at +40.07, where one decisive game the other way would have read Flat; this is the same edge from the other side.
+
+**Consequences, as registered in D448.**
+- **No change to the recipe follows from this rung.** Lambda 0.99 is not adopted and has no Positive pair. The lambda 0.97 adoption is untouched: D448 made the two readings independent.
+- **Chain 63 is not a warm-start candidate by this entry.** D448 grants candidacy under Positive only. Both retention contrasts are entirely above zero, which is the other half of that clause; it does not apply under Flat.
+- **Chain 58 stays the warm start.** The candidates standing for a selection are chain 60 and no other. Nothing is launched from chain 60, chain 61, chain 62, chain 63 or chain 64 before a registered selection.
+- The dose table is set beside the earlier lambda pairs below, with no pooled label.
+
+**The dose table: chain 58 continued at three lambdas, same pool, seed and build, each minus chain 58, on this one seed block.**
+
+| rung | lambda | against chain 37 | against chain 46 | head to head against chain 58 |
+|---|---|---|---|---|
+| chain 61 | 0.95 | -23.1 [-42.7, -3.8] | -2.3 [-24.5, +19.1] | +20.5 [+6.9, +34.6] (D447, another block) |
+| chain 62 | 0.97 | -49.6 [-69.9, -29.4] | -20.4 [-41.8, +0.7] | +61.2 [+47.3, +75.6] (D451, another block) |
+| chain 63 | 0.99 | +47.5 [+26.6, +69.2] | +50.7 [+28.6, +72.6] | +77.9 [+63.8, +92.6] (pair 10) |
+
+The response against the held-out opponents is not monotonic in lambda on this block: the point estimates fall from 0.95 to 0.97 and rise well above zero at 0.99. Three rungs, one training seed each, six nominal intervals with no adjustment. As D454 amends D448, chain 63 trained with a smoke playing beside it for about three minutes and the other two rungs with nothing beside them; the comparisons of chain 63 with chain 62 and chain 61, here and in the tables below, include that difference and cannot be laid to lambda alone.
+
+**The four lambda pairs side by side.** Different seed blocks; no pooled figure is computed. The first three compare 0.97 with 0.95; the fourth compares 0.99 with 0.97.
+
+| | chain 58 minus chain 55 (D428) | chain 60 minus chain 59 (D440) | chain 62 minus chain 61 (D451) | chain 63 minus chain 62 |
+|---|---|---|---|---|
+| direct (pair 1) | +44.5 [+30.7, +58.2] | +40.07 [+26.7, +54.2] | +53.4 [+40.3, +67.0] | +39.98 [+25.9, +54.8] |
+| against chain 37 | +37.9 [+17.7, +56.4] | +37.9 [+17.0, +59.8] | +6.5 [-13.5, +26.8] | +97.1 [+74.5, +119.3] |
+| against chain 46 | +27.7 [+5.9, +49.1] | +78.0 [+56.5, +99.0] | -21.8 [-42.5, -1.0] | +71.1 [+49.1, +93.4] |
+| against the offense bot | -5.2 [-28.1, +17.4] | +17.3 [-4.6, +38.6] | -10.6 [-33.8, +11.6] | +15.9 [-8.4, +38.4] |
+| under m1 | +61.9 [+46.7, +76.1] | +76.3 [+61.7, +90.8] | +82.1 [+66.8, +97.8] | -31.0 [-46.2, -16.4] |
+| retention against chain 37 (arm minus its parent) | +28.4 [+7.5, +49.8] | +47.0 [+25.5, +69.2] | -24.7 [-44.7, -5.2] | +47.5 [+26.6, +69.2] |
+| retention against chain 46 (arm minus its parent) | +95.5 [+74.8, +116.2] | +110.2 [+89.7, +130.1] | -43.7 [-63.3, -23.3] | +50.7 [+28.6, +72.6] |
+
+**What the registered rule does not say and the numbers do.**
+- **Chain 63 is above its parent against both held-out opponents.** It is the first rung from chain 58 for which that holds: chain 61 and chain 62 were below chain 58 against chain 37 and chain 46 on D451's block, and D455's group statements put both below it against the three opponents of the older line and the two off the line. Chain 63 trained against the same pool as chain 61 and chain 62 (the anchor, chain 41, chain 49). So at this parent a rung trained against the rotated pool can be above its parent against chain 37 and chain 46. D452 asks whether the pool's rotation cost the held-out strength; this result does not answer that, and it shows that the rotated pool does not prevent a gain against the held-out opponents at lambda 0.99. It is one rung at one training seed, and whether it is also above its parent against the panel's eight opponents has not been measured.
+- **Chain 63 beat every plain opponent it met:** chain 62 by +39.98, chain 61 by +62.1, chain 58 by +77.9, and it has the largest margins of the four checkpoints against chain 37 and chain 46. Against the offense bot it is +15.9 above chain 62 with an interval that contains zero.
+- **Under m1 the order reverses.** With the END_TURN mask on both sides chain 62 beats chain 63 by 31.0 [16.4, 46.2]. In the three earlier pairs the higher lambda won under m1 by more than it won plain. The mask forces more activations a turn; chain 63 already takes about one more activation a turn than chain 62 without it (below), and under the mask both take about seven (6.97 and 6.77). Nothing here says whether chain 63 plain is stronger or weaker than chain 62 + m1 or than chain 63 + m1: those pairs were not played.
+- **The exam and the in-run numbers pointed the other way.** Chain 63 was below chain 62 on five of six exam cells and below chain 58 on both offense cells, with seed 43 0.004 above the guard floor (D456), and its value loss and explained variance were worse in training. D456 wrote those down before the gate so they could not be weighed after it. Against chain 37 and chain 46 it has the highest estimated decisive-Elo of the four on this block.
+- **Chain 62's retention contrasts on a second block.** Chain 62 minus chain 58: -49.6 [-69.9, -29.4] against chain 37 and -20.4 [-41.8, +0.7] against chain 46 here; -24.7 and -43.7 on block 23100000 (D451). Both point estimates are below zero on both blocks; which opponent shows the larger loss changed, and the chain 46 interval here reaches zero. Chain 61 minus chain 58: -23.1 [-42.7, -3.8] and -2.3 [-24.5, +19.1] here; -31.2 and -21.8 on block 23100000; -31.7 and -8.8 on block 23000000. Against chain 37 chain 61 is established below its parent on all three blocks; against chain 46 on one of three (the point estimate is below zero on all three).
+- The tournament has no Bradley-Terry ranking: the pair graph is not connected (pair 13's masked players meet nobody else).
+
+**The registered style table (D429's rows), per team turn unless said, with the difference and its 95% seed-cluster interval (`main/diagnostics.txt`).**
+
+| Pair 1, plain | chain 63 | chain 62 | difference | chain 62 minus chain 61 (D451) | chain 60 minus chain 59 (D440) | chain 58 minus chain 55 (D428) |
+|---|---|---|---|---|---|---|
+| activations | 3.983 | 2.947 | +1.036 [+0.998, +1.076] | +0.061 | -0.164 | +0.332 |
+| empty activations | 1.153 | 0.646 | +0.507 [+0.486, +0.530] | +0.144 | -0.060 | +0.209 |
+| non-empty activations | 2.830 | 2.301 | +0.529 [+0.503, +0.556] | -0.083 | -0.104 | +0.123 |
+| blocks | 0.4845 | 0.454 | +0.031 [+0.023, +0.039] | +0.030 | +0.048 | +0.034 |
+| turnovers | 0.335 | 0.342 | -0.007 [-0.013, -0.002] | +0.014 | +0.007 | +0.006 |
+| own decisions per game | 411.6 | 339.9 | +71.7 [+68.5, +74.9] | -11.5 | -16.4 | +18.8 |
+| touchdowns per game | 0.630 | 0.530 | +0.100 [+0.068, +0.132] | +0.118 | +0.114 | +0.115 |
+
+| Pair 13, both under m1 | chain 63 | chain 62 | difference | chain 62 minus chain 61 (D451) | chain 60 minus chain 59 (D440) | chain 58 minus chain 55 (D428) |
+|---|---|---|---|---|---|---|
+| activations | 6.974 | 6.770 | +0.2035 [+0.154, +0.249] | -0.041 | -0.051 | +0.010 |
+| empty activations | 2.994 | 2.954 | +0.040 [-0.004, +0.083] | +0.518 | -0.035 | +0.363 |
+| non-empty activations | 3.980 | 3.816 | +0.164 [+0.134, +0.190] | -0.559 | -0.016 | -0.353 |
+| blocks | 0.582 | 0.560 | +0.021 [+0.012, +0.031] | +0.008 | +0.033 | +0.011 |
+| turnovers | 0.409 | 0.425 | -0.017 [-0.023, -0.011] | +0.000 | -0.014 | -0.010 |
+| own decisions per game | 603.7 | 598.9 | +4.8 [+0.9, +8.2] | -44.8 | -7.4 | -24.4 |
+| touchdowns per game | 0.4625 | 0.514 | -0.052 [-0.079, -0.025] | +0.174 | +0.205 | +0.151 |
+
+- **Blocks a team turn and touchdowns a game, the two things that were higher at the higher lambda in the earlier pairs:** in pair 1 both are higher for chain 63 (+0.031 and +0.100, each interval above zero). Under m1 blocks are higher (+0.021) and touchdowns are lower (-0.052, interval below zero), the first time the higher lambda scores less under the mask.
+- **Activations.** Chain 63 takes 3.98 activations a team turn against chain 62's 2.95 in pair 1: +1.04, about half of it non-empty activations (+0.53) and half empty (+0.51). The three earlier pairs moved activations by -0.16 to +0.33 with no consistent sign. Against the other opponents chain 63 has 3.32 (chain 37), 3.39 (chain 46), 3.91 (chain 58), 3.96 (chain 61) and 4.04 (offense bot) activations a team turn; chain 62 has 2.74, 2.73 and 2.97 against chain 37, chain 46 and the bot, and chain 58 has 2.87 and 2.88 against chain 37 and chain 46. Across pairs, no interval for those differences. This is the largest movement of activations a team turn among these four lambda pairs; it is one rung.
+- **In-run** (D456, read before the gate plan was committed; panel means, no intervals): value loss 0.0231 against 0.0137, explained variance 0.864 against 0.914, deciding-row KL 0.00226 against 0.00214, clip fraction 0.00327 against 0.00295, deciding-row entropy 0.221 against 0.183, gradient norm 2.36 against 2.08.
+
+**Descriptive, not part of the reading.**
+- Raw roster-conditioned decisive share of chain 63 in pair 1: bash 0.452 [0.422, 0.483], agile 0.706, hybrid 0.565, stunty 0.686. With a bash roster the higher-lambda rung is below one half against its control for the fourth time (0.440 in D451, 0.462 in D440, 0.464 in D428). Under m1 chain 63's bash share is 0.354 and its hybrid share 0.390. A raw share mixes the roster's strength with the policy's play and these splits were not registered.
+- The same pairs across seed blocks: chain 58 against chain 37 is +215.1 here, +198.8 on block 23100000 and +214.3 on block 23000000; chain 58 against chain 46 is +206.4, +223.0 and +209.8; chain 62 against chain 37 is +165.6 and +174.1; chain 62 against chain 46 is +186.0 and +179.4; chain 62 against the offense bot is +113.3 and +103.3.
+
+**Against what was written down beforehand (D448).** I wrote about one chance in five for Positive, one in four for Negative, and Flat or Inconclusive the rest; my guess for pair 1 was between -30 and +40. Pair 1 is +39.98, at the top edge of the guess, and the label is Flat. I expected explained variance to run lower than chain 62's in training; it did. I expected, weakly, more blocks a team turn than chain 62; that held in pair 1 and under m1. D448 records no expectation about the held-out contrasts, the retention contrasts, the result under m1 or activations; that the held-out contrasts would be +97 and +71 was written down nowhere, and I did not expect it.
+
+**The qualification D454 added.** The first smoke of the rig runner played for about three minutes (02:02 to 02:05 PDT) beside chain 63's training; chain 62, its control, trained with nothing beside it. By the operator's record that is the only load difference between the two rungs' training. D454 says what follows from it: the comparison with chain 62 includes this load difference and is not a comparison of lambda alone. It applies to the label pair, the held-out contrasts, the dose table and the style tables.
+
+**The first whole gate on the rig, as D454 and D456 require.**
+- **How long.** 5 h 10 min 23 s from the queue's start to its last shard's statistics (06:22:08 to 11:32:31). By shard, start to statistics done: 3,520 s (pairs 1, 10, 14), 5,087 s (pairs 2 to 5), 5,228 s (pairs 6 to 9), 4,788 s (pairs 11 to 13), 18,623 s in all. The shards' own statistics give the rate over the tournament's wall time alone (3,488 s, 5,037 s, 5,180 s and 4,757 s): 2.75, 2.54, 2.47 and 2.02 games a second (`collect.log`). Over the whole gate, statistics included, 2.41. D454's smokes measured 3.62 games a second on plain games for a few minutes; a whole gate beside the trainer ran at about 2.5 on plain pairs. A gate of this size is about five hours, not four.
+- **The trainer's speed.** From the write times of chain 64's periodic checkpoints (one every 49.94 million steps): between the checkpoints at 299.8M and 1,797.9M steps, written at 06:29:09 and 11:32:11, both inside the gate and covering 18,182 of its 18,623 seconds, the trainer ran at 82.4 thousand steps a second. Chain 62, which trained with nothing beside it, ran at 97.8 thousand over the same range of steps, and chain 64 ran at 97.3 thousand over the first checkpoint interval after the gate (20 seconds of it inside). So the trainer ran 15.7% slower beside the whole gate, against the 13% the smokes showed. The 1,498M steps took 18,182 s where chain 62's rate would have taken 15,318 s: the gate cost about 48 minutes of training progress, and chain 64 ends about that much later than D452 forecast. Before the gate chain 64 ran at 93.5 thousand (50M to 250M steps, 05:44 to 06:19), while the operator's smokes and dry runs were on the rig.
+- **Memory.** 10 gate processes, 2,370 MB resident in sum, with about 8.1 GB still available on the rig while the trainer ran.
+- These are the operator's readings of the rig; the timestamp files and the shard statistics are on the rig under `/home/rache/bbgate/c63-gate-20261009/`.
+
+**Not decided here.** Whether lambda 0.99 gets a second pair, and whether chain 63 is admitted to a selection: each needs its own entry. D457 registered chain 65 (chain 62's rung at training seed 2042) before this gate was read; it is the lambda 0.97 control a second lambda 0.99 pair at that seed would be read against. What runs after chain 65 is registered in a later entry.
+
+**Review.** Outside review (Codex, `gpt-6.1-sol`, read-only) before this entry was committed: `.codex-reviews/d458-review.md`. Confirmed: Flat is the correct label (pair 1 is 39.9758, below the strict threshold and inside the inclusive band; the interval clause and both held-out clauses do not override it); candidacy is granted under Positive only, and the consequences are D448's; no confirmed numerical mismatch in the fourteen pair rows, the nine contrasts, the dose table, the four-pair table, the earlier pairs' style columns, the roster shares, the across-block figures or the exam and in-run figures; the plan hash recomputes; the result under m1 is reported accurately and nothing is inferred for pairs that were not played. Three blocking corrections, applied above: D454's consequence (the comparison with chain 62 includes the load difference and is not lambda alone) is now stated with the dose table and with the qualification; the shard rates are said to be the shards' own statistics over tournament wall time, apart from the start-to-statistics durations; the trainer's slowdown is stated for the window measured, and the cost over the whole gate and the delay to chain 64 are called extrapolations. Also applied: "one look" restated as one recorded scoring sequence plus the operator's statement; chain 62's contrasts are on a second block; "established below" for chain 61 against chain 46; the activations claim limited to the four lambda pairs; "highest estimated decisive-Elo on this block" in place of "strongest"; three style cells given to the four decimals the file prints. A second pass (`.codex-reviews/d458-review2.md`) found the three resolved and nothing new that blocks. After it, the trainer-speed paragraph was replaced: both passes read a figure from two readings of the watch script over 1 h 43 min, and the second pass noted that D454 asks for the whole gate; the paragraph above now uses the checkpoint write times across the whole gate (82.4 against 97.8 thousand steps a second, 15.7%, where the reviewed text had 82.1 against 98.7, 16.8%). That replacement is the operator's and was not reviewed. Not verified by the review: the rig's timestamps, the watch readings, the memory readings, the commit and push times and what the operator inspected; no game-level recount, because the reviewer was told not to open the game records.

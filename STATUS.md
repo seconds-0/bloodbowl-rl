@@ -481,3 +481,11 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Chain 65:** chain 62's rung (chain 58, lambda 0.97, the standard pool) at training seed 2042. It asks whether chain 62's loss to its parent against chain 37 and chain 46 repeats at a second training seed, and it is the seed-2042 control a second-seed arm from chain 58 would need.
 - **Chosen without chain 64's reading and before chain 63's gate is read** (its last shard is playing). Wrapper `b3_chain65.sh` (`34cba79`), plan-only pass at 10:54 PDT. Gate: ten pairs, 32,000 games, seed block 23500000, on the rig after chain 64's.
 - **Still to do:** read chain 63's gate when its last shard ends (about 11:40 PDT); chain 64's check-in at about 15:00.
+
+**2026-10-09 11:43 PDT. Chain 63 reads Flat by one decisive game, and it is the first rung from chain 58 above its parent against the held-out opponents (D458).**
+- **Label:** +39.98 [+25.9, +54.8] over chain 62 directly; the rule needs above +40 (1007 wins to 800; 1008 would have read Positive). Both held-out contrasts are entirely above zero: +97.1 against chain 37, +71.1 against chain 46.
+- **Against its parent chain 58:** +47.5 and +50.7 against the held-out opponents (chain 61 and chain 62 were below it), +77.9 head to head.
+- **Under the END_TURN mask the order reverses:** chain 62 + m1 beats chain 63 + m1 by 31.0.
+- **Style:** 3.98 activations a team turn against chain 62's 2.95.
+- **Nothing is adopted; chain 63 is not a candidate by D448's rule; chain 58 stays the warm start.** A second lambda 0.99 pair and a selection each need their own entry. Chain 65 (D457) is the control such a pair would use.
+- **The gate on the rig:** 5 h 10 min for 44,800 games (2.41 games a second), trainer 15.7% slower beside it, 2.4 GB.
