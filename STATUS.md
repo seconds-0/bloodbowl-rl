@@ -465,3 +465,9 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Evidence:** four smokes replayed 2,496 records (1,280 distinct games) of chain 62's gate and every record matched the droplet's, action trail included.
 - **Cost:** a gate takes about four hours instead of 35 minutes, and in the smokes the trainer ran about 13 percent slower while one played (98.7K to 86K steps a second). No cloud spend.
 - **Declared:** chain 64 now trains with a gate beside it for part of its run and its control did not; D452's reading must name that.
+
+**Update 2026-10-09 06:20 PDT (D455): the panel is read.**
+- **Chain 62 against its parent chain 58:** below it against all five older or off-line opponents (chain 30: -44.8, chain 36: -35.3, chain 40: -29.4, chain 38: -50.8, chain 42: -28.8, every interval below zero) and above it against all three of chain 49's other rungs (chain 55: +57.5, chain 59: +35.4, chain 60: +72.2, every interval above zero).
+- **Chain 61 against chain 58:** below against the same five (two intervals reach zero), mixed against chain 49's rungs.
+- **So** the losses D451 found against chain 37 and chain 46 are not special to those two among these opponents: the rungs from chain 58 gained against their parent's own generation and lost margin against everything older. The margins against the older opponents are still large (+129 to +251 for chain 62).
+- **Limits:** eight chosen relatives, one seed block, sixteen intervals. It decides nothing and changes no rule. 76,800 games, about $0.67, the last droplets this work used.
