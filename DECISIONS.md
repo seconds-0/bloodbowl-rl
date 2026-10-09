@@ -3654,3 +3654,106 @@ Chain 62 (`1546f25e...`, warm chain 58, `LADDER_GAE_LAMBDA=0.97`, training seed 
 **Chain 63** (`r0chain63-lam099-from58-s42-20261008`, D448) launched on its own at 20:53:53 PDT. Its stage manifest against chain 62's, leaf by leaf (277 leaves each, 11 differ): `gae_lambda` 0.99 against 0.97 (the field and one command argument), the run's own paths and tag (the pool's directory among them), the pool manifest file's hash and the screen-manifest hash. The pool identity (`59a6703f...`) and the pool's lineage bundle (`b9dea0be...`) are equal, as are the warm start (`a03ed608...`) and its lineage, seed 42, source (`4c8a04b1...`), module (`4156c9c3...`) and patch bundle (`e3134e04...`). D448's condition holds. It should end at about 05:30 PDT on 2026-10-09 if it runs at chain 62's pace.
 
 **Still to register:** what the rig runs after chain 63. That entry follows this gate's reading, with the selection among the warm-start candidates that D441 requires.
+
+**D451 - CHAIN 62 (CHAIN 58 CONTINUED AT GAE LAMBDA 0.97, TRAINING SEED 42) READS INCONCLUSIVE: +53.4 [+40.3, +67.0] OVER CHAIN 61 DIRECTLY, BUT NOT ABOVE IT AGAINST THE HELD-OUT OPPONENTS (+6.5 AGAINST CHAIN 37, -21.8 [-42.5, -1.0] AGAINST CHAIN 46), AND BELOW ITS OWN PARENT ON BOTH (-24.7 AND -43.7, BOTH INTERVALS BELOW ZERO); THE LAMBDA 0.97 ADOPTION STANDS ON ITS TWO PAIRS, CHAIN 62 IS NOT A WARM-START CANDIDATE AND CHAIN 58 STAYS THE WARM START (2026-10-09 00:50 PDT by the machine's clock at commit; chain 63 is training)**
+
+**Evidence.** Gate `c62-gate-20261008`, plan sha256 `54da439a...` (fixed in D450 before launch), four droplet shards launched together at 20:55:20 PDT on 2026-10-08, the last shard's games complete at 21:32:45 and its teardown at 21:33, merged and accepted at 00:42 on 2026-10-09: `GATE-ACCEPTED 38400 games, 12 pairs, seed0 23100000, games_per_worker 32, commit 7d0d547` and `MASKS-ACCEPTED 6400 masked sides in 38400 games as registered, no sampling offsets, 0 truncated, 0 mask fallbacks`; integrity totals all zero; no unnatural ending; `games.jsonl` sha256 `a368367b...`. The plan's hash was committed at 20:55:09 (`62d45ff`) and pushed before the shard logs begin at 20:55:20 (the push is the operator's record: the local head equalled the remote's at 20:55:11). One look: the scorer's first invocation was refused by its argument parser (the operator passed the plan's file name, which this script does not take; exit 2, nothing merged, nothing read; kept as `score.usage-error.log`), and the second ran the one scoring sequence (`score.log`). By the operator's statement, the three hours between the last shard and the scoring were an interruption of the session and nothing of the gate was read in them; the files show one recorded scoring sequence and cannot show more than that. All four droplets destroyed and verified gone (HTTP 404), their keys gone; the tagged-droplet listing afterwards shows none (`droplet_status_after.txt`). Spend $0.078 + $0.084 + $0.079 + $0.105 = about $0.35.
+
+**Decisive-Elo, 95% seed-cluster intervals, 3,200 games a pair.**
+
+| pair | A | B | A W / D / L | decisive-Elo of A | 95% |
+|---|---|---|---|---|---|
+| 1 | chain 62 | chain 61 | 1084 / 1319 / 797 | +53.4 | [+40.3, +67.0] |
+| 2 | chain 62 | chain 37 | 1626 / 977 / 597 | +174.1 | [+159.2, +189.9] |
+| 3 | chain 61 | chain 37 | 1616 / 968 / 616 | +167.5 | [+152.8, +182.0] |
+| 4 | chain 58 | chain 37 | 1705 / 952 / 543 | +198.8 | [+183.5, +214.7] |
+| 5 | chain 62 | chain 46 | 1623 / 999 / 578 | +179.4 | [+164.3, +194.6] |
+| 6 | chain 61 | chain 46 | 1694 / 974 / 532 | +201.2 | [+185.4, +218.1] |
+| 7 | chain 58 | chain 46 | 1726 / 996 / 478 | +223.0 | [+207.1, +238.6] |
+| 8 | chain 62 | chain 58 (descriptive) | 1112 / 1306 / 782 | +61.2 | [+47.3, +75.6] |
+| 9 | chain 62 | offense bot | 939 / 1743 / 518 | +103.3 | [+85.3, +122.4] |
+| 10 | chain 61 | offense bot | 923 / 1798 / 479 | +113.9 | [+95.4, +132.6] |
+| 11 | chain 62 + m1 | chain 61 + m1 (descriptive) | 1004 / 1570 / 626 | +82.1 | [+66.8, +97.8] |
+| 12 | chain 62 | chain 60 (descriptive) | 1078 / 1332 / 790 | +54.0 | [+39.8, +67.5] |
+
+**Paired contrasts** (`paired_contrasts.py` `722ece95...`, 2,000 replicates, generator seed 0, 1,600 seed clusters).
+
+| contrast | opponent | decisive-Elo | 95% |
+|---|---|---|---|
+| chain 62 minus chain 61 (label) | chain 37 | +6.5 | [-13.5, +26.8] |
+| chain 62 minus chain 61 (label) | chain 46 | -21.8 | [-42.5, -1.0] |
+| chain 62 minus chain 61 (registered, no label) | offense bot | -10.6 | [-33.8, +11.6] |
+| chain 62 minus chain 58 (retention) | chain 37 | -24.7 | [-44.7, -5.2] |
+| chain 62 minus chain 58 (retention) | chain 46 | -43.7 | [-63.3, -23.3] |
+| chain 61 minus chain 58 (descriptive, added in D450) | chain 37 | -31.2 | [-50.8, -12.2] |
+| chain 61 minus chain 58 (descriptive, added in D450) | chain 46 | -21.8 | [-42.4, -0.4] |
+
+**The label, in the registered order (D441).**
+1. Negative: pair 1's interval entirely below zero, or the guard tripped. No: the interval is [+40.3, +67.0] and the guard did not fire (D450).
+2. Positive: pair 1 above +40 with its interval entirely above zero, and both held-out contrasts (chain 62 minus chain 61, against chain 37 and against chain 46) entirely above zero. The direct clause holds (+53.4). Neither held-out clause holds: against chain 37 the interval contains zero, and against chain 46 it is entirely below zero. Not Positive.
+3. Flat: pair 1 within plus or minus 40 inclusive. No: +53.4.
+4. **Chain 62 reads Inconclusive.**
+
+**Consequences, as registered in D441.**
+- **The adoption of lambda 0.97 stands on its two pairs** (D428 and D440, both from chain 49). The registered Positive criterion was not met at the second parent: the direct clause held and both held-out clauses failed, one of them with an interval entirely below zero. The third pair is set beside the first two with no pooled label.
+- **Chain 62 is not a warm-start candidate.** It did not read Positive, and both retention contrasts against chain 58 are entirely below zero.
+- **Chain 58 stays the warm start.** The candidates standing for a selection are chain 60 (D440) and no other. Nothing is launched from chain 60, chain 61 or chain 62 before a registered selection.
+- Chain 63 (chain 58 at lambda 0.99, D448) is training and is read against chain 62 as registered; nothing in this reading changes its gate.
+
+**The three lambda pairs side by side.** Different seed blocks; no pooled figure is computed.
+
+| | chain 58 minus chain 55 (from chain 49, seed 42, D428) | chain 60 minus chain 59 (from chain 49, seed 2042, D440) | chain 62 minus chain 61 (from chain 58, seed 42) |
+|---|---|---|---|
+| direct (pair 1) | +44.5 [+30.7, +58.2] | +40.07 [+26.7, +54.2] | +53.4 [+40.3, +67.0] |
+| against chain 37 | +37.9 [+17.7, +56.4] | +37.9 [+17.0, +59.8] | +6.5 [-13.5, +26.8] |
+| against chain 46 | +27.7 [+5.9, +49.1] | +78.0 [+56.5, +99.0] | -21.8 [-42.5, -1.0] |
+| against the offense bot | -5.2 [-28.1, +17.4] | +17.3 [-4.6, +38.6] | -10.6 [-33.8, +11.6] |
+| under m1 (pair 11) | +61.9 [+46.7, +76.1] | +76.3 [+61.7, +90.8] | +82.1 [+66.8, +97.8] |
+| retention against chain 37 (arm minus its parent) | +28.4 [+7.5, +49.8] | +47.0 [+25.5, +69.2] | -24.7 [-44.7, -5.2] |
+| retention against chain 46 (arm minus its parent) | +95.5 [+74.8, +116.2] | +110.2 [+89.7, +130.1] | -43.7 [-63.3, -23.3] |
+
+The direct gap for lambda 0.97 over 0.95 is above zero a third time, and the largest of the three. What the two pairs from chain 49 showed against the held-out opponents does not show at chain 58: no difference against chain 37 is established, and against chain 46 the lambda 0.97 rung is below its control.
+
+**What the registered rule does not say and the numbers do.**
+- **Both continuations from chain 58 are below chain 58 against both held-out opponents on this block.** Chain 62 minus chain 58: -24.7 [-44.7, -5.2] against chain 37 and -43.7 [-63.3, -23.3] against chain 46. Chain 61 minus chain 58: -31.2 [-50.8, -12.2] and -21.8 [-42.4, -0.4]. For chain 61 this is a second seed block: on block 23000000 (D447) the same two contrasts were -31.7 [-52.9, -11.4] and -8.8 [-29.9, +12.4]. D447 called the chain 37 result a flag from one rung and one block. It has now repeated on a second block for chain 61, and a second rung from the same parent shows the same sign against both opponents. These are four nominal 95% intervals on one block with no adjustment for the number of contrasts looked at, the two rungs share a parent, a pool and a training seed, and the two blocks for chain 61 share the checkpoint: two rungs, not two independent draws of a recipe.
+- **Both continuations beat chain 58 directly.** Chain 62 by +61.2 [+47.3, +75.6] (pair 8); chain 61 by +20.5 [+6.9, +34.6] (D447, another block). Chain 62 is also +54.0 [+39.8, +67.5] over chain 60 (pair 12), which is in neither rung's pool and is not an ancestor of chain 62; chain 60 against chain 58 was +9.8 [-4.4, +23.3] (D440, another block).
+- So on these pairs the order is not one order: chain 62 is above chain 58, chain 60 and chain 61 head to head, and below chain 58 against chain 37 and chain 46. A rung from chain 58 gained against the newest checkpoints and lost against the two held-out ones, at both lambdas. In the generation before (rungs from chain 49) no rung was established below its parent against either: the contrasts against chain 37 were -1.7 (chain 55, D419), +11.9 and +9.0 (chain 59 on two blocks), +28.4 (chain 58) and +47.0 (chain 60), and against chain 46 +60.9, +27.4 and +32.2, +95.5 and +110.2. Nothing here says why. The pool rotated between the two generations (chain 40 left, chain 49 became an active opponent), chain 46 is, like chain 40, a continuation of chain 36, and chain 37 is a continuation of chain 34 with chain 36 as its matched control (D407); and the parent differs. This gate separates none of these as explanations of the losses against the parent.
+- The exam did not see it: chain 62 is at or above chain 58 on all six exam cells and above chain 61 on three of six (D450).
+- The tournament has no Bradley-Terry ranking: the pair graph is not connected (pair 11's masked players meet nobody else).
+
+**The registered style table (D429's rows), per team turn unless said, chain 62 then chain 61, with the difference and its 95% seed-cluster interval (`main/diagnostics.txt`).**
+
+| Pair 1, plain | chain 62 | chain 61 | difference | chain 60 minus chain 59 (D440) | chain 58 minus chain 55 (D428) |
+|---|---|---|---|---|---|
+| activations | 2.985 | 2.924 | +0.061 [+0.027, +0.096] | -0.164 | +0.332 |
+| empty activations | 0.648 | 0.504 | +0.144 [+0.127, +0.161] | -0.060 | +0.209 |
+| non-empty activations | 2.337 | 2.420 | -0.083 [-0.108, -0.059] | -0.104 | +0.123 |
+| blocks | 0.471 | 0.442 | +0.030 [+0.022, +0.037] | +0.048 | +0.034 |
+| turnovers | 0.316 | 0.303 | +0.014 [+0.008, +0.019] | +0.007 | +0.006 |
+| own decisions per game | 349.6 | 361.1 | -11.5 [-14.6, -8.4] | -16.4 | +18.8 |
+| touchdowns per game | 0.701 | 0.583 | +0.118 [+0.086, +0.149] | +0.114 | +0.115 |
+
+| Pair 11, both under m1 | chain 62 | chain 61 | difference | chain 60 minus chain 59 (D440) | chain 58 minus chain 55 (D428) |
+|---|---|---|---|---|---|
+| activations | 6.909 | 6.950 | -0.041 [-0.087, +0.006] | -0.051 | +0.010 |
+| empty activations | 3.103 | 2.585 | +0.518 [+0.477, +0.561] | -0.035 | +0.363 |
+| non-empty activations | 3.806 | 4.365 | -0.559 [-0.590, -0.530] | -0.016 | -0.353 |
+| blocks | 0.588 | 0.581 | +0.008 [-0.001, +0.016] | +0.033 | +0.011 |
+| turnovers | 0.409 | 0.408 | +0.000 [-0.006, +0.006] | -0.014 | -0.010 |
+| own decisions per game | 608.4 | 653.1 | -44.8 [-48.3, -41.1] | -7.4 | -24.4 |
+| touchdowns per game | 0.611 | 0.437 | +0.174 [+0.145, +0.202] | +0.205 | +0.151 |
+
+- **The registered question: do more blocks a team turn and more touchdowns a game repeat a third time?** In pair 1, yes for both: +0.030 blocks and +0.118 touchdowns, each interval above zero. Under m1, touchdowns yes (+0.174); blocks +0.008 with an interval that reaches zero, so not established there.
+- Activations in pair 1 are +0.06 a team turn, all of it empty activations; non-empty activations are lower at lambda 0.97, as in D440 and unlike D428. Three pairs, three different activation results: no direction is established, as D440 said.
+- Against the held-out opponents chain 62 has more activations than chain 61 (2.76 against 2.61 a team turn against chain 37, 2.75 against 2.57 against chain 46) and more blocks (0.494 against 0.475, 0.507 against 0.477); chain 58 on the same block has 2.89 and 2.86 activations and 0.512 blocks against chain 37. Across pairs, no interval for the differences.
+- **In-run** (D450, read before the gate was launched; panel means, no intervals): value loss 0.0137 against 0.0095 and explained variance 0.914 against 0.937, as in the two earlier pairs; deciding-row KL 0.00214 against 0.00198; clip fraction 0.00295 against 0.00281; deciding-row entropy with similar panel means in the two runs (0.183 against 0.182), unlike chain 60 against chain 59 (0.197 against 0.168).
+
+**Descriptive, not part of the reading.**
+- Raw roster-conditioned decisive share of chain 62 in pair 1: bash 0.440 [0.407, 0.471], agile 0.771, hybrid 0.601, stunty 0.684. With a bash roster the lambda 0.97 rung is below one half against its control for the third time (0.462 in D440, 0.464 in D428). A raw share mixes the roster's strength with the policy's play and these splits were not registered.
+- The same pairs across seed blocks: chain 58 against chain 37 is +198.8 here and +214.3 on block 23000000; chain 58 against chain 46 is +223.0 and +209.8; chain 61 against chain 37 is +167.5 and +182.6; chain 61 against chain 46 is +201.2 and +201.0.
+
+**Against what was written down beforehand (D441).** I guessed a direct gap of +10 to +45 and wrote that Flat or Inconclusive was more likely than Positive (Positive about one chance in three). The direct gap is +53.4, above the guess; the label is Inconclusive. I expected more blocks a team turn for chain 62 than chain 61; that held in pair 1. D441 records no expectation about the held-out contrasts or about retention; that both retention contrasts would be below zero was written down nowhere.
+
+**Not decided here.** What the rig runs after chain 63 (it should end at about 05:30 PDT). That entry follows. Whether the held-out losses come from the pool, the parent or something else is not decided here either.
+
+**Review.** Outside review (Codex, `gpt-6.1-sol`, read-only) before this entry was committed: `.codex-reviews/d451-review.md`. No numerical mismatch in the twelve pair rows, the seven contrasts, the three-pair table, both style tables, the acceptance lines, the integrity counters, the costs, the teardown records, the across-block figures or the exam comparison. Inconclusive is the correct label and the consequences and the candidacy statement are D441's. The plan matches D441's twelve pairs plus D450's disclosed descriptive contrast, and its commit precedes every shard log. The refused scorer invocation was rejected before any plan or data was read, and `score.log` holds one sequence. Five blocking corrections, applied above: the commit's time (20:55:09), chain 37's lineage (from chain 34, not chain 36), the two registered in-run diagnostics that were missing and "similar" for the entropy means, the expectation paragraph cut to what D441 records, and the interruption marked as the operator's statement.
