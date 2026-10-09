@@ -437,3 +437,12 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Spend.** About $0.70 of $18.50. Every droplet is gone.
 - **Next.** A further distillation test is a new entry. Options are set down in D449 without choosing.
 - **Exploratory, after D449 (not registered, decides nothing):** running the same fine-tune for 24,000 steps instead of 2,400 left the training fit where it was (about 0.60 at lambda 16, 0.42 at lambda 4), so the step budget does not look like the limit. On the validation games the label's probability drifted down with more steps. Notes: `docs/search-distill-2026-10-08/NOTES.md`, section 0000.
+
+**Update 2026-10-09 00:50 PDT (D450, D451): chain 62 reads Inconclusive; both rungs from chain 58 are below it against the held-out opponents; chain 58 stays the warm start.**
+- **Chain 62 (chain 58 at lambda 0.97) against chain 61 (0.95):** +53.4 [+40.3, +67.0] directly. Against the held-out opponents it is not above chain 61: +6.5 [-13.5, +26.8] against chain 37 and -21.8 [-42.5, -1.0] against chain 46. Label: Inconclusive. The lambda 0.97 adoption stands on its two earlier pairs.
+- **Against its own parent on the held-out opponents:** chain 62 minus chain 58 is -24.7 [-44.7, -5.2] against chain 37 and -43.7 [-63.3, -23.3] against chain 46. Chain 61 minus chain 58 repeats below zero on this block (-31.2, -21.8). Chain 62 is not a warm-start candidate.
+- **Head to head chain 62 wins:** +61.2 over chain 58 and +54.0 over chain 60. So the rungs from chain 58 gained against the newest checkpoints and lost against the two held-out ones. This gate does not say why (the pool rotated, and the parent differs).
+- **Style:** more blocks a team turn and more touchdowns a game at lambda 0.97 a third time in plain play; activations again in no consistent direction.
+- **Gate.** 38,400 games, twelve pairs, seed block 23100000, accepted, integrity counters zero, four droplets destroyed, about $0.35.
+- **Chain 63 (lambda 0.99, D448)** launched at 20:53 PDT on 2026-10-08 and should end at about 05:30 on 2026-10-09. Its manifest differs from chain 62's in lambda and the run's own paths.
+- **Still to register:** what runs after chain 63.
