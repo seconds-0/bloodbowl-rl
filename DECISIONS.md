@@ -3938,7 +3938,7 @@ Chain 63 (`9c9f0ce8...`, warm chain 58, `LADDER_GAE_LAMBDA=0.99`, training seed 
 
 **Still to register:** what the rig runs after chain 64, by about 14:00 PDT.
 
-**D457 - CHAIN 65 PRE-REGISTERED TO FOLLOW CHAIN 64: CHAIN 62'S RUNG (CHAIN 58 AT GAE LAMBDA 0.97, THE STANDARD POOL) AT TRAINING SEED 2042; A TEST OF WHETHER CHAIN 62'S LOSS TO ITS PARENT AGAINST THE HELD-OUT OPPONENTS REPEATS AT A SECOND TRAINING SEED, AND THE SEED-2042 CONTROL THAT ANY SECOND-SEED ARM FROM CHAIN 58 NEEDS; CHOSEN WITHOUT CHAIN 64'S READING AND BEFORE CHAIN 63'S GATE IS READ (2026-10-09 11:01 PDT by the machine's clock at commit; chain 64 is training, chain 63's gate is playing its last shard, chain 65 has not started)**
+**D457 - CHAIN 65 PRE-REGISTERED TO FOLLOW CHAIN 64: CHAIN 62'S RUNG (CHAIN 58 AT GAE LAMBDA 0.97, THE STANDARD POOL) AT TRAINING SEED 2042; A TEST OF WHETHER CHAIN 62'S LOSS TO ITS PARENT AGAINST THE HELD-OUT OPPONENTS REPEATS AT A SECOND TRAINING SEED, AND THE SEED-2042 CONTROL THAT ANY SECOND-SEED ARM FROM CHAIN 58 NEEDS; CHOSEN WITHOUT CHAIN 64'S READING AND BEFORE CHAIN 63'S GATE IS READ (2026-10-09 10:59 PDT by the machine's clock at commit; chain 64 is training, chain 63's gate is playing its last shard, chain 65 has not started)**
 
 **Why this rung.** Chain 64 is the last stage in the plan and should end at about 15:00 PDT. D454 says the stage after a rung is now chosen without that rung's reading, because a gate on the rig takes hours and follows the rung. So this stage is chosen without chain 64's reading. Chain 63's gate is still playing and is also unread; the choice below does not depend on it, and it is registered now so that the rig has a stage whatever happens to this session before chain 64 ends.
 

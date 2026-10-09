@@ -477,7 +477,7 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Its gate:** fourteen pairs, 44,800 games, seed block 23200000, plan sha256 `2130467b...`, started on the rig at 06:22 PDT, about four hours.
 - **Chain 64 (D452)** launched at 05:35 PDT and meets its manifest condition. It should end between 14:15 and 14:45. What follows it is registered before then.
 
-**2026-10-09 11:01 PDT. Chain 65 is registered to follow chain 64 (D457).**
+**2026-10-09 10:59 PDT. Chain 65 is registered to follow chain 64 (D457).**
 - **Chain 65:** chain 62's rung (chain 58, lambda 0.97, the standard pool) at training seed 2042. It asks whether chain 62's loss to its parent against chain 37 and chain 46 repeats at a second training seed, and it is the seed-2042 control a second-seed arm from chain 58 would need.
 - **Chosen without chain 64's reading and before chain 63's gate is read** (its last shard is playing). Wrapper `b3_chain65.sh` (`34cba79`), plan-only pass at 10:54 PDT. Gate: ten pairs, 32,000 games, seed block 23500000, on the rig after chain 64's.
 - **Still to do:** read chain 63's gate when its last shard ends (about 11:40 PDT); chain 64's check-in at about 15:00.
