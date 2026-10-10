@@ -537,3 +537,9 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **The head-to-head gain is repeated:** +59.7 over chain 58, +59.8 over chain 60.
 - **Qualification:** a gate and a panel played beside chain 65's training for 5 h 35 min 41 s (about 51 minutes lost) and nothing played beside chain 62's.
 - **The rig:** the gate took 2 h 59 min 24 s (2.97 games a second), all of it beside chain 66, whose trainer ran 15.3% slower meanwhile (about 27 minutes lost). Chain 66's reading must carry that.
+
+**2026-10-10 04:54 PDT. Chain 67 is registered to follow chain 66 (D468): chain 58 at GAE lambda 0.999, training seed 42, control chain 63. It adopts nothing.**
+- **Why:** nothing may start from chains 60 to 66 before a selection, and the selection waits for chain 66's reading (about 14:30), so from about 10:10 the trainer runs a stage from chain 58 or nothing. This rung is a fourth dose on one parent, pool, seed and build and asks whether the response still rises above 0.99.
+- **Read by D448's rule with chain 63 as the control**, on a ten-pair gate (32,000 games, seed block 24400000). A guard trip reads Negative with no gate. A candidate only under Positive with both retention contrasts above zero. Chain 65's reading (D467) is quoted in it: two rungs of one recipe differed by 34 and 50 against the held-out opponents, so one pair cannot separate lambda from the run.
+- **A recorded disagreement:** the outside reviewer would leave the trainer idle so that chain 66's reading and the selection come about two hours sooner; the operator keeps the rung. Alex may have it stopped at any time; a stopped rung is Unread.
+- **If chain 66's stage fails** the halt is not reset for chain 67 without a new entry.
