@@ -1,0 +1,16 @@
+[Unit]
+Description=One Blood Bowl chain supervisor tick two minutes after boot (%i)
+# chain-supervisor@.timer has OnBootSec=2min, but on 2026-10-10 the rig's host
+# restarted and the timer came up "active (elapsed)" with no next trigger: it
+# did not tick until the service had been started once by hand, and the rig sat
+# idle for 84 minutes (D470). This unit does not depend on the timer's boot
+# trigger. It starts the tick service once; that start also gives
+# OnUnitActiveSec its base, so the five minute ticks follow.
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/sleep 120
+ExecStart=/usr/bin/systemctl --user start chain-supervisor@%i.service
+
+[Install]
+WantedBy=default.target

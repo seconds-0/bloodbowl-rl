@@ -114,7 +114,7 @@ The liveness probe is `pgrep -f`, so any command line on the rig that contains `
 2. The live integrity guard uses wall-clock time, so a host suspend of 3 minutes kills a healthy rung. That leaves `LIVE_INTEGRITY_FAILURE.json`, which this stage treats as final (exit 4, halt).
 3. No mid-rung resume. A host restart costs the partial rung (review LP5, by decision).
 4. A veto halts the chain. Falling back to the last passing parent is not built.
-5. The supervisor's relaunch after a reboot has never run on the rig. Test it with a disposable campaign.
+5. The timer's boot trigger did not fire when the rig's host restarted on 2026-10-10 (D470): the timer came up "active (elapsed)" with no next trigger and the rig sat idle for 84 minutes, until one `systemctl --user start chain-supervisor@<id>.service` by hand relaunched the stage (attempt 2 opened `screen-attempt2`, as designed) and set the five minute ticks going. `training/systemd/chain-supervisor-bootkick@.service` now starts the tick service once, two minutes after boot, without the timer: install it beside the other two units and `systemctl --user enable chain-supervisor-bootkick@<id>.service`. It has been run by hand on the rig (it produced one tick); it has not yet been through a real boot. Why the timer's `OnBootSec` did not fire is not known.
 6. Any long-lived process that inherits fd 7 holds the GPU lock after the stage exits. The next stage then waits and the supervisor reports BUSY, never HALT.
 7. The stage holds the lock for the whole rung and exam, so other GPU jobs wait up to 9.7 hours.
 8. The registered gate's tournament half is off the box. Every rung is a speculative continuation until its tournament is read.
