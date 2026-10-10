@@ -519,3 +519,8 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Head to head chain 64 loses to chain 62:** -76.3 [-90.6, -62.5]; the ladder's label is Negative and chain 64 is not a candidate. It is below chain 62 against chain 60 (-70.1), chain 59 (-30.0) and chain 49 (-24.9), with no difference shown against chain 40 (+1.8). Against its parent it is +9.7 [-4.0, +23.5].
 - **Load:** a gate or panel played beside chain 64's training for 7 h 41 min and its control trained alone, so the comparison cannot be laid to the pool alone. Nothing is adopted; chain 58 remains the warm start.
 - **The rig:** the gate took 4 h 56 min 39 s (2.88 games a second), all of it beside chain 65, whose trainer ran 15.4% slower meanwhile. D463's panel is playing.
+
+**2026-10-09 22:40 PDT. The END_TURN-mask panel for chain 63 is read (D465). It decides nothing.**
+- **Chain 62 + m1 against plain chain 63:** +27.4 [+11.9, +43.0]. With D458's pair 13 (chain 62 + m1 ahead of chain 63 + m1 by 31.0) the masked lambda 0.97 checkpoint is ahead of both other play-time players in its direct pairs. Played plain, chain 63 beats chain 62 by 40 (D458).
+- **Chain 63 + m1 against plain chain 63:** +14.0 with an interval from exactly 0.0 to +28.0, so by the registered rule no effect of the mask on chain 63 is shown. D416 measured +32 to +43 on four earlier checkpoints.
+- **The rig:** the panel took 39 min 2 s (2.73 games a second); the trainer ran 14.1% slower beside it. A gate or panel has played beside chain 65 for 5 h 35 min 41 s, about 51 minutes of progress lost; chain 65's reading must carry that. Chain 65 should end at about 00:52 on 2026-10-10.
