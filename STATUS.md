@@ -513,3 +513,9 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Panel `m1panel63-20261009`:** chain 63 + m1 against plain chain 63, and chain 62 + m1 against plain chain 63; 6,400 games, seed block 24300000, plan sha256 `d13a985b...`, on the rig, about an hour. It decides nothing; it fills the two pairs D458 left unplayed.
 - It plays beside chain 65, which chain 65's reading must count (chain 64's gate already played beside it for 4 h 56 min 39 s).
 - Correction recorded: "unused" seed blocks in earlier entries meant unused by ladder plans; D416's chain 41 mask tests had played on blocks 23000000 to 24200000. No ladder gate shared a block with an earlier run of its own players.
+
+**2026-10-09 22:02 PDT. Chain 64 reads "Criterion not met" (D464): the earlier pool did not show an improvement on chain 62 against the held-out opponents.**
+- **The registered question:** chain 64 minus chain 62 is +13.7 [-7.0, +33.3] against chain 37 and -2.0 [-23.9, +18.2] against chain 46. A recovery of the lost size is excluded against chain 46 (by D451's bound of 43.7) and not against chain 37.
+- **Head to head chain 64 loses to chain 62:** -76.3 [-90.6, -62.5]; the ladder's label is Negative and chain 64 is not a candidate. It is below chain 62 against chain 60 (-70.1), chain 59 (-30.0) and chain 49 (-24.9), with no difference shown against chain 40 (+1.8). Against its parent it is +9.7 [-4.0, +23.5].
+- **Load:** a gate or panel played beside chain 64's training for 7 h 41 min and its control trained alone, so the comparison cannot be laid to the pool alone. Nothing is adopted; chain 58 remains the warm start.
+- **The rig:** the gate took 4 h 56 min 39 s (2.88 games a second), all of it beside chain 65, whose trainer ran 15.4% slower meanwhile. D463's panel is playing.
