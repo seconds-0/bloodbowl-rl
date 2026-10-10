@@ -508,3 +508,8 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Chain 64** (`ccf606eb...`): exam offense AWAY 0.615 / 0.621, contact AWAY 0.560 / 0.558, contact HOME 0.504 / 0.476, above chain 62 and chain 58 on all six cells; guard not fired. In-run rows close to chain 62's (`docs/chain64-inrun-diagnostics-2026-10-09.txt`). Its training took 9 h 45 min against chain 62's 8 h 32 min, with a gate or panel beside it for 7 h 41 min.
 - **Gate `c64-gate-20261009`:** sixteen pairs, 51,200 games, seed block 23300000, plan sha256 `dc1be811...`, four shards on the rig, five to six hours. Read by D452.
 - **Chain 65** launched 15:32:53 and meets D457's manifest condition (14 of 277 leaves differ, all allowed). Chain 66 follows it.
+
+**2026-10-09 21:56 PDT. A small END_TURN-mask panel for chain 63 is registered and its plan fixed before any game (D463). Chain 64's gate is scored; its reading is the next entry.**
+- **Panel `m1panel63-20261009`:** chain 63 + m1 against plain chain 63, and chain 62 + m1 against plain chain 63; 6,400 games, seed block 24300000, plan sha256 `d13a985b...`, on the rig, about an hour. It decides nothing; it fills the two pairs D458 left unplayed.
+- It plays beside chain 65, which chain 65's reading must count (chain 64's gate already played beside it for 4 h 56 min 39 s).
+- Correction recorded: "unused" seed blocks in earlier entries meant unused by ladder plans; D416's chain 41 mask tests had played on blocks 23000000 to 24200000. No ladder gate shared a block with an earlier run of its own players.
