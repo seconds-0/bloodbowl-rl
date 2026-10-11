@@ -569,3 +569,11 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Rig:** the replay took 4 h 18 min 21 s beside chain 67's attempt 2, which ran 15% slower beside it (about 39 minutes lost). The first queue's finished shard matched the replay's same pairs in every compared field, 12,800 games.
 - **Load carried:** chain 66 trained with a gate beside it for 2 h 59 min 24 s and its control for 5 h 35 min 41 s, so no gain or its absence is laid to lambda alone.
 - **Next:** the selection's reading, then the next generation from the selected checkpoint at lambda 0.97, each in its own entry. Chain 67 should end at about 23:55 to 00:10. No filler rung.
+
+**2026-10-10 23:24 PDT. The selection is read (D473): chain 63 is the warm start of the next generation.**
+- **Rule (D471):** chain 63 is the one qualifier. Against chain 58 it is +70.3 [+48.3, +92.6] against chain 37 and +59.8 [+38.0, +84.1] against chain 46 on a fresh seed block, and +87.2 [+73.2, +102.3] directly. Chain 60 does not qualify (+9.4 [-11.4, +28.6], +0.2 [-20.3, +21.3]), though it is ahead of chain 58 directly (+32.7 [+18.3, +45.6]). No tie-break was used.
+- **Without D471's amendment** the only challenger is chain 60 and chain 58 stays. The ledger follows the amendment, registered before any game; Alex is told of both readings.
+- **Chain 66 (description only):** not shown above chain 58 against the held-out opponents (+19.5 [-0.5, +40.0], +10.2 [-9.7, +32.7]), and below chain 63 there by about 50 (-50.8, -49.6) and directly (-15.1 [-29.2, -1.1]). Two rungs of one recipe that differ in seed and load differ by about 50, as the two 0.97 rungs did (D467).
+- **Lambda:** nothing is adopted, qualified or rejected. The selection picks a checkpoint.
+- **Rig:** the gate took 4 h 36 min 25 s (18:41:06 to 23:17:31) beside chain 67's attempt 2, which ran 15.2% slower beside it (about 42 minutes lost). Gates played beside chain 67 without a break for 8 h 54 min 46 s, about 81 minutes lost in all.
+- **Next:** the next generation from chain 63, in its own entry. Chain 67 should write its last checkpoint at about 00:02 on 2026-10-11.
