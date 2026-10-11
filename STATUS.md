@@ -584,3 +584,11 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Gate:** ten pairs, 32,000 games, seed block 25400000, after chain 67's gate.
 - **A matched lambda 0.99 arm from chain 63** is judged worth its rig time and is left to its own entry, to be registered before chain 68's exam or gate is read. Without it the rig idles when chain 68 ends.
 - **Load:** chain 68 will train beside chain 67's gate; its reading must carry the times.
+
+**2026-10-10 23:33 PDT. Chain 69 is registered and appended (D475): chain 68's rung at lambda 0.99, the matched arm at the second parent.**
+- **Stage:** `r0chain69-lam099-from63-s42-20261011`, warm chain 63, seed 42, the same pool as chain 68, lambda 0.99. Control: chain 68. It launches when chain 68 passes its stage; if chain 68 does not pass, the halt is not reset for it.
+- **What it is and is not:** a matched pair at a second parent, registered after two pairs at the first were seen. It is not D460's prospective pair and adopts nothing under any outcome; lambda 0.97 stays adopted whatever it reads.
+- **Reading:** the ladder's label (D448's rule, chain 68 as control) and D460's three clauses, here called Met or Not met. Met supports a newly registered confirmation that must count chain 66's failure. Not met: lambda 0.99 is not pursued further as the recipe from this entry. Chain 69 is a warm-start candidate if both retention contrasts against chain 63 are entirely above zero.
+- **Gate:** eleven pairs, 35,200 games, seed block 25600000, after chain 68's gate.
+- **Load:** the intended schedule puts one gate beside each rung (chain 67's beside chain 68, chain 68's beside chain 69); the reading must give the measured times.
+- **Alex may have the stage removed before chain 68 ends (about 09:15 on 2026-10-11) or the rung stopped at any time.**
