@@ -577,3 +577,10 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Lambda:** nothing is adopted, qualified or rejected. The selection picks a checkpoint.
 - **Rig:** the gate took 4 h 36 min 25 s (18:41:06 to 23:17:31) beside chain 67's attempt 2, which ran 15.2% slower beside it (about 42 minutes lost). Gates played beside chain 67 without a break for 8 h 54 min 46 s, about 81 minutes lost in all.
 - **Next:** the next generation from chain 63, in its own entry. Chain 67 should write its last checkpoint at about 00:02 on 2026-10-11.
+
+**2026-10-10 23:25 PDT. Chain 68 is registered and appended (D474): chain 63 continued at lambda 0.97, the first rung of the next generation.**
+- **Stage:** `r0chain68-lam097-from63-s42-20261011`, warm chain 63, seed 42, the standard rotation's pool (the anchor, chain 49, chain 58, and chain 63 in the bot's seat), lambda 0.97 because it is the adopted value. The supervisor launches it on the first tick after chain 67's pass marker.
+- **Registered question:** is chain 68 above its parent chain 63 against chain 37 and chain 46 (both retention contrasts entirely above zero, pair 1 not entirely below zero)? It is a warm-start candidate if both retention contrasts are entirely above zero (D471's principle). It has no matched control and adopts nothing.
+- **Gate:** ten pairs, 32,000 games, seed block 25400000, after chain 67's gate.
+- **A matched lambda 0.99 arm from chain 63** is judged worth its rig time and is left to its own entry, to be registered before chain 68's exam or gate is read. Without it the rig idles when chain 68 ends.
+- **Load:** chain 68 will train beside chain 67's gate; its reading must carry the times.
