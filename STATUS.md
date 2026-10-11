@@ -592,3 +592,10 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Gate:** eleven pairs, 35,200 games, seed block 25600000, after chain 68's gate.
 - **Load:** the intended schedule puts one gate beside each rung (chain 67's beside chain 68, chain 68's beside chain 69); the reading must give the measured times.
 - **Alex may have the stage removed before chain 68 ends (about 09:15 on 2026-10-11) or the rung stopped at any time.**
+
+**2026-10-11 00:22 PDT. Chain 67 passed its stage (attempt 2); its gate's plan is fixed and the gate starts on the rig (D476). Chain 68 is training.**
+- **Stage:** checkpoint `db61e8a6...`, marker 00:05:19, exam 00:13:18. The chain 30 guard did not fire, by 0.003 at seed 42 (offense AWAY 0.544 / 0.569 against floors 0.541 / 0.551). Above chain 63 on three of six exam cells, above chain 58 on two.
+- **In-run:** value loss 0.0316 against chain 63's 0.0231, explained variance 0.823 against 0.864, deciding-row entropy 0.247 against 0.221.
+- **Load beside its training (the reading must carry it):** gates without a break for 8 h 54 min 46 s (the replay of chain 66's gate, then the selection gate), four plan-only passes; trainer 84.1 and 84.0 thousand steps a second beside them, 98.4 after; 9 h 45 min 46 s of training against chain 63's 8 h 26 min 56 s. Chain 63 had a three-minute smoke.
+- **Gate:** `c67-gate-20261011`, plan sha256 `ce06912f...`, ten pairs, 32,000 games, seed block 24400000, read by D468 (label by D448's rule with chain 63 as control; candidate only under Positive with both retention contrasts above zero; adopts nothing). Should end at about 03:45 to 04:15.
+- **Chain 68** (D474) launched 00:16:44 and meets its manifest condition against chain 62. Chain 69 (D475) follows it.
