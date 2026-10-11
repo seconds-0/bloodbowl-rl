@@ -614,3 +614,11 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Load beside its training (the readings must carry it):** chain 67's gate for 3 h 24 min 31 s (00:22:44.84 to 03:47:15.47), from six minutes after the rung's launch; trainer 83,558 steps a second beside it, 98,046 after; 9 h 0 min 1 s of training against chain 63's 8 h 26 min 56 s and chain 62's 8 h 31 min 55 s. Chain 63 had a three-minute smoke, chain 62 nothing.
 - **Gate:** `c68-gate-20261011`, plan sha256 `b2b326ee...`, ten plain pairs, 32,000 games, seed block 25400000, read by D474 (Above its parent, Below its parent or Not shown; a candidate if both retention contrasts against chain 63 are entirely above zero; adopts nothing). Should end at about 13:20 to 13:50.
 - **Chain 69** (D475) launched 09:31:44 and meets its manifest condition against chain 68 (11 of 277 leaves differ, all allowed). Its exam should end at about 18:41 to 18:45. Nothing is registered after it.
+
+**2026-10-11 09:50 PDT. Chain 70 is pre-registered to follow chain 69 (D479): chain 68's rung at training seed 2042.**
+- **What:** chain 63 continued at the adopted GAE lambda 0.97, training seed 2042, the same pool as chain 68 (`6a77d63a...`). It launches when chain 69 passes its stage. Without it the trainer would idle from about 18:45 until a selection is read.
+- **What it is and is not:** a second training seed of the generation's rung at the adopted recipe, registered before any game of chain 68's gate was read and after its exam and in-run rows were seen. It adopts nothing and says nothing new about any lambda.
+- **Reading:** D474's, against its parent chain 63 (Above its parent, Below its parent, Not shown); a candidate if both retention contrasts are entirely above zero. If both rungs have an accepted reading against the parent, the entry that reads chain 70 compares those readings, with no pooled estimate or label.
+- **Gate:** ten plain pairs, 32,000 games, seed block 25700000, after chain 69's gate.
+- **Load:** by the intended schedule chain 69's gate plays beside it; the reading must give the measured times, and any comparison with chain 68 includes seed and load together.
+- **Alex may have the stage removed before chain 69's stage passes (its exam should end at about 18:41 to 18:45 PDT on 2026-10-11) or the rung stopped at any time.**
