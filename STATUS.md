@@ -622,3 +622,14 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Gate:** ten plain pairs, 32,000 games, seed block 25700000, after chain 69's gate.
 - **Load:** by the intended schedule chain 69's gate plays beside it; the reading must give the measured times, and any comparison with chain 68 includes seed and load together.
 - **Alex may have the stage removed before chain 69's stage passes (its exam should end at about 18:41 to 18:45 PDT on 2026-10-11) or the rung stopped at any time.**
+
+**2026-10-11 13:27 PDT. Chain 68 reads Below its parent (D480). It is no candidate; chain 63 remains the warm start; nothing is adopted.**
+- **Gate:** `c68-gate-20261011` accepted, 32,000 games, zero integrity counts, seed block 25400000.
+- **The registered question (is chain 68 above chain 63 against the held-out opponents): no.** Chain 68 minus chain 63 is -84.9 [-107.7, -61.6] against chain 37 and -72.8 [-93.7, -50.9] against chain 46.
+- **Head to head it beats chain 63 by +58.4 [+43.2, +73.6],** and against chain 60 it is above chain 63 by +58.7 [+38.6, +80.0]. Chain 63 is in chain 68's training pool. Against chain 37 and chain 46 chain 68 is not shown different from its grandparent chain 58 (-16.1, -16.3, both intervals contain zero).
+- **Beside chain 62 (D451), a different parent:** the same recipe at the same seed one generation earlier also beat its parent head to head (+61.2) and was below it against chain 37 and chain 46 (-24.7, -43.7). Chain 65, the second seed then, was not shown below its parent. Chain 70 (D479) is the second seed now.
+- **Nothing is said about any lambda:** chain 68 has no matched arm. Chain 69 (lambda 0.99 from chain 63) is training and is read against chain 68, which is now eligible as its control.
+- **Load:** chain 67's gate played beside chain 68's training for 3 h 24 min 31 s; a three-minute smoke beside its parent's.
+- **Style:** chain 68 takes 3.06 activations a team turn against chain 63's 3.89 in their pair (-0.822 [-0.863, -0.781]).
+- **Rig:** the gate took 3 h 8 min 23 s at 2.83 games a second; chain 69's trainer made 83,500 steps a second beside it.
+- **Next:** chain 69's exam should end at about 18:37 to 18:40 PDT; chain 70 follows it by itself. Nothing is registered after chain 70.
