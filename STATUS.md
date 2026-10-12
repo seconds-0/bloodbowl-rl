@@ -633,3 +633,11 @@ Vast credit is exhausted (balance −$2.96); the 2070 is the only trainer.
 - **Style:** chain 68 takes 3.06 activations a team turn against chain 63's 3.89 in their pair (-0.822 [-0.863, -0.781]).
 - **Rig:** the gate took 3 h 8 min 23 s at 2.83 games a second; chain 69's trainer made 83,500 steps a second beside it.
 - **Next:** chain 69's exam should end at about 18:37 to 18:40 PDT; chain 70 follows it by itself. Nothing is registered after chain 70.
+
+**2026-10-11 18:58 PDT. Chain 69 passed its stage; its gate's plan is fixed for launch on the rig once this entry and the plan's hash are committed and pushed (D481). Chain 70 is training.**
+- **Stage:** checkpoint `33b70df8...`, marker 18:31:07, exam 18:39:09. The chain 30 guard did not fire (offense AWAY 0.573 / 0.579 against floors 0.541 / 0.551), so the rung is not Negative by the guard. Below its control chain 68 on all six exam cells, above its parent chain 63 on five.
+- **In-run:** value loss 0.0225 against chain 68's 0.0135, explained variance 0.863 against 0.915, deciding-row entropy 0.221 against 0.195; the value rows sit where chain 63's sat.
+- **Load beside its training (the reading must carry it):** chain 68's gate for 3 h 8 min 23 s (09:40:56.56 to 12:49:19.83), from 9 min 13 s after the rung's launch; trainer 83,500 steps a second beside it, 98,490 after; 8 h 56 min 5 s of training. Chain 68 had chain 67's gate for 3 h 24 min 31 s from six minutes after its launch (83,558 beside, 98,046 after; 9 h 0 min 1 s). One gate apiece does not establish comparable load.
+- **Gate:** `c69-gate-20261011`, plan sha256 `55959f58...`, eleven pairs (one under m1), 35,200 games, seed block 25600000, read by D475 (the ladder's label with chain 68 as the control; the criterion Met or Not met; a candidate if both retention contrasts against chain 63 are entirely above zero; adopts nothing). Should end at about 22:40 to 23:15.
+- **Chain 68 is eligible as the control** (stage passed, manifest met, gate accepted, D480).
+- **Chain 70** (D479) launched 18:40:44 and meets its manifest condition against chain 68 (14 of 277 leaves differ, all allowed: the seed in five, the run's paths and tag in seven, two hashes). Its exam should end at about 03:50 to 04:00 on 2026-10-12. Nothing is registered after it; the entry that reads chain 69's gate says what follows.
